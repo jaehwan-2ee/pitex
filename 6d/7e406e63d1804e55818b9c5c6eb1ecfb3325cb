@@ -1,0 +1,25 @@
+.github/workflows/ci.yml
+  s_bff2a81bec0f75::t_eee474f5cec90c 20
+.github/workflows/release.yml
+  s_bff2a81bec0f75::t_5a55a230b2ab4f 20
+.gitignore
+  s_bff2a81bec0f75::t_dc21451f5e4956 49-52
+README.md
+  s_bff2a81bec0f75::t_bb438bf9f85e19 4-5,15,17,19-44,48-72,75,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d7e406e63d1804e55818b9c5c6eb1ecfb3325cb",
+  "prompts": {},
+  "sessions": {
+    "s_bff2a81bec0f75": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_bff2a81bec0f75",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
