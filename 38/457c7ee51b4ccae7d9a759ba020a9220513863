@@ -1,0 +1,31 @@
+Linux/Cargo.lock
+  s_40838f7184508f::t_b1580099f1afeb 750
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_40838f7184508f::t_b50c531378d2cf 130-132,828-847,881,2827-2830,2852,2855-2857,2972,3025-3036,3256-3258,3287-3289,3758
+Linux/crates/pitex-shell/src/model.rs
+  s_40838f7184508f::t_5897f6148c7c43 2443-2458,2508,2529-2549
+Linux/crates/pitex/Cargo.toml
+  s_40838f7184508f::t_a1f7b4c38ba0c1 3
+Mac/Config/Info.plist
+  s_40838f7184508f::t_2c20ba45e461c7 20,22
+Windows/Cargo.lock
+  s_40838f7184508f::t_84f3a59f089310 869
+Windows/crates/pitex-windows/Cargo.toml
+  s_40838f7184508f::t_efc7bb48fbd00c 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38457c7ee51b4ccae7d9a759ba020a9220513863",
+  "prompts": {},
+  "sessions": {
+    "s_40838f7184508f": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_40838f7184508f",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
