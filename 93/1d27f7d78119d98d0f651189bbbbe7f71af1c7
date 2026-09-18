@@ -1,0 +1,65 @@
+.github/workflows/release.yml
+  s_e8a2f0518feca1::t_2d9959fb3b98ac 142-169
+Fixtures/expected/accessibility-identifiers.json
+  s_e8a2f0518feca1::t_192da291562095 2-142
+Linux/Cargo.lock
+  s_e8a2f0518feca1::t_7c737cf7b1ceb1 750
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_e8a2f0518feca1::t_7d1cde32e04e59 150-152,193,208,2694,2699-2705,2708,2711,2728,2737,2745-2789
+Linux/crates/pitex-shell/src/compat.rs
+  s_e8a2f0518feca1::t_1c58468087cbce 386-391
+Linux/crates/pitex-shell/src/lib.rs
+  s_e8a2f0518feca1::t_abd2993710457b 19,21-24
+Linux/crates/pitex-shell/src/panes.rs
+  s_e8a2f0518feca1::t_149cc56829fc96 1457-1595,1682-1691
+Linux/crates/pitex-shell/src/settings.rs
+  s_e8a2f0518feca1::t_f231a9f3798f8d 123-130
+Linux/crates/pitex-shell/src/update.rs
+  s_e8a2f0518feca1::t_249e2483bf79b5 1-352
+Linux/crates/pitex/Cargo.toml
+  s_e8a2f0518feca1::t_d77e97dbfc656c 3
+Linux/crates/pitex/src/main.rs
+  s_e8a2f0518feca1::t_a00083f2bb0f48 2
+Mac/Config/Info.plist
+  s_e8a2f0518feca1::t_4168b5df1e30e0 20,22
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_e8a2f0518feca1::t_9aeb2ea5430086 31,77,171,302
+Mac/Resources/en.lproj/Localizable.strings
+  s_e8a2f0518feca1::t_2416a3e19e61dd 282-299
+Mac/Resources/ja.lproj/Localizable.strings
+  s_e8a2f0518feca1::t_99f942e143cd19 283-300
+Mac/Resources/ko.lproj/Localizable.strings
+  s_e8a2f0518feca1::t_d8bf6023d7fb5b 283-300
+Mac/Resources/vi.lproj/Localizable.strings
+  s_e8a2f0518feca1::t_c8d6d337a0c493 282-299
+Mac/Sources/AppShell/PitexApp.swift
+  s_e8a2f0518feca1::t_e79a47aa650322 1447-1453
+Mac/Sources/Features/SettingsView.swift
+  s_e8a2f0518feca1::t_6d7f02fca44ef7 65-69,97,155,165,175,185,204,510-554
+Mac/Sources/Features/UpdateSupport.swift
+  s_e8a2f0518feca1::t_1cec9f427d0988 1-265
+README.md
+  s_e8a2f0518feca1::t_fc2fa385c7a194 143-180
+Windows/Cargo.lock
+  s_e8a2f0518feca1::t_6c83b1aeeb1646 161,869
+Windows/crates/pitex-windows/Cargo.toml
+  s_e8a2f0518feca1::t_31b47829249acf 3
+Windows/crates/pitex-windows/src/main.rs
+  s_e8a2f0518feca1::t_36cf61d1ca781b 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "931d27f7d78119d98d0f651189bbbbe7f71af1c7",
+  "prompts": {},
+  "sessions": {
+    "s_e8a2f0518feca1": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_e8a2f0518feca1",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
