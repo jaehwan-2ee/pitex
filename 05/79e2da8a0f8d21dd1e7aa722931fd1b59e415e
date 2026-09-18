@@ -1,0 +1,25 @@
+Linux/Cargo.lock
+  s_f7bb58f6af46aa::t_a40a91e6408a66 150
+Linux/Cargo.toml
+  s_f7bb58f6af46aa::t_f6502b3410353c 33
+Linux/crates/document-session-core/Cargo.toml
+  s_f7bb58f6af46aa::t_069d6730a80874 11-13
+Linux/crates/document-session-core/src/lib.rs
+  s_f7bb58f6af46aa::t_6ddca786f5b7fe 597,617-624,636,640-643,662-664,678
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0579e2da8a0f8d21dd1e7aa722931fd1b59e415e",
+  "prompts": {},
+  "sessions": {
+    "s_f7bb58f6af46aa": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_f7bb58f6af46aa",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
