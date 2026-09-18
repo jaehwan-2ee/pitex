@@ -119,7 +119,7 @@ jobs:
       - name: Ensure NSIS
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+          if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) {
             choco install nsis -y --no-progress
           }
       # Per-user NSIS installer — the recommended way to install (double-
@@ -128,7 +128,8 @@ jobs:
       - name: Build installer
         run: |
           cd Windows
-          makensis -V2 -DVERSION="${GITHUB_REF_NAME#v}" \
+          '/c/Program Files (x86)/NSIS/makensis.exe' -V2 \
+            -DVERSION="${GITHUB_REF_NAME#v}" \
             -DOUTFILE="Pitex-${GITHUB_REF_NAME}-windows-amd64-setup.exe" pitex.nsi
       - uses: actions/upload-artifact@v4
         with:
