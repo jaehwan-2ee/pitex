@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  macos-dmg:
+    name: macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release app
+        run: |
+          xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
+            -configuration Release -derivedDataPath build \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - name: Ad-hoc sign and create DMG
+        run: |
+          APP="build/Build/Products/Release/Pitex.app"
+          codesign --deep --force --sign - "$APP" || true
+          hdiutil create -volname Pitex -srcfolder "$APP" -ov -format UDZO \
+            "Pitex-${GITHUB_REF_NAME}-macos-arm64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg
+          path: '*.dmg'
+
+  linux-appimage:
+    name: Linux AppImage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev \
+            libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
+            libvte-2.91-gtk4-dev libpoppler-glib-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build --release -p pitex
+        working-directory: Linux
+      - name: Package AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          VERSION: ${{ github.ref_name }}
+        run: |
+          curl -L -o linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -L -o linuxdeploy-plugin-gtk.sh \
+            https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          chmod +x linuxdeploy linuxdeploy-plugin-gtk.sh
+          ./linuxdeploy --appdir AppDir \
+            -e Linux/target/release/pitex \
+            -d Linux/packaging/dev.pitex.app.desktop \
+            -i Linux/packaging/dev.pitex.app.png \
+            --plugin gtk --output appimage
+          mv ./Pitex-*.AppImage "Pitex-${GITHUB_REF_NAME}-linux-x86_64.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: 'Pitex-*.AppImage'
+
+  publish:
+    name: Publish GitHub Release
+    needs: [macos-dmg, linux-appimage]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Pitex ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*

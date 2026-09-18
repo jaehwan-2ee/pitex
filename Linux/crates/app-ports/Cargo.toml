@@ -1,0 +1,14 @@
+[package]
+name = "app-ports"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tex-domain = { path = "../tex-domain" }
+project-core = { path = "../project-core" }
+document-session-core = { path = "../document-session-core" }
+build-core = { path = "../build-core" }
+synctex-core = { path = "../synctex-core" }
+uuid.workspace = true

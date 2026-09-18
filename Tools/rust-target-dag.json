@@ -1,0 +1,164 @@
+{
+ "schemaVersion": 1,
+ "compositionRoot": "pitex-shell",
+ "appTarget": "pitex",
+ "guiDependencies": [
+  "gtk4",
+  "libadwaita",
+  "sourceview5",
+  "vte4",
+  "gdk4",
+  "gsk4",
+  "pango",
+  "cairo-rs",
+  "poppler-rs"
+ ],
+ "nonPortableTargets": [
+  "gtk-editor-adapter",
+  "linux-platform",
+  "pitex-shell",
+  "pitex"
+ ],
+ "swiftTargetMap": {
+  "tex-domain": "TexDomain",
+  "project-core": "ProjectCore",
+  "document-session-core": "DocumentSessionCore",
+  "language-core": "LanguageCore",
+  "build-core": "BuildCore",
+  "synctex-core": "SyncTeXCore",
+  "ai-core": "AICore",
+  "parity-kit": "ParityKit",
+  "app-ports": "AppPorts",
+  "project-feature": "ProjectFeature",
+  "editor-feature": "EditorFeature",
+  "build-feature": "BuildFeature",
+  "pdf-feature": "PDFFeature",
+  "settings-feature": "SettingsFeature",
+  "gtk-editor-adapter": "EditorMacAdapter",
+  "linux-platform": "MacPlatform",
+  "pitex-shell": "AppShell",
+  "pitex": "App"
+ },
+ "targets": {
+  "tex-domain": {
+   "dependencies": []
+  },
+  "project-core": {
+   "dependencies": [
+    "tex-domain"
+   ]
+  },
+  "document-session-core": {
+   "dependencies": [
+    "tex-domain",
+    "project-core"
+   ]
+  },
+  "language-core": {
+   "dependencies": [
+    "tex-domain"
+   ]
+  },
+  "build-core": {
+   "dependencies": [
+    "tex-domain",
+    "project-core"
+   ]
+  },
+  "synctex-core": {
+   "dependencies": [
+    "tex-domain",
+    "project-core"
+   ]
+  },
+  "ai-core": {
+   "dependencies": [
+    "tex-domain",
+    "document-session-core"
+   ]
+  },
+  "parity-kit": {
+   "dependencies": [
+    "tex-domain"
+   ]
+  },
+  "app-ports": {
+   "dependencies": [
+    "tex-domain",
+    "project-core",
+    "document-session-core",
+    "build-core",
+    "synctex-core"
+   ]
+  },
+  "project-feature": {
+   "dependencies": [
+    "project-core",
+    "document-session-core",
+    "app-ports"
+   ]
+  },
+  "editor-feature": {
+   "dependencies": [
+    "document-session-core",
+    "language-core",
+    "ai-core",
+    "app-ports"
+   ]
+  },
+  "build-feature": {
+   "dependencies": [
+    "build-core",
+    "document-session-core",
+    "app-ports"
+   ]
+  },
+  "pdf-feature": {
+   "dependencies": [
+    "synctex-core",
+    "document-session-core",
+    "app-ports"
+   ]
+  },
+  "settings-feature": {
+   "dependencies": [
+    "app-ports"
+   ]
+  },
+  "gtk-editor-adapter": {
+   "dependencies": [
+    "editor-feature",
+    "document-session-core",
+    "app-ports"
+   ]
+  },
+  "linux-platform": {
+   "dependencies": [
+    "app-ports"
+   ]
+  },
+  "pitex-shell": {
+   "dependencies": [
+    "tex-domain",
+    "project-core",
+    "document-session-core",
+    "language-core",
+    "build-core",
+    "synctex-core",
+    "app-ports",
+    "project-feature",
+    "editor-feature",
+    "build-feature",
+    "pdf-feature",
+    "settings-feature",
+    "linux-platform",
+    "gtk-editor-adapter"
+   ]
+  },
+  "pitex": {
+   "dependencies": [
+    "pitex-shell"
+   ]
+  }
+ }
+}

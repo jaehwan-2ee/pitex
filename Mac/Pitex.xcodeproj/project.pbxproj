@@ -1,0 +1,479 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* PitexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* PitexApp.swift */; };
+		100000000000000000000002 /* AppShell in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000001 /* AppShell */; };
+		100000000000000000000003 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* WorkspaceView.swift */; };
+		100000000000000000000004 /* EditorContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* EditorContainerView.swift */; };
+		100000000000000000000005 /* Preview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* Preview.swift */; };
+		100000000000000000000006 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000001 /* Localizable.strings */; };
+		100000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* Assets.xcassets */; };
+		100000000000000000000009 /* PitexAgent in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000030 /* PitexAgent */; };
+		100000000000000000000008 /* BuildSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* BuildSupport.swift */; };
+		10000000000000000000000B /* SyncTeXSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* SyncTeXSupport.swift */; };
+		10000000000000000000000C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* SettingsView.swift */; };
+		10000000000000000000000D /* SyntaxHighlighting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* SyntaxHighlighting.swift */; };
+		10000000000000000000001E /* AgentCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* AgentCoordinator.swift */; };
+		10000000000000000000001F /* PiRPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* PiRPC.swift */; };
+		100000000000000000000020 /* PiAgentProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* PiAgentProcess.swift */; };
+		100000000000000000000021 /* PiAuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* PiAuthStore.swift */; };
+		100000000000000000000022 /* BottomConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* BottomConsoleView.swift */; };
+		100000000000000000000023 /* ProjectSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* ProjectSidebarView.swift */; };
+		100000000000000000000024 /* AppearanceTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* AppearanceTheme.swift */; };
+		100000000000000000000025 /* EditorFolding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* EditorFolding.swift */; };
+		100000000000000000000026 /* AgentPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000031 /* AgentPanel.swift */; };
+		10000000000000000000000E /* AppPorts in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000002 /* AppPorts */; };
+		10000000000000000000000F /* EditorMacAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000003 /* EditorMacAdapter */; };
+		100000000000000000000010 /* MacPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000004 /* MacPlatform */; };
+		100000000000000000000011 /* BuildFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000005 /* BuildFeature */; };
+		100000000000000000000013 /* SettingsFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000007 /* SettingsFeature */; };
+		100000000000000000000014 /* TexDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000008 /* TexDomain */; };
+		100000000000000000000015 /* ProjectCore in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000009 /* ProjectCore */; };
+		100000000000000000000016 /* DocumentSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000A /* DocumentSessionCore */; };
+		100000000000000000000017 /* LanguageCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000B /* LanguageCore */; };
+		100000000000000000000018 /* BuildCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000C /* BuildCore */; };
+		100000000000000000000019 /* SyncTeXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000D /* SyncTeXCore */; };
+		10000000000000000000001A /* AICore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000E /* AICore */; };
+		10000000000000000000001B /* EditorFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000F /* EditorFeature */; };
+		10000000000000000000001C /* ProjectFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000010 /* ProjectFeature */; };
+		10000000000000000000001D /* PDFFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000011 /* PDFFeature */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		200000000000000000000001 /* PitexApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PitexApp.swift; sourceTree = "<group>"; };
+		200000000000000000000002 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		200000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		200000000000000000000004 /* Pitex.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pitex.entitlements; sourceTree = "<group>"; };
+		200000000000000000000005 /* Pitex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pitex.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000006 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		200000000000000000000007 /* EditorContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorContainerView.swift; sourceTree = "<group>"; };
+		200000000000000000000008 /* Preview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preview.swift; sourceTree = "<group>"; };
+		200000000000000000000010 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		200000000000000000000011 /* ko */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ko; path = ko.lproj/Localizable.strings; sourceTree = "<group>"; };
+		200000000000000000000012 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/Localizable.strings; sourceTree = "<group>"; };
+		20000000000000000000001B /* vi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = vi; path = vi.lproj/Localizable.strings; sourceTree = "<group>"; };
+		20000000000000000000000C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		200000000000000000000030 /* PitexAgent */ = {isa = PBXFileReference; lastKnownFileType = folder; path = PitexAgent; sourceTree = "<group>"; };
+		200000000000000000000009 /* BuildSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildSupport.swift; sourceTree = "<group>"; };
+		200000000000000000000013 /* AgentCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCoordinator.swift; sourceTree = "<group>"; };
+		200000000000000000000014 /* PiRPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiRPC.swift; sourceTree = "<group>"; };
+		200000000000000000000015 /* PiAgentProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiAgentProcess.swift; sourceTree = "<group>"; };
+		200000000000000000000016 /* PiAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiAuthStore.swift; sourceTree = "<group>"; };
+		200000000000000000000017 /* BottomConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomConsoleView.swift; sourceTree = "<group>"; };
+		200000000000000000000018 /* ProjectSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectSidebarView.swift; sourceTree = "<group>"; };
+		200000000000000000000019 /* AppearanceTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceTheme.swift; sourceTree = "<group>"; };
+		20000000000000000000001A /* EditorFolding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFolding.swift; sourceTree = "<group>"; };
+		20000000000000000000000D /* SyncTeXSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTeXSupport.swift; sourceTree = "<group>"; };
+		20000000000000000000000E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		20000000000000000000000F /* SyntaxHighlighting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxHighlighting.swift; sourceTree = "<group>"; };
+		200000000000000000000031 /* AgentPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		400000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000002 /* AppShell in Frameworks */,
+				10000000000000000000000E /* AppPorts in Frameworks */,
+				10000000000000000000000F /* EditorMacAdapter in Frameworks */,
+				100000000000000000000010 /* MacPlatform in Frameworks */,
+				10000000000000000000001B /* EditorFeature in Frameworks */,
+				10000000000000000000001C /* ProjectFeature in Frameworks */,
+				100000000000000000000011 /* BuildFeature in Frameworks */,
+				10000000000000000000001D /* PDFFeature in Frameworks */,
+				100000000000000000000013 /* SettingsFeature in Frameworks */,
+				100000000000000000000014 /* TexDomain in Frameworks */,
+				100000000000000000000015 /* ProjectCore in Frameworks */,
+				100000000000000000000016 /* DocumentSessionCore in Frameworks */,
+				100000000000000000000017 /* LanguageCore in Frameworks */,
+				100000000000000000000018 /* BuildCore in Frameworks */,
+				100000000000000000000019 /* SyncTeXCore in Frameworks */,
+				10000000000000000000001A /* AICore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		500000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				500000000000000000000002 /* Sources */,
+				500000000000000000000004 /* Config */,
+				500000000000000000000007 /* Resources */,
+				500000000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		500000000000000000000002 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				500000000000000000000003 /* AppShell */,
+				500000000000000000000006 /* Features */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		500000000000000000000003 /* AppShell */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000001 /* PitexApp.swift */,
+			);
+			path = AppShell;
+			sourceTree = "<group>";
+		};
+		500000000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000002 /* Base.xcconfig */,
+				200000000000000000000003 /* Info.plist */,
+				200000000000000000000004 /* Pitex.entitlements */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		500000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000005 /* Pitex.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		500000000000000000000006 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000006 /* WorkspaceView.swift */,
+				200000000000000000000007 /* EditorContainerView.swift */,
+				200000000000000000000008 /* Preview.swift */,
+				200000000000000000000009 /* BuildSupport.swift */,
+				200000000000000000000013 /* AgentCoordinator.swift */,
+				200000000000000000000014 /* PiRPC.swift */,
+				200000000000000000000015 /* PiAgentProcess.swift */,
+				200000000000000000000016 /* PiAuthStore.swift */,
+				200000000000000000000017 /* BottomConsoleView.swift */,
+				200000000000000000000018 /* ProjectSidebarView.swift */,
+				200000000000000000000019 /* AppearanceTheme.swift */,
+				20000000000000000000001A /* EditorFolding.swift */,
+				20000000000000000000000D /* SyncTeXSupport.swift */,
+				20000000000000000000000E /* SettingsView.swift */,
+				20000000000000000000000F /* SyntaxHighlighting.swift */,
+				200000000000000000000031 /* AgentPanel.swift */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		500000000000000000000007 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000001 /* Localizable.strings */,
+				20000000000000000000000C /* Assets.xcassets */,
+				200000000000000000000030 /* PitexAgent */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		600000000000000000000001 /* Pitex */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 700000000000000000000002 /* Build configuration list for PBXNativeTarget "Pitex" */;
+			buildPhases = (
+				400000000000000000000002 /* Sources */,
+				400000000000000000000001 /* Frameworks */,
+				400000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Pitex;
+			packageProductDependencies = (
+				300000000000000000000001 /* AppShell */,
+				300000000000000000000002 /* AppPorts */,
+				300000000000000000000003 /* EditorMacAdapter */,
+				300000000000000000000004 /* MacPlatform */,
+				300000000000000000000005 /* BuildFeature */,
+				300000000000000000000007 /* SettingsFeature */,
+				300000000000000000000008 /* TexDomain */,
+				300000000000000000000009 /* ProjectCore */,
+				30000000000000000000000A /* DocumentSessionCore */,
+				30000000000000000000000B /* LanguageCore */,
+				30000000000000000000000C /* BuildCore */,
+				30000000000000000000000D /* SyncTeXCore */,
+				30000000000000000000000E /* AICore */,
+				30000000000000000000000F /* EditorFeature */,
+				300000000000000000000010 /* ProjectFeature */,
+				300000000000000000000011 /* PDFFeature */,
+			);
+			productName = Pitex;
+			productReference = 200000000000000000000005 /* Pitex.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		600000000000000000000002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					600000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 700000000000000000000001 /* Build configuration list for PBXProject "Pitex" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				ko,
+				ja,
+				vi,
+				Base,
+			);
+			mainGroup = 500000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */,
+				800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 500000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				600000000000000000000001 /* Pitex */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		400000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000006 /* Localizable.strings in Resources */,
+				100000000000000000000007 /* Assets.xcassets in Resources */,
+				100000000000000000000009 /* PitexAgent in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		400000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000001 /* PitexApp.swift in Sources */,
+				100000000000000000000003 /* WorkspaceView.swift in Sources */,
+				100000000000000000000004 /* EditorContainerView.swift in Sources */,
+				100000000000000000000005 /* Preview.swift in Sources */,
+				100000000000000000000008 /* BuildSupport.swift in Sources */,
+				10000000000000000000001E /* AgentCoordinator.swift in Sources */,
+				10000000000000000000001F /* PiRPC.swift in Sources */,
+				100000000000000000000020 /* PiAgentProcess.swift in Sources */,
+				100000000000000000000021 /* PiAuthStore.swift in Sources */,
+				100000000000000000000022 /* BottomConsoleView.swift in Sources */,
+				100000000000000000000023 /* ProjectSidebarView.swift in Sources */,
+				100000000000000000000024 /* AppearanceTheme.swift in Sources */,
+				100000000000000000000025 /* EditorFolding.swift in Sources */,
+				10000000000000000000000B /* SyncTeXSupport.swift in Sources */,
+				10000000000000000000000C /* SettingsView.swift in Sources */,
+				10000000000000000000000D /* SyntaxHighlighting.swift in Sources */,
+				100000000000000000000026 /* AgentPanel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		900000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 200000000000000000000002 /* Base.xcconfig */;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		900000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 200000000000000000000002 /* Base.xcconfig */;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		900000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 200000000000000000000002 /* Base.xcconfig */;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		900000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 200000000000000000000002 /* Base.xcconfig */;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		700000000000000000000001 /* Build configuration list for PBXProject "Pitex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				900000000000000000000001 /* Debug */,
+				900000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		700000000000000000000002 /* Build configuration list for PBXNativeTarget "Pitex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				900000000000000000000003 /* Debug */,
+				900000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin PBXVariantGroup section */
+		A00000000000000000000001 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				200000000000000000000010 /* en */,
+				200000000000000000000011 /* ko */,
+				200000000000000000000012 /* ja */,
+				20000000000000000000001B /* vi */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		800000000000000000000001 /* XCLocalSwiftPackageReference "../Packages/TexCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/TexCore;
+		};
+		800000000000000000000002 /* XCLocalSwiftPackageReference "../Packages/TexApp" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/TexApp;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		300000000000000000000001 /* AppShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = AppShell;
+		};
+		300000000000000000000002 /* AppPorts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = AppPorts;
+		};
+		300000000000000000000003 /* EditorMacAdapter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = EditorMacAdapter;
+		};
+		300000000000000000000004 /* MacPlatform */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = MacPlatform;
+		};
+		300000000000000000000005 /* BuildFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = BuildFeature;
+		};
+		300000000000000000000007 /* SettingsFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = SettingsFeature;
+		};
+		300000000000000000000008 /* TexDomain */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = TexDomain;
+		};
+		300000000000000000000009 /* ProjectCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = ProjectCore;
+		};
+		30000000000000000000000A /* DocumentSessionCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = DocumentSessionCore;
+		};
+		30000000000000000000000B /* LanguageCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = LanguageCore;
+		};
+		30000000000000000000000C /* BuildCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = BuildCore;
+		};
+		30000000000000000000000D /* SyncTeXCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = SyncTeXCore;
+		};
+		30000000000000000000000E /* AICore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = AICore;
+		};
+		30000000000000000000000F /* EditorFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = EditorFeature;
+		};
+		300000000000000000000010 /* ProjectFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = ProjectFeature;
+		};
+		300000000000000000000011 /* PDFFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
+			productName = PDFFeature;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 600000000000000000000002 /* Project object */;
+}

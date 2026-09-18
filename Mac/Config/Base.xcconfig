@@ -1,0 +1,27 @@
+// Pitex is currently scoped to personal, local Apple Silicon development builds.
+ARCHS = arm64
+VALID_ARCHS = arm64
+ONLY_ACTIVE_ARCH = YES
+MACOSX_DEPLOYMENT_TARGET = 15.0
+SDKROOT = macosx
+SUPPORTED_PLATFORMS = macosx
+SWIFT_VERSION = 6.0
+
+PRODUCT_BUNDLE_IDENTIFIER = app.pitex.desktop
+GENERATE_INFOPLIST_FILE = NO
+INFOPLIST_FILE = Config/Info.plist
+CODE_SIGN_ENTITLEMENTS = Config/Pitex.entitlements
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+// Ad-hoc ("Sign to Run Locally") — no development team needed for personal local builds.
+CODE_SIGN_IDENTITY = -
+
+// Distribution hardening, notarization, sandboxing, and updater integration are intentionally out of scope.
+ENABLE_HARDENED_RUNTIME = NO
+ENABLE_APP_SANDBOX = NO
+ENABLE_USER_SCRIPT_SANDBOXING = NO
+
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks
+CLANG_ENABLE_MODULES = YES
+SWIFT_EMIT_LOC_STRINGS = YES
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon

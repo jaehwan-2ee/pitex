@@ -1,0 +1,11 @@
+[package]
+name = "document-session-core"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tex-domain = { path = "../tex-domain" }
+project-core = { path = "../project-core" }
+libc.workspace = true

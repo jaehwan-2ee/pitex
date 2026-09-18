@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pitex
+Comment=LaTeX environment
+Exec=pitex %F
+Icon=dev.pitex.app
+Terminal=false
+Categories=Development;TextEditor;
+StartupNotify=true
+MimeType=text/x-tex;text/x-bib;

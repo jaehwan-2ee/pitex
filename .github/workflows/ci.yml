@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gates:
+    name: Repository gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node Tools/verify-target-dag.mjs
+      - run: node Tools/verify-rust-dag.mjs
+      - run: node Tools/validate-xcodeproj.mjs
+      - run: node Tools/generate-sbom.mjs
+      - run: node Tools/verify-release-surface.mjs
+
+  swift:
+    name: Swift packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.3.3'
+      - run: swift test
+        working-directory: Packages/TexCore
+      - run: swift test
+        working-directory: Packages/TexApp
+
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev \
+            libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
+            libvte-2.91-gtk4-dev libpoppler-glib-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+        working-directory: Linux

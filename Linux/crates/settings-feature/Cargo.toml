@@ -1,0 +1,15 @@
+[package]
+name = "settings-feature"
+edition.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+project-feature = { path = "../project-feature" }
+editor-feature = { path = "../editor-feature" }
+build-feature = { path = "../build-feature" }
+pdf-feature = { path = "../pdf-feature" }
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+app-ports = { path = "../app-ports" }

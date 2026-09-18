@@ -1,0 +1,11 @@
+[package]
+name = "editor-feature"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+document-session-core = { path = "../document-session-core" }
+language-core = { path = "../language-core" }
+ai-core = { path = "../ai-core" }
+app-ports = { path = "../app-ports" }

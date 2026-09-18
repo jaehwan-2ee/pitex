@@ -1,0 +1,41 @@
+SyncTeX Version:1
+SyncTeX Fingerprint:7829367
+SyncTeX result begin
+Input:/workspace/multifile/sections/intro.tex
+Line:4
+Column:0
+Output:/workspace/multifile/build/main.pdf
+Page:1
+x:133.768341
+y:134.764618
+h:133.768341
+v:134.764618
+W:343.711060
+H:6.918498
+SyncTeX result end
+SyncTeX result begin
+Input:/workspace/multifile/sections/details.tex
+Line:3
+Column:2
+Output:/workspace/multifile/build/main.pdf
+Page:2
+x:144.250000
+y:221.750000
+h:144.250000
+v:221.750000
+W:275.500000
+H:7.250000
+SyncTeX result end
+SyncTeX result begin
+Input:/workspace/multifile/main.tex
+Line:8
+Column:0
+Output:/workspace/multifile/build/main.pdf
+Page:2
+x:144.251500
+y:221.751500
+h:144.251500
+v:221.751500
+W:86.750000
+H:7.250000
+SyncTeX result end

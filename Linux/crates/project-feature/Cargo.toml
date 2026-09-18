@@ -1,0 +1,10 @@
+[package]
+name = "project-feature"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+project-core = { path = "../project-core" }
+document-session-core = { path = "../document-session-core" }
+app-ports = { path = "../app-ports" }

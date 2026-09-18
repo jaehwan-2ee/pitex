@@ -1,0 +1,30 @@
+[package]
+name = "pitex-shell"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+flate2.workspace = true
+dirs.workspace = true
+regex.workspace = true
+tex-domain = { path = "../tex-domain" }
+project-core = { path = "../project-core" }
+document-session-core = { path = "../document-session-core" }
+language-core = { path = "../language-core" }
+build-core = { path = "../build-core" }
+synctex-core = { path = "../synctex-core" }
+app-ports = { path = "../app-ports" }
+project-feature = { path = "../project-feature" }
+editor-feature = { path = "../editor-feature" }
+build-feature = { path = "../build-feature" }
+pdf-feature = { path = "../pdf-feature" }
+settings-feature = { path = "../settings-feature" }
+linux-platform = { path = "../linux-platform" }
+gtk-editor-adapter = { path = "../gtk-editor-adapter" }
+gtk4.workspace = true
+libadwaita.workspace = true
+sourceview5.workspace = true
+vte4.workspace = true

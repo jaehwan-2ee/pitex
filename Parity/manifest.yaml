@@ -1,0 +1,283 @@
+schema_version: "1.0.0"
+manifest_id: p0
+status: provisional
+completeness_claimed: false
+reference:
+  product: TexSpark
+  version: v0.10.2
+  release_date: "2026-08-28"
+  documented_source: https://texspark.io/category/changelog/
+  downloadable_build:
+    sha256: unresolved
+    resolution_phase: final-transition-r1
+  black_box_inventory:
+    status: unresolved
+    resolution_phase: final-transition-r1
+taxonomy:
+  - active-parity
+  - excluded-approved
+  - out-of-domain
+items:
+  - id: p0.project.file.open-existing
+    title: Open an existing project file
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public project workflow; exact native behavior awaits R1.
+  - id: p0.project.file.create-save
+    title: Create and save project files
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public document workflow; exact dialogs and states await R1.
+  - id: p0.project.file.tabs-session
+    title: Multi-file tabs and session continuity
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/, https://texspark.io/legal/]
+    rationale: Public multi-file and local session surface.
+  - id: p0.project.build-target.persistence
+    title: Persistent project build target
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public project-level target workflow.
+  - id: p0.project.includes.recursive-outline
+    title: Recursive include tree and project outline
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public cross-file project intelligence surface.
+  - id: p0.project.external-change.diff-resolution
+    title: External-change detection and diff resolution
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/2026/08/28/v0-10-2-outline/]
+    rationale: Public v0.10.2 change surface; complete state inventory awaits R1.
+
+  - id: p0.editor.native.text-input
+    title: Native text input, composition, and dictation
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public native-editor surface requiring physical Mac evidence.
+  - id: p0.editor.editing.undo-find-replace
+    title: Native undo, find, and replace
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public editing and shortcut surface requiring native verification.
+  - id: p0.editor.language.latex-highlighting
+    title: LaTeX syntax highlighting
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public language-intelligence surface.
+  - id: p0.editor.language.bibtex-highlighting
+    title: BibTeX syntax highlighting and bibliography navigation
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public bibliography-intelligence surface.
+  - id: p0.editor.intelligence.command-completion
+    title: LaTeX command completion
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public completion surface.
+  - id: p0.editor.intelligence.cross-file-symbols
+    title: Cross-file label, reference, and citation intelligence
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public project-wide intelligence surface.
+  - id: p0.editor.intelligence.folding-matching
+    title: Section folding and bracket or environment matching
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public structural editing surface.
+  - id: p0.editor.navigation.minimap
+    title: Editor minimap
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public long-document navigation surface.
+  - id: p0.editor.outline.three-level-numbering
+    title: Three-level document-class-aware outline numbering
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/2026/08/28/v0-10-2-outline/]
+    rationale: Public v0.10.2 outline behavior; detailed variants await R1.
+
+  - id: p0.build.engine.template-selection
+    title: TeX engine and tool templates
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public build configuration surface.
+  - id: p0.build.command.login-shell
+    title: Editable custom login-shell command
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public custom-command surface with explicit inherited authority.
+  - id: p0.build.pipeline.multi-pass
+    title: Multi-pass and chained build pipeline
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/2026/08/13/chaining-multi-pass-build/]
+    rationale: Public build-pipeline surface.
+  - id: p0.build.execution.cancel-clean
+    title: Build cancellation and artifact cleanup
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public build command surface; failure states await R1.
+  - id: p0.build.log.streaming
+    title: Streaming build log
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public diagnostics surface.
+  - id: p0.build.diagnostics.issue-navigation
+    title: Error and warning issue navigation
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public diagnostics-to-source workflow.
+  - id: p0.build.output.last-successful-pdf
+    title: Preserve last successful PDF on build failure
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public failed-build output behavior.
+
+  - id: p0.pdf.preview.render-navigation
+    title: PDF rendering and navigation
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public preview surface requiring PDFKit evidence.
+  - id: p0.pdf.synctex.forward-search
+    title: Forward source-to-PDF SyncTeX
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/, https://texspark.io/documentation/]
+    rationale: Public two-way navigation surface.
+  - id: p0.pdf.synctex.inverse-search
+    title: Inverse PDF-to-source SyncTeX
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/, https://texspark.io/documentation/]
+    rationale: Public two-way navigation surface.
+  - id: p0.pdf.synctex.cross-file
+    title: Cross-file SyncTeX resolution
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public multi-file navigation surface.
+  - id: p0.pdf.preview.scroll-preservation
+    title: Preserve PDF position across rebuilds
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/2026/08/13/chaining-multi-pass-build/]
+    rationale: Public preview continuity behavior.
+
+  - id: p0.ai.models.selection
+    title: Provider model selection
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public multi-provider AI surface; exact models await R1.
+  - id: p0.ai.chat.streaming
+    title: Streaming AI conversation
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public AI interaction surface.
+  - id: p0.ai.context.current-file
+    title: Current-file context control
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Public source-context control.
+  - id: p0.ai.edit.selection-application
+    title: Selection handoff and revision-safe edit application
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public selection workflow with approved zero-loss revision requirements.
+  - id: p0.ai.history.local
+    title: Local AI conversation history
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/legal/]
+    rationale: Public local-data surface without copying reference content.
+  - id: p0.macos.integration.finder-document-open
+    title: Finder and Open With document integration
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public native installation and document workflow requiring physical Mac evidence.
+  - id: p0.macos.integration.menus-shortcuts
+    title: Native menus and documented shortcuts
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Public native command surface; complete inventory awaits R1.
+  - id: p0.macos.integration.panels-layout
+    title: Editor, PDF, AI, terminal, issues, and log panel layout
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/, https://texspark.io/documentation/]
+    rationale: Public panel composition surface requiring native evidence.
+  - id: p0.macos.integration.accessibility
+    title: Native accessibility and VoiceOver semantics
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/features/]
+    rationale: Native quality surface required by the approved contract; exact inventory awaits R1.
+  - id: p0.macos.integration.file-permissions
+    title: Voluntary file access and permission recovery
+    taxonomy: active-parity
+    provisional: true
+    source_urls: [https://texspark.io/legal/]
+    rationale: Local-file boundary under the approved non-sandbox capability contract.
+  - id: p0.macos.updater.in-app-automatic
+    title: In-app automatic updating
+    taxonomy: excluded-approved
+    provisional: true
+    source_urls: [https://texspark.io/documentation/]
+    rationale: Sole approved functional exclusion; replacement is manual bundle installation only.
+
+  - id: p0.identity.brand.marks
+    title: TexSpark name and marks
+    taxonomy: out-of-domain
+    provisional: true
+    source_urls: [https://texspark.io/]
+    rationale: Reference identity is provenance only and is not a functional exclusion.
+  - id: p0.identity.brand.assets
+    title: TexSpark visual and downloadable assets
+    taxonomy: out-of-domain
+    provisional: true
+    source_urls: [https://texspark.io/]
+    rationale: Reference assets are not copied and are not a functional exclusion.
+  - id: p0.commercial.pricing.purchase
+    title: Pricing and purchase flow
+    taxonomy: out-of-domain
+    provisional: true
+    source_urls: [https://texspark.io/]
+    rationale: Commercial terms are outside the personal implementation domain, not excluded functionality.
+  - id: p0.commercial.trial.licensing
+    title: Trial and license activation
+    taxonomy: out-of-domain
+    provisional: true
+    source_urls: [https://texspark.io/legal/]
+    rationale: Trial and licensing are commercial surfaces, not functional exclusions.
+  - id: p0.distribution.public.release
+    title: Public distribution, notarized delivery, and storefront-facing release
+    taxonomy: out-of-domain
+    provisional: true
+    source_urls: [https://texspark.io/download/]
+    rationale: Public distribution is outside the personal implementation domain, not a functional exclusion.

@@ -1,0 +1,11 @@
+[package]
+name = "pitex"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "pitex"
+path = "src/main.rs"
+
+[dependencies]
+pitex-shell = { path = "../pitex-shell" }

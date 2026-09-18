@@ -1,0 +1,13 @@
+[package]
+name = "linux-platform"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+dirs.workspace = true
+app-ports = { path = "../app-ports" }
+uuid.workspace = true
+url.workspace = true

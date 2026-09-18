@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.pitex.invalid/schema/manifest.schema.json",
+  "title": "Provisional parity manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_id", "status", "completeness_claimed", "reference", "taxonomy", "items"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "manifest_id": { "const": "p0" },
+    "status": { "const": "provisional" },
+    "completeness_claimed": { "const": false },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product", "version", "release_date", "documented_source", "downloadable_build", "black_box_inventory"],
+      "properties": {
+        "product": { "const": "TexSpark" },
+        "version": { "const": "v0.10.2" },
+        "release_date": { "const": "2026-08-28" },
+        "documented_source": { "type": "string", "const": "https://texspark.io/category/changelog/" },
+        "downloadable_build": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256", "resolution_phase"],
+          "properties": {
+            "sha256": { "const": "unresolved" },
+            "resolution_phase": { "const": "final-transition-r1" }
+          }
+        },
+        "black_box_inventory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "resolution_phase"],
+          "properties": {
+            "status": { "const": "unresolved" },
+            "resolution_phase": { "const": "final-transition-r1" }
+          }
+        }
+      }
+    },
+    "taxonomy": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "active-parity" },
+        { "const": "excluded-approved" },
+        { "const": "out-of-domain" }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/item" }
+    }
+  },
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "pattern": "^p0\\.[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*){2,}$"
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "taxonomy", "provisional", "source_urls", "rationale"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "title": { "type": "string", "minLength": 1 },
+        "taxonomy": { "enum": ["active-parity", "excluded-approved", "out-of-domain"] },
+        "provisional": { "const": true },
+        "source_urls": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "format": "uri", "pattern": "^https://texspark\\.io/" }
+        },
+        "rationale": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "taxonomy": { "const": "excluded-approved" } }, "required": ["taxonomy"] },
+          "then": { "properties": { "id": { "const": "p0.macos.updater.in-app-automatic" } } }
+        },
+        {
+          "if": { "properties": { "taxonomy": { "const": "out-of-domain" } }, "required": ["taxonomy"] },
+          "then": { "properties": { "id": { "pattern": "^p0\\.(?:identity|commercial|distribution)\\." } } }
+        },
+        {
+          "if": { "properties": { "taxonomy": { "const": "active-parity" } }, "required": ["taxonomy"] },
+          "then": {
+            "properties": {
+              "id": {
+                "allOf": [
+                  { "$ref": "#/$defs/stableId" },
+                  { "not": { "pattern": "^p0\\.(?:identity|commercial|distribution)\\." } },
+                  { "not": { "const": "p0.macos.updater.in-app-automatic" } }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

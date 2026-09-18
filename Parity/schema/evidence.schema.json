@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.pitex.invalid/schema/evidence.schema.json",
+  "title": "Provisional parity evidence index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_id", "status", "completeness_claimed", "entries"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "manifest_id": { "const": "p0" },
+    "status": { "const": "provisional" },
+    "completeness_claimed": { "const": false },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "pattern": "^p0\\.[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*){2,}$"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_urls", "observed_date", "method", "status"],
+      "properties": {
+        "source_urls": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "format": "uri", "pattern": "^https://texspark\\.io/" }
+        },
+        "observed_date": { "const": "2026-08-30" },
+        "method": { "const": "public-web" },
+        "status": { "const": "provisional" }
+      }
+    },
+    "plannedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "phase", "artifact_kind", "environment", "status"],
+      "properties": {
+        "category": {
+          "enum": [
+            "linux-portable-contract",
+            "linux-integration",
+            "final-mac-native",
+            "final-mac-filesystem",
+            "final-mac-auth",
+            "final-mac-accessibility"
+          ]
+        },
+        "phase": { "enum": ["linux-p0", "final-mac-r1", "final-mac-e2e"] },
+        "artifact_kind": { "type": "string", "minLength": 1 },
+        "environment": { "enum": ["canonical-linux", "physical-mac-min", "physical-mac-latest", "private-backend"] },
+        "status": { "const": "planned" }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parity_id", "taxonomy", "provisional", "provenance", "disposition", "planned_evidence"],
+      "properties": {
+        "parity_id": { "$ref": "#/$defs/stableId" },
+        "taxonomy": { "enum": ["active-parity", "excluded-approved", "out-of-domain"] },
+        "provisional": { "const": true },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "disposition": { "enum": ["planned", "not-applicable"] },
+        "planned_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/plannedEvidence" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "taxonomy": { "const": "active-parity" } }, "required": ["taxonomy"] },
+          "then": {
+            "properties": {
+              "disposition": { "const": "planned" },
+              "planned_evidence": { "minItems": 1 },
+              "parity_id": {
+                "allOf": [
+                  { "$ref": "#/$defs/stableId" },
+                  { "not": { "pattern": "^p0\\.(?:identity|commercial|distribution)\\." } },
+                  { "not": { "const": "p0.macos.updater.in-app-automatic" } }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "taxonomy": { "const": "excluded-approved" } }, "required": ["taxonomy"] },
+          "then": {
+            "properties": {
+              "parity_id": { "const": "p0.macos.updater.in-app-automatic" },
+              "disposition": { "const": "not-applicable" },
+              "planned_evidence": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "taxonomy": { "const": "out-of-domain" } }, "required": ["taxonomy"] },
+          "then": {
+            "properties": {
+              "parity_id": { "pattern": "^p0\\.(?:identity|commercial|distribution)\\." },
+              "disposition": { "const": "not-applicable" },
+              "planned_evidence": { "maxItems": 0 }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

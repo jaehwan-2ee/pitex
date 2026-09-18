@@ -1,0 +1,13 @@
+[package]
+name = "language-core"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tex-domain = { path = "../tex-domain" }
+unicode-segmentation = "=1.12.0"
+
+[dev-dependencies]
+unicode-segmentation = "=1.12.0"

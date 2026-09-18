@@ -1,0 +1,10 @@
+[package]
+name = "pdf-feature"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+synctex-core = { path = "../synctex-core" }
+document-session-core = { path = "../document-session-core" }
+app-ports = { path = "../app-ports" }

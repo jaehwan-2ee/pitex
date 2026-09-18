@@ -1,0 +1,152 @@
+{
+ "schemaVersion": 1,
+ "compositionRoot": "AppShell",
+ "appleOnlyTargets": [
+  "EditorMacAdapter",
+  "MacPlatform",
+  "AppShell"
+ ],
+ "appleOnlyModules": [
+  "AppKit",
+  "AuthenticationServices",
+  "AVFoundation",
+  "CloudKit",
+  "CoreServices",
+  "CryptoKit",
+  "LocalAuthentication",
+  "PDFKit",
+  "Security",
+  "SwiftUI",
+  "UniformTypeIdentifiers",
+  "WebKit"
+ ],
+ "targets": {
+  "TexDomain": {
+   "package": "Packages/TexCore",
+   "dependencies": []
+  },
+  "ProjectCore": {
+   "package": "Packages/TexCore",
+   "dependencies": [
+    "TexDomain"
+   ]
+  },
+  "DocumentSessionCore": {
+   "package": "Packages/TexCore",
+   "dependencies": [
+    "TexDomain",
+    "ProjectCore"
+   ]
+  },
+  "LanguageCore": {
+   "package": "Packages/TexCore",
+   "dependencies": [
+    "TexDomain"
+   ]
+  },
+  "BuildCore": {
+   "package": "Packages/TexCore",
+   "dependencies": [
+    "TexDomain",
+    "ProjectCore"
+   ]
+  },
+  "SyncTeXCore": {
+   "package": "Packages/TexCore",
+   "dependencies": [
+    "TexDomain",
+    "ProjectCore"
+   ]
+  },
+  "AICore": {
+   "package": "Packages/TexCore",
+   "dependencies": [
+    "TexDomain",
+    "DocumentSessionCore"
+   ]
+  },
+  "ParityKit": {
+   "package": "Packages/TexCore",
+   "dependencies": [
+    "TexDomain"
+   ]
+  },
+  "AppPorts": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "TexDomain",
+    "ProjectCore",
+    "DocumentSessionCore",
+    "BuildCore",
+    "SyncTeXCore",
+    "AICore"
+   ]
+  },
+  "ProjectFeature": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "ProjectCore",
+    "DocumentSessionCore",
+    "AppPorts"
+   ]
+  },
+  "EditorFeature": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "DocumentSessionCore",
+    "LanguageCore",
+    "AICore",
+    "AppPorts"
+   ]
+  },
+  "EditorMacAdapter": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "EditorFeature",
+    "DocumentSessionCore",
+    "AppPorts"
+   ]
+  },
+  "BuildFeature": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "BuildCore",
+    "DocumentSessionCore",
+    "AppPorts"
+   ]
+  },
+  "PDFFeature": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "SyncTeXCore",
+    "DocumentSessionCore",
+    "AppPorts"
+   ]
+  },
+  "SettingsFeature": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "AppPorts"
+   ]
+  },
+  "MacPlatform": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "AppPorts"
+   ]
+  },
+  "AppShell": {
+   "package": "Packages/TexApp",
+   "dependencies": [
+    "AppPorts",
+    "ProjectFeature",
+    "EditorFeature",
+    "EditorMacAdapter",
+    "BuildFeature",
+    "PDFFeature",
+    "SettingsFeature",
+    "MacPlatform"
+   ]
+  }
+ }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "gtk-editor-adapter"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+editor-feature = { path = "../editor-feature" }
+document-session-core = { path = "../document-session-core" }
+app-ports = { path = "../app-ports" }
+gtk4.workspace = true
+sourceview5.workspace = true
