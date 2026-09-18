@@ -1,0 +1,19 @@
+.github/workflows/release.yml
+  s_4bad2192dfec42::t_f4a6843006bead 122,131-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdae467f2710334cfc4160425c9c242aae8951c2",
+  "prompts": {},
+  "sessions": {
+    "s_4bad2192dfec42": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_4bad2192dfec42",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
