@@ -140,6 +140,44 @@ Prebuilt artifacts are published on the
   build, the terminal console hands interactive commands to an external
   terminal (there is no VTE-GTK4 on Windows).
 
+### macOS via Homebrew
+
+```sh
+brew tap jaehwan-2ee/tap
+brew install --cask pitex
+```
+
+The cask installs the same signed-ad-hoc DMG content into `/Applications`.
+Apps installed this way update through `brew upgrade --cask pitex` — the
+in-app updater detects the Caskroom install and defers to brew
+automatically.
+
+## Updates
+
+Pitex checks GitHub Releases for a newer tag, downloads the matching
+platform asset, and installs it — the same flow on macOS, Linux, and
+Windows.
+
+- **Settings → Updates → Check for Updates** — queries the latest release
+  and shows whether a newer version exists.
+- **Install Update** (appears when an update is available) — downloads and
+  installs:
+  - *macOS*: replaces `/Applications/Pitex.app` from the DMG and relaunches.
+    Homebrew-cask installs go through `brew upgrade --cask pitex` instead;
+    without admin rights the DMG opens for a manual drag install.
+  - *Linux*: runs `pkexec apt install` on the downloaded deb (polkit
+    password prompt), falling back to `sudo apt install` in a terminal
+    window. Restart Pitex to finish.
+  - *Windows*: extracts the zip and hands off to a small updater script
+    that swaps the bundle after the app exits and relaunches `pitex.exe`.
+- **Automatically download and install updates** — when on, Pitex runs the
+  same check→download→install pass on every launch. Stored as
+  `pitex.pref.update.autoInstall` on all platforms.
+
+Requirements: network access to `api.github.com` and the release CDN;
+`curl` (preinstalled on macOS, Ubuntu, and Windows 10+); on Linux, polkit
+or `sudo` for the package install.
+
 ## Development
 
 - CI (`.github/workflows/ci.yml`) runs the repository gates, SwiftPM tests,

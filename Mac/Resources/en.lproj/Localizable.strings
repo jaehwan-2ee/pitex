@@ -279,3 +279,21 @@
 "appearance.color.fold_accent_d" = "Collapsed-region markers";
 "appearance.color.bracket_match" = "Bracket Match";
 "appearance.color.bracket_match_d" = "Highlight under matching delimiters";
+
+"settings.tab.updates" = "Updates";
+"settings.updates.section" = "Updates";
+"settings.updates.current_version" = "Current version";
+"settings.updates.check" = "Check for Updates";
+"settings.updates.checking" = "Checking…";
+"settings.updates.up_to_date" = "Pitex is up to date.";
+"settings.updates.available" = "Version %@ is available.";
+"settings.updates.install_version" = "Install %@";
+"settings.updates.install" = "Download & Install Update";
+"settings.updates.installing" = "Installing…";
+"settings.updates.downloading" = "Downloading…";
+"settings.updates.installed" = "Update installed — restart Pitex to finish.";
+"settings.updates.installed_version" = "Pitex was updated to %@ — restart to finish.";
+"settings.updates.auto_install" = "Automatically download and install updates";
+"settings.updates.failed" = "Update failed: %@";
+"settings.updates.install_terminal" = "Finish the update in the terminal window.";
+"settings.updates.manual" = "Could not install automatically — the download is on disk.";

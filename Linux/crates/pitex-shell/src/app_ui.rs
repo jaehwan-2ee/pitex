@@ -147,6 +147,9 @@ pub struct AppState {
     /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
     /// capability lease like `capabilityBroker`, `workspace` opens externals).
     pub env: PlatformEnvironment,
+    /// `CFBundleShortVersionString` equivalent — compared against release
+    /// tags by the updater.
+    pub app_version: String,
     pub active_session: Option<DocumentSession>,
     /// Debounce source for post-edit re-highlighting (120ms like Swift).
     pub highlight_pending: Cell<bool>,
@@ -187,7 +190,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(store: SettingsStore, tx: Sender<WorkspaceMessage>) -> Self {
+    fn new(store: SettingsStore, tx: Sender<WorkspaceMessage>, app_version: String) -> Self {
         let mut model = WorkspaceModel::new();
         model.set_event_sink(tx.clone());
         model.load_recents(&store);
@@ -202,6 +205,7 @@ impl AppState {
             editor: None,
             fold: None,
             env: PlatformEnvironment::make("dev.pitex.app"),
+            app_version,
             active_session: None,
             highlight_pending: Cell::new(false),
             disk_pending: RefCell::new(HashMap::new()),
@@ -2687,20 +2691,24 @@ fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64) ->
 
 // ─── window assembly ─────────────────────────────────────────────────────────
 
-pub fn run() -> i32 {
+pub fn run(app_version: &str) -> i32 {
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
-    app.connect_activate(|app| {
-        build_window(app);
-    });
+    let version = app_version.to_string();
+    {
+        let version = version.clone();
+        app.connect_activate(move |app| {
+            build_window(app, &version);
+        });
+    }
     // `application(_:open:)` — files passed on the command line (or via the
     // desktop file) open as projects, mirroring the macOS entry point.
-    app.connect_open(|app, files, _hint| {
+    app.connect_open(move |app, files, _hint| {
         let running = STATE.with(|s| s.borrow().is_some());
         if !running {
-            build_window(app);
+            build_window(app, &version);
         }
         for file in files {
             if let Some(path) = file.path() {
@@ -2717,7 +2725,7 @@ pub fn run() -> i32 {
     app.run().value()
 }
 
-fn build_window(app: &adw::Application) {
+fn build_window(app: &adw::Application, app_version: &str) {
     // Channel: worker threads → main context dispatch. The std mpsc receiver
     // is drained by a 10ms tick on the GTK main loop (glib 0.19 removed
     // `MainContext::channel`; a poll keeps `Rc<RefCell<AppState>>` main-only).
@@ -2726,6 +2734,7 @@ fn build_window(app: &adw::Application) {
     let state = Rc::new(RefCell::new(AppState::new(
         SettingsStore::new(Preferences::standard()),
         model_tx,
+        app_version.to_string(),
     )));
     let lang = resolve_language(state.borrow().appearance.language);
     state.borrow_mut().language = lang;
@@ -2733,6 +2742,51 @@ fn build_window(app: &adw::Application) {
     STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
 
     UI.with(|ui| build_chrome(app, &state, ui, model_rx));
+
+    // Auto-update: check+download+install on a worker thread when the
+    // preference allows it. `ExitRequested` means the Windows updater is
+    // staged and the process must leave so it can swap binaries.
+    if state.borrow().store.auto_install_updates() {
+        let version = app_version.to_string();
+        std::thread::spawn(move || {
+            let result = crate::update::auto_update(&version);
+            // `invoke` needs `Send` — only the result crosses; the state is
+            // reached through the main-thread-local `STATE` like elsewhere.
+            gtk4::glib::MainContext::default().invoke(move || {
+                let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+                let Ok(st) = state.try_borrow() else { return };
+                match result {
+                    Ok(Some((info, outcome))) => match outcome {
+                        crate::update::InstallOutcome::ExitRequested => {
+                            std::process::exit(0);
+                        }
+                        crate::update::InstallOutcome::AwaitingRestart => {
+                            st.toast(&crate::l10n::tr1(
+                                st.language,
+                                "settings.updates.installed_version",
+                                &info.tag,
+                            ));
+                        }
+                        crate::update::InstallOutcome::HandedToTerminal => {
+                            st.toast(&crate::l10n::tr(
+                                st.language,
+                                "settings.updates.install_terminal",
+                            ));
+                        }
+                        crate::update::InstallOutcome::ManualFallback => {
+                            st.toast(&crate::l10n::tr(st.language, "settings.updates.manual"));
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(e) => st.toast(&crate::l10n::tr1(
+                        st.language,
+                        "settings.updates.failed",
+                        &e,
+                    )),
+                }
+            });
+        });
+    }
 }
 
 fn build_chrome(

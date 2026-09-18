@@ -1444,6 +1444,13 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
             await PiRuntimeInstaller.ensureInstalled()
             await MainActor.run { self?.workspace?.agent?.prepare() }
         }
+        // Auto-update: check+install on launch when the preference allows
+        // it — same pref key the Linux/Windows shells read.
+        Task { @MainActor [weak self] in
+            if self?.workspace?.settings.autoInstallUpdates == true {
+                await UpdateChecker().autoUpdate()
+            }
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

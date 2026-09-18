@@ -280,3 +280,21 @@
 "appearance.color.fold_accent_d" = "접힌 영역 표시";
 "appearance.color.bracket_match" = "괄호 일치";
 "appearance.color.bracket_match_d" = "일치하는 구분자 아래 강조";
+
+"settings.tab.updates" = "업데이트";
+"settings.updates.section" = "업데이트";
+"settings.updates.current_version" = "현재 버전";
+"settings.updates.check" = "업데이트 확인";
+"settings.updates.checking" = "확인 중…";
+"settings.updates.up_to_date" = "Pitex가 최신 버전입니다.";
+"settings.updates.available" = "%@ 버전을 사용할 수 있습니다.";
+"settings.updates.install_version" = "%@ 설치";
+"settings.updates.install" = "업데이트 다운로드 및 설치";
+"settings.updates.installing" = "설치 중…";
+"settings.updates.downloading" = "다운로드 중…";
+"settings.updates.installed" = "업데이트가 설치됐습니다 — Pitex를 재시작하세요.";
+"settings.updates.installed_version" = "Pitex가 %@로 업데이트됐습니다 — 재시작하세요.";
+"settings.updates.auto_install" = "업데이트 자동 다운로드 및 설치";
+"settings.updates.failed" = "업데이트 실패: %@";
+"settings.updates.install_terminal" = "터미널 창에서 업데이트를 완료하세요.";
+"settings.updates.manual" = "자동 설치 불가 — 다운로드된 파일을 엽니다.";

@@ -120,6 +120,14 @@ impl SettingsStore {
     pub fn set_jump_to_cursor_after_build(&mut self, v: bool) {
         self.prefs.set("pitex.pref.build.jumpToCursorAfterBuild", v);
     }
+    /// `pitex.pref.update.autoInstall` — on launch, check GitHub Releases
+    /// and install a newer package without asking.
+    pub fn auto_install_updates(&self) -> bool {
+        self.prefs.bool("pitex.pref.update.autoInstall").unwrap_or(false)
+    }
+    pub fn set_auto_install_updates(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.update.autoInstall", v);
+    }
     pub fn restore_session(&self) -> bool {
         self.prefs.bool("pitex.pref.editor.restoreSession").unwrap_or(true)
     }

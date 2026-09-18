@@ -139,3 +139,31 @@ jobs:
             --title "Pitex ${GITHUB_REF_NAME}" \
             --generate-notes \
             dist/*
+
+      # Keep the Homebrew cask in jaehwan-2ee/homebrew-tap in step with the
+      # release: bump `version` + `sha256` to the freshly built DMG. Requires
+      # the HOMEBREW_TAP_TOKEN secret (a token that can push to the tap
+      # repo); the step is skipped silently without it.
+      - name: Update Homebrew cask
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          SHA=$(shasum -a 256 "dist/Pitex-${TAG}-macos-arm64.dmg" | cut -d' ' -f1)
+          # Fetch the cask from the tap and bump only version+sha256, so the
+          # committed cask stays the single source of truth for its fields.
+          gh api repos/jaehwan-2ee/homebrew-tap/contents/Casks/pitex.rb \
+            -q .content | base64 -d > pitex.rb
+          sed -i \
+            -e "s/^  version .*/  version \"${VERSION}\"/" \
+            -e "s/^  sha256 .*/  sha256 \"${SHA}\"/" \
+            pitex.rb
+          gh api repos/jaehwan-2ee/homebrew-tap/contents/Casks/pitex.rb \
+            -X PUT \
+            -f message="pitex ${TAG}" \
+            -f content="$(base64 -w0 pitex.rb)" \
+            -f sha="$(gh api repos/jaehwan-2ee/homebrew-tap/contents/Casks/pitex.rb -q .sha)"

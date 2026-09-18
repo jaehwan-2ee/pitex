@@ -4,7 +4,7 @@
 
 fn main() {
     configure_runtime_environment();
-    std::process::exit(pitex_shell::run());
+    std::process::exit(pitex_shell::run(env!("CARGO_PKG_VERSION")));
 }
 
 /// The bundled layout keeps DLLs in `bin/` beside the exe; GLib/GdkPixbuf

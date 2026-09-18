@@ -383,6 +383,12 @@ fn strip_ansi(text: &str) -> String {
     out
 }
 
+/// Non-VTE builds hand interactive commands to a real terminal emulator —
+/// the updater uses the same path for `sudo apt install`.
+pub fn run_in_external_terminal(command: &str, dir: Option<&Path>) -> bool {
+    spawn_external_terminal(command, dir)
+}
+
 /// Try common terminal emulators in order; each stays open after the
 /// command finishes so sign-in output remains readable.
 #[cfg(unix)]

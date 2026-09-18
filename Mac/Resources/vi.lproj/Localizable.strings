@@ -279,3 +279,21 @@
 "appearance.color.fold_accent_d" = "Đánh dấu vùng đã thu gọn";
 "appearance.color.bracket_match" = "Khớp ngoặc";
 "appearance.color.bracket_match_d" = "Tô sáng dưới cặp dấu tương ứng";
+
+"settings.tab.updates" = "Cập nhật";
+"settings.updates.section" = "Cập nhật";
+"settings.updates.current_version" = "Phiên bản hiện tại";
+"settings.updates.check" = "Kiểm tra cập nhật";
+"settings.updates.checking" = "Đang kiểm tra…";
+"settings.updates.up_to_date" = "Pitex đã là bản mới nhất.";
+"settings.updates.available" = "Đã có phiên bản %@.";
+"settings.updates.install_version" = "Cài đặt %@";
+"settings.updates.install" = "Tải xuống và cài đặt bản cập nhật";
+"settings.updates.installing" = "Đang cài đặt…";
+"settings.updates.downloading" = "Đang tải xuống…";
+"settings.updates.installed" = "Đã cài đặt bản cập nhật — khởi động lại Pitex.";
+"settings.updates.installed_version" = "Pitex đã được cập nhật lên %@ — khởi động lại để hoàn tất.";
+"settings.updates.auto_install" = "Tự động tải xuống và cài đặt bản cập nhật";
+"settings.updates.failed" = "Cập nhật thất bại: %@";
+"settings.updates.install_terminal" = "Hoàn tất cập nhật trong cửa sổ terminal.";
+"settings.updates.manual" = "Không thể tự động cài đặt — đã mở bản tải xuống.";

@@ -280,3 +280,21 @@
 "appearance.color.fold_accent_d" = "折りたたまれた領域のマーカー";
 "appearance.color.bracket_match" = "ブラケット一致";
 "appearance.color.bracket_match_d" = "一致する区切り文字のハイライト";
+
+"settings.tab.updates" = "アップデート";
+"settings.updates.section" = "アップデート";
+"settings.updates.current_version" = "現在のバージョン";
+"settings.updates.check" = "アップデートを確認";
+"settings.updates.checking" = "確認中…";
+"settings.updates.up_to_date" = "Pitexは最新です。";
+"settings.updates.available" = "バージョン %@ が利用可能です。";
+"settings.updates.install_version" = "%@ をインストール";
+"settings.updates.install" = "アップデートをダウンロードしてインストール";
+"settings.updates.installing" = "インストール中…";
+"settings.updates.downloading" = "ダウンロード中…";
+"settings.updates.installed" = "アップデートをインストールしました — Pitexを再起動してください。";
+"settings.updates.installed_version" = "Pitexを %@ にアップデートしました — 再起動してください。";
+"settings.updates.auto_install" = "アップデートを自動でダウンロード・インストール";
+"settings.updates.failed" = "アップデートに失敗しました: %@";
+"settings.updates.install_terminal" = "ターミナルでアップデートを完了してください。";
+"settings.updates.manual" = "自動インストールできませんでした — ダウンロード済みファイルを開きます。";

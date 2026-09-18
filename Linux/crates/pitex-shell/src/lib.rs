@@ -16,8 +16,10 @@ pub mod panes;
 pub mod pdf;
 pub mod settings;
 pub mod synctex;
+pub mod update;
 
-/// Launch the native application (GTK4 main loop).
-pub fn run() -> i32 {
-    app_ui::run()
+/// Launch the native application (GTK4 main loop). `app_version` is the
+/// semantic version the updater compares against release tags.
+pub fn run(app_version: &str) -> i32 {
+    app_ui::run(app_version)
 }

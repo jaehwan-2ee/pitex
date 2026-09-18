@@ -62,6 +62,11 @@ final class SettingsStore: ObservableObject {
     @Published var defaultCustomCommand: String {
         didSet { UserDefaults.standard.set(defaultCustomCommand, forKey: "project.defaultCustomCommand") }
     }
+    /// `pitex.pref.update.autoInstall` — check GitHub Releases on launch and
+    /// install a newer build without asking (same key on Linux/Windows).
+    @Published var autoInstallUpdates: Bool {
+        didSet { UserDefaults.standard.set(autoInstallUpdates, forKey: "pitex.pref.update.autoInstall") }
+    }
     private static let settingsKey = "dev.pitex.settings"
 
     init() {
@@ -89,6 +94,7 @@ final class SettingsStore: ObservableObject {
         aiFontSize = min(max(defaults.object(forKey: "ai.fontSize") as? Double ?? 13, 10), 24)
         defaultBuildCommand = defaults.string(forKey: "project.defaultBuildCommand") ?? "xelatex -interaction=nonstopmode -synctex=1 {file}"
         defaultCustomCommand = defaults.string(forKey: "project.defaultCustomCommand") ?? ""
+        autoInstallUpdates = defaults.bool(forKey: "pitex.pref.update.autoInstall")
     }
 
     func update(_ transform: (PersistedSettings) throws -> PersistedSettings) rethrows {
@@ -146,6 +152,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case editor
     case appearance
     case ai
+    case updates
 
     var id: Self { self }
 
@@ -155,6 +162,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .editor: "settings.tab.editor"
         case .appearance: "settings.tab.appearance"
         case .ai: "settings.tab.ai"
+        case .updates: "settings.tab.updates"
         }
     }
 
@@ -164,6 +172,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .editor: "textformat"
         case .appearance: "paintpalette"
         case .ai: "wand.and.stars"
+        case .updates: "arrow.triangle.2.circlepath"
         }
     }
 }
@@ -173,6 +182,7 @@ struct SettingsView: View {
     @ObservedObject var workspace: WorkspaceModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var appearance = AppearanceSettings.shared
+    @StateObject private var updates = UpdateChecker()
     @State private var selectedTab: SettingsTab = .compile
     @State private var piInstallInFlight = false
     @State private var piInstallMessage: String?
@@ -191,6 +201,7 @@ struct SettingsView: View {
                 case .editor: editorTab
                 case .appearance: appearanceTab
                 case .ai: aiTab
+                case .updates: updatesTab
                 }
             }
 
@@ -490,6 +501,51 @@ struct SettingsView: View {
                 Text("settings.ai.runtime_note")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding(8)
+    }
+
+    /// Updates pane — mirrors the GTK settings page: current version, a
+    /// check button, an install button that appears when a newer release
+    /// exists, and the auto-install preference (same UserDefaults key the
+    /// Linux and Windows shells read).
+    private var updatesTab: some View {
+        Form {
+            Section("settings.updates.section") {
+                LabeledContent("settings.updates.current_version") {
+                    Text(updates.currentVersion)
+                        .monospacedDigit()
+                }
+                HStack {
+                    Button("settings.updates.check") {
+                        Task { await updates.check() }
+                    }
+                    .disabled(updates.phase == .checking || updates.phase == .downloading
+                              || updates.phase == .installing)
+                    .accessibilityIdentifier("pitex.settings.updates.check")
+                    if updates.phase == .checking {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                if let tag = updates.availableTag {
+                    Button {
+                        Task { await updates.downloadAndInstall() }
+                    } label: {
+                        Text(String(format: String(localized: "settings.updates.install_version"), tag))
+                    }
+                    .disabled(updates.phase == .downloading || updates.phase == .installing)
+                    .accessibilityIdentifier("pitex.settings.updates.install")
+                }
+                if !updates.detail.isEmpty {
+                    Text(updates.detail)
+                        .font(.caption)
+                        .foregroundStyle(updates.phase == .failed ? Color.red : Color.secondary)
+                }
+                Toggle("settings.updates.auto_install", isOn: $store.autoInstallUpdates)
+                    .accessibilityIdentifier("pitex.settings.updates.autoInstall")
             }
         }
         .formStyle(.grouped)

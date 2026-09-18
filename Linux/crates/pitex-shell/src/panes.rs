@@ -1454,6 +1454,145 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     ai.add(&agent_group);
     window.add(&ai);
 
+    // ── Updates ──
+    // Check GitHub Releases on a worker thread; widgets are touched back on
+    // the main loop through `SendWrapper` (they are !Send like every GTK
+    // object). The pending UpdateInfo is main-thread `Rc` state shared by
+    // the check and install buttons.
+    let updates_page = adw::PreferencesPage::new();
+    updates_page.set_title(&tr(lang, "settings.tab.updates"));
+    updates_page.set_icon_name(Some("software-update-available-symbolic"));
+    let update_group = adw::PreferencesGroup::new();
+    update_group.set_title(&tr(lang, "settings.updates.section"));
+
+    let version_row = adw::ActionRow::new();
+    version_row.set_title(&tr(lang, "settings.updates.current_version"));
+    version_row.set_subtitle(&state.borrow().app_version);
+    update_group.add(&version_row);
+
+    let check_row = adw::ActionRow::new();
+    check_row.set_title(&tr(lang, "settings.updates.check"));
+    check_row.set_activatable(true);
+    a11y(&check_row, "pitex.settings.updates.check", "settings.updates.check");
+
+    let install_row = adw::ActionRow::new();
+    install_row.set_activatable(true);
+    install_row.set_visible(false);
+    a11y(&install_row, "pitex.settings.updates.install", "settings.updates.install");
+
+    let pending_update: Rc<RefCell<Option<crate::update::UpdateInfo>>> =
+        Rc::new(RefCell::new(None));
+    UPDATE_ROWS.with(|t| {
+        *t.borrow_mut() = Some(UpdateRows {
+            check: check_row.downgrade(),
+            install: install_row.downgrade(),
+            pending: pending_update.clone(),
+        });
+    });
+
+    {
+        let state = state.clone();
+        check_row.connect_activated(move |row| {
+            row.set_subtitle(&tr(lang, "settings.updates.checking"));
+            let version = state.borrow().app_version.clone();
+            std::thread::spawn(move || {
+                let result = crate::update::check_for_update(&version);
+                // `invoke` needs `Send` — only the result crosses; the rows
+                // are reached through the main-thread-local weak refs.
+                gtk4::glib::MainContext::default().invoke(move || {
+                    UPDATE_ROWS.with(|t| {
+                        let rows = t.borrow();
+                        let Some(rows) = rows.as_ref() else { return };
+                        let Some(row) = rows.check.upgrade() else { return };
+                        match result {
+                            Ok(Some(info)) => {
+                                if let Some(install) = rows.install.upgrade() {
+                                    install.set_title(&tr1(
+                                        lang,
+                                        "settings.updates.install_version",
+                                        &info.tag,
+                                    ));
+                                    install.set_visible(true);
+                                }
+                                row.set_subtitle(&tr1(
+                                    lang,
+                                    "settings.updates.available",
+                                    &info.tag,
+                                ));
+                                *rows.pending.borrow_mut() = Some(info);
+                            }
+                            Ok(None) => {
+                                row.set_subtitle(&tr(lang, "settings.updates.up_to_date"));
+                                *rows.pending.borrow_mut() = None;
+                                if let Some(install) = rows.install.upgrade() {
+                                    install.set_visible(false);
+                                }
+                            }
+                            Err(e) => {
+                                row.set_subtitle(&tr1(lang, "settings.updates.failed", &e))
+                            }
+                        }
+                    });
+                });
+            });
+        });
+    }
+    update_group.add(&check_row);
+
+    {
+        install_row.connect_activated(move |row| {
+            let Some(info) = pending_update.borrow().clone() else { return };
+            row.set_subtitle(&tr(lang, "settings.updates.downloading"));
+            std::thread::spawn(move || {
+                let outcome = crate::update::download(&info)
+                    .and_then(|path| crate::update::install(&path, &info));
+                gtk4::glib::MainContext::default().invoke(move || {
+                    UPDATE_ROWS.with(|t| {
+                        let rows = t.borrow();
+                        let Some(rows) = rows.as_ref() else { return };
+                        let Some(row) = rows.install.upgrade() else { return };
+                        match outcome {
+                            Ok(crate::update::InstallOutcome::ExitRequested) => {
+                                std::process::exit(0);
+                            }
+                            Ok(crate::update::InstallOutcome::AwaitingRestart) => {
+                                row.set_subtitle(&tr(lang, "settings.updates.installed"));
+                            }
+                            Ok(crate::update::InstallOutcome::HandedToTerminal) => {
+                                row.set_subtitle(&tr(
+                                    lang,
+                                    "settings.updates.install_terminal",
+                                ));
+                            }
+                            Ok(crate::update::InstallOutcome::ManualFallback) => {
+                                row.set_subtitle(&tr(lang, "settings.updates.manual"));
+                            }
+                            Err(e) => {
+                                row.set_subtitle(&tr1(lang, "settings.updates.failed", &e))
+                            }
+                        }
+                    });
+                });
+            });
+        });
+    }
+    update_group.add(&install_row);
+
+    let (auto_row, auto_switch) = compat::switch_row(&tr(lang, "settings.updates.auto_install"));
+    auto_switch.set_active(state.borrow().store.auto_install_updates());
+    a11y(&auto_switch, "pitex.settings.updates.autoInstall", "settings.updates.auto_install");
+    {
+        let state = state.clone();
+        auto_switch.connect_active_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_auto_install_updates(r.is_active());
+            }
+        });
+    }
+    update_group.add(&auto_row);
+    updates_page.add(&update_group);
+    window.add(&updates_page);
+
     window.present();
 }
 
@@ -1540,4 +1679,14 @@ fn apply_syntax_preview(
 
 thread_local! {
     static PREVIEW_CSS: std::cell::OnceCell<gtk4::CssProvider> = std::cell::OnceCell::new();
+    /// Weak handles to the settings Updates rows — worker threads post their
+    /// results through `MainContext::invoke` and paint them here, since the
+    /// widgets themselves are !Send and can't cross the boundary.
+    static UPDATE_ROWS: RefCell<Option<UpdateRows>> = const { RefCell::new(None) };
+}
+
+struct UpdateRows {
+    check: gtk4::glib::WeakRef<adw::ActionRow>,
+    install: gtk4::glib::WeakRef<adw::ActionRow>,
+    pending: Rc<RefCell<Option<crate::update::UpdateInfo>>>,
 }
