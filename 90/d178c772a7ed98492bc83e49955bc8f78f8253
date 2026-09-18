@@ -1,0 +1,53 @@
+.github/workflows/ci.yml
+  s_2ab927f0bc1bf7::t_070e2d4f03e62b 50-69
+.github/workflows/release.yml
+  s_2ab927f0bc1bf7::t_930650be2ac574 33-34,43,45-47,49-79,81-82,85-86,90
+Linux/Cargo.lock
+  s_2ab927f0bc1bf7::t_208042e6a97771 749
+Linux/Cargo.toml
+  s_2ab927f0bc1bf7::t_6f19132aa9dc60 36-37
+Linux/README.md
+  s_2ab927f0bc1bf7::t_ffd9714cb2f439 3,7-17,28-40,44-47,53-68
+Linux/crates/pitex-shell/Cargo.toml
+  s_2ab927f0bc1bf7::t_6dc6230efc5d72 30-37
+Linux/crates/pitex-shell/src/agent.rs
+  s_2ab927f0bc1bf7::t_80b83231844889 2151-2155
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_2ab927f0bc1bf7::t_7f7a8549f3f3da 20-21,91,830-833,835,842-845,847,877-884,886,1091,1095,1100-1101,1105,1400-1401,1755-1757,1761-1775,2391-2494,2742-2744,2882,2918-2919
+Linux/crates/pitex-shell/src/compat.rs
+  s_2ab927f0bc1bf7::t_eeb361168df116 1-588
+Linux/crates/pitex-shell/src/lib.rs
+  s_2ab927f0bc1bf7::t_2b2a653204b8a9 1-2,10
+Linux/crates/pitex-shell/src/model.rs
+  s_2ab927f0bc1bf7::t_97416d406a40f1 587-589,670
+Linux/crates/pitex-shell/src/panes.rs
+  s_2ab927f0bc1bf7::t_63cc85c6da4b56 14,138-142,149-150,153-155,157-158,160-161,440-447,551-552,624,700,740,764,766,789,794,802-803,811-812,824-825,837,842,850-851,859,861,875,898,900,946,954,956,967-968,978-979,989,994,1002,1004,1008,1020-1021,1033,1040,1049-1050,1066,1136,1218,1236,1255,1267,1277,1300,1317,1325
+Linux/crates/pitex/Cargo.toml
+  s_2ab927f0bc1bf7::t_cb571e4e8ca981 3,6-9,16-52
+Linux/crates/project-feature/src/lib.rs
+  s_2ab927f0bc1bf7::t_64b47039cb58f8 222-286
+Mac/Config/Info.plist
+  s_2ab927f0bc1bf7::t_a340af76fef7bf 20,22
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_2ab927f0bc1bf7::t_29ec23409932cd 1,206-207,210-211,213-214,219-221,241-280
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_2ab927f0bc1bf7::t_8932c2da081c4d 3,169-227
+README.md
+  s_2ab927f0bc1bf7::t_2ba1c7e505e109 63-66,74-81,100,102,114-120,127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90d178c772a7ed98492bc83e49955bc8f78f8253",
+  "prompts": {},
+  "sessions": {
+    "s_2ab927f0bc1bf7": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_2ab927f0bc1bf7",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
