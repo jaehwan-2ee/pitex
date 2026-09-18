@@ -9,7 +9,8 @@ body:
       options:
         - macOS
         - Linux
-        - Both
+        - Windows
+        - All
     validations:
       required: true
   - type: textarea
