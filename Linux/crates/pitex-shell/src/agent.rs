@@ -2148,10 +2148,11 @@ pub mod pi_installer {
     }
 
     /// `openAuthenticationInTerminal`/`authenticationScript` equivalent:
-    /// writes a login/logout shell script the settings pane can spawn inside
-    /// the embedded VTE terminal. The toolchain is discovered here so the
-    /// script exports the same PATH and runs through Bun/Node when the
-    /// launcher is a JavaScript entry point.
+    /// writes a login/logout shell script the settings pane hands to the
+    /// terminal surface — the embedded VTE on modern builds, an external
+    /// terminal emulator on the Ubuntu 22.04 build (no VTE-GTK4 there). The
+    /// toolchain is discovered here so the script exports the same PATH and
+    /// runs through Bun/Node when the launcher is a JavaScript entry point.
     pub fn authentication_script(logout: bool) -> Result<PathBuf, String> {
         let executable = pi_paths::runtime_executable();
         if !is_executable(&executable) {

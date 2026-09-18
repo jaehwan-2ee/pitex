@@ -47,3 +47,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
         working-directory: Linux
+
+  rust-ubuntu2204:
+    name: Rust workspace (Ubuntu 22.04 compat)
+    # 22.04 has GTK 4.6 / libadwaita 1.1 and ships no VTE-GTK4 — the compat
+    # build (--no-default-features) must compile and link against exactly
+    # these system libraries, so the job runs inside the real container.
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential pkg-config libssl-dev curl \
+            ca-certificates git \
+            libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
+            libpoppler-glib-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p pitex --no-default-features
+        working-directory: Linux

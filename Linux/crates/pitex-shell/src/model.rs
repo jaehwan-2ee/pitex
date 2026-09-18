@@ -584,6 +584,9 @@ pub struct WorkspaceModel {
     pub phase: WorkspacePhase,
     pub project_url: Option<PathBuf>,
     pub project_files: Vec<PathBuf>,
+    /// Relative dir paths the user collapsed in the project tree. Entries
+    /// for dirs that disappear on rescan are simply ignored.
+    pub collapsed_project_dirs: std::collections::HashSet<String>,
     pub open_documents: Vec<PathBuf>,
     pub active_document_url: Option<PathBuf>,
     pub document_snapshot: Option<DocumentSnapshot>,
@@ -664,6 +667,7 @@ impl WorkspaceModel {
             phase: WorkspacePhase::NoProject,
             project_url: None,
             project_files: Vec::new(),
+            collapsed_project_dirs: std::collections::HashSet::new(),
             open_documents: Vec::new(),
             active_document_url: None,
             document_snapshot: None,

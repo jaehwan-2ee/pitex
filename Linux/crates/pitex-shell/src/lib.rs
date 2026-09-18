@@ -1,4 +1,5 @@
-//! Pitex — native Ubuntu 24.04 port of the macOS LaTeX environment.
+//! Pitex — native Ubuntu port of the macOS LaTeX environment (24.04 full
+//! build; 22.04 via `--no-default-features`, see `compat`).
 //!
 //! GUI entry point: `pitex_shell::run()`. The workspace model, SyncTeX
 //! runner, agent coordinator, settings store, PDF renderer and localization
@@ -6,6 +7,7 @@
 
 pub mod agent;
 pub mod app_ui;
+pub mod compat;
 pub mod fold;
 pub mod l10n;
 pub mod model;

@@ -17,7 +17,8 @@ use gtk4::{gdk, gio, glib};
 use libadwaita as adw;
 use adw::prelude::*;
 use sourceview5::prelude::*;
-use vte4::prelude::*;
+
+use crate::compat;
 use settings_feature::{BuildPreferences, EditorPreferences, PersistedSettings, ShellExecutionPreference};
 
 use gtk_editor_adapter::{FnSessionClient, GtkEditorAdapter, SessionClient};
@@ -87,7 +88,7 @@ pub struct UiHandles {
     pub custom_command_entry: RefCell<Option<gtk4::Entry>>,
     pub console_section_dropdown: RefCell<Option<gtk4::DropDown>>,
     pub console_stack: RefCell<Option<gtk4::Stack>>,
-    pub terminal: RefCell<Option<vte4::Terminal>>,
+    pub terminal: RefCell<Option<compat::ShellTerminal>>,
     pub issues_list: RefCell<Option<gtk4::ListBox>>,
     pub issue_filter: RefCell<Option<gtk4::DropDown>>,
     pub build_log_view: RefCell<Option<gtk4::TextView>>,
@@ -826,42 +827,24 @@ impl AppState {
         file_btn.connect_clicked(move |b| {
             menu_state.popdown();
             let window = b.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
-            let dialog = gtk4::FileDialog::new();
-            dialog.set_title("Open");
-            let filter = gtk4::FileFilter::new();
-            filter.add_suffix("tex");
-            filter.add_suffix("bib");
-            let filters = gio::ListStore::new::<gtk4::FileFilter>();
-            filters.append(&filter);
-            dialog.set_filters(Some(&filters));
-            dialog.open(window.as_ref(), gio::Cancellable::NONE, |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                if let Ok(mut s) = state.try_borrow_mut() { s.open_selected(path); }
-                            }
-                        });
+            compat::pick_source_file(window.as_ref(), "Open", |path| {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() { s.open_selected(path); }
                     }
-                }
+                });
             });
         });
         let menu_state = menu.clone();
         folder_btn.connect_clicked(move |b| {
             menu_state.popdown();
             let window = b.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
-            let dialog = gtk4::FileDialog::new();
-            dialog.set_title("Open Project Folder");
-            dialog.select_folder(window.as_ref(), gio::Cancellable::NONE, |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                if let Ok(mut s) = state.try_borrow_mut() { s.open_selected(path); }
-                            }
-                        });
+            compat::pick_folder(window.as_ref(), "Open Project Folder", |path| {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() { s.open_selected(path); }
                     }
-                }
+                });
             });
         });
         vbox.append(&file_btn);
@@ -886,29 +869,21 @@ impl AppState {
     pub fn save_as_action(&self) {
         let window = UI.with(|ui| ui.window.borrow().clone());
         let Some(window) = window else { return };
-        let dialog = gtk4::FileDialog::new();
         let name = self
             .model
             .active_document_url
             .as_ref()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
-        if let Some(name) = name {
-            dialog.set_initial_name(Some(&name));
-        }
-        dialog.save(Some(&window), gio::Cancellable::NONE, |res| {
-            if let Ok(file) = res {
-                if let Some(path) = file.path() {
-                    STATE.with(|s| {
-                        if let Some(state) = s.borrow().as_ref() {
-                            let Ok(mut st) = state.try_borrow_mut() else { return };
-                            if let Some(tx) = st.tx.clone() {
-                                st.model.save_as(path, tx);
-                            }
-                            st.refresh_after_document_change();
-                        }
-                    });
+        compat::save_file(Some(window.upcast_ref()), "Save As", name.as_deref(), |path| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let Ok(mut st) = state.try_borrow_mut() else { return };
+                    if let Some(tx) = st.tx.clone() {
+                        st.model.save_as(path, tx);
+                    }
+                    st.refresh_after_document_change();
                 }
-            }
+            });
         });
     }
 
@@ -1113,20 +1088,21 @@ impl AppState {
         self.refresh_assistant();
     }
 
-    /// `on_terminal_feed` — ANSI status text into the VTE.
+    /// `on_terminal_feed` — ANSI status text into the terminal pane.
     pub fn terminal_feed(&self, text: &str) {
         UI.with(|ui| {
             if let Some(term) = ui.terminal.borrow().as_ref() {
-                term.feed(text.as_bytes());
+                term.feed(text);
             }
         });
     }
 
-    /// `on_terminal_send` — a full command line to the shell's stdin.
+    /// `on_terminal_send` — a full command line to the shell's stdin (or an
+    /// external terminal on the Ubuntu 22.04 build, which has no VTE).
     pub fn terminal_send(&self, command: &str) {
         UI.with(|ui| {
             if let Some(term) = ui.terminal.borrow().as_ref() {
-                term.feed_child(format!("{command}\r").as_bytes());
+                term.send(command, self.model.project_url.as_deref());
             }
         });
     }
@@ -1421,7 +1397,8 @@ impl AppState {
 
     /// `openAuthenticationInTerminal` — toolchain discovery + script
     /// generation block on shell probes, so they run off the UI thread and
-    /// the terminal hand-off hops back through idle.
+    /// the terminal hand-off hops back through idle. `terminal_send` picks
+    /// the embedded PTY or an external emulator per build variant.
     pub fn run_agent_auth_script(&mut self, logout: bool) {
         std::thread::spawn(move || {
             let result = crate::agent::pi_installer::authentication_script(logout);
@@ -1775,56 +1752,27 @@ impl AppState {
                     list.append(&row);
                 }
             }
-            // Project file list — always visible at the bottom.
+            // Project file tree — always visible at the bottom. Built from
+            // relative paths through the shared `project-feature` builder
+            // so directories nest like SwiftUI's OutlineGroup.
             if let Some(list) = ui.project_list.borrow().as_ref() {
                 clear_list(list);
                 let root = self.model.project_url.clone();
-                for url in &self.model.project_files {
-                    let rel = root
-                        .as_ref()
-                        .and_then(|r| url.strip_prefix(r).ok().map(|p| p.to_path_buf()))
-                        .unwrap_or_else(|| url.clone());
-                    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
-                    let icon = gtk4::Image::from_icon_name(
-                        if url.extension().map(|e| e == "bib").unwrap_or(false) {
-                            "accessories-dictionary-symbolic"
-                        } else {
-                            "x-office-document-symbolic"
-                        },
-                    );
-                    let name = gtk4::Label::new(Some(&rel.to_string_lossy()));
-                    name.set_xalign(0.0);
-                    name.set_hexpand(true);
-                    name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
-                    row.append(&icon);
-                    row.append(&name);
-                    if self.model.pinned_build_target.as_ref() == Some(url) {
-                        row.append(&gtk4::Image::from_icon_name("emblem-important-symbolic"));
-                    } else if self.model.automatic_build_target.as_ref() == Some(url) {
-                        // `hammer` — Adwaita's engineering icon marks the
-                        // inferred main document like the SF Symbol does.
-                        row.append(&gtk4::Image::from_icon_name(
-                            "applications-engineering-symbolic",
-                        ));
-                    }
-                    if self.model.active_document_url.as_ref() == Some(url) {
-                        row.add_css_class("pitex-tab-active");
-                    }
-                    row.set_margin_start(8);
-                    row.set_margin_end(8);
-                    row.set_margin_top(3);
-                    row.set_margin_bottom(3);
-                    let url2 = url.clone();
-                    let gesture = gtk4::GestureClick::new();
-                    gesture.connect_released(move |_, _, _, _| {
-                        STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                if let Ok(mut s) = state.try_borrow_mut() { s.activate_document(url2.clone()); }
-                            }
-                        });
-                    });
-                    row.add_controller(gesture);
-                    list.append(&row);
+                let rel_paths: Vec<String> = self
+                    .model
+                    .project_files
+                    .iter()
+                    .map(|url| {
+                        root.as_ref()
+                            .and_then(|r| url.strip_prefix(r).ok().map(|p| p.to_path_buf()))
+                            .unwrap_or_else(|| url.clone())
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect();
+                let tree = project_feature::build_project_file_tree(&rel_paths);
+                for node in &tree {
+                    append_project_node(list, node, 0, &root, &self.model);
                 }
             }
             if let Some(pin) = ui.pin_button.borrow().as_ref() {
@@ -2440,6 +2388,110 @@ fn clear_list(list: &gtk4::ListBox) {
     }
 }
 
+/// Recursive renderer for the project tree — mirrors `OutlineGroup` in
+/// `ProjectSidebarView.swift`. Directories toggle collapse state (tracked
+/// in `WorkspaceModel::collapsed_project_dirs`); files activate documents.
+fn append_project_node(
+    list: &gtk4::ListBox,
+    node: &project_feature::ProjectFileNode,
+    depth: u32,
+    root: &Option<PathBuf>,
+    model: &crate::model::WorkspaceModel,
+) {
+    let indent = 8 + (depth as i32) * 14;
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
+    row.set_margin_start(indent);
+    row.set_margin_end(8);
+    row.set_margin_top(3);
+    row.set_margin_bottom(3);
+
+    if node.is_directory {
+        let collapsed = model.collapsed_project_dirs.contains(&node.path);
+        let disclosure = gtk4::Image::from_icon_name(if collapsed {
+            "pan-end-symbolic"
+        } else {
+            "pan-down-symbolic"
+        });
+        let icon = gtk4::Image::from_icon_name("folder-symbolic");
+        let name = gtk4::Label::new(Some(&node.name));
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        row.append(&disclosure);
+        row.append(&icon);
+        row.append(&name);
+        let dir_path = node.path.clone();
+        let gesture = gtk4::GestureClick::new();
+        gesture.connect_released(move |_, _, _, _| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut s) = state.try_borrow_mut() {
+                        if !s.model.collapsed_project_dirs.remove(&dir_path) {
+                            s.model.collapsed_project_dirs.insert(dir_path.clone());
+                        }
+                        s.refresh_sidebar();
+                    }
+                }
+            });
+        });
+        row.add_controller(gesture);
+        list.append(&row);
+        if !collapsed {
+            for child in node.children.as_deref().unwrap_or(&[]) {
+                append_project_node(list, child, depth + 1, root, model);
+            }
+        }
+        return;
+    }
+
+    let url = root
+        .as_ref()
+        .map(|r| r.join(&node.path))
+        .unwrap_or_else(|| PathBuf::from(&node.path));
+    let icon = gtk4::Image::from_icon_name(
+        if url.extension().map(|e| e == "bib").unwrap_or(false) {
+            "accessories-dictionary-symbolic"
+        } else {
+            "x-office-document-symbolic"
+        },
+    );
+    // Spacer keeps file labels aligned under the directory labels' names —
+    // files have no disclosure triangle.
+    let spacer = gtk4::Label::new(None);
+    spacer.set_width_chars(1);
+    let name = gtk4::Label::new(Some(&node.name));
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    row.append(&spacer);
+    row.append(&icon);
+    row.append(&name);
+    if model.pinned_build_target.as_ref() == Some(&url) {
+        row.append(&gtk4::Image::from_icon_name("emblem-important-symbolic"));
+    } else if model.automatic_build_target.as_ref() == Some(&url) {
+        // `hammer` — Adwaita's engineering icon marks the inferred main
+        // document like the SF Symbol does.
+        row.append(&gtk4::Image::from_icon_name(
+            "applications-engineering-symbolic",
+        ));
+    }
+    if model.active_document_url.as_ref() == Some(&url) {
+        row.add_css_class("pitex-tab-active");
+    }
+    let gesture = gtk4::GestureClick::new();
+    gesture.connect_released(move |_, _, _, _| {
+        STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                if let Ok(mut s) = state.try_borrow_mut() {
+                    s.activate_document(url.clone());
+                }
+            }
+        });
+    });
+    row.add_controller(gesture);
+    list.append(&row);
+}
+
 fn dialect_for(url: Option<&Path>) -> TeXDialect {
     match url.and_then(|u| u.extension()).and_then(|e| e.to_str()) {
         Some("bib") => TeXDialect::Bibtex,
@@ -2687,7 +2739,9 @@ fn build_chrome(
     a11y(&window, "pitex.workspace", "app.name");
     ui.window.replace(Some(window.clone()));
 
-    let toolbar_view = adw::ToolbarView::new();
+    // Vertical box mirrors ToolbarView's header+content layout; the plain
+    // Box keeps the same visuals on both GTK variants.
+    let toolbar_view = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let header = adw::HeaderBar::new();
 
     // Navigation side: sidebar toggle.
@@ -2825,7 +2879,7 @@ fn build_chrome(
         });
     }
     header.pack_end(&find_btn);
-    toolbar_view.add_top_bar(&header);
+    toolbar_view.append(&header);
 
     // ── central three-column layout ──
     let outer = gtk4::Paned::new(gtk4::Orientation::Horizontal);
@@ -2861,7 +2915,8 @@ fn build_chrome(
     inner.set_position(900);
     outer.set_position(240);
 
-    toolbar_view.set_content(Some(&outer));
+    outer.set_vexpand(true);
+    toolbar_view.append(&outer);
 
     // ── phase stack overlays the whole window ──
     let root_stack = gtk4::Stack::new();

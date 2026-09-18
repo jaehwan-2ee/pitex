@@ -1,11 +1,52 @@
 [package]
 name = "pitex"
+version = "1.0.1"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+description = "Pitex — native LaTeX environment for Linux"
+homepage = "https://github.com/jaehwan-2ee/pitex"
+authors = ["Pitex contributors <https://github.com/jaehwan-2ee/pitex>"]
 
 [[bin]]
 name = "pitex"
 path = "src/main.rs"
 
 [dependencies]
-pitex-shell = { path = "../pitex-shell" }
+pitex-shell = { path = "../pitex-shell", default-features = false }
+
+[features]
+default = ["modern-gtk"]
+modern-gtk = ["pitex-shell/modern-gtk"]
+
+# Debian package — `cargo deb -p pitex` builds the Ubuntu 24.04+ variant
+# (GTK 4.10+/libadwaita 1.4+/VTE embedded terminal). `$auto` resolves the
+# shared-library Depends from the built binary via dpkg-shlibdeps.
+# Non-target asset source paths resolve relative to this crate's directory,
+# so packaging files climb to Linux/packaging/.
+[package.metadata.deb]
+name = "pitex"
+section = "editors"
+priority = "optional"
+maintainer = "Pitex contributors <https://github.com/jaehwan-2ee/pitex>"
+depends = "$auto"
+assets = [
+    ["target/release/pitex", "usr/bin/pitex", "755"],
+    [
+        "../../packaging/dev.pitex.app.desktop",
+        "usr/share/applications/dev.pitex.app.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/dev.pitex.app.png",
+        "usr/share/pixmaps/dev.pitex.app.png",
+        "644",
+    ],
+]
+
+# Ubuntu 22.04 variant: GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — disables
+# `modern-gtk` so the compat code paths compile instead. Same package name:
+# it's an alternative build of the same app, not a separate package.
+[package.metadata.deb.variants.ubuntu2204]
+name = "pitex"
+default-features = false

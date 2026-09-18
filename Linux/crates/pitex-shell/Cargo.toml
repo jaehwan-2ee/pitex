@@ -27,4 +27,11 @@ gtk-editor-adapter = { path = "../gtk-editor-adapter" }
 gtk4.workspace = true
 libadwaita.workspace = true
 sourceview5.workspace = true
-vte4.workspace = true
+vte4 = { workspace = true, optional = true }
+
+# Ubuntu 22.04 ships GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — building with
+# --no-default-features produces that variant. Ubuntu 24.04+ keeps the
+# default full-feature build.
+[features]
+default = ["modern-gtk"]
+modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4", "dep:vte4"]

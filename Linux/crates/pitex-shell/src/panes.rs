@@ -9,9 +9,9 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use adw::prelude::*;
-use vte4::prelude::*;
 
 use crate::app_ui::{a11y, AppState, UiHandles};
+use crate::compat;
 use crate::l10n::tr;
 use crate::model::{ConsoleSection, WorkspaceBuildState};
 use settings_feature::ShellExecutionPreference;
@@ -135,56 +135,30 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
 }
 
 fn build_terminal_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
-    let terminal = vte4::Terminal::new();
-    terminal.set_scrollback_lines(10_000);
-    terminal.set_scroll_on_output(false);
-    terminal.set_scroll_on_keystroke(true);
-    terminal.set_hexpand(true);
-    terminal.set_vexpand(true);
-    a11y(&terminal, "pitex.console.terminal", "console.terminal");
+    let terminal = compat::ShellTerminal::new();
+    let widget = terminal.widget();
+    widget.set_hexpand(true);
+    widget.set_vexpand(true);
+    a11y(&widget, "pitex.console.terminal", "console.terminal");
     let (font, dir) = {
         let s = state.borrow();
         (s.editor_font_desc(), s.model.project_url.clone())
     };
     terminal.set_font(Some(&font));
     // Spawn a login shell rooted at the project — `TerminalShellView` parity.
+    // The Ubuntu 22.04 build has no VTE: `spawn_shell` reports failure and
+    // the transcript explains that commands run in an external terminal.
     {
         let state = state.clone();
-        spawn_terminal(&terminal, dir.as_deref(), &state);
+        terminal.spawn_shell(dir.as_deref(), move |ok| {
+            if let Ok(mut s) = state.try_borrow_mut() { s.terminal_running = ok; }
+        });
     }
-    terminal.connect_child_exited(move |term, _status| {
-        term.feed(b"\r\n\x1b[90m(shell exited)\x1b[0m\r\n");
+    terminal.connect_exited(|term| {
+        term.feed("\r\n\x1b[90m(shell exited)\x1b[0m\r\n");
     });
-    ui.terminal.replace(Some(terminal.clone()));
-    terminal.upcast()
-}
-
-/// `Coordinator.attach` — spawn a login shell rooted at the project,
-/// mirroring `TerminalShellView.spawn()` (`TERM`, `COLORTERM`,
-/// `TERM_PROGRAM` all preserved).
-pub fn spawn_terminal(terminal: &vte4::Terminal, dir: Option<&std::path::Path>, state: &Rc<RefCell<AppState>>) {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-    let mut env: Vec<String> = std::env::vars().map(|(k, v)| format!("{k}={v}")).collect();
-    env.push("TERM=xterm-256color".into());
-    env.push("COLORTERM=truecolor".into());
-    env.push("TERM_PROGRAM=Pitex".into());
-    let argv = [shell.as_str(), "-l"];
-    let envv: Vec<&str> = env.iter().map(|s| s.as_str()).collect();
-    let dir_str = dir.map(|d| d.to_string_lossy().into_owned());
-    let state = state.clone();
-    terminal.spawn_async(
-        vte4::PtyFlags::DEFAULT,
-        dir_str.as_deref(),
-        &argv,
-        &envv,
-        gtk4::glib::SpawnFlags::DEFAULT,
-        || {},
-        -1,
-        gtk4::gio::Cancellable::NONE,
-        move |result| {
-            if let Ok(mut s) = state.try_borrow_mut() { s.terminal_running = result.is_ok(); }
-        },
-    );
+    ui.terminal.replace(Some(terminal));
+    widget
 }
 
 fn build_issues_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
@@ -462,28 +436,15 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
 /// Multi-select file dialog whose result paths are composer-inserted
 /// (project-relative when possible, matching `attachFiles()`).
 fn attach_files_dialog(button: &gtk4::Button, on_paths: impl Fn(Vec<String>) + 'static) {
-    let dialog = gtk4::FileDialog::new();
-    dialog.set_title("Attach files");
-    dialog.set_modal(true);
     let window = button.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
-    dialog.open_multiple(
-        window.as_ref(),
-        gtk4::gio::Cancellable::NONE,
-        move |result| {
-            if let Ok(files) = result {
-                let paths: Vec<String> = (0..files.n_items())
-                    .filter_map(|i| {
-                        files
-                            .item(i)
-                            .and_then(|o| o.downcast::<gtk4::gio::File>().ok())
-                            .and_then(|g| g.path())
-                            .map(|p| p.to_string_lossy().into_owned())
-                    })
-                    .collect();
-                on_paths(paths);
-            }
-        },
-    );
+    compat::pick_files(window.as_ref(), "Attach files", move |paths| {
+        on_paths(
+            paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+        );
+    });
 }
 
 // ─── PDF preview column ─────────────────────────────────────────────────────
@@ -586,15 +547,9 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
                     let Ok(s) = state.try_borrow() else { return };
                     s.pdf_display_name()
                 };
-                let dialog = gtk4::FileDialog::new();
-                dialog.set_initial_name(Some(&name));
                 let window = b.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
-                dialog.save(window.as_ref(), gtk4::gio::Cancellable::NONE, move |res| {
-                    if let Ok(file) = res {
-                        if let Some(path) = file.path() {
-                            let _ = std::fs::write(path, &data);
-                        }
-                    }
+                compat::save_file(window.as_ref(), "Save PDF", Some(name.as_str()), move |path| {
+                    let _ = std::fs::write(path, &data);
                 });
             }
         });
@@ -666,7 +621,7 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     }
     let overlay = gtk4::Overlay::new();
     let picture = gtk4::Picture::new();
-    picture.set_content_fit(gtk4::ContentFit::Contain);
+    compat::fit_picture(&picture);
     picture.set_can_shrink(true);
     a11y(&picture, "pitex.pdf", "preview.title");
     overlay.set_child(Some(&picture));
@@ -742,7 +697,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     presets_group.set_title(&tr(lang, "settings.compile.presets"));
     // Bound widgets sharing the command text — the preset buttons and the
     // commands entry both track the same live value in SwiftUI.
-    let build_cmd_cell: Rc<RefCell<Option<adw::EntryRow>>> = Rc::new(RefCell::new(None));
+    let build_cmd_cell: Rc<RefCell<Option<gtk4::Entry>>> = Rc::new(RefCell::new(None));
     for (label, command) in [
         ("preset.pdflatex", "pdflatex -interaction=nonstopmode -synctex=1 {file}"),
         ("preset.xelatex", "xelatex -interaction=nonstopmode -synctex=1 {file}"),
@@ -782,8 +737,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     commands.set_description(Some(&tr(lang, "settings.compile.commands_note")));
     // `buildCommandTextBinding` — the live workspace command when a project
     // is open, the persisted default otherwise.
-    let build_cmd = adw::EntryRow::new();
-    build_cmd.set_title(&tr(lang, "settings.compile.build_command"));
+    let (build_cmd_row, build_cmd) = compat::entry_row(&tr(lang, "settings.compile.build_command"));
     {
         let s = state.borrow();
         let text = if s.model.has_project() {
@@ -807,10 +761,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             }
         });
     }
-    commands.add(&build_cmd);
+    commands.add(&build_cmd_row);
     // `customCommandTextBinding` — same workspace/default split.
-    let custom_cmd = adw::EntryRow::new();
-    custom_cmd.set_title(&tr(lang, "settings.compile.custom_command"));
+    let (custom_cmd_row, custom_cmd) = compat::entry_row(&tr(lang, "settings.compile.custom_command"));
     {
         let s = state.borrow();
         let text = if s.model.has_project() {
@@ -833,13 +786,12 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             }
         });
     }
-    commands.add(&custom_cmd);
+    commands.add(&custom_cmd_row);
     compile.add(&commands);
 
     let behavior = adw::PreferencesGroup::new();
     behavior.set_title(&tr(lang, "settings.compile.behavior"));
-    let switch_pdf = adw::SwitchRow::new();
-    switch_pdf.set_title(&tr(lang, "settings.compile.switch_pdf"));
+    let (switch_pdf_row, switch_pdf) = compat::switch_row(&tr(lang, "settings.compile.switch_pdf"));
     switch_pdf.set_active(state.borrow().store.switch_to_pdf_on_build());
     {
         let state = state.clone();
@@ -847,9 +799,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.store.set_switch_to_pdf_on_build(r.is_active()); }
         });
     }
-    behavior.add(&switch_pdf);
-    let jump = adw::SwitchRow::new();
-    jump.set_title(&tr(lang, "settings.compile.jump_cursor"));
+    behavior.add(&switch_pdf_row);
+    let (jump_row, jump) = compat::switch_row(&tr(lang, "settings.compile.jump_cursor"));
     jump.set_active(state.borrow().store.jump_to_cursor_after_build());
     {
         let state = state.clone();
@@ -857,9 +808,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.store.set_jump_to_cursor_after_build(r.is_active()); }
         });
     }
-    behavior.add(&jump);
-    let stop_err = adw::SwitchRow::new();
-    stop_err.set_title(&tr(lang, "settings.compile.stop_error"));
+    behavior.add(&jump_row);
+    let (stop_err_row, stop_err) = compat::switch_row(&tr(lang, "settings.compile.stop_error"));
     stop_err.set_active(store_settings.build.stops_after_first_error);
     {
         let state = state.clone();
@@ -871,9 +821,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             }
         });
     }
-    behavior.add(&stop_err);
-    let passes = adw::SpinRow::with_range(1.0, 10.0, 1.0);
-    passes.set_title(&tr1(lang, "settings.compile.max_passes", &store_settings.build.maximum_passes.to_string()));
+    behavior.add(&stop_err_row);
+    let (passes_row, passes) = compat::spin_row(&tr1(lang, "settings.compile.max_passes", &store_settings.build.maximum_passes.to_string()), 1.0, 10.0, 1.0);
     passes.set_value(store_settings.build.maximum_passes as f64);
     {
         let state = state.clone();
@@ -885,13 +834,12 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             }
         });
     }
-    behavior.add(&passes);
+    behavior.add(&passes_row);
     compile.add(&behavior);
 
     let shell_group = adw::PreferencesGroup::new();
     shell_group.set_title(&tr(lang, "settings.compile.shell"));
-    let shell_path = adw::EntryRow::new();
-    shell_path.set_title(&tr(lang, "settings.compile.shell_path"));
+    let (shell_path_row, shell_path) = compat::entry_row(&tr(lang, "settings.compile.shell_path"));
     shell_path.set_text(&state.borrow().store.custom_shell_executable());
     {
         let state = state.clone();
@@ -899,9 +847,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.store.set_custom_shell_executable(&row.text()); }
         });
     }
-    shell_group.add(&shell_path);
-    let ack = adw::SwitchRow::new();
-    ack.set_title(&tr(lang, "settings.compile.shell_ack"));
+    shell_group.add(&shell_path_row);
+    let (ack_row, ack) = compat::switch_row(&tr(lang, "settings.compile.shell_ack"));
     ack.set_active(store_settings.build.custom_shell_acknowledged);
     {
         let state = state.clone();
@@ -909,10 +856,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.update_shell_acknowledgement(r.is_active()); }
         });
     }
-    shell_group.add(&ack);
+    shell_group.add(&ack_row);
     // `TextField("settings.compile.fallback_command", text: customCommandBinding)`
-    let fallback = adw::EntryRow::new();
-    fallback.set_title(&tr(lang, "settings.compile.fallback_command"));
+    let (fallback_row, fallback) = compat::entry_row(&tr(lang, "settings.compile.fallback_command"));
     if let ShellExecutionPreference::Custom { command } =
         &store_settings.build.shell_execution
     {
@@ -926,7 +872,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             }
         });
     }
-    shell_group.add(&fallback);
+    shell_group.add(&fallback_row);
     compile.add(&shell_group);
 
     // `DefaultEditorRegistration.registerAsDefault()` — claim the declared
@@ -949,10 +895,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     editor.set_icon_name(Some("document-edit-symbolic"));
     let autosave_group = adw::PreferencesGroup::new();
     autosave_group.set_title(&tr(lang, "settings.editor.autosave"));
-    let auto_save = adw::SwitchRow::new();
-    auto_save.set_title(&tr(lang, "settings.editor.autosave"));
+    let (auto_save_row, auto_save) = compat::switch_row(&tr(lang, "settings.editor.autosave"));
     auto_save.set_active(state.borrow().store.auto_save());
-    autosave_group.add(&auto_save);
+    autosave_group.add(&auto_save_row);
     // `.disabled(!store.autoSave)` — the delay picker greys out while
     // autosave is off.
     let delay = adw::ComboRow::new();
@@ -998,8 +943,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
 
     let editing = adw::PreferencesGroup::new();
     editing.set_title(&tr(lang, "settings.editor.editing"));
-    let confirm = adw::SwitchRow::new();
-    confirm.set_title(&tr(lang, "settings.editor.confirm_overwrite"));
+    let (confirm_row, confirm) = compat::switch_row(&tr(lang, "settings.editor.confirm_overwrite"));
     confirm.set_active(state.borrow().store.confirm_overwrite());
     {
         let state = state.clone();
@@ -1007,10 +951,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.store.set_confirm_overwrite(r.is_active()); }
         });
     }
-    editing.add(&confirm);
+    editing.add(&confirm_row);
     // `Toggle("settings.editor.autocomplete", isOn: completesDelimitersBinding)`
-    let autocomplete = adw::SwitchRow::new();
-    autocomplete.set_title(&tr(lang, "settings.editor.autocomplete"));
+    let (autocomplete_row, autocomplete) = compat::switch_row(&tr(lang, "settings.editor.autocomplete"));
     autocomplete.set_active(store_settings.editor.completes_delimiters);
     {
         let state = state.clone();
@@ -1021,9 +964,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             });
         });
     }
-    editing.add(&autocomplete);
-    let folding = adw::SwitchRow::new();
-    folding.set_title(&tr(lang, "settings.editor.folding"));
+    editing.add(&autocomplete_row);
+    let (folding_row, folding) = compat::switch_row(&tr(lang, "settings.editor.folding"));
     folding.set_active(state.borrow().store.code_folding());
     {
         let state = state.clone();
@@ -1033,9 +975,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             s.apply_editor_preferences();
         });
     }
-    editing.add(&folding);
-    let minimap = adw::SwitchRow::new();
-    minimap.set_title(&tr(lang, "settings.editor.minimap"));
+    editing.add(&folding_row);
+    let (minimap_row, minimap) = compat::switch_row(&tr(lang, "settings.editor.minimap"));
     minimap.set_active(state.borrow().store.minimap());
     {
         let state = state.clone();
@@ -1045,13 +986,12 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             s.apply_editor_preferences();
         });
     }
-    editing.add(&minimap);
+    editing.add(&minimap_row);
     editor.add(&editing);
 
     let session_group = adw::PreferencesGroup::new();
     session_group.set_title(&tr(lang, "settings.editor.session"));
-    let restore = adw::SwitchRow::new();
-    restore.set_title(&tr(lang, "settings.editor.restore"));
+    let (restore_row, restore) = compat::switch_row(&tr(lang, "settings.editor.restore"));
     restore.set_active(state.borrow().store.restore_session());
     {
         let state = state.clone();
@@ -1059,14 +999,13 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.store.set_restore_session(r.is_active()); }
         });
     }
-    session_group.add(&restore);
+    session_group.add(&restore_row);
     // `Stepper(..., value: tabWidthBinding, in: 1...16)`
-    let tab_width = adw::SpinRow::with_range(1.0, 16.0, 1.0);
-    tab_width.set_title(&tr1(
+    let (tab_width_row, tab_width) = compat::spin_row(&tr1(
         lang,
         "settings.editor.tab_width",
         &store_settings.editor.tab_width.to_string(),
-    ));
+    ), 1.0, 16.0, 1.0);
     tab_width.set_value(store_settings.editor.tab_width as f64);
     {
         let state = state.clone();
@@ -1078,9 +1017,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             s.apply_editor_preferences();
         });
     }
-    session_group.add(&tab_width);
-    let wrap = adw::SwitchRow::new();
-    wrap.set_title(&tr(lang, "settings.editor.wrap"));
+    session_group.add(&tab_width_row);
+    let (wrap_row, wrap) = compat::switch_row(&tr(lang, "settings.editor.wrap"));
     wrap.set_active(store_settings.editor.wraps_lines);
     {
         let state = state.clone();
@@ -1092,15 +1030,14 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             s.apply_editor_preferences();
         });
     }
-    session_group.add(&wrap);
+    session_group.add(&wrap_row);
     editor.add(&session_group);
 
     // `Section("SyncTeX")` — independent highlight toggles, both off by
     // default; navigation works regardless.
     let synctex_group = adw::PreferencesGroup::new();
     synctex_group.set_title("SyncTeX");
-    let inverse_highlight = adw::SwitchRow::new();
-    inverse_highlight.set_title(&tr(lang, "settings.synctex.inverse_highlight"));
+    let (inverse_highlight_row, inverse_highlight) = compat::switch_row(&tr(lang, "settings.synctex.inverse_highlight"));
     inverse_highlight.set_active(state.borrow().store.inverse_sync_highlight());
     a11y(&inverse_highlight, "pitex.settings.synctex.inverseHighlight", "settings.synctex.inverse_highlight");
     {
@@ -1109,9 +1046,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.store.set_inverse_sync_highlight(r.is_active()); }
         });
     }
-    synctex_group.add(&inverse_highlight);
-    let forward_highlight = adw::SwitchRow::new();
-    forward_highlight.set_title(&tr(lang, "settings.synctex.forward_highlight"));
+    synctex_group.add(&inverse_highlight_row);
+    let (forward_highlight_row, forward_highlight) = compat::switch_row(&tr(lang, "settings.synctex.forward_highlight"));
     forward_highlight.set_active(state.borrow().store.forward_sync_highlight());
     a11y(&forward_highlight, "pitex.settings.synctex.forwardHighlight", "settings.synctex.forward_highlight");
     {
@@ -1127,7 +1063,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             }
         });
     }
-    synctex_group.add(&forward_highlight);
+    synctex_group.add(&forward_highlight_row);
     // `Text("settings.synctex.highlight_note").font(.caption)` — a subtitle
     // row carries the same secondary-text styling.
     let note = adw::ActionRow::new();
@@ -1197,7 +1133,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     // Widgets bound to the palette — populated by the colors/preview
     // sections below so a preset pick re-paints them like SwiftUI's
     // `@ObservedObject appearance` does.
-    let color_wells: Rc<RefCell<Vec<gtk4::ColorDialogButton>>> =
+    let color_wells: Rc<RefCell<Vec<compat::ColorWell>>> =
         Rc::new(RefCell::new(Vec::new()));
     let preview_label_cell: Rc<RefCell<Option<gtk4::Label>>> = Rc::new(RefCell::new(None));
     let palette_refreshing = Rc::new(std::cell::Cell::new(false));
@@ -1279,8 +1215,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
 
     let font_group = adw::PreferencesGroup::new();
     font_group.set_title(&tr(lang, "settings.appearance.font"));
-    let font_dialog = gtk4::FontDialog::new();
-    let font_button = gtk4::FontDialogButton::new(Some(font_dialog.clone()));
+    let font_button = compat::FontPicker::new();
     font_button.set_font_desc(&state.borrow().editor_font_desc());
     // `SyntaxPreview()` — styled sample lines in the palette + editor font;
     // refreshed whenever the font or a role color changes.
@@ -1298,7 +1233,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     {
         let state = state.clone();
         let preview_label = preview_label.clone();
-        font_button.connect_font_desc_notify(move |b| {
+        font_button.connect_changed(move |b| {
             if let Some(desc) = b.font_desc() {
                 let Ok(mut s) = state.try_borrow_mut() else { return };
                 let family = desc.family().map(|f| f.to_string()).unwrap_or_default();
@@ -1317,7 +1252,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     }
     let font_row = adw::ActionRow::new();
     font_row.set_title(&tr(lang, "settings.appearance.family"));
-    font_row.add_suffix(&font_button);
+    font_row.add_suffix(font_button.widget());
     font_group.add(&font_row);
     font_group.add(&preview);
     appearance.add(&font_group);
@@ -1329,9 +1264,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         let row = adw::ActionRow::new();
         row.set_title(&tr(lang, role.title_key()));
         row.set_subtitle(&tr(lang, role.detail_key()));
-        let dialog = gtk4::ColorDialog::new();
-        dialog.set_with_alpha(true);
-        let well = gtk4::ColorDialogButton::new(Some(dialog));
+        let well = compat::ColorWell::new();
         {
             let s = state.borrow();
             let (r, g, b, a) = s.appearance.color(s.store.prefs(), role);
@@ -1341,7 +1274,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             let state = state.clone();
             let preview_label = preview_label.clone();
             let palette_refreshing = palette_refreshing.clone();
-            well.connect_rgba_notify(move |w| {
+            well.connect_changed(move |w| {
                 // Preset picks re-set every well — don't re-store the same
                 // hexes eleven times over.
                 if palette_refreshing.get() {
@@ -1364,7 +1297,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
                 apply_syntax_preview(&s, &preview_label);
             });
         }
-        row.add_suffix(&well);
+        row.add_suffix(well.widget());
         color_wells.borrow_mut().push(well);
         colors_group.add(&row);
     }
@@ -1381,8 +1314,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     location.set_title(&tr(lang, "settings.ai.location"));
     location.set_subtitle(&crate::agent::pi_paths::runtime_directory().to_string_lossy());
     agent_group.add(&location);
-    let attach_default = adw::SwitchRow::new();
-    attach_default.set_title(&tr(lang, "settings.ai.attach_default"));
+    let (attach_default_row, attach_default) = compat::switch_row(&tr(lang, "settings.ai.attach_default"));
     attach_default.set_active(state.borrow().store.ai_attach_default());
     {
         let state = state.clone();
@@ -1390,7 +1322,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if let Ok(mut s) = state.try_borrow_mut() { s.store.set_ai_attach_default(r.is_active()); }
         });
     }
-    agent_group.add(&attach_default);
+    agent_group.add(&attach_default_row);
     // `LabeledContent("settings.ai.font_size")` — 10…24pt slider + pt readout
     // + a live preview line, like the Swift settings page.
     let font_row = adw::ActionRow::new();

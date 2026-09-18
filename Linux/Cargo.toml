@@ -33,8 +33,8 @@ libc = "0.2"
 flate2 = "1"
 dirs = "5"
 regex = "1"
-gtk4 = { version = "0.8", features = ["v4_10"] }
-libadwaita = { version = "0.6", package = "libadwaita", features = ["v1_4"] }
+gtk4 = { version = "0.8" }
+libadwaita = { version = "0.6", package = "libadwaita" }
 sourceview5 = "0.8"
 vte4 = "0.7"
 url = "=2.5.8"

@@ -219,3 +219,68 @@ impl ProjectFeatureState {
         }
     }
 }
+
+/// One node of the hierarchical project file list. `path` is the
+/// project-relative path ("/" separated); directories carry their children.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFileNode {
+    pub path: String,
+    pub name: String,
+    pub is_directory: bool,
+    pub children: Option<Vec<ProjectFileNode>>,
+}
+
+/// Builds the directory tree shown in the project sidebar from flat
+/// project-relative paths. Directories sort before files; siblings order
+/// lexicographically by name so both platforms render identically.
+pub fn build_project_file_tree(relative_paths: &[String]) -> Vec<ProjectFileNode> {
+    let mut roots: Vec<ProjectFileNode> = Vec::new();
+    for path in relative_paths {
+        let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+        if components.is_empty() {
+            continue;
+        }
+        insert(&components, "", &mut roots);
+    }
+    sort_nodes(&mut roots);
+    roots
+}
+
+fn insert(components: &[&str], prefix: &str, nodes: &mut Vec<ProjectFileNode>) {
+    let Some((&head, rest)) = components.split_first() else { return };
+    let node_path = if prefix.is_empty() {
+        head.to_string()
+    } else {
+        format!("{prefix}/{head}")
+    };
+    if rest.is_empty() {
+        nodes.push(ProjectFileNode {
+            path: node_path,
+            name: head.to_string(),
+            is_directory: false,
+            children: None,
+        });
+        return;
+    }
+    if let Some(node) = nodes.iter_mut().find(|n| n.is_directory && n.name == head) {
+        insert(rest, &node_path, node.children.get_or_insert_with(Vec::new));
+    } else {
+        let mut children = Vec::new();
+        insert(rest, &node_path, &mut children);
+        nodes.push(ProjectFileNode {
+            path: node_path,
+            name: head.to_string(),
+            is_directory: true,
+            children: Some(children),
+        });
+    }
+}
+
+fn sort_nodes(nodes: &mut Vec<ProjectFileNode>) {
+    nodes.sort_by(|a, b| (b.is_directory, a.name.to_lowercase()).cmp(&(a.is_directory, b.name.to_lowercase())));
+    for node in nodes.iter_mut() {
+        if let Some(children) = node.children.as_mut() {
+            sort_nodes(children);
+        }
+    }
+}

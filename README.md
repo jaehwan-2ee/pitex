@@ -60,13 +60,23 @@ Source and PDF stay locked together:
 
 ### Linux
 
-- **Ubuntu 24.04** (or a distribution shipping GTK 4.10+)
-- System packages:
+- **Ubuntu 24.04** (full build — GTK 4.10+, libadwaita 1.4+, VTE-GTK4)
+  or **Ubuntu 22.04** (compatibility build — GTK 4.6, libadwaita 1.1,
+  no embedded terminal).
+- System packages (Ubuntu 24.04):
 
   ```sh
   sudo apt-get install -y build-essential pkg-config libssl-dev \
       libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
       libvte-2.91-gtk4-dev libpoppler-glib-dev
+  ```
+
+- System packages (Ubuntu 22.04 — note there is no VTE-GTK4 package):
+
+  ```sh
+  sudo apt-get install -y build-essential pkg-config libssl-dev \
+      libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
+      libpoppler-glib-dev
   ```
 
 - Rust stable toolchain
@@ -87,8 +97,9 @@ xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex -configuration Release bui
 ### Linux
 
 ```sh
-cargo build --workspace   # in Linux/
+cargo build --workspace                          # full build (Ubuntu 24.04+)
 cargo run -p pitex
+cargo build -p pitex --no-default-features       # Ubuntu 22.04 compat build
 ```
 
 See `Linux/README.md` for details.
@@ -100,14 +111,20 @@ Prebuilt artifacts are published on the
 
 - `Pitex-*-macos-arm64.dmg` — unsigned/ad-hoc-signed macOS app; open via
   right-click → Open on first launch (Gatekeeper).
-- `Pitex-*-linux-x86_64.AppImage` — Ubuntu 24.04+ AppImage with bundled GTK.
+- `Pitex-*-ubuntu24.04-amd64.deb` — full Ubuntu 24.04+ package
+  (embedded terminal via VTE-GTK4). Install with
+  `sudo apt install ./Pitex-*-ubuntu24.04-amd64.deb`.
+- `Pitex-*-ubuntu22.04-amd64.deb` — Ubuntu 22.04 compatibility package.
+  The terminal console shows status output and hands interactive commands
+  (e.g. Pi sign-in) to an external terminal emulator, since 22.04 has no
+  VTE-GTK4.
 
 ## Development
 
 - CI (`.github/workflows/ci.yml`) runs the repository gates, SwiftPM tests,
   and the Rust workspace tests on every PR.
 - Cutting a release: tag `v*` and push — the release workflow builds the
-  DMG and AppImage and attaches them to a GitHub Release.
+  DMG and both deb variants and attaches them to a GitHub Release.
 - Report bugs or request features via Issues; changes land via PR.
 
 ## License

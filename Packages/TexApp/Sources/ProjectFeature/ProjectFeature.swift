@@ -1,5 +1,6 @@
 import AppPorts
 import DocumentSessionCore
+import Foundation
 import ProjectCore
 
 public enum ProjectPermissionState: Sendable {
@@ -163,5 +164,64 @@ public struct ProjectFeatureState: Sendable {
             throw ProjectOpenError.documentRouteMismatch
         }
         try tabs[index].present(snapshot)
+    }
+}
+
+/// One node of the hierarchical project file list. `path` is the
+/// project-relative path ("/" separated); directories carry their children.
+public struct ProjectFileNode: Equatable, Identifiable, Sendable {
+    public let path: String
+    public let name: String
+    public let isDirectory: Bool
+    public let children: [ProjectFileNode]?
+
+    public var id: String { path }
+
+    public init(path: String, name: String, isDirectory: Bool, children: [ProjectFileNode]?) {
+        self.path = path
+        self.name = name
+        self.isDirectory = isDirectory
+        self.children = children
+    }
+}
+
+/// Builds the directory tree shown in the project sidebar from flat
+/// project-relative paths. Directories sort before files; siblings order
+/// lexicographically by name so both platforms render identically.
+public func buildProjectFileTree(relativePaths: [String]) -> [ProjectFileNode] {
+    var roots: [ProjectFileNode] = []
+    for path in relativePaths {
+        let components = path.split(separator: "/").map(String.init)
+        guard !components.isEmpty else { continue }
+        insert(components: components[...], prefix: "", into: &roots)
+    }
+    return sorted(roots)
+}
+
+private func insert(components: ArraySlice<String>, prefix: String, into nodes: inout [ProjectFileNode]) {
+    guard let head = components.first else { return }
+    let nodePath = prefix.isEmpty ? head : "\(prefix)/\(head)"
+    if components.count == 1 {
+        nodes.append(ProjectFileNode(path: nodePath, name: head, isDirectory: false, children: nil))
+        return
+    }
+    if let index = nodes.firstIndex(where: { $0.isDirectory && $0.name == head }) {
+        var children = nodes[index].children ?? []
+        insert(components: components.dropFirst(), prefix: nodePath, into: &children)
+        nodes[index] = ProjectFileNode(path: nodePath, name: head, isDirectory: true, children: children)
+    } else {
+        var children: [ProjectFileNode] = []
+        insert(components: components.dropFirst(), prefix: nodePath, into: &children)
+        nodes.append(ProjectFileNode(path: nodePath, name: head, isDirectory: true, children: children))
+    }
+}
+
+private func sorted(_ nodes: [ProjectFileNode]) -> [ProjectFileNode] {
+    nodes.sorted { lhs, rhs in
+        if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+        return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+    }.map { node in
+        guard node.isDirectory else { return node }
+        return ProjectFileNode(path: node.path, name: node.name, isDirectory: true, children: sorted(node.children ?? []))
     }
 }

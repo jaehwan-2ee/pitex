@@ -1,3 +1,4 @@
+import ProjectFeature
 import SwiftUI
 
 extension SidebarSection {
@@ -202,41 +203,23 @@ struct ProjectSidebarView: View {
 
             // ScrollView+VStack instead of List: NSTableView marks clicked
             // rows selected (accent wash) even without a selection binding —
-            // we want only our own active-file highlight.
+            // we want only our own active-file highlight. OutlineGroup draws
+            // the directory disclosure triangles.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(Array(workspace.projectFiles.enumerated()), id: \.element) { index, url in
-                        Button {
-                            Task { await workspace.activateDocument(url) }
-                        } label: {
+                    OutlineGroup(projectTree, children: \.children) { node in
+                        if node.isDirectory {
                             HStack(spacing: 7) {
-                                Image(systemName: url.pathExtension.lowercased() == "bib" ? "book" : "doc.text")
-                                Text(relativeDisplayPath(url))
+                                Image(systemName: "folder")
+                                Text(verbatim: node.name)
                                     .lineLimit(1)
                                 Spacer()
-                                if url == workspace.pinnedBuildTarget {
-                                    Image(systemName: "pin.fill")
-                                        .foregroundStyle(.orange)
-                                        .imageScale(.small)
-                                } else if url == workspace.automaticBuildTarget {
-                                    Image(systemName: "hammer")
-                                        .foregroundStyle(.secondary)
-                                        .imageScale(.small)
-                                }
                             }
-                            .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                url == workspace.activeDocumentURL
-                                    ? Color.primary.opacity(0.10)
-                                    : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 4)
-                            )
-                            .contentShape(Rectangle())
+                            .accessibilityIdentifier("pitex.project.dir.\(node.path)")
+                        } else {
+                            fileRow(node)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("pitex.project.file.\(index)")
                     }
                 }
                 .padding(.horizontal, 4)
@@ -253,6 +236,46 @@ struct ProjectSidebarView: View {
                     .padding(.bottom, 8)
             }
         }
+    }
+
+    private var projectTree: [ProjectFileNode] {
+        buildProjectFileTree(relativePaths: workspace.projectFiles.map { relativeDisplayPath($0) })
+    }
+
+    private func fileRow(_ node: ProjectFileNode) -> some View {
+        let url = workspace.projectURL?.appendingPathComponent(node.path)
+            ?? URL(fileURLWithPath: node.path)
+        return Button {
+            Task { await workspace.activateDocument(url) }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: url.pathExtension.lowercased() == "bib" ? "book" : "doc.text")
+                Text(verbatim: node.name)
+                    .lineLimit(1)
+                Spacer()
+                if url == workspace.pinnedBuildTarget {
+                    Image(systemName: "pin.fill")
+                        .foregroundStyle(.orange)
+                        .imageScale(.small)
+                } else if url == workspace.automaticBuildTarget {
+                    Image(systemName: "hammer")
+                        .foregroundStyle(.secondary)
+                        .imageScale(.small)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                url == workspace.activeDocumentURL
+                    ? Color.primary.opacity(0.10)
+                    : Color.clear,
+                in: RoundedRectangle(cornerRadius: 4)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("pitex.project.file.\(node.path)")
     }
 
     private func relativeDisplayPath(_ url: URL) -> String {
