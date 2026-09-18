@@ -2440,18 +2440,22 @@ impl WorkspaceModel {
         url: &Path,
         root: &Path,
     ) -> Result<NormalizedRelativePath, WorkspaceOpenError> {
-        let root_str = standardize(root.to_path_buf()).to_string_lossy().into_owned();
-        let file_str = standardize(url.to_path_buf()).to_string_lossy().into_owned();
-        let prefix = if root_str == "/" {
-            "/".to_string()
-        } else {
-            format!("{root_str}/")
-        };
-        if !file_str.starts_with(&prefix) {
-            return Err(WorkspaceOpenError::OutsideProject);
-        }
-        NormalizedRelativePath::new(&file_str[prefix.len()..])
-            .map_err(|_| WorkspaceOpenError::OutsideProject)
+        // Component-wise comparison — a string prefix check cannot work on
+        // Windows, where `canonicalize` produces `\`-separated `\\?\C:\…`
+        // verbatim paths while the prefix was appended with '/'.
+        let root = standardize(root.to_path_buf());
+        let file = standardize(url.to_path_buf());
+        let relative = file
+            .strip_prefix(&root)
+            .map_err(|_| WorkspaceOpenError::OutsideProject)?;
+        // `NormalizedRelativePath` is a POSIX path and rejects '\', so the
+        // components rejoin with '/' regardless of the platform separator.
+        let raw = relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        NormalizedRelativePath::new(&raw).map_err(|_| WorkspaceOpenError::OutsideProject)
     }
 
     pub fn read_exact_utf8(url: &Path) -> Result<String, WorkspaceOpenError> {
@@ -2501,7 +2505,7 @@ impl WorkspaceModel {
 /// path exists, otherwise strip `.`/`..` lexically.
 pub fn standardize(path: PathBuf) -> PathBuf {
     if let Ok(c) = path.canonicalize() {
-        return c;
+        return deverbatim(c);
     }
     let mut out = PathBuf::new();
     for component in path.components() {
@@ -2520,6 +2524,27 @@ pub fn standardize(path: PathBuf) -> PathBuf {
         }
     }
     out
+}
+
+/// Windows `canonicalize` yields verbatim `\\?\C:\…` paths; re-express plain
+/// disk paths without the verbatim prefix so a canonical path compares equal
+/// to the same path spelled lexically (e.g. a not-yet-created file).
+/// `\\?\UNC\…` shares are kept verbatim — they have no plain spelling.
+#[cfg(windows)]
+fn deverbatim(path: PathBuf) -> PathBuf {
+    if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
+        if let std::path::Prefix::VerbatimDisk(letter) = prefix.kind() {
+            let mut out = PathBuf::from(format!("{}:", letter as char));
+            out.extend(path.components().skip(1));
+            return out;
+        }
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn deverbatim(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// The Linux answer to macOS `/Library/TeX/texbin`: upstream TeX Live

@@ -127,6 +127,9 @@ pub struct UiHandles {
     /// "+" menu button — its model is rebuilt on refresh so the Open Recent
     /// section mirrors `recent_documents` (macOS File → Open Recent).
     pub add_menu_button: RefCell<Option<gtk4::MenuButton>>,
+    /// Header open button — the popover's anchor when `win.open` fires from
+    /// a shortcut or menu item rather than a button click.
+    pub open_button: RefCell<Option<gtk4::Button>>,
 }
 
 /// Shared application state — replaces SwiftUI's `@Published` propagation
@@ -822,9 +825,26 @@ impl AppState {
         self.refresh_phase();
     }
 
-    pub fn present_open(&self) {
-        let window = UI.with(|ui| ui.window.borrow().clone());
-        let Some(window) = window else { return };
+    /// `anchor` is the button that triggered the chooser — the popover
+    /// points at it. `win.open` (shortcut/menu) passes `None` and falls
+    /// back to the header open button, then the window.
+    pub fn present_open(&self, anchor: Option<&gtk4::Widget>) {
+        let anchor = anchor.cloned().or_else(|| {
+            UI.with(|ui| {
+                ui.open_button
+                    .borrow()
+                    .as_ref()
+                    .filter(|b| b.is_mapped())
+                    .map(|b| b.clone().upcast::<gtk4::Widget>())
+                    .or_else(|| {
+                        ui.window
+                            .borrow()
+                            .as_ref()
+                            .map(|w| w.clone().upcast::<gtk4::Widget>())
+                    })
+            })
+        });
+        let Some(anchor) = anchor else { return };
         let menu = gtk4::Popover::new();
         let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         let file_btn = gtk4::Button::with_label(&tr(self.language, "workspace.open"));
@@ -858,7 +878,7 @@ impl AppState {
         vbox.append(&file_btn);
         vbox.append(&folder_btn);
         menu.set_child(Some(&vbox));
-        menu.set_parent(&window);
+        menu.set_parent(&anchor);
         menu.popup();
     }
 
@@ -2804,7 +2824,10 @@ fn build_chrome(
     ui.window.replace(Some(window.clone()));
 
     // Vertical box mirrors ToolbarView's header+content layout; the plain
-    // Box keeps the same visuals on both GTK variants.
+    // Box keeps the same visuals on both GTK variants. On `modern-gtk` the
+    // header moves into a real `AdwToolbarView` wrapping the whole window —
+    // the only way libadwaita 1.4+ draws window controls (AdwWindow rejects
+    // `set_titlebar`), which is what gives Windows its min/max/close buttons.
     let toolbar_view = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let header = adw::HeaderBar::new();
 
@@ -2826,9 +2849,12 @@ fn build_chrome(
     let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
     open_btn.set_tooltip_text(Some(&tr(lang, "workspace.open")));
     a11y(&open_btn, "pitex.toolbar.open", "workspace.open");
+    ui.open_button.replace(Some(open_btn.clone()));
     {
         let state = state.clone();
-        open_btn.connect_clicked(move |_| state.borrow().present_open());
+        open_btn.connect_clicked(move |b| {
+            state.borrow().present_open(Some(b.upcast_ref()));
+        });
     }
     header.pack_end(&open_btn);
 
@@ -2943,6 +2969,7 @@ fn build_chrome(
         });
     }
     header.pack_end(&find_btn);
+    #[cfg(not(feature = "modern-gtk"))]
     toolbar_view.append(&header);
 
     // ── central three-column layout ──
@@ -2995,6 +3022,18 @@ fn build_chrome(
     let toast = adw::ToastOverlay::new();
     toast.set_child(Some(&root_stack));
     ui.toast_overlay.replace(Some(toast.clone()));
+    #[cfg(feature = "modern-gtk")]
+    {
+        // The header is the window's top bar — window controls (min/max/
+        // close on Windows, close/min/max per decoration layout on Linux)
+        // appear on every stack page. Legacy GTK keeps the header inside
+        // the ready page's box.
+        let chrome = adw::ToolbarView::new();
+        chrome.add_top_bar(&header);
+        chrome.set_content(Some(&toast));
+        window.set_content(Some(&chrome));
+    }
+    #[cfg(not(feature = "modern-gtk"))]
     window.set_content(Some(&toast));
 
     // ── keyboard shortcuts — the macOS `AppCommands` accelerator surface:
@@ -3214,7 +3253,9 @@ fn empty_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
     a11y(&button, "pitex.open", "workspace.open");
     {
         let state = state.clone();
-        button.connect_clicked(move |_| state.borrow().present_open());
+        button.connect_clicked(move |b| {
+            state.borrow().present_open(Some(b.upcast_ref()));
+        });
     }
     page.set_child(Some(&button));
     ui.status_page.replace(Some(page.clone()));
@@ -3243,7 +3284,9 @@ fn error_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
     button.set_halign(gtk4::Align::Center);
     {
         let state = state.clone();
-        button.connect_clicked(move |_| state.borrow().present_open());
+        button.connect_clicked(move |b| {
+            state.borrow().present_open(Some(b.upcast_ref()));
+        });
     }
     page.set_child(Some(&button));
     let _ = ui; // status_page shared with empty state
@@ -3712,7 +3755,7 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     newdoc.connect_activate(move |_, _| state2.borrow_mut().create_document_action());
     let state3 = state.clone();
     let open_action = gio::SimpleAction::new("open", None);
-    open_action.connect_activate(move |_, _| state3.borrow().present_open());
+    open_action.connect_activate(move |_, _| state3.borrow().present_open(None));
     let state4 = state.clone();
     let saveas = gio::SimpleAction::new("saveas", None);
     saveas.connect_activate(move |_, _| state4.borrow().save_as_action());
