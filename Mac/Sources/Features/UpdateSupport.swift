@@ -192,17 +192,18 @@ final class UpdateChecker: ObservableObject {
     private func installFromDMG(_ dmg: URL) async throws {
         phase = .installing
         detail = String(localized: "settings.updates.installing")
-        let mount = NSTemporaryDirectory().appendingPathComponent("pitex-update-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(atPath: mount, withIntermediateDirectories: true)
-        defer { _ = try? Self.runSync("/usr/bin/hdiutil", ["detach", "-quiet", mount]) }
+        let mount = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("pitex-update-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+        defer { _ = try? Self.runSync("/usr/bin/hdiutil", ["detach", "-quiet", mount.path]) }
         let attach = try await Self.run(
             "/usr/bin/hdiutil",
-            ["attach", "-nobrowse", "-readonly", "-mountpoint", mount, dmg.path])
+            ["attach", "-nobrowse", "-readonly", "-mountpoint", mount.path, dmg.path])
         guard attach == 0 else {
             throw NSError(domain: "PitexUpdate", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "Could not mount the downloaded image"])
         }
-        let source = "\(mount)/Pitex.app"
+        let source = mount.appendingPathComponent("Pitex.app", isDirectory: true).path
         guard FileManager.default.fileExists(atPath: source) else {
             throw NSError(domain: "PitexUpdate", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "The downloaded image has no Pitex.app"])
