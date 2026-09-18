@@ -1,0 +1,19 @@
+README.md
+  s_2a0eca7136a8f6::t_21fde0a9d14ceb 11-14,93-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1358cae761e43d23c46a396ef5930ab528b15404",
+  "prompts": {},
+  "sessions": {
+    "s_2a0eca7136a8f6": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_2a0eca7136a8f6",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
