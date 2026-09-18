@@ -8,9 +8,10 @@ sharing one architecture across platforms.
   targets (`Packages/`) that compile and test on Linux.
 - **Linux**: GTK4/libadwaita app (`Linux/`), a Cargo workspace that mirrors
   the Swift target DAG one crate per target (`Tools/rust-target-dag.json`).
-- **Windows**: GTK4/libadwaita app (`Windows/`) built on the same Rust crates
-  — `pitex-shell` runs on the MSYS2 GTK stack and `windows-platform`
-  implements the Windows side of the `app-ports` contracts.
+- **Windows** *(beta)*: GTK4/libadwaita app (`Windows/`) built on the same
+  Rust crates — `pitex-shell` runs on the MSYS2 GTK stack and
+  `windows-platform` implements the Windows side of the `app-ports`
+  contracts. Windows support is still beta-quality and may be unstable.
 - **Gates**: `Tools/*.mjs` verify the target DAGs, Xcode project, release
   surface, and cross-language parity contract.
 
@@ -88,6 +89,10 @@ status output and hands interactive commands (e.g. Pi sign-in) to an
 external terminal emulator, since 22.04 has no VTE-GTK4.
 
 ### Windows — installer (recommended)
+
+> **Note:** Windows support is **beta** — expect bugs and instability.
+> Please report issues on the
+> [issue tracker](../../issues).
 
 Download `Pitex-*-windows-amd64-setup.exe` and double-click it — a
 per-user NSIS installer puts Pitex in `%LOCALAPPDATA%\Programs\Pitex`
