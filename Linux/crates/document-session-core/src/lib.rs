@@ -594,6 +594,7 @@ impl AtomicDocumentStore {
 
 /// `fsync` on the containing directory after rename. Tolerates EINVAL,
 /// EOPNOTSUPP, and EROFS on Linux (matching the Swift Glibc branch).
+#[cfg(unix)]
 fn synchronize_directory(directory: &Path) -> Result<(), StoreError> {
     use std::os::unix::io::AsRawFd;
     let file = std::fs::File::open(directory).map_err(classify_io)?;
@@ -613,6 +614,14 @@ fn synchronize_directory(directory: &Path) -> Result<(), StoreError> {
     })
 }
 
+/// Windows counterpart — `std::fs` cannot open a directory for syncing and
+/// NTFS already journals the rename's directory entry, so durability comes
+/// from the file sync performed before the rename.
+#[cfg(windows)]
+fn synchronize_directory(_directory: &Path) -> Result<(), StoreError> {
+    Ok(())
+}
+
 fn read_document(url: &Path) -> Result<PersistedDocument, StoreError> {
     let data = std::fs::read(url).map_err(classify_io)?;
     let text = String::from_utf8(data).map_err(|_| StoreError::InvalidUtf8)?;
@@ -624,9 +633,14 @@ fn classify_io(error: std::io::Error) -> StoreError {
     match error.kind() {
         ErrorKind::PermissionDenied => StoreError::Permission,
         _ => match error.raw_os_error() {
+            #[cfg(unix)]
             Some(code) if code == libc::EACCES || code == libc::EPERM || code == libc::EROFS => {
                 StoreError::Permission
             }
+            // ERROR_ACCESS_DENIED / WRITE_PROTECT / SHARING_VIOLATION /
+            // LOCK_VIOLATION — the raw codes PermissionDenied already maps.
+            #[cfg(windows)]
+            Some(code) if matches!(code, 5 | 19 | 32 | 33) => StoreError::Permission,
             _ => StoreError::Other,
         },
     }
@@ -645,34 +659,10 @@ fn uuid_v4() -> String {
 }
 
 fn getrandom_16(buf: &mut [u8; 16]) {
-    // getrandom(2) first — the kernel CSPRNG with no fd or path dependency.
-    let mut filled = 0usize;
-    while filled < buf.len() {
-        let rc = unsafe {
-            libc::getrandom(
-                buf[filled..].as_mut_ptr().cast::<libc::c_void>(),
-                buf.len() - filled,
-                0,
-            )
-        };
-        if rc > 0 {
-            filled += rc as usize;
-            continue;
-        }
-        if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
-            continue;
-        }
-        break;
-    }
-    if filled == buf.len() {
+    // The `getrandom` crate wraps the OS CSPRNG on every platform
+    // (getrandom(2) on Unix, BCryptGenRandom on Windows) — one code path.
+    if getrandom::getrandom(buf).is_ok() {
         return;
-    }
-    // /dev/urandom fallback (paranoia; getrandom cannot fail on Linux ≥3.17).
-    use std::io::Read;
-    if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
-        if file.read_exact(&mut buf[filled..]).is_ok() {
-            return;
-        }
     }
     // Last resort: uniqueness mixing, never expected to run. Time + pid +
     // counter keeps ids distinct even within a single process.
@@ -685,7 +675,7 @@ fn getrandom_16(buf: &mut [u8; 16]) {
     let mut state = (nanos as u64)
         ^ ((std::process::id() as u64) << 32)
         ^ COUNTER.fetch_add(0x9e3779b97f4a7c15, Ordering::Relaxed);
-    for byte in buf[filled..].iter_mut() {
+    for byte in buf.iter_mut() {
         state ^= state << 13;
         state ^= state >> 7;
         state ^= state << 17;
