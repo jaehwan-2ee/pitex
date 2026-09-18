@@ -57,8 +57,18 @@ pub mod pi_paths {
             .map(|p| p.join("pi-runtime"))
             .unwrap_or_else(|| PathBuf::from("pi-runtime"))
     }
+    /// The app-local launcher. Unix publishes a `bin/pi` symlink into the
+    /// package's `dist/cli.js`; Windows skips the indirection (no symlink
+    /// privilege) and points straight at the installed `cli.js` — `launch`
+    /// runs `.js` entry points through Bun/Node on every platform.
+    #[cfg(unix)]
     pub fn runtime_executable() -> PathBuf {
         runtime_directory().join("bin/pi")
+    }
+    #[cfg(windows)]
+    pub fn runtime_executable() -> PathBuf {
+        runtime_directory()
+            .join("node_modules/@earendil-works/pi-coding-agent/dist/cli.js")
     }
     /// `configurationFile(customProvider:)` — creates the file when missing.
     pub fn configuration_file(custom_provider: bool) -> std::io::Result<PathBuf> {
@@ -110,6 +120,9 @@ pub fn locate_pi_executable_in(environment: &HashMap<String, String>) -> Option<
 /// A pi runtime shipped inside the install image — the Linux counterpart of
 /// `Bundle.main.resourceURL/pi-runtime/bin/pi`. Packaging can drop the
 /// runtime next to the executable or under the shared data directory.
+/// On Windows the launcher is the package's `cli.js` itself (see
+/// `runtime_executable`), so the candidates mirror that layout.
+#[cfg(unix)]
 fn bundled_executable() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
@@ -125,16 +138,48 @@ fn bundled_executable() -> Option<PathBuf> {
     }
     None
 }
+#[cfg(windows)]
+fn bundled_executable() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    const ENTRY: &str = "pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
+    for candidate in [
+        dir.join(ENTRY),
+        dir.join(format!("../share/pitex/{ENTRY}")),
+        dir.join(format!("../lib/pitex/{ENTRY}")),
+    ] {
+        let candidate = candidate.canonicalize().unwrap_or(candidate);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
 
 pub fn app_local_runtime_installed() -> bool {
     is_executable(&pi_paths::runtime_executable())
 }
 
+#[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path)
         .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+/// Windows has no permission-bit executability: a file is launchable when it
+/// exists and carries a runnable extension — `launch` routes `.js`-family
+/// entry points through Bun/Node, the rest through `cmd`.
+#[cfg(windows)]
+fn is_executable(path: &Path) -> bool {
+    const RUNNABLE: [&str; 7] = ["exe", "com", "bat", "cmd", "ps1", "js", "mjs"];
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| RUNNABLE.contains(&e.to_ascii_lowercase().as_str()))
+            .unwrap_or(false)
 }
 
 /// `PiToolchain` — an app launched from a desktop session misses the PATH
@@ -153,6 +198,7 @@ pub struct PiToolchain {
 impl PiToolchain {
     /// System directories appended after the ambient PATH — the Linux
     /// counterpart of `/opt/homebrew/bin` & friends in the Swift default.
+    #[cfg(unix)]
     pub const SYSTEM_DIRECTORIES: [&'static str; 7] = [
         "/usr/local/bin",
         "/home/linuxbrew/.linuxbrew/bin",
@@ -162,16 +208,39 @@ impl PiToolchain {
         "/usr/sbin",
         "/sbin",
     ];
+    /// The Windows counterpart: the standard Node.js installer targets plus
+    /// the `nvm-windows` shim directory (covered again via `NVM_SYMLINK`).
+    #[cfg(windows)]
+    pub const SYSTEM_DIRECTORIES: [&'static str; 3] = [
+        "C:\\Program Files\\nodejs",
+        "C:\\Program Files (x86)\\nodejs",
+        "C:\\Program Files\\Git\\bin",
+    ];
+
+    /// Names a PATH probe should try: on Unix the bare name, on Windows the
+    /// name plus each PATHEXT-style runnable suffix (`npm` resolves to
+    /// `npm.cmd`, `pi` to `pi.cmd`, …).
+    #[cfg(unix)]
+    fn executable_names(name: &str) -> Vec<String> {
+        vec![name.to_string()]
+    }
+    #[cfg(windows)]
+    fn executable_names(name: &str) -> Vec<String> {
+        [".exe", ".cmd", ".bat", ".ps1", ""]
+            .iter()
+            .map(|ext| format!("{name}{ext}"))
+            .collect()
+    }
 
     pub fn find(name: &str, environment: &HashMap<String, String>) -> Option<PathBuf> {
-        environment
-            .get("PATH")
-            .map(|p| {
-                p.split(':')
-                    .map(|dir| PathBuf::from(dir).join(name))
-                    .find(|candidate| is_executable(candidate))
+        let path = environment.get("PATH")?;
+        std::env::split_paths(path)
+            .flat_map(|dir| {
+                Self::executable_names(name)
+                    .into_iter()
+                    .map(move |n| dir.join(&n))
             })
-            .unwrap_or(None)
+            .find(|candidate| is_executable(candidate))
     }
 
     /// `PiToolchain.discover(environment:home:systemDirectories:)` — verbatim.
@@ -193,13 +262,16 @@ impl PiToolchain {
         let mut paths: Vec<String> = result
             .environment
             .get("PATH")
-            .cloned()
-            .unwrap_or_default()
-            .split(':')
-            .map(String::from)
-            .collect();
+            .map(|p| {
+                std::env::split_paths(std::ffi::OsStr::new(p))
+                    .map(|d| d.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
         paths.extend(system_directories.iter().map(|s| s.to_string()));
-        for rel in [
+        // Version-manager and user-prefix install dirs, relative to home.
+        #[cfg(unix)]
+        let home_relative: [&str; 8] = [
             ".bun/bin",
             ".npm-global/bin",
             ".local/bin",
@@ -208,52 +280,95 @@ impl PiToolchain {
             ".local/share/mise/shims",
             ".nix-profile/bin",
             ".local/share/pnpm",
-        ] {
+        ];
+        #[cfg(windows)]
+        let home_relative: [&str; 6] = [
+            ".bun/bin",
+            "AppData/Roaming/npm",
+            "AppData/Local/Programs/bun",
+            "AppData/Local/pnpm",
+            "scoop/shims",
+            ".volta/bin",
+        ];
+        for rel in home_relative {
             paths.push(home.join(rel).to_string_lossy().into_owned());
         }
-        for key in [
+        // Prefix env keys — the value is a prefix, the binaries live in bin/
+        // (except on Windows, where the npm prefix IS the shim directory).
+        #[cfg(unix)]
+        let prefix_bin_keys: [&str; 4] = [
             "BUN_INSTALL",
             "NPM_CONFIG_PREFIX",
             "npm_config_prefix",
             "HOMEBREW_PREFIX",
-        ] {
+        ];
+        #[cfg(windows)]
+        let prefix_bin_keys: [&str; 4] = [
+            "BUN_INSTALL",
+            "NPM_CONFIG_PREFIX",
+            "npm_config_prefix",
+            "PNPM_HOME",
+        ];
+        for key in prefix_bin_keys {
             if let Some(prefix) = result.environment.get(key) {
                 if !prefix.is_empty() {
-                    paths.push(format!("{}/bin", expand_tilde(prefix, home)));
+                    let expanded = expand_tilde(prefix, home);
+                    #[cfg(unix)]
+                    paths.push(format!("{expanded}/bin"));
+                    #[cfg(windows)]
+                    paths.push(expanded);
+                }
+            }
+        }
+        // These keys already name the executable directory itself —
+        // nvm-windows' active-version symlink is the main one.
+        #[cfg(windows)]
+        for key in ["NVM_SYMLINK", "NVM_HOME"] {
+            if let Some(dir) = result.environment.get(key) {
+                if !dir.is_empty() {
+                    paths.push(expand_tilde(dir, home));
                 }
             }
         }
         update_path(&mut result.environment, &paths);
         // Interactive startup is needed for .zshrc/.bashrc-managed installs.
         // The timeout prevents a shell startup prompt from hanging the app.
-        let shell = result
-            .environment
-            .get("SHELL")
-            .cloned()
-            .unwrap_or_else(|| "/bin/bash".into());
-        if let Some(path) = run_probe(
-            &shell,
-            &[
-                "-ilc".into(),
-                "/usr/bin/printf '\\0'; /usr/bin/printenv PATH".into(),
-            ],
-            &result.environment,
-            home,
-            5,
-        )
-        .and_then(|out| {
-            String::from_utf8_lossy(&out)
-                .rsplit('\0')
-                .next()
-                .and_then(|s| s.lines().next())
-                .map(|s| s.to_string())
-        }) {
-            let mut shell_paths: Vec<String> = path.split(':').map(String::from).collect();
-            shell_paths.extend(paths);
-            paths = shell_paths;
+        // Windows has no login shell — PATH probing ends here.
+        #[cfg(unix)]
+        {
+            let shell = result
+                .environment
+                .get("SHELL")
+                .cloned()
+                .unwrap_or_else(|| "/bin/bash".into());
+            if let Some(path) = run_probe(
+                &shell,
+                &[
+                    "-ilc".into(),
+                    "/usr/bin/printf '\\0'; /usr/bin/printenv PATH".into(),
+                ],
+                &result.environment,
+                home,
+                5,
+            )
+            .and_then(|out| {
+                String::from_utf8_lossy(&out)
+                    .rsplit('\0')
+                    .next()
+                    .and_then(|s| s.lines().next())
+                    .map(|s| s.to_string())
+            }) {
+                let mut shell_paths: Vec<String> =
+                    std::env::split_paths(std::ffi::OsStr::new(&path))
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .collect();
+                shell_paths.extend(paths);
+                paths = shell_paths;
+            }
         }
         // nvm/fnm may only initialize in a terminal with a TTY. Their
         // installed binaries are still usable directly.
+        #[cfg(unix)]
         for (directory, suffix) in [
             (".nvm/versions/node", "bin"),
             (".local/share/fnm/node-versions", "installation/bin"),
@@ -291,11 +406,14 @@ impl PiToolchain {
                                 .lines()
                                 .filter(|l| !l.is_empty())
                                 .last()
-                                .filter(|l| l.starts_with('/'))
+                                .filter(|l| Path::new(l).is_absolute())
                                 .map(|s| s.to_string())
                         })
                 {
+                    #[cfg(unix)]
                     paths.insert(0, format!("{prefix}/bin"));
+                    #[cfg(windows)]
+                    paths.insert(0, prefix);
                     update_path(&mut result.environment, &paths);
                 }
             }
@@ -349,6 +467,30 @@ impl PiToolchain {
                     .to_string()
             })
             .unwrap_or_default();
+        // Windows script shims cannot be spawned directly — CreateProcess
+        // only runs PE executables. Route `.cmd`/`.bat` through `cmd` and
+        // `.ps1` through `powershell`, the same way `cmd` itself resolves
+        // npm's global shims.
+        #[cfg(windows)]
+        if let Some(ext) = script.extension().and_then(|e| e.to_str()) {
+            let lower = ext.to_ascii_lowercase();
+            if lower == "cmd" || lower == "bat" {
+                let mut args = vec!["/c".into(), script.to_string_lossy().into_owned()];
+                args.extend(arguments.iter().cloned());
+                return Ok((PathBuf::from("cmd"), args));
+            }
+            if lower == "ps1" {
+                let mut args = vec![
+                    "-NoProfile".into(),
+                    "-ExecutionPolicy".into(),
+                    "Bypass".into(),
+                    "-File".into(),
+                    script.to_string_lossy().into_owned(),
+                ];
+                args.extend(arguments.iter().cloned());
+                return Ok((PathBuf::from("powershell"), args));
+            }
+        }
         let java_script = ["js", "mjs", "cjs"]
             .iter()
             .any(|ext| script.extension().map(|e| e == *ext).unwrap_or(false))
@@ -393,14 +535,15 @@ impl PiToolchain {
 /// (`updatePath` in the Swift closure).
 fn update_path(environment: &mut HashMap<String, String>, paths: &[String]) {
     let mut seen = std::collections::HashSet::new();
+    let separator = if cfg!(windows) { ";" } else { ":" };
     environment.insert(
         "PATH".into(),
         paths
             .iter()
-            .filter(|p| p.starts_with('/') && seen.insert((*p).clone()))
+            .filter(|p| Path::new(p).is_absolute() && seen.insert((*p).clone()))
             .cloned()
             .collect::<Vec<_>>()
-            .join(":"),
+            .join(separator),
     );
 }
 
@@ -1823,19 +1966,24 @@ impl AgentCoordinator {
                 .map(|p| p.to_string_lossy().into_owned()),
         );
         if let Some(existing) = environment.get("PATH").cloned() {
-            search.extend(existing.split(':').map(String::from));
+            search.extend(
+                std::env::split_paths(std::ffi::OsStr::new(&existing))
+                    .map(|d| d.to_string_lossy().into_owned()),
+            );
         }
+        #[cfg(unix)]
         search.extend(
             ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
                 .iter()
                 .map(|s| s.to_string()),
         );
         let mut seen = std::collections::HashSet::new();
+        let separator = if cfg!(windows) { ";" } else { ":" };
         let path = search
             .into_iter()
             .filter(|p| seen.insert(p.clone()))
             .collect::<Vec<_>>()
-            .join(":");
+            .join(separator);
         environment.insert("PATH".into(), path);
         environment
     }
@@ -2054,17 +2202,22 @@ pub mod pi_installer {
         }
         // Rename a new symlink over the old one atomically, leaving an
         // existing legacy package's CLI and running agent processes
-        // untouched.
-        let launcher_dir = pi_paths::runtime_executable()
-            .parent()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| "The agent launcher directory is invalid.".to_string())?;
-        std::fs::create_dir_all(&launcher_dir).map_err(|e| e.to_string())?;
-        let temporary = launcher_dir.join(crate::model::uuid_v4());
-        std::os::unix::fs::symlink(&entry, &temporary).map_err(|e| e.to_string())?;
-        if let Err(e) = std::fs::rename(&temporary, pi_paths::runtime_executable()) {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(format!("The agent launcher could not be updated: {e}"));
+        // untouched. On Windows `runtime_executable` IS the package entry
+        // (`symlink` needs a privilege Windows users rarely hold), so there
+        // is no launcher to publish.
+        #[cfg(unix)]
+        {
+            let launcher_dir = pi_paths::runtime_executable()
+                .parent()
+                .map(|p| p.to_path_buf())
+                .ok_or_else(|| "The agent launcher directory is invalid.".to_string())?;
+            std::fs::create_dir_all(&launcher_dir).map_err(|e| e.to_string())?;
+            let temporary = launcher_dir.join(crate::model::uuid_v4());
+            std::os::unix::fs::symlink(&entry, &temporary).map_err(|e| e.to_string())?;
+            if let Err(e) = std::fs::rename(&temporary, pi_paths::runtime_executable()) {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(format!("The agent launcher could not be updated: {e}"));
+            }
         }
         install_bundled_skills()
     }
@@ -2165,13 +2318,25 @@ pub mod pi_installer {
             &PiToolchain::SYSTEM_DIRECTORIES,
         );
         let launch = tools.launch(&executable, &[])?;
+        let action = if logout { "Logout" } else { "Login" };
+        let command = if logout { "/logout" } else { "/login" };
+        write_authentication_script(&tools, &launch, action, command)
+    }
+
+    /// POSIX single-quote escaping — `quoted(_:)` in the Swift original.
+    /// Safe for embedding any path in a shell command line.
+    #[cfg(unix)]
+    fn write_authentication_script(
+        tools: &PiToolchain,
+        launch: &(PathBuf, Vec<String>),
+        action: &str,
+        command: &str,
+    ) -> Result<PathBuf, String> {
         let launch_command = std::iter::once(launch.0.to_string_lossy().into_owned())
             .chain(launch.1.iter().cloned())
             .map(|part| shell_quote(&part))
             .collect::<Vec<_>>()
             .join(" ");
-        let action = if logout { "Logout" } else { "Login" };
-        let command = if logout { "/logout" } else { "/login" };
         let script_path = pi_paths::agent_directory().join(format!("Pitex Agent {action}.sh"));
         // util-linux `script` needs `-c` for the command — the BSD positional
         // form used on macOS does not exist on Ubuntu 24.04.
@@ -2185,6 +2350,33 @@ pub mod pi_installer {
         std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
             .map_err(|e| e.to_string())?;
+        Ok(script_path)
+    }
+
+    /// Windows counterpart — a `.bat` file run under `cmd /k` by
+    /// `spawn_external_terminal`. conhost gives `pi` a real console, so the
+    /// `stty`/`script` plumbing the Unix PTY needs is unnecessary: export the
+    /// environment, print the same guidance, launch the agent interactively.
+    #[cfg(windows)]
+    fn write_authentication_script(
+        tools: &PiToolchain,
+        launch: &(PathBuf, Vec<String>),
+        action: &str,
+        command: &str,
+    ) -> Result<PathBuf, String> {
+        let launch_command = std::iter::once(launch.0.to_string_lossy().into_owned())
+            .chain(launch.1.iter().cloned())
+            .map(|part| format!("\"{}\"", part.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let script_path = pi_paths::agent_directory().join(format!("Pitex Agent {action}.bat"));
+        let script = format!(
+            "@echo off\r\nset \"PI_CODING_AGENT_DIR={}\"\r\nset \"PATH={}\"\r\necho Pitex Agent {action} — pick a provider.\r\necho If the provider list does not open on its own, type {command} and press Enter.\r\n{}\r\n",
+            pi_paths::agent_directory().to_string_lossy(),
+            tools.environment.get("PATH").map(String::as_str).unwrap_or_default(),
+            launch_command
+        );
+        std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
         Ok(script_path)
     }
 
@@ -2213,7 +2405,11 @@ pub mod pi_installer {
         Ok(())
     }
 
-    #[cfg(test)]
+    // Toolchain-discovery tests stage fake `#!/bin/sh` binaries and chmod
+    // bits — Unix semantics throughout, so the module is Unix-only. The
+    // Windows port exercises the same functions through its own PATH/PATHEXT
+    // branches at build time.
+    #[cfg(all(test, unix))]
     mod tests {
         use super::*;
         use std::collections::HashMap;

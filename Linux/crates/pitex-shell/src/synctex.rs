@@ -491,15 +491,22 @@ impl SyncTeXRunner {
         if let Some(path) = self.tool_path.lock().unwrap().clone() {
             return Ok(path);
         }
+        #[cfg(unix)]
         let mut candidates = vec![
             "/usr/bin/synctex".to_string(),
             "/usr/local/bin/synctex".to_string(),
             "/home/linuxbrew/.linuxbrew/bin/synctex".to_string(),
         ];
+        #[cfg(windows)]
+        let mut candidates = vec![
+            "C:/texlive/2025/bin/windows/synctex.exe".to_string(),
+            "C:/texlive/2024/bin/windows/synctex.exe".to_string(),
+            "C:/Program Files/MiKTeX/miktex/bin/x64/synctex.exe".to_string(),
+        ];
         candidates.extend(
             crate::model::texlive_bin_dirs()
                 .iter()
-                .map(|d| d.join("synctex").to_string_lossy().into_owned()),
+                .map(|d| d.join(synctex_binary_name()).to_string_lossy().into_owned()),
         );
         for candidate in &candidates {
             if Path::new(candidate).exists() && is_executable(candidate) {
@@ -507,9 +514,15 @@ impl SyncTeXRunner {
                 return Ok(candidate.clone());
             }
         }
+        // PATH probe — `/usr/bin/env` on Unix, the bare name on Windows
+        // (resolved through the runner's own PATH/PATHEXT search).
+        #[cfg(unix)]
+        let (probe_exe, probe_args) = ("/usr/bin/env", vec!["synctex".into(), "--version".into()]);
+        #[cfg(windows)]
+        let (probe_exe, probe_args) = ("synctex", vec!["--version".into()]);
         let plan = DirectCommandPlan::new(
-            "/usr/bin/env",
-            vec!["synctex".into(), "--version".into()],
+            probe_exe,
+            probe_args,
             WorkingDirectoryPolicy::ProjectRoot,
             EnvironmentPolicy::Inherit {
                 overrides: Default::default(),
@@ -518,7 +531,7 @@ impl SyncTeXRunner {
         .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
         if let Ok(probe) = self.runner.run(
             &plan,
-            Path::new("/tmp"),
+            &std::env::temp_dir(),
             None,
             Some(Duration::from_secs(10)),
             None,
@@ -543,11 +556,26 @@ fn map_selector_error(e: synctex_core::SyncTeXQueryError) -> SyncTeXSupportError
     }
 }
 
+/// TeX Live installs `synctex` on Unix and `synctex.exe` on Windows.
+fn synctex_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "synctex.exe"
+    } else {
+        "synctex"
+    }
+}
+
+#[cfg(unix)]
 fn is_executable(path: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path)
         .map(|m| m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_executable(path: &str) -> bool {
+    Path::new(path).is_file()
 }
 
 // ─── SHA-256 (reuses the shared implementation in tex-domain) ───────────────

@@ -100,7 +100,10 @@ impl SettingsStore {
 
     // Field accessors with the exact UserDefaults key + default.
     pub fn custom_shell_executable(&self) -> String {
-        self.prefs.string("customShellExecutable").unwrap_or_else(|| "/bin/bash".into())
+        // The Windows default is cmd — `LoginShellCommandPlan` pairs it with
+        // `/c`, the counterpart of bash's `-l -c`.
+        let default = if cfg!(windows) { "cmd.exe" } else { "/bin/bash" };
+        self.prefs.string("customShellExecutable").unwrap_or_else(|| default.into())
     }
     pub fn set_custom_shell_executable(&mut self, v: &str) {
         self.prefs.set("customShellExecutable", v);

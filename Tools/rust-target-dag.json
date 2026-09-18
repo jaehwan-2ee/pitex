@@ -160,5 +160,10 @@
     "pitex-shell"
    ]
   }
+ },
+ "externalPathDependencies": {
+  "pitex-shell": [
+   "windows-platform"
+  ]
  }
 }

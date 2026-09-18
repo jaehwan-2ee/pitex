@@ -85,9 +85,45 @@ jobs:
           name: deb-ubuntu2204
           path: 'Pitex-*.deb'
 
+  windows-zip:
+    name: Windows bundle (MSYS2 UCRT64)
+    # Portable zip: pitex.exe + the GTK runtime DLLs and resources, bundled
+    # by Windows/build.sh under a real UCRT64 toolchain.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-gtksourceview5
+            mingw-w64-ucrt-x86_64-poppler
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme
+            mingw-w64-ucrt-x86_64-hicolor-icon-theme
+            zip
+      - name: Build and bundle
+        run: bash Windows/build.sh
+      - name: Create zip
+        run: |
+          cd Windows/dist
+          zip -qr "${GITHUB_WORKSPACE}/Pitex-${GITHUB_REF_NAME}-windows-amd64.zip" pitex
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: 'Pitex-*.zip'
+
   publish:
     name: Publish GitHub Release
-    needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204]
+    needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204, windows-zip]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

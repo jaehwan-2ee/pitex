@@ -1,13 +1,16 @@
 # Pitex
 
-Native LaTeX environment for macOS and Linux: editor, PDF preview with
-SyncTeX, project-aware builds, and an embedded Pi-based AI assistant —
+Native LaTeX environment for macOS, Linux, and Windows: editor, PDF preview
+with SyncTeX, project-aware builds, and an embedded Pi-based AI assistant —
 sharing one architecture across platforms.
 
 - **macOS**: SwiftUI/AppKit/TextKit app (`Mac/`), driven by portable SwiftPM
   targets (`Packages/`) that compile and test on Linux.
 - **Linux**: GTK4/libadwaita app (`Linux/`), a Cargo workspace that mirrors
   the Swift target DAG one crate per target (`Tools/rust-target-dag.json`).
+- **Windows**: GTK4/libadwaita app (`Windows/`) built on the same Rust crates
+  — `pitex-shell` runs on the MSYS2 GTK stack and `windows-platform`
+  implements the Windows side of the `app-ports` contracts.
 - **Gates**: `Tools/*.mjs` verify the target DAGs, Xcode project, release
   surface, and cross-language parity contract.
 
@@ -81,6 +84,12 @@ Source and PDF stay locked together:
 
 - Rust stable toolchain
 
+### Windows
+
+- **Windows 10+** with **MSYS2** (UCRT64 environment)
+- UCRT64 packages: `gcc rust pkgconf gtk4 libadwaita gtksourceview5 poppler
+  adwaita-icon-theme hicolor-icon-theme` (see `Windows/README.md`)
+
 ### Tooling
 
 - Node.js 24+ (`Tools/` gates)
@@ -104,6 +113,14 @@ cargo build -p pitex --no-default-features       # Ubuntu 22.04 compat build
 
 See `Linux/README.md` for details.
 
+### Windows
+
+```sh
+bash Windows/build.sh    # under MSYS2 UCRT64 — builds + bundles dist/pitex
+```
+
+See `Windows/README.md` for details.
+
 ## Download
 
 Prebuilt artifacts are published on the
@@ -118,13 +135,19 @@ Prebuilt artifacts are published on the
   The terminal console shows status output and hands interactive commands
   (e.g. Pi sign-in) to an external terminal emulator, since 22.04 has no
   VTE-GTK4.
+- `Pitex-*-windows-amd64.zip` — portable Windows bundle (`pitex.exe` + GTK
+  runtime). Extract anywhere and run `pitex\bin\pitex.exe`. Like the 22.04
+  build, the terminal console hands interactive commands to an external
+  terminal (there is no VTE-GTK4 on Windows).
 
 ## Development
 
 - CI (`.github/workflows/ci.yml`) runs the repository gates, SwiftPM tests,
-  and the Rust workspace tests on every PR.
+  the Linux Rust workspace tests (24.04 + 22.04 compat), and the Windows
+  workspace build under MSYS2 UCRT64 on every PR.
 - Cutting a release: tag `v*` and push — the release workflow builds the
-  DMG and both deb variants and attaches them to a GitHub Release.
+  DMG, both deb variants, and the Windows zip, and attaches them to a
+  GitHub Release.
 - Report bugs or request features via Issues; changes land via PR.
 
 ## License

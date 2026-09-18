@@ -10,6 +10,10 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use app_ports::FileCapabilityBroker;
+#[cfg(unix)]
+use linux_platform::LinuxFileCapabilityBroker as PlatformFileCapabilityBroker;
+#[cfg(windows)]
+use windows_platform::WindowsFileCapabilityBroker as PlatformFileCapabilityBroker;
 use build_core::{
     BuildEvent, BuildID, BuildIssueRecord, BuildLifecycle, BuildOrchestrator, BuildOutcome,
     BuildPipeline, BuildTarget, BuildToolStage, LoginShellCommandPlan, ShellAuthority,
@@ -627,7 +631,7 @@ pub struct WorkspaceModel {
     /// `capabilityBroker` — the platform capability source (Linux canonical-
     /// path broker), issued on open and released on close like the Swift
     /// security-scoped bookmark flow.
-    pub files: linux_platform::LinuxFileCapabilityBroker,
+    pub files: PlatformFileCapabilityBroker,
     /// `capabilityLease` — held while a project is open.
     pub capability_lease: Option<app_ports::FileAccessLease>,
     /// Current editor selection in UTF-16 offsets, mirrored from the adapter.
@@ -705,7 +709,7 @@ impl WorkspaceModel {
             label_items: Vec::new(),
             bibliography_items: Vec::new(),
             read_write: true,
-            files: linux_platform::LinuxFileCapabilityBroker::new(),
+            files: PlatformFileCapabilityBroker::new(),
             capability_lease: None,
             editor_selection: (0, 0),
             event_sink: None,
@@ -2612,6 +2616,7 @@ fn line_range_utf16(text: &str, loc: usize, len: usize) -> (usize, usize) {
     (start16, len16)
 }
 
+#[cfg(unix)]
 pub(crate) fn uuid_v4() -> String {
     let mut bytes = [0u8; 16];
     // getrandom(2) needs no fd and works without /dev; /dev/urandom is the
@@ -2626,21 +2631,53 @@ pub(crate) fn uuid_v4() -> String {
         })
         .is_ok();
     if !filled {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0) as u64;
-        let mut state = nanos
-            ^ (std::process::id() as u64) << 32
-            ^ (&bytes as *const _ as usize) as u64;
-        for b in bytes.iter_mut() {
-            // xorshift64* — decorrelates the mixed sources across bytes.
-            state ^= state >> 12;
-            state ^= state << 25;
-            state ^= state >> 27;
-            *b = (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 56) as u8;
-        }
+        fill_bytes_fallback(&mut bytes);
     }
+    finish_uuid_v4(bytes)
+}
+
+/// Windows counterpart — no `getrandom`/`/dev/urandom`. `RandomState` keys
+/// are seeded from OS entropy per process (they back `HashMap` DoS
+/// resistance), so hashing a fresh `RandomState` plus time/pid spreads real
+/// entropy across the bytes.
+#[cfg(windows)]
+pub(crate) fn uuid_v4() -> String {
+    let mut bytes = [0u8; 16];
+    use std::hash::{BuildHasher, Hasher};
+    let build = std::collections::hash_map::RandomState::new();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0) as u64;
+    for (i, chunk) in bytes.chunks_mut(8).enumerate() {
+        let mut hasher = build.build_hasher();
+        hasher.write_u64(nanos);
+        hasher.write_u64(i as u64);
+        hasher.write_u32(std::process::id());
+        chunk.copy_from_slice(&hasher.finish().to_le_bytes());
+    }
+    finish_uuid_v4(bytes)
+}
+
+#[cfg(unix)]
+fn fill_bytes_fallback(bytes: &mut [u8; 16]) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0) as u64;
+    let mut state = nanos
+        ^ (std::process::id() as u64) << 32
+        ^ (&*bytes as *const _ as usize) as u64;
+    for b in bytes.iter_mut() {
+        // xorshift64* — decorrelates the mixed sources across bytes.
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        *b = (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 56) as u8;
+    }
+}
+
+fn finish_uuid_v4(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     format!(

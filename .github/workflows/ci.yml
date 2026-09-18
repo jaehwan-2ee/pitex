@@ -67,3 +67,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build -p pitex --no-default-features
         working-directory: Linux
+
+  windows:
+    name: Windows workspace (MSYS2 UCRT64)
+    # The Windows app links the MSYS2 GTK stack, so the authoritative compile
+    # gate is a real UCRT64 toolchain — no cross-compile from Linux.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-gtksourceview5
+            mingw-w64-ucrt-x86_64-poppler
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme
+            mingw-w64-ucrt-x86_64-hicolor-icon-theme
+      - run: cargo build -p pitex-windows
+        working-directory: Windows

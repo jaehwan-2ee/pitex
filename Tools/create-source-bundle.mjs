@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const TOP_LEVEL = ['Mac', 'Linux', 'Docs', 'Fixtures', 'Packages', 'Parity', 'Tools'];
+const TOP_LEVEL = ['Mac', 'Linux', 'Windows', 'Docs', 'Fixtures', 'Packages', 'Parity', 'Tools'];
 const SKIP_DIRS = new Set(['.git', '.gjc', 'node_modules', 'dist', '.build', 'build', 'target', 'DerivedData', 'coverage', 'ReferenceEvidence', 'Evidence', 'Artifacts']);
 const SKIP_EXTENSIONS = new Set(['.db', '.sqlite', '.sqlite3', '.log', '.tmp', '.d', '.o', '.a', '.so', '.dylib', '.class', '.pyc', '.DS_Store']);
 const ALLOWED_BINARY = new Set(['.png', '.jpg', '.jpeg', '.pdf', '.icns', '.zip']);

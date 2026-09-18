@@ -6,7 +6,6 @@ rust-version.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-libc.workspace = true
 flate2.workspace = true
 dirs.workspace = true
 regex.workspace = true
@@ -22,16 +21,26 @@ editor-feature = { path = "../editor-feature" }
 build-feature = { path = "../build-feature" }
 pdf-feature = { path = "../pdf-feature" }
 settings-feature = { path = "../settings-feature" }
-linux-platform = { path = "../linux-platform" }
 gtk-editor-adapter = { path = "../gtk-editor-adapter" }
 gtk4.workspace = true
 libadwaita.workspace = true
 sourceview5.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+linux-platform = { path = "../linux-platform" }
 vte4 = { workspace = true, optional = true }
 
-# Ubuntu 22.04 ships GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — building with
-# --no-default-features produces that variant. Ubuntu 24.04+ keeps the
-# default full-feature build.
+[target.'cfg(windows)'.dependencies]
+windows-platform = { path = "../../../Windows/crates/windows-platform" }
+
+# API level: GTK 4.10 / libadwaita 1.4+. Ubuntu 22.04 ships GTK 4.6 /
+# libadwaita 1.1 — building with --no-default-features produces that
+# compatibility variant. Ubuntu 24.04+ and Windows keep the modern API level.
+# The `vte` feature (embedded VTE terminal) exists only on Unix — Windows
+# builds use `modern-gtk` without it and take the external-terminal fallback,
+# like the Ubuntu 22.04 build.
 [features]
-default = ["modern-gtk"]
-modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4", "dep:vte4"]
+default = ["modern-gtk", "vte"]
+modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
+vte = ["dep:vte4"]

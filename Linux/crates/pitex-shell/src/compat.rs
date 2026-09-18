@@ -1,16 +1,19 @@
 //! Build-variant compatibility shims.
 //!
-//! The default `modern-gtk` feature targets GTK 4.10+ / libadwaita 1.4+ /
-//! VTE (Ubuntu 24.04 and newer). Building with `--no-default-features`
-//! produces the Ubuntu 22.04 variant: GTK 4.6, libadwaita 1.1, and no
-//! VTE-GTK4 — file dialogs use `FileChooserNative`, settings rows use the
-//! `ActionRow` + control pattern, and the console terminal falls back to a
-//! read-only transcript plus an external terminal emulator.
+//! Two orthogonal features select the surface:
+//!
+//! - `modern-gtk` — GTK 4.10+ / libadwaita 1.4+ APIs (file `add_suffix`,
+//!   `ContentFit`, `FontDialogButton`, `ColorDialogButton`). Off for the
+//!   Ubuntu 22.04 build (GTK 4.6 / libadwaita 1.1), on everywhere else.
+//! - `vte` — the embedded VTE terminal. On for Unix desktop builds; off on
+//!   Ubuntu 22.04 and Windows, where the console terminal degrades to a
+//!   read-only transcript plus an external terminal emulator (kgx /
+//!   gnome-terminal / konsole / xterm on Linux, `wt` / conhost on Windows).
 
 use gtk4::prelude::*;
 use libadwaita as adw;
 use adw::prelude::*;
-#[cfg(feature = "modern-gtk")]
+#[cfg(feature = "vte")]
 use vte4::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -188,22 +191,22 @@ pub fn fit_picture(picture: &gtk4::Picture) {
 
 // ─── Embedded terminal ──────────────────────────────────────────────────
 
-/// The bottom-console terminal. Modern builds embed a real VTE widget
-/// running a login shell; the Ubuntu 22.04 build has no VTE-GTK4, so the
+/// The bottom-console terminal. `vte` builds embed a real VTE widget
+/// running a login shell; Ubuntu 22.04 and Windows have no VTE-GTK4, so the
 /// pane degrades to a read-only transcript — status feeds still land here
 /// and `send` hands interactive commands to an external terminal emulator.
 pub enum ShellTerminal {
-    #[cfg(feature = "modern-gtk")]
+    #[cfg(feature = "vte")]
     Embedded(vte4::Terminal),
-    /// Only constructed when `modern-gtk` is off — kept visible in both
-    /// builds so the match arms below stay uniform.
+    /// Only constructed when `vte` is off — kept visible in both builds so
+    /// the match arms below stay uniform.
     #[allow(dead_code)]
     External(gtk4::TextView),
 }
 
 impl ShellTerminal {
     pub fn new() -> Self {
-        #[cfg(feature = "modern-gtk")]
+        #[cfg(feature = "vte")]
         {
             let terminal = vte4::Terminal::new();
             terminal.set_scrollback_lines(10_000);
@@ -211,7 +214,7 @@ impl ShellTerminal {
             terminal.set_scroll_on_keystroke(true);
             Self::Embedded(terminal)
         }
-        #[cfg(not(feature = "modern-gtk"))]
+        #[cfg(not(feature = "vte"))]
         {
             let view = gtk4::TextView::new();
             view.set_editable(false);
@@ -232,7 +235,7 @@ impl ShellTerminal {
     /// `ScrolledWindow` for the legacy transcript).
     pub fn widget(&self) -> gtk4::Widget {
         match self {
-            #[cfg(feature = "modern-gtk")]
+            #[cfg(feature = "vte")]
             Self::Embedded(t) => t.clone().upcast(),
             Self::External(v) => {
                 let scroll = gtk4::ScrolledWindow::new();
@@ -248,7 +251,7 @@ impl ShellTerminal {
     /// it only ever carries the app's own colored status lines.
     pub fn feed(&self, text: &str) {
         match self {
-            #[cfg(feature = "modern-gtk")]
+            #[cfg(feature = "vte")]
             Self::Embedded(t) => t.feed(text.as_bytes()),
             Self::External(v) => {
                 let buffer = v.buffer();
@@ -259,11 +262,11 @@ impl ShellTerminal {
     }
 
     /// A command line to a shell's stdin. Embedded builds write to the PTY;
-    /// the legacy build spawns an external terminal emulator so interactive
+    /// builds without VTE spawn an external terminal emulator so interactive
     /// flows (Pi sign-in, custom commands) still work.
     pub fn send(&self, command: &str, dir: Option<&Path>) {
         match self {
-            #[cfg(feature = "modern-gtk")]
+            #[cfg(feature = "vte")]
             Self::Embedded(t) => t.feed_child(format!("{command}\r").as_bytes()),
             Self::External(_) => {
                 if spawn_external_terminal(command, dir) {
@@ -275,12 +278,12 @@ impl ShellTerminal {
         }
     }
 
-    /// Spawn the login shell — embedded only. The legacy transcript has no
+    /// Spawn the login shell — embedded only. Transcript builds have no
     /// embedded shell; the callback reports failure so `terminal_running`
     /// stays honest.
     pub fn spawn_shell(&self, dir: Option<&Path>, on_result: impl Fn(bool) + 'static) {
         match self {
-            #[cfg(feature = "modern-gtk")]
+            #[cfg(feature = "vte")]
             Self::Embedded(t) => {
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
                 let mut env: Vec<String> =
@@ -312,7 +315,7 @@ impl ShellTerminal {
 
     pub fn set_font(&self, font: Option<&gtk4::pango::FontDescription>) {
         match self {
-            #[cfg(feature = "modern-gtk")]
+            #[cfg(feature = "vte")]
             Self::Embedded(t) => t.set_font(font),
             Self::External(_) => {
                 let _ = font;
@@ -324,7 +327,7 @@ impl ShellTerminal {
     /// terminals are fire-and-forget so there is nothing to connect.
     pub fn connect_exited(&self, f: impl Fn(&Self) + 'static) {
         match self {
-            #[cfg(feature = "modern-gtk")]
+            #[cfg(feature = "vte")]
             Self::Embedded(t) => {
                 let this = self.clone_ref();
                 t.connect_child_exited(move |_, _| f(&this));
@@ -335,7 +338,7 @@ impl ShellTerminal {
         }
     }
 
-    #[cfg(feature = "modern-gtk")]
+    #[cfg(feature = "vte")]
     fn clone_ref(&self) -> Self {
         match self {
             Self::Embedded(t) => Self::Embedded(t.clone()),
@@ -382,6 +385,7 @@ fn strip_ansi(text: &str) -> String {
 
 /// Try common terminal emulators in order; each stays open after the
 /// command finishes so sign-in output remains readable.
+#[cfg(unix)]
 fn spawn_external_terminal(command: &str, dir: Option<&Path>) -> bool {
     let dir_arg = dir.map(|d| d.to_string_lossy().into_owned());
     let hold = format!("{command}; exec bash");
@@ -414,6 +418,29 @@ fn spawn_external_terminal(command: &str, dir: Option<&Path>) -> bool {
         }
     }
     false
+}
+
+/// Windows counterpart: `cmd /k` keeps the console open after the command —
+/// the same "stay readable" contract the Unix `; exec bash` tail gives.
+/// Windows Terminal (`wt`) is preferred; the conhost `start` fallback works
+/// on every Windows install. `current_dir` carries the working directory
+/// into the new console (avoids quoting `start /D` edge cases).
+#[cfg(windows)]
+fn spawn_external_terminal(command: &str, dir: Option<&Path>) -> bool {
+    let mut wt = std::process::Command::new("wt");
+    wt.args(["cmd", "/k", command]);
+    if let Some(d) = dir {
+        wt.current_dir(d);
+    }
+    if wt.spawn().is_ok() {
+        return true;
+    }
+    let mut conhost = std::process::Command::new("cmd");
+    conhost.args(["/c", "start", "Pitex", "cmd", "/k", command]);
+    if let Some(d) = dir {
+        conhost.current_dir(d);
+    }
+    conhost.spawn().is_ok()
 }
 
 // ─── Font / color pickers ────────────────────────────────────────────────

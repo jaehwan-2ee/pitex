@@ -218,8 +218,24 @@ impl LoginShellCommandPlan {
         })
     }
 
+    /// `-l -c` for POSIX shells. On Windows the flag depends on the
+    /// configured shell: `cmd /c` for cmd.exe, `-Command` for PowerShell —
+    /// resolved from the shell executable's file name.
+    #[cfg(unix)]
     pub fn invocation_arguments(&self) -> Vec<String> {
         vec!["-l".into(), "-c".into(), self.command.clone()]
+    }
+    #[cfg(windows)]
+    pub fn invocation_arguments(&self) -> Vec<String> {
+        let name = std::path::Path::new(&self.shell_executable)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if name.starts_with("powershell") || name.starts_with("pwsh") {
+            vec!["-NoProfile".into(), "-Command".into(), self.command.clone()]
+        } else {
+            vec!["/c".into(), self.command.clone()]
+        }
     }
 }
 
@@ -1087,7 +1103,7 @@ impl ProcessControl {
             }
             state.stop_reason = reason;
         }
-        send_signal_to_group(libc::SIGTERM, self.pid);
+        terminate_group(self.pid);
         let this = Arc::clone(self);
         std::thread::spawn(move || {
             std::thread::sleep(this.grace_period);
@@ -1105,13 +1121,13 @@ impl ProcessControl {
         // Reap stragglers in the group even on normal completion, mirroring
         // the Swift escalation: SIGTERM now, SIGKILL after the grace period
         // if the group still exists.
-        send_signal_to_group(libc::SIGTERM, self.pid);
+        terminate_group(self.pid);
         let pid = self.pid;
         let grace = self.grace_period;
         std::thread::spawn(move || {
             std::thread::sleep(grace);
             if process_group_exists(pid) {
-                send_signal_to_group(libc::SIGKILL, pid);
+                kill_group(pid);
             }
         });
         reason
@@ -1120,7 +1136,7 @@ impl ProcessControl {
     fn force_stop_if_running(&self) {
         let exited = self.state.lock().unwrap().exited;
         if !exited {
-            send_signal_to_group(libc::SIGKILL, self.pid);
+            kill_group(self.pid);
         }
     }
 
@@ -1129,16 +1145,66 @@ impl ProcessControl {
     }
 }
 
+#[cfg(unix)]
 fn process_group_exists(pid: i32) -> bool {
     unsafe { libc::kill(-pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) }
 }
 
-fn send_signal_to_group(signal: i32, pid: i32) {
+/// Windows has no process-group signals — `taskkill /T` walks the process
+/// tree instead. `tasklist` reports the leader while it still runs.
+#[cfg(windows)]
+fn process_group_exists(pid: i32) -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout).contains(&format!(",\"{pid}\","))
+        })
+        .unwrap_or(false)
+}
+
+/// SIGTERM to the process group — graceful shutdown request.
+#[cfg(unix)]
+fn terminate_group(pid: i32) {
     unsafe {
-        libc::kill(-pid, signal);
+        libc::kill(-pid, libc::SIGTERM);
     }
 }
 
+/// SIGKILL to the process group — forced teardown after the grace period.
+#[cfg(unix)]
+fn kill_group(pid: i32) {
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+}
+
+/// Windows cannot signal a foreign console process gracefully (`taskkill`
+/// without `/F` only reaches GUI message loops), so the TERM stage is a
+/// best-effort request and the forced stage after the grace period does the
+/// real work — same two-phase shape as the Unix escalation.
+#[cfg(windows)]
+fn terminate_group(pid: i32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+#[cfg(windows)]
+fn kill_group(pid: i32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+#[cfg(unix)]
 fn wait_for_process(pid: i32) -> Result<i32, ProcessRunnerError> {
     let mut status: i32 = 0;
     loop {
@@ -1156,6 +1222,21 @@ fn wait_for_process(pid: i32) -> Result<i32, ProcessRunnerError> {
     }
 }
 
+/// Windows counterpart — the `Child` handle waits directly; the exit code
+/// carries the same information waitpid packs into `status`. Takes the
+/// child field rather than `SpawnedProcess`, which is partially moved once
+/// the reader threads own the output pipes.
+#[cfg(windows)]
+fn wait_for_process(child: &mut std::process::Child) -> Result<i32, ProcessRunnerError> {
+    child
+        .wait()
+        .map(|s| s.code().unwrap_or(1))
+        .map_err(|e| ProcessRunnerError::WaitFailed {
+            code: e.raw_os_error().unwrap_or(1),
+        })
+}
+
+#[cfg(unix)]
 fn decode_wait_status(status: i32) -> ProcessTermination {
     let signal = status & 0x7f;
     if signal == 0 {
@@ -1167,10 +1248,28 @@ fn decode_wait_status(status: i32) -> ProcessTermination {
     }
 }
 
+/// Windows reports exit codes directly — a `taskkill`-terminated process
+/// surfaces as exit code 1, matching how the Unix `Signaled` case is
+/// consumed downstream (non-zero ⇒ failed build).
+#[cfg(windows)]
+fn decode_wait_status(status: i32) -> ProcessTermination {
+    ProcessTermination::Exited { code: status }
+}
+
+#[cfg(unix)]
 struct SpawnedProcess {
     pid: i32,
     standard_output: i32,
     standard_error: i32,
+}
+
+#[cfg(windows)]
+struct SpawnedProcess {
+    pid: i32,
+    /// Kept for `wait()` — the reader threads own the piped streams.
+    child: std::process::Child,
+    standard_output: std::process::ChildStdout,
+    standard_error: std::process::ChildStderr,
 }
 
 fn resolve_working_directory(
@@ -1189,7 +1288,7 @@ fn resolve_working_directory(
             }
         },
         WorkingDirectoryPolicy::Explicit(path) => {
-            if path.starts_with('/') {
+            if Path::new(path).is_absolute() {
                 PathBuf::from(path)
             } else {
                 project_root.join(path)
@@ -1221,6 +1320,7 @@ fn resolved_environment(policy: &EnvironmentPolicy) -> HashMap<String, String> {
 
 /// posix_spawnp searches the parent's PATH, ignoring PATH in its envp. Resolve
 /// against the command's environment so GUI launches and overrides agree.
+#[cfg(unix)]
 fn resolved_executable(
     executable: &str,
     environment: &HashMap<String, String>,
@@ -1254,6 +1354,59 @@ fn resolved_executable(
     Err(ProcessRunnerError::SpawnFailed { code: error_code })
 }
 
+/// Windows counterpart — `std::env::split_paths` handles the `;` separator
+/// and a bare name expands through `PATHEXT` (`latexmk` → `latexmk.exe`,
+/// `npm` → `npm.cmd`).
+#[cfg(windows)]
+fn resolved_executable(
+    executable: &str,
+    environment: &HashMap<String, String>,
+    directory: &Path,
+) -> Result<String, ProcessRunnerError> {
+    if Path::new(executable).is_absolute() {
+        return Ok(executable.to_string());
+    }
+    let names = pathext_candidates(executable, environment);
+    let path = environment.get("PATH").cloned().unwrap_or_default();
+    for entry in std::env::split_paths(&path) {
+        let folder = if entry.as_os_str().is_empty() {
+            directory.to_path_buf()
+        } else if entry.is_absolute() {
+            entry
+        } else {
+            directory.join(entry)
+        };
+        for name in &names {
+            let candidate = folder.join(name);
+            if candidate.is_file() {
+                return Ok(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+    // ERROR_FILE_NOT_FOUND — matches the Unix ENOENT reporting slot.
+    Err(ProcessRunnerError::SpawnFailed { code: 2 })
+}
+
+/// `name` → `[name.exe, name.cmd, name.bat, name.com, name.ps1, name]` in
+/// PATHEXT order (extension-bearing names pass through unchanged).
+#[cfg(windows)]
+fn pathext_candidates(executable: &str, environment: &HashMap<String, String>) -> Vec<String> {
+    if Path::new(executable).extension().is_some() {
+        return vec![executable.to_string()];
+    }
+    let pathext = environment
+        .get("PATHEXT")
+        .map(|s| s.as_str())
+        .unwrap_or(".COM;.EXE;.BAT;.CMD");
+    pathext
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(|e| format!("{executable}{e}"))
+        .chain(std::iter::once(executable.to_string()))
+        .collect()
+}
+
+#[cfg(unix)]
 fn is_executable_file(path: &Path) -> bool {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -1263,6 +1416,7 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+#[cfg(unix)]
 fn spawn(
     executable: &str,
     arguments: &[String],
@@ -1396,6 +1550,61 @@ fn spawn(
     })
 }
 
+/// Windows counterpart — `std::process::Command` with piped output. Script
+/// shims (`npm.cmd`, `pi.bat`) cannot run through CreateProcess, so they go
+/// through `cmd /c` / `powershell -File` the way the console resolves them.
+/// `taskkill /T` covers the child tree, matching the Unix process group.
+#[cfg(windows)]
+fn spawn(
+    executable: &str,
+    arguments: &[String],
+    directory: &Path,
+    environment: &HashMap<String, String>,
+) -> Result<SpawnedProcess, ProcessRunnerError> {
+    let extension = Path::new(executable)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mut command = match extension.as_str() {
+        "cmd" | "bat" => {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/c").arg(executable).args(arguments);
+            c
+        }
+        "ps1" => {
+            let mut c = std::process::Command::new("powershell");
+            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(executable)
+                .args(arguments);
+            c
+        }
+        _ => {
+            let mut c = std::process::Command::new(executable);
+            c.args(arguments);
+            c
+        }
+    };
+    command
+        .current_dir(directory)
+        .env_clear()
+        .envs(environment)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().map_err(|e| ProcessRunnerError::SpawnFailed {
+        code: e.raw_os_error().unwrap_or(1),
+    })?;
+    let standard_output = child.stdout.take().ok_or(ProcessRunnerError::PipeFailed { code: 0 })?;
+    let standard_error = child.stderr.take().ok_or(ProcessRunnerError::PipeFailed { code: 0 })?;
+    Ok(SpawnedProcess {
+        pid: child.id() as i32,
+        child,
+        standard_output,
+        standard_error,
+    })
+}
+
 /// Sequences chunks across both reader threads exactly like the Swift actor.
 struct OutputSequencer<'a> {
     sequence: Mutex<u64>,
@@ -1420,6 +1629,7 @@ impl<'a> OutputSequencer<'a> {
     }
 }
 
+#[cfg(unix)]
 fn read_fd_into(fd: i32, channel: ProcessOutputChannel, sequencer: &OutputSequencer) -> Vec<u8> {
     let mut collected = Vec::new();
     let mut buffer = [0u8; 4096];
@@ -1442,6 +1652,31 @@ fn read_fd_into(fd: i32, channel: ProcessOutputChannel, sequencer: &OutputSequen
     }
     unsafe {
         libc::close(fd);
+    }
+    collected
+}
+
+/// Windows counterpart — the piped `ChildStdout`/`ChildStderr` implement
+/// `Read`, so the loop is plain `std::io`; EOF/closed pipe both end it.
+#[cfg(windows)]
+fn read_fd_into(
+    mut fd: impl std::io::Read,
+    channel: ProcessOutputChannel,
+    sequencer: &OutputSequencer,
+) -> Vec<u8> {
+    use std::io::Read;
+    let mut collected = Vec::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        match fd.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                let bytes = buffer[..count].to_vec();
+                collected.extend_from_slice(&bytes);
+                sequencer.emit(channel, bytes);
+            }
+            Err(_) => break,
+        }
     }
     collected
 }
@@ -1527,7 +1762,9 @@ impl ProcessRunner {
     ) -> Result<ProcessResult, ProcessRunnerError> {
         let directory = resolve_working_directory(working_directory, project_root, source_directory)?;
         let environment_values = resolved_environment(environment);
-        let spawned = spawn(
+        // `mut` only matters on Windows, where `wait` takes `&mut Child`.
+        #[allow(unused_mut)]
+        let mut spawned = spawn(
             &resolved_executable(executable, &environment_values, &directory)?,
             arguments,
             &directory,
@@ -1576,7 +1813,10 @@ impl ProcessRunner {
                 });
             }
 
+            #[cfg(unix)]
             let status = wait_for_process(spawned.pid)?;
+            #[cfg(windows)]
+            let status = wait_for_process(&mut spawned.child)?;
             let reason = control.process_did_exit();
             let standard_output = stdout_reader.join().unwrap_or_default();
             let standard_error = stderr_reader.join().unwrap_or_default();
@@ -2554,19 +2794,38 @@ impl StreamingBuildExecutor {
             .get("PATH")
             .cloned()
             .or_else(|| std::env::var("PATH").ok())
-            .unwrap_or_else(|| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+            .unwrap_or_else(|| default_path_fallback().to_string());
         let mut extra: Vec<String> = texlive_bin_dirs()
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
+        #[cfg(unix)]
         extra.push("/usr/local/bin".to_string());
-        overrides.insert("PATH".to_string(), format!("{path}:{}", extra.join(":")));
+        if extra.is_empty() {
+            overrides.insert("PATH".to_string(), path);
+        } else {
+            let separator = if cfg!(windows) { ";" } else { ":" };
+            overrides.insert(
+                "PATH".to_string(),
+                format!("{path}{}{}", separator, extra.join(separator)),
+            );
+        }
         EnvironmentPolicy::Inherit { overrides }
+    }
+}
+
+/// PATH used when the environment carries none at all.
+fn default_path_fallback() -> &'static str {
+    if cfg!(windows) {
+        ""
+    } else {
+        "/usr/bin:/bin:/usr/sbin:/sbin"
     }
 }
 
 /// Upstream TeX Live installs under `/usr/local/texlive/<year>/bin/<arch>-linux`
 /// (the distro package lands in `/usr/bin` directly). Newest year first.
+#[cfg(unix)]
 pub fn texlive_bin_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir("/usr/local/texlive")
         .map(|entries| {
@@ -2594,6 +2853,38 @@ pub fn texlive_bin_dirs() -> Vec<PathBuf> {
         .unwrap_or_default();
     dirs.sort();
     dirs.reverse();
+    dirs
+}
+
+/// Windows counterpart — TeX Live installs under `C:\texlive\<year>\bin`
+/// (`windows` on 2023+, `win32` before); MiKTeX lands under Program Files
+/// or the per-user `%LOCALAPPDATA%\Programs` prefix. Newest TeX Live year
+/// first, MiKTeX after.
+#[cfg(windows)]
+pub fn texlive_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut years: Vec<PathBuf> = std::fs::read_dir("C:/texlive")
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    years.sort_by(|a, b| b.cmp(a));
+    for year in years {
+        for arch in ["windows", "win32"] {
+            let candidate = year.join("bin").join(arch);
+            if candidate.is_dir() {
+                dirs.push(candidate);
+            }
+        }
+    }
+    for candidate in [
+        PathBuf::from("C:/Program Files/MiKTeX/miktex/bin/x64"),
+        std::env::var("LOCALAPPDATA")
+            .map(|d| PathBuf::from(d).join("Programs/MiKTeX/miktex/bin/x64"))
+            .unwrap_or_default(),
+    ] {
+        if candidate.is_dir() {
+            dirs.push(candidate);
+        }
+    }
     dirs
 }
 

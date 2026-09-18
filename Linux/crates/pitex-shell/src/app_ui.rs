@@ -11,6 +11,10 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use app_ports::DocumentMutationResult;
+#[cfg(unix)]
+use linux_platform::LinuxEnvironment as PlatformEnvironment;
+#[cfg(windows)]
+use windows_platform::WindowsEnvironment as PlatformEnvironment;
 use document_session_core::{DocumentMutation, DocumentSaveState, DocumentSession};
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, glib};
@@ -142,7 +146,7 @@ pub struct AppState {
     pub fold: Option<Rc<crate::fold::FoldEngine>>,
     /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
     /// capability lease like `capabilityBroker`, `workspace` opens externals).
-    pub env: linux_platform::LinuxEnvironment,
+    pub env: PlatformEnvironment,
     pub active_session: Option<DocumentSession>,
     /// Debounce source for post-edit re-highlighting (120ms like Swift).
     pub highlight_pending: Cell<bool>,
@@ -197,7 +201,7 @@ impl AppState {
             terminal_running: false,
             editor: None,
             fold: None,
-            env: linux_platform::LinuxEnvironment::make("dev.pitex.app"),
+            env: PlatformEnvironment::make("dev.pitex.app"),
             active_session: None,
             highlight_pending: Cell::new(false),
             disk_pending: RefCell::new(HashMap::new()),
@@ -1411,12 +1415,18 @@ impl AppState {
                                     // Shell-quote the path — `{:?}` debug
                                     // format is NOT quoting: `$`, backticks
                                     // and `\` stay live inside bash quotes.
+                                    #[cfg(unix)]
                                     let command = format!(
                                         "bash {} && exit",
                                         crate::agent::pi_installer::shell_quote(
                                             &script.display().to_string()
                                         )
                                     );
+                                    // `cmd /k` (spawn_external_terminal) runs
+                                    // the .bat directly — quoting the path
+                                    // is the whole command line.
+                                    #[cfg(windows)]
+                                    let command = format!("\"{}\"", script.display());
                                     st.model.console_section = ConsoleSection::Terminal;
                                     st.model.bottom_panel_visible = true;
                                     st.refresh_console_visibility();

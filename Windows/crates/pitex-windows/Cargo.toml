@@ -1,0 +1,16 @@
+[package]
+name = "pitex-windows"
+version = "1.0.2"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "pitex"
+path = "src/main.rs"
+
+# The Windows build shares `pitex-shell` with the Linux app: `modern-gtk`
+# keeps the GTK 4.10 / libadwaita 1.4+ API level (all present in current
+# MSYS2), while the `vte` feature stays off — there is no VTE-GTK4 on
+# Windows, so the terminal pane uses the external-terminal fallback.
+[dependencies]
+pitex-shell = { path = "../../../Linux/crates/pitex-shell", default-features = false, features = ["modern-gtk"] }

@@ -20,18 +20,21 @@ function add(violations, code, path, message) {
 }
 
 // Minimal TOML-aware-enough dependency scanner: tracks [dependencies],
-// [dev-dependencies], and [build-dependencies] sections and captures entries
+// [dev-dependencies], [build-dependencies], and target-scoped
+// [target.'cfg(...)'.dependencies] sections and captures entries
 // of the forms `name = { path = "../x" }`, `name = { version = ... }`, and
 // `name.workspace = true`.
 function parseCargoToml(source) {
-  const sections = { dependencies: [], 'dev-dependencies': [], 'build-dependencies': [] };
+  const sections = { dependencies: [], 'dev-dependencies': [], 'build-dependencies': [], 'target-dependencies': [] };
   let section = null;
   for (const rawLine of source.split('\n')) {
     const line = rawLine.replace(/#.*$/, '').trim();
     const header = line.match(/^\[\s*([^\]]+)\s*\]/);
     if (header) {
       const name = header[1].trim();
-      section = Object.prototype.hasOwnProperty.call(sections, name) ? name : null;
+      if (Object.prototype.hasOwnProperty.call(sections, name)) section = name;
+      else if (/^target\..*\.dependencies$/.test(name)) section = 'target-dependencies';
+      else section = null;
       continue;
     }
     if (!section || !line) continue;
@@ -121,6 +124,14 @@ export async function verifyRustDag({ root = DEFAULT_ROOT } = {}) {
   // ── Per-crate edge validation ───────────────────────────────────────────
   const guiDeps = new Set(dag.guiDependencies ?? []);
   const nonPortable = new Set(dag.nonPortableTargets ?? []);
+  const externalEdges = new Map(
+    Object.entries(dag.externalPathDependencies ?? {}).map(([name, deps]) => [name, deps ?? []])
+  );
+  for (const [name, deps] of externalEdges) {
+    if (!configured.has(name)) add(violations, 'DAG_UNKNOWN_EDGE', 'Tools/rust-target-dag.json', `externalPathDependencies references unknown crate ${name}`);
+    if (new Set(deps).size !== deps.length) add(violations, 'DAG_DEPENDENCIES', 'Tools/rust-target-dag.json', `${name} externalPathDependencies must be a unique array`);
+    for (const dep of deps) if (configured.has(dep)) add(violations, 'DAG_DEPENDENCIES', 'Tools/rust-target-dag.json', `${name}: ${dep} is a workspace member and must use targets dependencies instead`);
+  }
   for (const [name, dir] of [...memberDirs.entries()].sort()) {
     const manifest = join(rustRoot, dir, 'Cargo.toml');
     const rel = `Linux/${dir}/Cargo.toml`;
@@ -131,17 +142,22 @@ export async function verifyRustDag({ root = DEFAULT_ROOT } = {}) {
       continue;
     }
     const expected = [...(configured.get(name) ?? [])].sort();
-    const internal = parsed.dependencies
+    const external = new Set(externalEdges.get(name) ?? []);
+    const internal = [...parsed.dependencies, ...parsed['target-dependencies']]
       .filter((dep) => dep.path?.startsWith('../'))
       .map((dep) => dep.path.split('/').pop());
     const uniqueInternal = [...new Set(internal)].sort();
+    const workspaceInternal = uniqueInternal.filter((edge) => !external.has(edge));
     if (internal.length !== uniqueInternal.length) {
       add(violations, 'DUPLICATE_EDGE', rel, `${name} declares a duplicate internal dependency`);
     }
-    if (JSON.stringify(expected) !== JSON.stringify(uniqueInternal)) {
-      add(violations, 'EDGE_MISMATCH', rel, `${name}: expected [${expected}], declared [${uniqueInternal}]`);
+    for (const edge of external) {
+      if (!uniqueInternal.includes(edge)) add(violations, 'EXTERNAL_EDGE_MISSING', rel, `${name}: allowed external path dependency ${edge} is not declared`);
     }
-    for (const edge of uniqueInternal) {
+    if (JSON.stringify(expected) !== JSON.stringify(workspaceInternal)) {
+      add(violations, 'EDGE_MISMATCH', rel, `${name}: expected [${expected}], declared [${workspaceInternal}]`);
+    }
+    for (const edge of workspaceInternal) {
       if (!configured.has(edge)) add(violations, 'DAG_UNKNOWN_EDGE', rel, `${name} depends on non-workspace path crate ${edge}`);
       else if (!configured.get(name).includes(edge)) add(violations, 'FORBIDDEN_EDGE', rel, `${name} -> ${edge}`);
     }

@@ -1,4 +1,5 @@
 //! Port of `Packages/TexCore/Tests/TexCoreTests/ProcessRunnerTests.swift`.
+#![cfg(unix)] // POSIX process semantics — the Windows runner is covered by CI builds.
 
 use build_core::*;
 use std::collections::HashMap;

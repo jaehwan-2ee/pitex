@@ -10,6 +10,17 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use adw::prelude::*;
 
+#[cfg(unix)]
+use linux_platform::{
+    LinuxDefaultEditorRegistration as PlatformDefaultEditorRegistration,
+    LinuxWorkspaceOpener as PlatformWorkspaceOpener,
+};
+#[cfg(windows)]
+use windows_platform::{
+    WindowsDefaultEditorRegistration as PlatformDefaultEditorRegistration,
+    WindowsWorkspaceOpener as PlatformWorkspaceOpener,
+};
+
 use crate::app_ui::{a11y, AppState, UiHandles};
 use crate::compat;
 use crate::l10n::tr;
@@ -883,7 +894,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     make_default.set_subtitle(&tr(lang, "settings.compile.make_default_note"));
     make_default.set_activatable(true);
     make_default.connect_activated(|_| {
-        let _ = linux_platform::LinuxDefaultEditorRegistration::register_as_default();
+        let _ = PlatformDefaultEditorRegistration::register_as_default();
     });
     default_group.add(&make_default);
     compile.add(&default_group);
@@ -1392,7 +1403,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     custom_provider.connect_activated(|_| {
         if let Ok(path) = crate::agent::pi_paths::configuration_file(true) {
             let _ = app_ports::WorkspaceOpening::open_document(
-                &linux_platform::LinuxWorkspaceOpener,
+                &PlatformWorkspaceOpener,
                 &path,
             );
         }
@@ -1404,7 +1415,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     config.connect_activated(|_| {
         if let Ok(path) = crate::agent::pi_paths::configuration_file(false) {
             let _ = app_ports::WorkspaceOpening::open_document(
-                &linux_platform::LinuxWorkspaceOpener,
+                &PlatformWorkspaceOpener,
                 &path,
             );
         }

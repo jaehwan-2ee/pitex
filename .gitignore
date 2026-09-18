@@ -2,6 +2,8 @@
 **/.build/
 **/.swiftpm/
 Linux/target/
+Windows/target/
+Windows/dist/
 DerivedData/
 *.xcuserstate
 *.xcuserdata/
