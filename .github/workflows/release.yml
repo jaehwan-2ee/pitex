@@ -116,10 +116,28 @@ jobs:
         run: |
           cd Windows/dist
           zip -qr "${GITHUB_WORKSPACE}/Pitex-${GITHUB_REF_NAME}-windows-amd64.zip" pitex
+      - name: Ensure NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+          }
+      # Per-user NSIS installer — the recommended way to install (double-
+      # click, Start Menu entry, Add/Remove Programs, no admin). The in-app
+      # updater drives it with /S.
+      - name: Build installer
+        run: |
+          cd Windows
+          makensis -V2 -DVERSION="${GITHUB_REF_NAME#v}" \
+            -DOUTFILE="Pitex-${GITHUB_REF_NAME}-windows-amd64-setup.exe" pitex.nsi
       - uses: actions/upload-artifact@v4
         with:
           name: windows-zip
           path: 'Pitex-*.zip'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup
+          path: 'Windows/Pitex-*-setup.exe'
 
   publish:
     name: Publish GitHub Release

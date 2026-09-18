@@ -135,10 +135,15 @@ Prebuilt artifacts are published on the
   The terminal console shows status output and hands interactive commands
   (e.g. Pi sign-in) to an external terminal emulator, since 22.04 has no
   VTE-GTK4.
+- `Pitex-*-windows-amd64-setup.exe` — **recommended Windows install**:
+  double-click the NSIS installer; it installs to
+  `%LOCALAPPDATA%\Programs\Pitex` (no admin rights needed), adds Start
+  Menu/Desktop shortcuts, and registers an Add/Remove Programs entry.
 - `Pitex-*-windows-amd64.zip` — portable Windows bundle (`pitex.exe` + GTK
-  runtime). Extract anywhere and run `pitex\bin\pitex.exe`. Like the 22.04
-  build, the terminal console hands interactive commands to an external
-  terminal (there is no VTE-GTK4 on Windows).
+  runtime) for users who prefer no installer. Extract anywhere and run
+  `pitex\bin\pitex.exe`. Like the 22.04 build, the terminal console hands
+  interactive commands to an external terminal (there is no VTE-GTK4 on
+  Windows).
 
 ### macOS via Homebrew
 
@@ -168,8 +173,10 @@ Windows.
   - *Linux*: runs `pkexec apt install` on the downloaded deb (polkit
     password prompt), falling back to `sudo apt install` in a terminal
     window. Restart Pitex to finish.
-  - *Windows*: extracts the zip and hands off to a small updater script
-    that swaps the bundle after the app exits and relaunches `pitex.exe`.
+  - *Windows*: downloads the `*-setup.exe` installer and runs it silently
+    (`/S`) after the app exits, then relaunches `pitex.exe`. A portable-zip
+    install migrates to `%LOCALAPPDATA%\Programs\Pitex` automatically;
+    zip-only releases fall back to a staged bundle swap.
 - **Automatically download and install updates** — when on, Pitex runs the
   same check→download→install pass on every launch. Stored as
   `pitex.pref.update.autoInstall` on all platforms.

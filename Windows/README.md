@@ -54,6 +54,22 @@ Zip `dist/pitex` to ship it; the folder is portable (no installer, no
 registry writes — default-editor registration only happens when the user
 asks for it in settings).
 
+## Installer
+
+`pitex.nsi` builds the recommended per-user installer
+(`Pitex-*-windows-amd64-setup.exe`) from the same bundle:
+
+```sh
+makensis -DVERSION=1.0.4 -DOUTFILE=Pitex-setup.exe pitex.nsi   # from Windows/
+```
+
+It installs to `%LOCALAPPDATA%\Programs\Pitex` (no admin rights), adds
+Start Menu/Desktop shortcuts, writes an Add/Remove Programs entry with an
+uninstaller, and supports `/S` silent installs — which is exactly what the
+in-app updater drives: it waits for the app to exit, runs `setup.exe /S`,
+and relaunches the new exe. The release workflow produces both the
+installer and the portable zip.
+
 ## Notes
 
 - TeX discovery checks TeX Live under `C:\texlive\<year>\bin\{windows,win32}`

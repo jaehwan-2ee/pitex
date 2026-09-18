@@ -77,21 +77,25 @@ fn latest_release() -> Result<UpdateInfo, String> {
         .get("tag_name")
         .and_then(|t| t.as_str())
         .ok_or_else(|| "The latest release has no tag.".to_string())?;
-    let suffix = asset_suffix();
-    let asset = json
-        .get("assets")
-        .and_then(|a| a.as_array())
-        .into_iter()
-        .flatten()
-        .find_map(|asset| {
-            let name = asset.get("name")?.as_str()?;
-            if !name.ends_with(suffix) {
-                return None;
-            }
-            let url = asset.get("browser_download_url")?.as_str()?;
-            Some((name.to_string(), url.to_string()))
+    // Preferred asset first — e.g. Windows favors the setup.exe installer
+    // and only falls back to the portable zip if a release lacks one.
+    let asset = asset_suffixes()
+        .iter()
+        .find_map(|suffix| {
+            json.get("assets")
+                .and_then(|a| a.as_array())
+                .into_iter()
+                .flatten()
+                .find_map(|asset| {
+                    let name = asset.get("name")?.as_str()?;
+                    if !name.ends_with(suffix) {
+                        return None;
+                    }
+                    let url = asset.get("browser_download_url")?.as_str()?;
+                    Some((name.to_string(), url.to_string()))
+                })
         })
-        .ok_or_else(|| format!("No {suffix} asset in release {tag}."))?;
+        .ok_or_else(|| format!("No suitable asset in release {tag}."))?;
     Ok(UpdateInfo {
         tag: tag.to_string(),
         asset_name: asset.0,
@@ -99,23 +103,25 @@ fn latest_release() -> Result<UpdateInfo, String> {
     })
 }
 
-/// The asset name tail this platform's packages use.
+/// Asset name tails this platform's packages use, most preferred first.
 #[cfg(target_os = "macos")]
-fn asset_suffix() -> &'static str {
-    "macos-arm64.dmg"
+fn asset_suffixes() -> &'static [&'static str] {
+    &["macos-arm64.dmg"]
 }
-#[cfg(target_os = "windows")]
-fn asset_suffix() -> &'static str {
-    "windows-amd64.zip"
+/// Windows prefers the per-user NSIS installer; the portable zip remains
+/// as the fallback for releases that predate it.
+#[cfg(windows)]
+fn asset_suffixes() -> &'static [&'static str] {
+    &["windows-amd64-setup.exe", "windows-amd64.zip"]
 }
 /// Linux picks the deb matching the distro: the 22.04 compat package for
 /// Ubuntu 22.04 (no VTE-GTK4 there), the full package elsewhere.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn asset_suffix() -> &'static str {
+fn asset_suffixes() -> &'static [&'static str] {
     if is_ubuntu_2204() {
-        "ubuntu22.04-amd64.deb"
+        &["ubuntu22.04-amd64.deb"]
     } else {
-        "ubuntu24.04-amd64.deb"
+        &["ubuntu24.04-amd64.deb"]
     }
 }
 
@@ -215,11 +221,52 @@ fn install_impl(downloaded: &Path, _info: &UpdateInfo) -> Result<InstallOutcome,
     Ok(InstallOutcome::ManualFallback)
 }
 
+#[cfg(windows)]
+fn install_impl(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, String> {
+    if downloaded
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false)
+    {
+        install_setup(downloaded)
+    } else {
+        install_zip(downloaded, info)
+    }
+}
+
+/// NSIS setup.exe: the installer does all file work — an updater .cmd just
+/// waits for this process to exit, runs it silently (/S), and relaunches
+/// the installed exe. A portable-zip copy migrates to the installed
+/// location (%LOCALAPPDATA%\Programs\Pitex) the same way.
+#[cfg(windows)]
+fn install_setup(setup: &Path) -> Result<InstallOutcome, String> {
+    let staging = setup
+        .parent()
+        .ok_or_else(|| "The download path is invalid.".to_string())?;
+    let installed_exe = dirs::data_local_dir()
+        .map(|d| d.join("Programs").join("Pitex").join("bin").join("pitex.exe"))
+        .ok_or_else(|| "Could not resolve the install directory.".to_string())?;
+    let script_path = staging.join("pitex-update.cmd");
+    let script = format!(
+        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\ndel \"%~f0\"\r\n",
+        setup.to_string_lossy(),
+        installed_exe.to_string_lossy()
+    );
+    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
+    Command::new("cmd")
+        .args(["/c", "start", "/min", "PitexUpdate"])
+        .arg(&script_path)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(InstallOutcome::ExitRequested)
+}
+
 /// Portable zip: a running exe cannot overwrite itself, so an updater .cmd
 /// waits for the process to exit, mirrors the new tree over the install
 /// root, and relaunches it.
 #[cfg(windows)]
-fn install_impl(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, String> {
+fn install_zip(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, String> {
     let staging = downloaded
         .parent()
         .map(|p| p.join(format!("extract-{}", crate::model::uuid_v4())))
