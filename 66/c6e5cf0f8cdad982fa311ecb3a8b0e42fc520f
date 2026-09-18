@@ -1,0 +1,425 @@
+.github/ISSUE_TEMPLATE/bug_report.yml
+  s_e0a18e282d7f25::t_8d8fbf1147eccb 1-42
+.github/ISSUE_TEMPLATE/feature_request.yml
+  s_e0a18e282d7f25::t_e22d2039e6b734 1-29
+.github/PULL_REQUEST_TEMPLATE.md
+  s_e0a18e282d7f25::t_db514a1ccf4c91 1-18
+.github/workflows/ci.yml
+  s_e0a18e282d7f25::t_0b46f1e079dab4 1-49
+.github/workflows/release.yml
+  s_e0a18e282d7f25::t_d6332bb6cc6e40 1-86
+.gitignore
+  s_e0a18e282d7f25::t_3c17e48ea3a1ae 1-48
+Fixtures/expected/accessibility-identifiers.json
+  s_e0a18e282d7f25::t_983148648d0816 1-144
+Fixtures/expected/project-graph.json
+  s_e0a18e282d7f25::t_483396e0995116 1-15
+Fixtures/expected/session-reopen.json
+  s_e0a18e282d7f25::t_6fbbb8725a4a80 1-69
+Fixtures/process/child-tree.sh
+  s_e0a18e282d7f25::t_d8ec7961f01006 1-28
+Fixtures/process/emit-log.sh
+  s_e0a18e282d7f25::t_1817e290bbc879 1-14
+Fixtures/projects/build-matrix/main.tex
+  s_e0a18e282d7f25::t_8d5a467cc25a3a 1-21
+Fixtures/projects/build-matrix/references.bib
+  s_e0a18e282d7f25::t_8589134df1f9e5 1-6
+Fixtures/projects/large/main.tex
+  s_e0a18e282d7f25::t_5655f00a0baa24 1-5607
+Fixtures/projects/multifile/main.tex
+  s_e0a18e282d7f25::t_be1ca40c60e6c0 1-9
+Fixtures/projects/multifile/sections/details.tex
+  s_e0a18e282d7f25::t_e7348d0086426b 1-2
+Fixtures/projects/multifile/sections/intro.tex
+  s_e0a18e282d7f25::t_10f320d56aea06 1-2
+Fixtures/projects/small/main.tex
+  s_e0a18e282d7f25::t_280ae7561bc07b 1-8
+Fixtures/synctex/forward-output.txt
+  s_e0a18e282d7f25::t_8b910c9c8a3f0e 1-41
+Fixtures/synctex/inverse-output.txt
+  s_e0a18e282d7f25::t_6e23399b2d9e8a 1-41
+LICENSE
+  s_e0a18e282d7f25::t_a42fc8e034acb5 1-75
+Linux/Cargo.lock
+  s_e0a18e282d7f25::t_70ab2b9773b69e 1-1372
+Linux/Cargo.toml
+  s_e0a18e282d7f25::t_441343de4a8f95 1-44
+Linux/README.md
+  s_e0a18e282d7f25::t_6d1c8c6cd40ce0 1-40
+Linux/crates/ai-core/Cargo.toml
+  s_e0a18e282d7f25::t_1f797456f73af8 1-9
+Linux/crates/ai-core/src/lib.rs
+  s_e0a18e282d7f25::t_170618e9c87135 1-612
+Linux/crates/app-ports/Cargo.toml
+  s_e0a18e282d7f25::t_51def0ed404ac8 1-14
+Linux/crates/app-ports/src/lib.rs
+  s_e0a18e282d7f25::t_d97cbc0b1b1f83 1-205
+Linux/crates/build-core/Cargo.toml
+  s_e0a18e282d7f25::t_bf3e24f90c7c72 1-11
+Linux/crates/build-core/src/lib.rs
+  s_e0a18e282d7f25::t_f68cb6057541bc 1-2663
+Linux/crates/build-core/tests/orchestrator.rs
+  s_e0a18e282d7f25::t_5f459e179f027c 1-675
+Linux/crates/build-core/tests/runner.rs
+  s_e0a18e282d7f25::t_e1f0d5980cd246 1-362
+Linux/crates/build-feature/Cargo.toml
+  s_e0a18e282d7f25::t_b84f7e50a417ef 1-10
+Linux/crates/build-feature/src/lib.rs
+  s_e0a18e282d7f25::t_66c655e91d1872 1-279
+Linux/crates/document-session-core/Cargo.toml
+  s_e0a18e282d7f25::t_9ffd3c74c8b86d 1-11
+Linux/crates/document-session-core/src/lib.rs
+  s_e0a18e282d7f25::t_a444baa18a85e7 1-694
+Linux/crates/document-session-core/tests/session.rs
+  s_e0a18e282d7f25::t_4cfe718c754c21 1-241
+Linux/crates/editor-feature/Cargo.toml
+  s_e0a18e282d7f25::t_e0386535bbf0ac 1-11
+Linux/crates/editor-feature/src/fold.rs
+  s_e0a18e282d7f25::t_437c0de47892a1 1-290
+Linux/crates/editor-feature/src/lib.rs
+  s_e0a18e282d7f25::t_08d22cc177c6b0 1-260
+Linux/crates/gtk-editor-adapter/Cargo.toml
+  s_e0a18e282d7f25::t_07997f9a1627cb 1-13
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  s_e0a18e282d7f25::t_955b513deda3c7 1-403
+Linux/crates/language-core/Cargo.toml
+  s_e0a18e282d7f25::t_7448078b906722 1-13
+Linux/crates/language-core/src/lib.rs
+  s_e0a18e282d7f25::t_b0e4395738c329 1-1537
+Linux/crates/language-core/tests/language.rs
+  s_e0a18e282d7f25::t_d6635c5c871b3f 1-459
+Linux/crates/linux-platform/Cargo.toml
+  s_e0a18e282d7f25::t_666aabc6d0ceaa 1-13
+Linux/crates/linux-platform/src/lib.rs
+  s_e0a18e282d7f25::t_acbcdce6c5001d 1-568
+Linux/crates/parity-kit/Cargo.toml
+  s_e0a18e282d7f25::t_b0e48f513e4d50 1-9
+Linux/crates/parity-kit/src/lib.rs
+  s_e0a18e282d7f25::t_e09e3bf782fa26 1-391
+Linux/crates/pdf-feature/Cargo.toml
+  s_e0a18e282d7f25::t_01ea7d2452ff2a 1-10
+Linux/crates/pdf-feature/src/lib.rs
+  s_e0a18e282d7f25::t_4bb48d583b764b 1-186
+Linux/crates/pitex-shell/Cargo.toml
+  s_e0a18e282d7f25::t_28f112a6e084fc 1-30
+Linux/crates/pitex-shell/src/agent.rs
+  s_e0a18e282d7f25::t_8ca95efb16c1b7 1-2670
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_e0a18e282d7f25::t_8547c55b0b2093 1-3685
+Linux/crates/pitex-shell/src/fold.rs
+  s_e0a18e282d7f25::t_5808667cacfe7a 1-421
+Linux/crates/pitex-shell/src/l10n.rs
+  s_e0a18e282d7f25::t_3a5a5f7b143ee9 1-160
+Linux/crates/pitex-shell/src/lib.rs
+  s_e0a18e282d7f25::t_cbaffc4f4dea3d 1-20
+Linux/crates/pitex-shell/src/model.rs
+  s_e0a18e282d7f25::t_37ac12933bd84a 1-2647
+Linux/crates/pitex-shell/src/panes.rs
+  s_e0a18e282d7f25::t_63c337801cae35 1-1600
+Linux/crates/pitex-shell/src/pdf.rs
+  s_e0a18e282d7f25::t_9d9df1cc8fd730 1-223
+Linux/crates/pitex-shell/src/settings.rs
+  s_e0a18e282d7f25::t_360e109bb7ddda 1-703
+Linux/crates/pitex-shell/src/synctex.rs
+  s_e0a18e282d7f25::t_f257fade5b51a1 1-560
+Linux/crates/pitex-shell/tests/accessibility_contract.rs
+  s_e0a18e282d7f25::t_d72fb58cdae61d 1-198
+Linux/crates/pitex-shell/tests/tex_project_resolver.rs
+  s_e0a18e282d7f25::t_ce54056968be3e 1-215
+Linux/crates/pitex-shell/tests/thinking_levels.rs
+  s_e0a18e282d7f25::t_c8b12e29fd77c7 1-144
+Linux/crates/pitex-shell/tests/workspace_discovery.rs
+  s_e0a18e282d7f25::t_22f2a9dcbc3686 1-105
+Linux/crates/pitex/Cargo.toml
+  s_e0a18e282d7f25::t_7a5c9b7d7041f9 1-11
+Linux/crates/pitex/src/main.rs
+  s_e0a18e282d7f25::t_b4cc1839524d6b 1-3
+Linux/crates/project-core/Cargo.toml
+  s_e0a18e282d7f25::t_d8bbebb5786f69 1-9
+Linux/crates/project-core/src/lib.rs
+  s_e0a18e282d7f25::t_29df1bf3ef06c1 1-805
+Linux/crates/project-core/tests/workspace.rs
+  s_e0a18e282d7f25::t_c9db7c234168e6 1-292
+Linux/crates/project-feature/Cargo.toml
+  s_e0a18e282d7f25::t_11b4885ef76af7 1-10
+Linux/crates/project-feature/src/lib.rs
+  s_e0a18e282d7f25::t_ec547098ab2ca9 1-221
+Linux/crates/settings-feature/Cargo.toml
+  s_e0a18e282d7f25::t_d28e9019b94868 1-15
+Linux/crates/settings-feature/src/lib.rs
+  s_e0a18e282d7f25::t_92bd1c6fd6a23b 1-258
+Linux/crates/settings-feature/tests/architecture.rs
+  s_e0a18e282d7f25::t_e72bcdf1e15cf0 1-46
+Linux/crates/synctex-core/Cargo.toml
+  s_e0a18e282d7f25::t_2fa6fa617a731b 1-11
+Linux/crates/synctex-core/src/lib.rs
+  s_e0a18e282d7f25::t_57d891abe7618f 1-667
+Linux/crates/synctex-core/tests/synctex.rs
+  s_e0a18e282d7f25::t_7b437a6646d681 1-316
+Linux/crates/tex-domain/Cargo.toml
+  s_e0a18e282d7f25::t_6a34af241866a5 1-8
+Linux/crates/tex-domain/src/lib.rs
+  s_e0a18e282d7f25::t_8fe9c266311fe8 1-326
+Linux/crates/tex-domain/tests/domain.rs
+  s_e0a18e282d7f25::t_7efd02fc39167c 1-153
+Linux/packaging/dev.pitex.app.desktop
+  s_e0a18e282d7f25::t_8f78a3a2dd03f4 1-10
+Mac/Config/Base.xcconfig
+  s_e0a18e282d7f25::t_146486c8cd60e7 1-27
+Mac/Config/Info.plist
+  s_e0a18e282d7f25::t_a6e6fc15268dcf 1-169
+Mac/Config/Pitex.entitlements
+  s_e0a18e282d7f25::t_0649f1ddb015d6 1-6
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_e0a18e282d7f25::t_0b1f4fda1ff72d 1-479
+Mac/Pitex.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+  s_e0a18e282d7f25::t_102480828a58d0 1-24
+Mac/Pitex.xcodeproj/xcshareddata/xcschemes/Pitex.xcscheme
+  s_e0a18e282d7f25::t_625709ccf39f24 1-76
+Mac/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json
+  s_e0a18e282d7f25::t_643dbb183f324c 1-68
+Mac/Resources/Assets.xcassets/Contents.json
+  s_e0a18e282d7f25::t_84d777a8b23e42 1-6
+Mac/Resources/PitexAgent/skills/humanizer/SKILL.md
+  s_e0a18e282d7f25::t_d50bf37b49a4f3 1-374
+Mac/Resources/PitexAgent/skills/latex-compile/SKILL.md
+  s_e0a18e282d7f25::t_fad4206237f777 1-36
+Mac/Resources/PitexAgent/skills/latex-compile/scripts/compile_latex.py
+  s_e0a18e282d7f25::t_7927b38ccff4d4 1-486
+Mac/Resources/PitexAgent/skills/latex-compile/scripts/detect_tectonic.py
+  s_e0a18e282d7f25::t_849c87f6c65235 1-122
+Mac/Resources/PitexAgent/skills/latex-compile/scripts/detect_texlive.py
+  s_e0a18e282d7f25::t_8111c76e42eabb 1-191
+Mac/Resources/PitexAgent/skills/latex-doctor/SKILL.md
+  s_e0a18e282d7f25::t_5113bdb3c4385c 1-38
+Mac/Resources/PitexAgent/skills/latex-doctor/scripts/detect_tectonic.py
+  s_e0a18e282d7f25::t_61d1bed946cfa9 1-122
+Mac/Resources/PitexAgent/skills/latex-doctor/scripts/detect_texlive.py
+  s_e0a18e282d7f25::t_20687601a9ec60 1-191
+Mac/Resources/PitexAgent/skills/latex-doctor/scripts/latex_doctor.py
+  s_e0a18e282d7f25::t_135a21b290c153 1-197
+Mac/Resources/PitexAgent/skills/scispace/SKILL.md
+  s_e0a18e282d7f25::t_459d692e6d2e3c 1-27
+Mac/Resources/PitexAgent/skills/scispace/scripts/scispace_search.py
+  s_e0a18e282d7f25::t_7dca49fc91f8bb 1-83
+Mac/Resources/PitexAgent/skills/texlive-runtime-installer/SKILL.md
+  s_e0a18e282d7f25::t_18982c6a4273ee 1-48
+Mac/Resources/PitexAgent/skills/texlive-runtime-installer/scripts/detect_texlive.py
+  s_e0a18e282d7f25::t_acbfe355aed90f 1-191
+Mac/Resources/PitexAgent/skills/texlive-runtime-installer/scripts/install_texlive.py
+  s_e0a18e282d7f25::t_824a231ad717fd 1-194
+Mac/Resources/en.lproj/Localizable.strings
+  s_e0a18e282d7f25::t_dcff5f480acc02 1-281
+Mac/Resources/ja.lproj/Localizable.strings
+  s_e0a18e282d7f25::t_7e24cfe1221fe2 1-282
+Mac/Resources/ko.lproj/Localizable.strings
+  s_e0a18e282d7f25::t_d71062c7bbf3c5 1-282
+Mac/Resources/vi.lproj/Localizable.strings
+  s_e0a18e282d7f25::t_646e3b610b15fe 1-281
+Mac/Sources/AppShell/PitexApp.swift
+  s_e0a18e282d7f25::t_99d0f91086f00f 1-1488
+Mac/Sources/Features/AgentCoordinator.swift
+  s_e0a18e282d7f25::t_20356505f726ab 1-762
+Mac/Sources/Features/AgentPanel.swift
+  s_e0a18e282d7f25::t_f4e6808728d111 1-416
+Mac/Sources/Features/AppearanceTheme.swift
+  s_e0a18e282d7f25::t_8be713c580b106 1-341
+Mac/Sources/Features/BottomConsoleView.swift
+  s_e0a18e282d7f25::t_a0ddaffae5ccec 1-239
+Mac/Sources/Features/BuildSupport.swift
+  s_e0a18e282d7f25::t_4049352cbe8b44 1-473
+Mac/Sources/Features/EditorContainerView.swift
+  s_e0a18e282d7f25::t_1087f32939ec00 1-507
+Mac/Sources/Features/EditorFolding.swift
+  s_e0a18e282d7f25::t_03fe44e4b25700 1-573
+Mac/Sources/Features/PiAgentProcess.swift
+  s_e0a18e282d7f25::t_a9f91d6115cd8e 1-446
+Mac/Sources/Features/PiAuthStore.swift
+  s_e0a18e282d7f25::t_1159b725c39f50 1-91
+Mac/Sources/Features/PiRPC.swift
+  s_e0a18e282d7f25::t_79a2edbd7239bb 1-118
+Mac/Sources/Features/Preview.swift
+  s_e0a18e282d7f25::t_46a380ed9e6389 1-309
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_e0a18e282d7f25::t_7720008bbd2d6f 1-266
+Mac/Sources/Features/SettingsView.swift
+  s_e0a18e282d7f25::t_3bde3f759d5184 1-902
+Mac/Sources/Features/SyncTeXSupport.swift
+  s_e0a18e282d7f25::t_bef959d4cd96a0 1-328
+Mac/Sources/Features/SyntaxHighlighting.swift
+  s_e0a18e282d7f25::t_4001188a9141e6 1-85
+Mac/Sources/Features/WorkspaceView.swift
+  s_e0a18e282d7f25::t_fc333f3682a4a8 1-458
+Packages/TexApp/Package.resolved
+  s_e0a18e282d7f25::t_da6dc7630124dd 1-24
+Packages/TexApp/Package.swift
+  s_e0a18e282d7f25::t_c359287c430e76 1-104
+Packages/TexApp/Sources/AppPorts/AppPorts.swift
+  s_e0a18e282d7f25::t_9e4f1808f0d00f 1-196
+Packages/TexApp/Sources/AppShell/AppShell.swift
+  s_e0a18e282d7f25::t_90e68a94a5e9b4 1-68
+Packages/TexApp/Sources/BuildFeature/BuildFeature.swift
+  s_e0a18e282d7f25::t_93f94b4f5c0918 1-181
+Packages/TexApp/Sources/EditorFeature/EditorFeature.swift
+  s_e0a18e282d7f25::t_056c5eac7f6578 1-208
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_e0a18e282d7f25::t_88b71694940c84 1-180
+Packages/TexApp/Sources/MacPlatform/MacPlatform.swift
+  s_e0a18e282d7f25::t_33d880f5b12261 1-350
+Packages/TexApp/Sources/MacPlatform/TerminalShellView.swift
+  s_e0a18e282d7f25::t_a4fdf23055b73b 1-171
+Packages/TexApp/Sources/PDFFeature/PDFFeature.swift
+  s_e0a18e282d7f25::t_126e8aac746579 1-154
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_e0a18e282d7f25::t_ae784aefc689f6 1-167
+Packages/TexApp/Sources/SettingsFeature/SettingsFeature.swift
+  s_e0a18e282d7f25::t_176fe87515eb90 1-233
+Packages/TexApp/Tests/TexAppTests/AccessibilityContractTests.swift
+  s_e0a18e282d7f25::t_f6943e95dc8582 1-110
+Packages/TexApp/Tests/TexAppTests/ArchitectureTests.swift
+  s_e0a18e282d7f25::t_b80bdaa43fe31b 1-62
+Packages/TexApp/Tests/TexAppTests/EditorAITransactionTests.swift
+  s_e0a18e282d7f25::t_6d60800a334f91 1-113
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_e0a18e282d7f25::t_9a7486e0e9e6ef 1-77
+Packages/TexApp/Tests/TexAppTests/FeatureStateTests.swift
+  s_e0a18e282d7f25::t_d1bf80b49c1fb6 1-124
+Packages/TexApp/Tests/TexAppTests/MacAdapterSourceTests.swift
+  s_e0a18e282d7f25::t_5dd1dc4b63128b 1-102
+Packages/TexCore/Package.swift
+  s_e0a18e282d7f25::t_2a4502776b4883 1-56
+Packages/TexCore/Sources/AICore/AICore.swift
+  s_e0a18e282d7f25::t_d9f00be19fa320 1-132
+Packages/TexCore/Sources/AICore/RevisionBoundEdit.swift
+  s_e0a18e282d7f25::t_3c73bd61762755 1-272
+Packages/TexCore/Sources/BuildCore/BuildCore.swift
+  s_e0a18e282d7f25::t_de8b994b86a451 1-168
+Packages/TexCore/Sources/BuildCore/BuildLogParser.swift
+  s_e0a18e282d7f25::t_0239f22d25ecc3 1-319
+Packages/TexCore/Sources/BuildCore/BuildOrchestrator.swift
+  s_e0a18e282d7f25::t_346d43859430cd 1-613
+Packages/TexCore/Sources/BuildCore/ProcessRunner.swift
+  s_e0a18e282d7f25::t_c9008d06eab594 1-458
+Packages/TexCore/Sources/DocumentSessionCore/DocumentPersistence.swift
+  s_e0a18e282d7f25::t_d56e831542c2b0 1-222
+Packages/TexCore/Sources/DocumentSessionCore/DocumentSessionCore.swift
+  s_e0a18e282d7f25::t_108e5888a6f0c0 1-186
+Packages/TexCore/Sources/DocumentSessionCore/DocumentSessionRegistry.swift
+  s_e0a18e282d7f25::t_2d07c65ca8cfa2 1-130
+Packages/TexCore/Sources/LanguageCore/LanguageCore.swift
+  s_e0a18e282d7f25::t_fd88c0603e20c1 1-254
+Packages/TexCore/Sources/LanguageCore/LanguageIndex.swift
+  s_e0a18e282d7f25::t_e98934566c0b71 1-647
+Packages/TexCore/Sources/ParityKit/ParityKit.swift
+  s_e0a18e282d7f25::t_36c9bf1987143f 1-173
+Packages/TexCore/Sources/ProjectCore/ProjectCore.swift
+  s_e0a18e282d7f25::t_9f13e2f6ffae81 1-159
+Packages/TexCore/Sources/ProjectCore/ProjectWorkspace.swift
+  s_e0a18e282d7f25::t_407606a53d14e3 1-349
+Packages/TexCore/Sources/SyncTeXCore/SyncTeXCore.swift
+  s_e0a18e282d7f25::t_23279ae030d999 1-155
+Packages/TexCore/Sources/SyncTeXCore/SyncTeXQueryParser.swift
+  s_e0a18e282d7f25::t_ae1a31e4c82647 1-274
+Packages/TexCore/Sources/TexDomain/TexDomain.swift
+  s_e0a18e282d7f25::t_b6f91bf271de11 1-137
+Packages/TexCore/Tests/TexCoreTests/ArchitectureTests.swift
+  s_e0a18e282d7f25::t_b4a5db6e154bac 1-161
+Packages/TexCore/Tests/TexCoreTests/BuildOrchestratorTests.swift
+  s_e0a18e282d7f25::t_adcbe78c7eb206 1-370
+Packages/TexCore/Tests/TexCoreTests/DocumentSessionPersistenceTests.swift
+  s_e0a18e282d7f25::t_2c5349e19a44ea 1-207
+Packages/TexCore/Tests/TexCoreTests/LanguageIndexTests.swift
+  s_e0a18e282d7f25::t_142b34c172d4d1 1-138
+Packages/TexCore/Tests/TexCoreTests/LargeFixtureTests.swift
+  s_e0a18e282d7f25::t_e69bcdc6e07a1c 1-71
+Packages/TexCore/Tests/TexCoreTests/ProcessRunnerTests.swift
+  s_e0a18e282d7f25::t_2ca8371db24642 1-247
+Packages/TexCore/Tests/TexCoreTests/ProjectWorkspaceTests.swift
+  s_e0a18e282d7f25::t_c1662fc46f875b 1-214
+Packages/TexCore/Tests/TexCoreTests/RevisionBoundEditTests.swift
+  s_e0a18e282d7f25::t_c9573d893f7258 1-237
+Packages/TexCore/Tests/TexCoreTests/SyncTeXQueryTests.swift
+  s_e0a18e282d7f25::t_0c7b788f1171bc 1-326
+Packages/TexCore/Tests/TexCoreTests/UnicodeCoordinateTests.swift
+  s_e0a18e282d7f25::t_74b7f1c2c5aadd 1-82
+Parity/evidence-index.json
+  s_e0a18e282d7f25::t_df900453d24ea9 1-1072
+Parity/manifest.yaml
+  s_e0a18e282d7f25::t_72aa6959182a16 1-283
+Parity/observations/ledger.jsonl
+  s_e0a18e282d7f25::t_bad68d9fd9329c 1-8
+Parity/schema/evidence.schema.json
+  s_e0a18e282d7f25::t_322dc400ce48fb 1-116
+Parity/schema/manifest.schema.json
+  s_e0a18e282d7f25::t_9234efc1e47ef4 1-107
+README.md
+  s_e0a18e282d7f25::t_9576f5c44ca749 1-118
+ReferenceEvidence/policy.json
+  s_e0a18e282d7f25::t_a8c6d14caa8e41 1-73
+Toolchains.lock.json
+  s_e0a18e282d7f25::t_fccc24368c30c0 1-16
+Tools/check-assistant-font.py
+  s_e0a18e282d7f25::t_f9a168e5748c7e 1-55
+Tools/check-editor-chrome.py
+  s_e0a18e282d7f25::t_9578a52307165d 1-138
+Tools/check-macos-release.py
+  s_e0a18e282d7f25::t_d57138a4df0562 1-89
+Tools/check-macos-synctex.py
+  s_e0a18e282d7f25::t_da4906af692ede 1-144
+Tools/check-multifile-project.py
+  s_e0a18e282d7f25::t_7bc41bf84f4fa4 1-182
+Tools/check-pi-reasoning.py
+  s_e0a18e282d7f25::t_72ef213f6f0591 1-117
+Tools/check-pi-runtime.py
+  s_e0a18e282d7f25::t_6a62e8b199092c 1-163
+Tools/check-pi-settings.py
+  s_e0a18e282d7f25::t_55651cd174684b 1-109
+Tools/check-workspace-navigation.py
+  s_e0a18e282d7f25::t_8ce1b3dc595e20 1-205
+Tools/collect-linux-evidence.mjs
+  s_e0a18e282d7f25::t_c2795e12c94dc5 1-63
+Tools/create-source-bundle.mjs
+  s_e0a18e282d7f25::t_096c78fae86664 1-74
+Tools/generate-sbom.mjs
+  s_e0a18e282d7f25::t_5876b321213db2 1-57
+Tools/run-synctex-fixture.mjs
+  s_e0a18e282d7f25::t_4b88c5807b90e4 1-216
+Tools/run-tex-fixtures.mjs
+  s_e0a18e282d7f25::t_0f5efa27df5f64 1-200
+Tools/rust-target-dag.json
+  s_e0a18e282d7f25::t_1f9933df996ae6 1-164
+Tools/target-dag.json
+  s_e0a18e282d7f25::t_f6e6d93d73f558 1-152
+Tools/tex-build-matrix.json
+  s_e0a18e282d7f25::t_5f44d10153f2e7 1-102
+Tools/update-p0-evidence.mjs
+  s_e0a18e282d7f25::t_71355587b471d5 1-60
+Tools/validate-parity.mjs
+  s_e0a18e282d7f25::t_71e1ef519cd298 1-288
+Tools/validate-xcodeproj.mjs
+  s_e0a18e282d7f25::t_16aa65d119fa64 1-206
+Tools/verify-linux.mjs
+  s_e0a18e282d7f25::t_1b1f6860ae8c6c 1-145
+Tools/verify-release-surface.mjs
+  s_e0a18e282d7f25::t_d97efa4f8bd38c 1-77
+Tools/verify-rust-dag.mjs
+  s_e0a18e282d7f25::t_fc6a9d2b4d0b71 1-196
+Tools/verify-target-dag.mjs
+  s_e0a18e282d7f25::t_d7a4285ff32da7 1-193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66c6e5cf0f8cdad982fa311ecb3a8b0e42fc520f",
+  "prompts": {},
+  "sessions": {
+    "s_e0a18e282d7f25": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_e0a18e282d7f25",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
