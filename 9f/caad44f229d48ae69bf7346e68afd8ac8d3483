@@ -1,0 +1,19 @@
+Mac/Sources/Features/UpdateSupport.swift
+  s_a267e5dd768877::t_c661a8fcbaa0b5 195-198,201,206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fcaad44f229d48ae69bf7346e68afd8ac8d3483",
+  "prompts": {},
+  "sessions": {
+    "s_a267e5dd768877": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_a267e5dd768877",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
