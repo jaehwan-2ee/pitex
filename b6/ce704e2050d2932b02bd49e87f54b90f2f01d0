@@ -1,0 +1,23 @@
+.github/workflows/ci.yml
+  s_1f8f2561525ec4::t_7e848d1c7af5b2 27
+.github/workflows/release.yml
+  s_1f8f2561525ec4::t_238e06a261671d 18,52,56-57,62
+Mac/Pitex.xcodeproj/xcshareddata/xcschemes/Pitex.xcscheme
+  s_1f8f2561525ec4::t_f397a7abae1564 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6ce704e2050d2932b02bd49e87f54b90f2f01d0",
+  "prompts": {},
+  "sessions": {
+    "s_1f8f2561525ec4": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_1f8f2561525ec4",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
