@@ -1,0 +1,21 @@
+.github/workflows/release.yml
+  s_f715766d683733::t_b314bd1db7568f 74
+README.md
+  s_f715766d683733::t_bad617f5c58dd1 28-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7e27f60df728df3f5fb16511ab9e8f747d96ef1",
+  "prompts": {},
+  "sessions": {
+    "s_f715766d683733": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_f715766d683733",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
