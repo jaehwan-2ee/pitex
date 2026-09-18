@@ -1,0 +1,37 @@
+.github/workflows/release.yml
+  s_55cbcaa017090a::t_58fd87fc6cdd07 119-132,137-140
+Linux/Cargo.lock
+  s_55cbcaa017090a::t_377cebca0ffdaf 750
+Linux/crates/pitex-shell/src/update.rs
+  s_55cbcaa017090a::t_4c2b692ec9478e 80-96,98,106,108-109,111-115,120,122,124,224-264,269
+Linux/crates/pitex/Cargo.toml
+  s_55cbcaa017090a::t_51f3def19dff81 3
+Mac/Config/Info.plist
+  s_55cbcaa017090a::t_d1ae62771e3bb5 20,22
+README.md
+  s_55cbcaa017090a::t_f5b2f5423a2c23 138-141,143-146,176-179
+Windows/Cargo.lock
+  s_55cbcaa017090a::t_9326bf674969ba 869
+Windows/README.md
+  s_55cbcaa017090a::t_fc4115681bb833 57-72
+Windows/crates/pitex-windows/Cargo.toml
+  s_55cbcaa017090a::t_194d999cf87813 3
+Windows/pitex.nsi
+  s_55cbcaa017090a::t_f50962e06fc654 1-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3e986bc88614713546536949da1e379e38c874e",
+  "prompts": {},
+  "sessions": {
+    "s_55cbcaa017090a": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_55cbcaa017090a",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
