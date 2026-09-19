@@ -185,6 +185,7 @@
 "assistant.reasoning_help" = "추론 강도";
 "assistant.send_help" = "전송 (⌘Return)";
 "assistant.stop_help" = "에이전트 중지";
+"assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";
@@ -257,6 +258,15 @@
 "settings.ai.install_runtime" = "Pitex Agent 설치";
 "settings.ai.reinstall_runtime" = "Pitex Agent 다시 설치";
 "settings.ai.runtime_note" = "Pitex Agent는 Pitex 자체 폴더(응용 프로그램 지원 ▸ Pitex ▸ pi-runtime)에 LaTeX, Humanizer, SciSpace 스킬과 함께 자동 설치됩니다. 누락되거나 손상된 경우에만 다시 설치하세요. Bun이 있으면 우선 사용하며, 없으면 Node.js와 npm을 사용합니다.";
+"settings.ai.skills" = "스킬";
+"settings.ai.install_skill" = "스킬 또는 확장 소스 설치";
+"settings.ai.install" = "설치";
+"settings.ai.remove" = "제거";
+"settings.ai.builtin" = "기본 제공";
+"settings.ai.no_skills" = "설치된 스킬 없음";
+"settings.ai.skill_installing" = "설치 중…";
+"settings.ai.skill_installed" = "스킬이 설치되었습니다.";
+"settings.ai.skill_failed" = "설치 실패: %@";
 
 "appearance.color.editor_background" = "편집기 배경";
 "appearance.color.editor_background_d" = "텍스트 뒤의 캔버스";

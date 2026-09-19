@@ -119,6 +119,9 @@ pub struct UiHandles {
     pub agent_send_button: RefCell<Option<gtk4::Button>>,
     pub agent_stop_button: RefCell<Option<gtk4::Button>>,
     pub agent_status_label: RefCell<Option<gtk4::Label>>,
+    /// Right-aligned usage/context readout in the assistant controls row —
+    /// populated from `get_session_stats`, hidden until stats arrive.
+    pub agent_usage_label: RefCell<Option<gtk4::Label>>,
     pub selection_chip: RefCell<Option<gtk4::Box>>,
     pub selection_chip_label: RefCell<Option<gtk4::Label>>,
     pub search_bar: RefCell<Option<gtk4::SearchBar>>,
@@ -162,6 +165,11 @@ pub struct AppState {
     pub pdf: Option<PdfDocument>,
     pub pdf_page: usize,
     pub pdf_scale: f64,
+    /// `pi` config dir monitor — restarts the agent when auth/models/
+    /// settings change so provider edits apply without an app restart.
+    pub agent_config_monitor: Option<gio::FileMonitor>,
+    /// Debounce generation for the agent-config monitor (~500ms).
+    pub agent_config_generation: Cell<u64>,
     /// PDFView `autoScales` — fit page width to the pane until the user zooms.
     pub pdf_auto_fit: bool,
     /// Hash of the PDF byte buffer currently loaded in `pdf`.
@@ -216,6 +224,8 @@ impl AppState {
             pdf: None,
             pdf_page: 0,
             pdf_scale: 1.5,
+            agent_config_monitor: None,
+            agent_config_generation: Cell::new(0),
             pdf_auto_fit: true,
             pdf_hash: 0,
             agent_activity_pending: Rc::new(Cell::new(false)),
@@ -2134,12 +2144,26 @@ impl AppState {
                 label.set_text(agent.status_message.as_deref().unwrap_or(""));
                 label.set_visible(agent.status_message.is_some());
             }
-            // Model picker.
+            // Model picker — when models span multiple providers the
+            // provider name disambiguates same-named entries.
             if let Some(picker) = ui.agent_model_picker.borrow().as_ref() {
+                let providers: std::collections::HashSet<&str> =
+                    agent.models.iter().map(|m| m.provider.as_str()).collect();
+                let disambiguate = providers.len() > 1;
                 let titles: Vec<String> = if agent.models.is_empty() {
                     vec![tr(lang, "assistant.model_placeholder")]
                 } else {
-                    agent.models.iter().map(|m| m.picker_title()).collect()
+                    agent
+                        .models
+                        .iter()
+                        .map(|m| {
+                            if disambiguate {
+                                format!("{} · {}", m.picker_title(), m.provider)
+                            } else {
+                                m.picker_title()
+                            }
+                        })
+                        .collect()
                 };
                 let list = gtk4::StringList::new(&titles.iter().map(String::as_str).collect::<Vec<_>>());
                 picker.set_model(Some(&list));
@@ -2190,6 +2214,20 @@ impl AppState {
             if let Some(t) = ui.agent_attach_toggle.borrow().as_ref() {
                 if t.is_active() != agent.attach_active_document {
                     t.set_active(agent.attach_active_document);
+                }
+            }
+            // Usage/context readout — `get_session_stats` payload formatted
+            // compactly ("12.3k/200k ctx (6%) · 45.2k tok · $0.12").
+            if let Some(label) = ui.agent_usage_label.borrow().as_ref() {
+                if let Some(stats) = &agent.session_stats {
+                    label.set_text(&crate::l10n::tr1(
+                        lang,
+                        "assistant.usage",
+                        &format_session_stats(stats),
+                    ));
+                    label.set_visible(true);
+                } else {
+                    label.set_visible(false);
                 }
             }
             if let Some(b) = ui.agent_send_button.borrow().as_ref() {
@@ -2307,6 +2345,65 @@ impl AppState {
             });
             self.watchers.push(monitor);
         }
+    }
+
+    /// Watch the pi agent dir: edits to `auth.json`, `models.json`, or
+    /// `settings.json` (Settings → AI, `pi /login`, a text editor) restart
+    /// the agent so the new provider config applies without an app restart.
+    /// Coalesced ~500ms like the project-file watchers.
+    fn install_agent_config_watch(&mut self) {
+        let dir = crate::agent::pi_paths::agent_directory();
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let file = gio::File::for_path(&dir);
+        let Ok(monitor) =
+            file.monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        else {
+            return;
+        };
+        monitor.connect_changed(move |_, file, _, event| {
+            if !matches!(
+                event,
+                gio::FileMonitorEvent::Changed
+                    | gio::FileMonitorEvent::ChangesDoneHint
+                    | gio::FileMonitorEvent::Created
+                    | gio::FileMonitorEvent::Deleted
+                    | gio::FileMonitorEvent::Moved
+            ) {
+                return;
+            }
+            let name = file
+                .basename()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if !matches!(name.as_str(), "auth.json" | "models.json" | "settings.json") {
+                return;
+            }
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let Ok(st) = state.try_borrow_mut() else { return };
+                    let generation = st.agent_config_generation.get() + 1;
+                    st.agent_config_generation.set(generation);
+                    glib::timeout_add_local_once(Duration::from_millis(500), move || {
+                        STATE.with(|s| {
+                            if let Some(state) = s.borrow().as_ref() {
+                                let Ok(mut st) = state.try_borrow_mut() else { return };
+                                if st.agent_config_generation.get() != generation {
+                                    return;
+                                }
+                                st.ensure_agent();
+                                if let Some(agent) = st.agent.as_mut() {
+                                    agent.restart();
+                                }
+                                st.refresh_assistant();
+                            }
+                        });
+                    });
+                }
+            });
+        });
+        self.agent_config_monitor = Some(monitor);
     }
 
     // ── workspace message dispatch ─────────────────────────────────────────
@@ -2646,6 +2743,30 @@ pub(crate) fn font_attrs(size: f64) -> gtk4::pango::AttrList {
     attrs
 }
 
+/// Compact token count — "45.2k" past 999, raw below.
+fn compact_tokens(n: u64) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// `12.3k/200k ctx (6%) · 45.2k tok · $0.12` — the assistant usage readout.
+fn format_session_stats(stats: &crate::agent::PiSessionStats) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let (Some(tokens), Some(window)) = (stats.context_tokens, stats.context_window) {
+        let mut ctx = format!("{}/{} ctx", compact_tokens(tokens), compact_tokens(window));
+        if let Some(percent) = stats.context_percent {
+            ctx.push_str(&format!(" ({:.0}%)", percent));
+        }
+        parts.push(ctx);
+    }
+    parts.push(format!("{} tok", compact_tokens(stats.total_tokens)));
+    parts.push(format!("${:.2}", stats.cost));
+    parts.join(" · ")
+}
+
 fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64) -> gtk4::Widget {
     let caption_size = (font_size - 2.0).max(9.0);
     let row = gtk4::Box::new(gtk4::Orientation::Vertical, 3);
@@ -2760,6 +2881,7 @@ fn build_window(app: &adw::Application, app_version: &str) {
     state.borrow_mut().language = lang;
     LANG.with(|l| l.set(lang));
     STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+    state.borrow_mut().install_agent_config_watch();
 
     UI.with(|ui| build_chrome(app, &state, ui, model_rx));
 

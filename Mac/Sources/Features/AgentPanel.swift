@@ -67,7 +67,7 @@ struct AgentPanel: View {
                     Text("assistant.model_placeholder").tag(Optional<PiModelDescriptor>.none)
                 }
                 ForEach(coordinator.models) { model in
-                    Text(verbatim: model.pickerTitle).tag(Optional(model))
+                    Text(verbatim: modelLabel(model)).tag(Optional(model))
                 }
             } label: {
                 EmptyView()
@@ -116,6 +116,14 @@ struct AgentPanel: View {
             .disabled(coordinator.connection != .ready)
             .help(String(localized: "assistant.clear"))
             .accessibilityIdentifier("pitex.agent.newSession")
+
+            if let usage = usageText {
+                Text(String(format: String(localized: "assistant.usage"), usage))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("pitex.assistant.usage")
+            }
         }
     }
 
@@ -168,6 +176,15 @@ struct AgentPanel: View {
 
     /// Composer: attach button, rounded text field, circular send/stop.
     private var composerRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !slashMatches.isEmpty {
+                slashCompletionList
+            }
+            composerInputRow
+        }
+    }
+
+    private var composerInputRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
             Button {
                 attachFiles()
@@ -210,6 +227,80 @@ struct AgentPanel: View {
                 .accessibilityIdentifier("pitex.assistantSend")
             }
         }
+    }
+
+    /// `/`-prefixed drafts complete against pi's advertised commands
+    /// (extensions, prompts, skills); picking one fills the composer.
+    private var slashMatches: [PiSlashCommand] {
+        guard draft.hasPrefix("/"), draft.rangeOfCharacter(from: .whitespaces) == nil else { return [] }
+        let query = String(draft.dropFirst())
+        return coordinator.commands
+            .filter { query.isEmpty || $0.name.lowercased().hasPrefix(query.lowercased()) }
+            .prefix(8)
+            .map { $0 }
+    }
+
+    private var slashCompletionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(slashMatches) { command in
+                Button {
+                    draft = "/\(command.name) "
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(verbatim: "/\(command.name)")
+                            .font(.callout.monospaced())
+                        if let description = command.description, !description.isEmpty {
+                            Text(verbatim: description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 4)
+                        Text(verbatim: command.source)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+            }
+        }
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityIdentifier("pitex.assistant.slashCommands")
+    }
+
+    /// `12.3k/200k ctx (6%) · 45.2k tok · $0.12` — context fill first when pi
+    /// reports it, then total tokens and cost.
+    private var usageText: String? {
+        guard let stats = coordinator.sessionStats else { return nil }
+        var parts: [String] = []
+        if let tokens = stats.contextTokens, let window = stats.contextWindow {
+            var context = "\(Self.compactTokens(tokens))/\(Self.compactTokens(window)) ctx"
+            if let percent = stats.contextPercent {
+                context += " (\(Int(percent.rounded()))%)"
+            }
+            parts.append(context)
+        }
+        parts.append("\(Self.compactTokens(stats.totalTokens)) tok")
+        parts.append(String(format: "$%.2f", stats.cost))
+        return parts.joined(separator: " · ")
+    }
+
+    private static func compactTokens(_ value: Int) -> String {
+        if value >= 1_000 {
+            return String(format: "%.1fk", Double(value) / 1_000)
+        }
+        return "\(value)"
+    }
+
+    /// Disambiguates same-named models across providers once more than one
+    /// provider is configured (`name · provider`).
+    private func modelLabel(_ model: PiModelDescriptor) -> String {
+        let providers = Set(coordinator.models.map(\.provider))
+        guard providers.count > 1 else { return model.pickerTitle }
+        return "\(model.pickerTitle) · \(model.provider)"
     }
 
     /// Chip shown while the user drags over editor text: filename + line

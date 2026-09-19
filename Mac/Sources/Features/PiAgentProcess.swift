@@ -276,6 +276,27 @@ enum PiRuntimeInstaller {
         }
     }
 
+    /// `pi install <source>` — installs a skill or extension into the
+    /// app-local agent home. Unlike auth (which needs a pty) this runs
+    /// in-process with the same discovered toolchain PATH and
+    /// `PI_CODING_AGENT_DIR` the spawned agent uses.
+    static func installSkill(source: String) async throws {
+        let executable = PiPaths.runtimeExecutable
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw InstallError.installFailed("Pitex Agent is not installed yet.")
+        }
+        let tools = await PiToolchain.discover()
+        let launch = try tools.launch(executable, arguments: ["install", source])
+        var environment = tools.environment
+        environment["PI_CODING_AGENT_DIR"] = PiPaths.agentDirectory.path
+        let result = try await ProcessRunner().run(DirectCommandPlan(executable: launch.executable.path,
+            arguments: launch.arguments,
+            environment: .inherit(overrides: environment)), projectRoot: FileManager.default.homeDirectoryForCurrentUser, timeout: .seconds(300))
+        guard result.stopReason == .completed, result.termination == .exited(code: 0) else {
+            throw InstallError.installFailed(String(String(decoding: result.standardOutput + result.standardError, as: UTF8.self).suffix(2_000)))
+        }
+    }
+
     /// pi owns provider selection and credential updates for both actions.
     static func openAuthenticationInTerminal(logout: Bool = false) async throws {
         let url = try await authenticationScript(logout: logout)

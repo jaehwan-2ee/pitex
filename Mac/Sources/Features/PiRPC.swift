@@ -29,6 +29,8 @@ enum PiRPCCommand {
     case newSession
     case getState
     case getAvailableModels
+    case getSessionStats
+    case getCommands
     case getAvailableThinkingLevels
     case setModel(provider: String, modelID: String)
     case setThinkingLevel(level: String)
@@ -50,6 +52,10 @@ enum PiRPCCommand {
             return ["type": "get_state"]
         case .getAvailableModels:
             return ["type": "get_available_models"]
+        case .getSessionStats:
+            return ["type": "get_session_stats"]
+        case .getCommands:
+            return ["type": "get_commands"]
         case .getAvailableThinkingLevels:
             return ["type": "get_available_thinking_levels"]
         case let .setModel(provider, modelID):
@@ -103,6 +109,8 @@ struct PiModelDescriptor: Hashable, Identifiable {
     let id: String
     let provider: String
     let name: String
+    /// The model's context window size in tokens, when pi reports it.
+    let contextWindow: Int?
 
     init?(_ object: Any) {
         guard let dictionary = object as? [String: Any],
@@ -112,7 +120,48 @@ struct PiModelDescriptor: Hashable, Identifiable {
         self.id = id
         self.provider = provider
         name = dictionary["name"] as? String ?? id
+        contextWindow = dictionary["contextWindow"] as? Int
     }
 
     var pickerTitle: String { name == id ? id : "\(name) (\(id))" }
+}
+
+/// `get_session_stats` response payload — token totals, cost, and the
+/// context-window occupancy pi reports for the current session.
+struct PiSessionStats {
+    var totalTokens = 0
+    var cost = 0.0
+    var contextTokens: Int?
+    var contextWindow: Int?
+    var contextPercent: Double?
+
+    init?(_ object: Any) {
+        guard let dictionary = object as? [String: Any] else { return nil }
+        let tokens = dictionary["tokens"] as? [String: Any]
+        let usage = dictionary["contextUsage"] as? [String: Any]
+        totalTokens = tokens?["total"] as? Int ?? 0
+        cost = dictionary["cost"] as? Double ?? 0
+        contextTokens = usage?["tokens"] as? Int
+        contextWindow = usage?["contextWindow"] as? Int
+        contextPercent = usage?["percent"] as? Double
+    }
+}
+
+/// One slash command returned by `get_commands` (extension, prompt, or
+/// skill — pi expands the `/name` prefix itself when the prompt is sent raw).
+struct PiSlashCommand: Identifiable {
+    let name: String
+    let description: String?
+    let source: String
+
+    var id: String { name }
+
+    init?(_ object: Any) {
+        guard let dictionary = object as? [String: Any],
+              let name = dictionary["name"] as? String
+        else { return nil }
+        self.name = name
+        description = dictionary["description"] as? String
+        source = dictionary["source"] as? String ?? ""
+    }
 }
