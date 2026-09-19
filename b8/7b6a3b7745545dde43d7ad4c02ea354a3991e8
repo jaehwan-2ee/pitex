@@ -1,0 +1,16 @@
+Mac/Sources/Features/BottomConsoleView.swift
+  h_bcbc8ae9e599aa 50-52
+Mac/Sources/Features/SettingsView.swift
+  h_bcbc8ae9e599aa 790-801
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b87b6a3b7745545dde43d7ad4c02ea354a3991e8",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
