@@ -7,11 +7,12 @@ import Foundation
 /// same auto-install preference key.
 ///
 /// Install path selection:
-/// - Homebrew-cask installs (`/opt/homebrew/Caskroom/pitex` or the Intel
-///   prefix) go through `brew upgrade --cask` so brew keeps tracking the
-///   version it owns.
-/// - Manual/DMG installs replace `/Applications/Pitex.app` directly. When
-///   that needs admin rights the mounted DMG is opened for a drag install.
+/// - Homebrew-cask installs (this copy is `/Applications/Pitex.app` *and*
+///   a Caskroom cellar for `pitex` exists) go through `brew upgrade
+///   --cask` so brew keeps tracking the version it owns.
+/// - Manual/DMG installs replace the running bundle in place, wherever it
+///   lives. When that needs admin rights the mounted DMG is opened for a
+///   drag install.
 @MainActor
 final class UpdateChecker: ObservableObject {
     enum Phase {
@@ -160,7 +161,7 @@ final class UpdateChecker: ObservableObject {
                           userInfo: [NSLocalizedDescriptionKey: "Download failed"])
         }
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("dev.pitex.app/updates", isDirectory: true)
+            .appendingPathComponent("app.pitex.desktop/updates", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(asset.name)
         try? FileManager.default.removeItem(at: dest)
@@ -168,10 +169,12 @@ final class UpdateChecker: ObservableObject {
         return dest
     }
 
-    /// Homebrew owns the app when a Caskroom cellar for `pitex` exists —
-    /// `brew upgrade` then does the right thing (and re-tracks the version).
+    /// Homebrew owns the app only when this running copy is the cask's
+    /// `/Applications/Pitex.app` *and* a Caskroom cellar exists — a stray
+    /// DMG copy next to a brew install must not route through `brew`.
     private var isBrewManaged: Bool {
-        ["/opt/homebrew/Caskroom/pitex", "/usr/local/Caskroom/pitex"]
+        guard Bundle.main.bundleURL.path == "/Applications/Pitex.app" else { return false }
+        return ["/opt/homebrew/Caskroom/pitex", "/usr/local/Caskroom/pitex"]
             .contains { FileManager.default.fileExists(atPath: $0) }
     }
 
@@ -187,8 +190,8 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Mount the DMG, replace `/Applications/Pitex.app`, detach. Non-admin
-    /// installs fall back to opening the DMG for a manual drag.
+    /// Mount the DMG, replace the running bundle wherever it lives, detach.
+    /// Non-admin installs fall back to opening the DMG for a manual drag.
     private func installFromDMG(_ dmg: URL) async throws {
         phase = .installing
         detail = String(localized: "settings.updates.installing")
@@ -208,7 +211,7 @@ final class UpdateChecker: ObservableObject {
             throw NSError(domain: "PitexUpdate", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "The downloaded image has no Pitex.app"])
         }
-        let dest = "/Applications/Pitex.app"
+        let dest = Bundle.main.bundleURL.path
         do {
             try? FileManager.default.removeItem(atPath: dest)
             try FileManager.default.copyItem(atPath: source, toPath: dest)
@@ -224,17 +227,26 @@ final class UpdateChecker: ObservableObject {
         relaunch()
     }
 
-    /// Start the freshly installed copy and leave — the same "exit so the
-    /// new build runs" handoff the Windows updater script performs.
+    /// Exit so the new build runs. A detached helper waits for this process
+    /// to leave, then opens the freshly installed bundle — `open` on the
+    /// bundle path reuses the same Dock icon, so no second instance appears
+    /// (the old `createsNewApplicationInstance` relaunch produced two).
+    /// The wait is bounded: if the user cancels the quit (e.g. unsaved
+    /// changes), nothing relaunches behind their back.
     private func relaunch() {
-        let config = NSWorkspace.OpenConfiguration()
-        config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(
-            at: URL(fileURLWithPath: "/Applications/Pitex.app"),
-            configuration: config
-        ) { _, _ in
-            Task { @MainActor in NSApp.terminate(nil) }
-        }
+        let bundle = Bundle.main.bundleURL.path
+            .replacingOccurrences(of: "'", with: "'\\''")
+        let pid = getpid()
+        let script = """
+            n=0
+            while kill -0 \(pid) 2>/dev/null && [ $n -lt 600 ]; do sleep 0.2; n=$((n+1)); done
+            kill -0 \(pid) 2>/dev/null || open '\(bundle)'
+            """
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = ["-c", script]
+        try? helper.run()
+        NSApp.terminate(nil)
     }
 
     // MARK: - process helpers
