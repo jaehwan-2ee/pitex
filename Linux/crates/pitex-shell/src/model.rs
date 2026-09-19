@@ -341,6 +341,85 @@ impl TeXProjectResolver {
             .unwrap_or(false)
     }
 
+    /// `directLinks` — include/bibliography targets of one file, resolved
+    /// against the main document's directory first, then the including
+    /// file's. Only existing files are returned, canonicalized.
+    fn direct_links(&mut self, file: &Path, base: &Path) -> Vec<PathBuf> {
+        let Some(parsed) = self.snapshot(file).cloned() else {
+            return Vec::new();
+        };
+        let mut links: Vec<(String, &'static str)> = parsed
+            .includes
+            .iter()
+            .map(|i| (i.target.clone(), "tex"))
+            .collect();
+        // Remove lexer-recognized comments before scanning the resource
+        // commands not yet represented by LanguageFileSnapshot.includes.
+        let mut source = parsed.source.clone();
+        for token in parsed.tokens.iter().rev() {
+            if matches!(token.kind, LanguageTokenKind::Comment(_)) {
+                let start = token.range.utf8_offset.max(0) as usize;
+                let end = start + token.range.utf8_length.max(0) as usize;
+                source.replace_range(start..end, "");
+            }
+        }
+        links.extend(
+            Self::captures(r"\\subfile\s*\{([^}]+)\}", &source)
+                .into_iter()
+                .map(|m| (m, "tex")),
+        );
+        for group in Self::captures(r"\\bibliography\s*\{([^}]+)\}", &source) {
+            links.extend(
+                group
+                    .split(',')
+                    .map(|s| (s.trim().to_string(), "bib")),
+            );
+        }
+        links.extend(
+            Self::captures(r"\\addbibresource(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}", &source)
+                .into_iter()
+                .map(|m| (m, "bib")),
+        );
+        let mut targets = Vec::new();
+        for (name, ext) in links {
+            let path = if Path::new(&name).extension().is_none() {
+                format!("{name}.{ext}")
+            } else {
+                name
+            };
+            // TeX resolves nested \input paths from the main document's
+            // working directory. subfiles can additionally use local paths.
+            let candidates = [
+                base.join(&path),
+                file.parent()
+                    .map(|p| p.join(&path))
+                    .unwrap_or_default(),
+            ];
+            if let Some(target) = candidates.iter().find(|c| is_readable_file(c)) {
+                let target = Self::canonical(target);
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+        }
+        targets
+    }
+
+    /// `directDependencies` — the main document's own bibliography and
+    /// included files, one level only; the sidebar nests these under it.
+    pub fn direct_dependencies(&mut self, main: &Path) -> Vec<PathBuf> {
+        let file = Self::canonical(main);
+        if file
+            .extension()
+            .map(|e| !e.eq_ignore_ascii_case("tex"))
+            .unwrap_or(true)
+        {
+            return Vec::new();
+        }
+        let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        self.direct_links(&file, &base)
+    }
+
     fn dependencies(&mut self, main: &Path) -> HashSet<PathBuf> {
         let base = main.parent().map(Path::to_path_buf).unwrap_or_default();
         let mut visited = HashSet::new();
@@ -356,59 +435,7 @@ impl TeXProjectResolver {
             {
                 continue;
             }
-            let Some(parsed) = self.snapshot(&file).cloned() else {
-                continue;
-            };
-            let mut links: Vec<(String, &'static str)> = parsed
-                .includes
-                .iter()
-                .map(|i| (i.target.clone(), "tex"))
-                .collect();
-            // Remove lexer-recognized comments before scanning the resource
-            // commands not yet represented by LanguageFileSnapshot.includes.
-            let mut source = parsed.source.clone();
-            for token in parsed.tokens.iter().rev() {
-                if matches!(token.kind, LanguageTokenKind::Comment(_)) {
-                    let start = token.range.utf8_offset.max(0) as usize;
-                    let end = start + token.range.utf8_length.max(0) as usize;
-                    source.replace_range(start..end, "");
-                }
-            }
-            links.extend(
-                Self::captures(r"\\subfile\s*\{([^}]+)\}", &source)
-                    .into_iter()
-                    .map(|m| (m, "tex")),
-            );
-            for group in Self::captures(r"\\bibliography\s*\{([^}]+)\}", &source) {
-                links.extend(
-                    group
-                        .split(',')
-                        .map(|s| (s.trim().to_string(), "bib")),
-                );
-            }
-            links.extend(
-                Self::captures(r"\\addbibresource(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}", &source)
-                    .into_iter()
-                    .map(|m| (m, "bib")),
-            );
-            for (name, ext) in links {
-                let path = if Path::new(&name).extension().is_none() {
-                    format!("{name}.{ext}")
-                } else {
-                    name
-                };
-                // TeX resolves nested \input paths from the main document's
-                // working directory. subfiles can additionally use local paths.
-                let candidates = [
-                    base.join(&path),
-                    file.parent()
-                        .map(|p| p.join(&path))
-                        .unwrap_or_default(),
-                ];
-                if let Some(target) = candidates.iter().find(|c| is_readable_file(c)) {
-                    pending.push(Self::canonical(target));
-                }
-            }
+            pending.extend(self.direct_links(&file, &base));
         }
         visited
     }
@@ -588,6 +615,9 @@ pub struct WorkspaceModel {
     pub phase: WorkspacePhase,
     pub project_url: Option<PathBuf>,
     pub project_files: Vec<PathBuf>,
+    /// Direct dependencies of the build target, nested under it in the
+    /// project sidebar (`projectChildren`).
+    pub project_children: Vec<PathBuf>,
     /// Relative dir paths the user collapsed in the project tree. Entries
     /// for dirs that disappear on rescan are simply ignored.
     pub collapsed_project_dirs: std::collections::HashSet<String>,
@@ -671,6 +701,7 @@ impl WorkspaceModel {
             phase: WorkspacePhase::NoProject,
             project_url: None,
             project_files: Vec::new(),
+            project_children: Vec::new(),
             collapsed_project_dirs: std::collections::HashSet::new(),
             open_documents: Vec::new(),
             active_document_url: None,
@@ -1165,6 +1196,7 @@ impl WorkspaceModel {
             }
         }
         self.project_files.clear();
+        self.project_children.clear();
         self.open_documents.clear();
         self.active_document_url = None;
         self.document_snapshot = None;
@@ -1889,6 +1921,10 @@ impl WorkspaceModel {
                 self.build_target_message = Some(e.to_string());
             }
         }
+        self.project_children = self
+            .build_source_url()
+            .map(|main| resolver.direct_dependencies(&main))
+            .unwrap_or_default();
     }
     pub fn build_source_relative_path(&self) -> Option<String> {
         let root = self.project_url.as_ref()?;

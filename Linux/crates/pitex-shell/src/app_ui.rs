@@ -1827,7 +1827,25 @@ impl AppState {
                             .into_owned()
                     })
                     .collect();
-                let tree = project_feature::build_project_file_tree(&rel_paths);
+                let rel_of = |url: &PathBuf| {
+                    root.as_ref()
+                        .and_then(|r| url.strip_prefix(r).ok().map(|p| p.to_path_buf()))
+                        .unwrap_or_else(|| url.clone())
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                let main_rel = self.model.build_source_url().map(|u| rel_of(&u));
+                let child_rels: Vec<String> = self
+                    .model
+                    .project_children
+                    .iter()
+                    .map(rel_of)
+                    .collect();
+                let tree = project_feature::nest_project_children(
+                    project_feature::build_project_file_tree(&rel_paths),
+                    &main_rel.unwrap_or_default(),
+                    &child_rels,
+                );
                 for node in &tree {
                     append_project_node(list, node, 0, &root, &self.model);
                 }
@@ -2631,6 +2649,11 @@ fn append_project_node(
     });
     row.add_controller(gesture);
     list.append(&row);
+    // Dependency children nested by `nest_project_children` render one level
+    // deeper; files have no disclosure so they are always visible.
+    for child in node.children.as_deref().unwrap_or(&[]) {
+        append_project_node(list, child, depth + 1, root, model);
+    }
 }
 
 fn dialect_for(url: Option<&Path>) -> TeXDialect {

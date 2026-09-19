@@ -169,6 +169,9 @@ final class WorkspaceModel: ObservableObject {
     /// File pinned as the build target; nil means "build the active document".
     @Published var pinnedBuildTarget: URL?
     @Published internal(set) var automaticBuildTarget: URL?
+    /// Direct dependencies of the build target, nested under it in the
+    /// project sidebar (`project_children`).
+    @Published internal(set) var projectChildren: [URL] = []
     @Published internal(set) var buildTargetMessage: String?
     /// Recently opened documents/projects, shown in the tab bar's + menu.
     @Published private(set) var recentDocuments: [URL] = []
@@ -626,6 +629,7 @@ final class WorkspaceModel: ObservableObject {
         syncTeXBinding = nil
         pinnedBuildTarget = nil
         automaticBuildTarget = nil
+        projectChildren = []
         buildTargetMessage = nil
         consoleSection = .assistant
         outlineItems = []
@@ -1238,6 +1242,7 @@ final class WorkspaceModel: ObservableObject {
             automaticBuildTarget = nil
             buildTargetMessage = error.localizedDescription
         }
+        projectChildren = buildSourceURL().map { resolver.directDependencies(main: $0) } ?? []
     }
 
     func buildSourceRelativePath() -> String? {

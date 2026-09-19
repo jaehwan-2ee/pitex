@@ -225,3 +225,43 @@ private func sorted(_ nodes: [ProjectFileNode]) -> [ProjectFileNode] {
         return ProjectFileNode(path: node.path, name: node.name, isDirectory: true, children: sorted(node.children ?? []))
     }
 }
+
+/// `nest_project_children` — reorders the built tree so the main document leads
+/// the root list and its direct dependencies (bibliographies, included
+/// chapters) nest one level beneath it. Missing `main` returns the tree
+/// unchanged; directories left empty by a move are pruned.
+public func nestProjectChildren(_ tree: [ProjectFileNode], main: String, children: [String]) -> [ProjectFileNode] {
+    var tree = tree
+    guard var mainNode = removeNode(path: main, from: &tree) else { return tree }
+    var nested = mainNode.children ?? []
+    for child in children {
+        if let node = removeNode(path: child, from: &tree) {
+            nested.append(node)
+        }
+    }
+    mainNode = ProjectFileNode(path: mainNode.path, name: mainNode.name,
+                               isDirectory: mainNode.isDirectory,
+                               children: nested.isEmpty ? nil : nested)
+    tree.insert(mainNode, at: 0)
+    return tree
+}
+
+/// Detaches the node with `path` wherever it sits, pruning directory nodes
+/// left empty by the removal.
+private func removeNode(path: String, from nodes: inout [ProjectFileNode]) -> ProjectFileNode? {
+    if let index = nodes.firstIndex(where: { $0.path == path }) {
+        return nodes.remove(at: index)
+    }
+    for index in nodes.indices {
+        var children = nodes[index].children ?? []
+        guard let found = removeNode(path: path, from: &children) else { continue }
+        if children.isEmpty {
+            nodes.remove(at: index)
+        } else {
+            nodes[index] = ProjectFileNode(path: nodes[index].path, name: nodes[index].name,
+                                           isDirectory: true, children: children)
+        }
+        return found
+    }
+    return nil
+}

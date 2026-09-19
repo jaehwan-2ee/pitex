@@ -188,38 +188,56 @@ struct TeXProjectResolver {
         return snapshot.tokens.contains { $0.kind == .controlSequence("documentclass") }
     }
 
+    /// `direct_links` — include/bibliography targets of one file, resolved
+    /// against the main document's directory first, then the including
+    /// file's. Only existing files are returned, canonicalized.
+    private mutating func directLinks(of file: URL, base: URL) -> [URL] {
+        guard let parsed = snapshot(file) else { return [] }
+        var links = parsed.includes.map { ($0.target, "tex") }
+        // Remove lexer-recognized comments before scanning the resource
+        // commands not yet represented by LanguageFileSnapshot.includes.
+        var source = parsed.source
+        for token in parsed.tokens.reversed() {
+            guard case .comment = token.kind else { continue }
+            let bytes = source.utf8
+            let lower = bytes.index(bytes.startIndex, offsetBy: token.range.utf8Offset)
+            let upper = bytes.index(lower, offsetBy: token.range.utf8Length)
+            source.removeSubrange(lower..<upper)
+        }
+        links += captures(#"\\subfile\s*\{([^}]+)\}"#, in: source).map { ($0, "tex") }
+        for group in captures(#"\\bibliography\s*\{([^}]+)\}"#, in: source) {
+            links += group.split(separator: ",").map { (String($0).trimmingCharacters(in: .whitespaces), "bib") }
+        }
+        links += captures(#"\\addbibresource(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"#, in: source).map { ($0, "bib") }
+        var targets: [URL] = []
+        for (name, ext) in links {
+            let path = (name as NSString).pathExtension.isEmpty ? name + "." + ext : name
+            // TeX resolves nested \input paths from the main document's
+            // working directory. subfiles can additionally use local paths.
+            let candidates = [base.appendingPathComponent(path), file.deletingLastPathComponent().appendingPathComponent(path)]
+            if let target = candidates.first(where: { FileManager.default.isReadableFile(atPath: $0.path) }) {
+                let target = canonical(target)
+                if !targets.contains(target) { targets.append(target) }
+            }
+        }
+        return targets
+    }
+
+    /// `direct_dependencies` — the main document's own bibliography and
+    /// included files, one level only; the sidebar nests these under it.
+    mutating func directDependencies(main: URL) -> [URL] {
+        let file = canonical(main)
+        guard file.pathExtension.lowercased() == "tex" else { return [] }
+        return directLinks(of: file, base: file.deletingLastPathComponent())
+    }
+
     private mutating func dependencies(of main: URL) -> Set<URL> {
         let base = main.deletingLastPathComponent()
         var visited = Set<URL>()
         var pending = [canonical(main)]
         while let file = pending.popLast() {
-            guard visited.insert(file).inserted, file.pathExtension.lowercased() == "tex",
-                  let parsed = snapshot(file) else { continue }
-            var links = parsed.includes.map { ($0.target, "tex") }
-            // Remove lexer-recognized comments before scanning the resource
-            // commands not yet represented by LanguageFileSnapshot.includes.
-            var source = parsed.source
-            for token in parsed.tokens.reversed() {
-                guard case .comment = token.kind else { continue }
-                let bytes = source.utf8
-                let lower = bytes.index(bytes.startIndex, offsetBy: token.range.utf8Offset)
-                let upper = bytes.index(lower, offsetBy: token.range.utf8Length)
-                source.removeSubrange(lower..<upper)
-            }
-            links += captures(#"\\subfile\s*\{([^}]+)\}"#, in: source).map { ($0, "tex") }
-            for group in captures(#"\\bibliography\s*\{([^}]+)\}"#, in: source) {
-                links += group.split(separator: ",").map { (String($0).trimmingCharacters(in: .whitespaces), "bib") }
-            }
-            links += captures(#"\\addbibresource(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"#, in: source).map { ($0, "bib") }
-            for (name, ext) in links {
-                let path = (name as NSString).pathExtension.isEmpty ? name + "." + ext : name
-                // TeX resolves nested \input paths from the main document's
-                // working directory. subfiles can additionally use local paths.
-                let candidates = [base.appendingPathComponent(path), file.deletingLastPathComponent().appendingPathComponent(path)]
-                if let target = candidates.first(where: { FileManager.default.isReadableFile(atPath: $0.path) }) {
-                    pending.append(canonical(target))
-                }
-            }
+            guard visited.insert(file).inserted, file.pathExtension.lowercased() == "tex" else { continue }
+            pending.append(contentsOf: directLinks(of: file, base: base))
         }
         return visited
     }
