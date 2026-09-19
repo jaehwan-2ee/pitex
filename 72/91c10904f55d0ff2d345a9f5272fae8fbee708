@@ -1,0 +1,14 @@
+Mac/Sources/Features/SubscriptionUsage.swift
+  h_bcbc8ae9e599aa 165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7291c10904f55d0ff2d345a9f5272fae8fbee708",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
