@@ -3152,8 +3152,11 @@ fn build_chrome(
     // ── central three-column layout ──
     let outer = gtk4::Paned::new(gtk4::Orientation::Horizontal);
     outer.set_resize_start_child(false);
-    // shrink_start_child stays TRUE (GTK4 default): the sidebar must be
-    // able to shrink below its natural width or it overlaps the editor.
+    // Fixed minimum like the macOS sidebar (minWidth 170): the divider
+    // stops at the sidebar's min width — shrinking further would allocate
+    // below the min and GTK would shift+clip the content. The editor is
+    // protected by inner.shrink_start_child(false) below.
+    outer.set_shrink_start_child(false);
     ui.outer_paned.replace(Some(outer.clone()));
 
     let inner = gtk4::Paned::new(gtk4::Orientation::Horizontal);
