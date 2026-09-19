@@ -11,7 +11,7 @@ struct UsageWindow: Hashable {
 
 /// Fetches subscription rate-limit usage for OAuth providers from the same
 /// endpoints the CLIs use, reading pi's `auth.json` for the access token.
-/// API-key providers have no subscription windows — they keep the token/cost
+/// API-token providers have no subscription windows — they keep the token/cost
 /// display in `AgentPanel`.
 @MainActor
 final class SubscriptionUsageStore: ObservableObject {
@@ -47,7 +47,7 @@ final class SubscriptionUsageStore: ObservableObject {
     }
 
     /// Reads the credential and queries the provider's usage endpoint.
-    /// Returns nil for API-key credentials, unknown providers, missing
+    /// Returns nil for API-token credentials, unknown providers, missing
     /// tokens, or any network/parse failure — callers fall back gracefully.
     nonisolated private static func fetch(provider: String) async -> [UsageWindow]? {
         guard let credential = credential(for: provider),

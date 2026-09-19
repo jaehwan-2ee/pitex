@@ -273,7 +273,7 @@ struct AgentPanel: View {
     }
 
     /// `12.3k/200k ctx (6%) · 5h 12% · 7d 34%` for OAuth subscription
-    /// providers (Claude, Codex); `… · 45.2k tok · $0.12` for API keys.
+    /// providers (Claude, Codex); `… · 45.2k tok · $0.12` for API-token providers.
     private var usageText: String? {
         var parts: [String] = []
         if let stats = coordinator.sessionStats,
