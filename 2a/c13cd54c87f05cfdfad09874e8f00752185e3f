@@ -1,0 +1,50 @@
+Fixtures/expected/accessibility-identifiers.json
+  h_bcbc8ae9e599aa 40-43
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 333-346,511,1599-1600
+Linux/crates/pitex-shell/src/compat.rs
+  h_bcbc8ae9e599aa 526
+Linux/crates/pitex-shell/src/l10n.rs
+  h_bcbc8ae9e599aa 13-15,26-28,104-106,121-123
+Linux/crates/pitex-shell/src/model.rs
+  h_bcbc8ae9e599aa 67
+Linux/crates/pitex-shell/src/panes.rs
+  h_bcbc8ae9e599aa 47,58-59,156,495,1173-1175,1185-1187,1205-1207,1261-1318
+Linux/crates/pitex-shell/src/settings.rs
+  h_bcbc8ae9e599aa 479-481,491-493,502-504,517-518,537-542,604-609,618-630
+Mac/Pitex.xcodeproj/project.pbxproj
+  h_bcbc8ae9e599aa 62-64,252-254,388-390
+Mac/Resources/en.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,247-249,263-271
+Mac/Resources/es.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 1-312
+Mac/Resources/ja.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,248-250,264-272
+Mac/Resources/ko.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,248-250,264-272
+Mac/Resources/ru.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 1-312
+Mac/Resources/vi.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,247-249,263-271
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 1-312
+Mac/Sources/AppShell/PitexApp.swift
+  h_bcbc8ae9e599aa 36,42
+Mac/Sources/Features/AppearanceTheme.swift
+  h_bcbc8ae9e599aa 189-191,202-204,230-236,273-274,303-316
+Mac/Sources/Features/BottomConsoleView.swift
+  h_bcbc8ae9e599aa 134
+Mac/Sources/Features/SettingsView.swift
+  h_bcbc8ae9e599aa 382-384,407-420,612-622
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ac13cd54c87f05cfdfad09874e8f00752185e3f",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
