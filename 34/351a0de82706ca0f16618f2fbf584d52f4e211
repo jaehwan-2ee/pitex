@@ -1,0 +1,14 @@
+Mac/Sources/Features/UpdateSupport.swift
+  h_bcbc8ae9e599aa 10-15,164,172-174,176-177,193-194,214,230-235,237-249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34351a0de82706ca0f16618f2fbf584d52f4e211",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
