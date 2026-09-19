@@ -64,6 +64,8 @@ pub struct UiHandles {
     pub inner_paned: RefCell<Option<gtk4::Paned>>,
     pub console_paned: RefCell<Option<gtk4::Paned>>,
     pub editor_scroller: RefCell<Option<gtk4::ScrolledWindow>>,
+    /// Overlay wrapping `editor_scroller`; hosts the fold chip layer.
+    pub editor_overlay: RefCell<Option<gtk4::Overlay>>,
     pub editor_stack: RefCell<Option<gtk4::Stack>>,
     pub minimap: RefCell<Option<sourceview5::Map>>,
     pub footer: RefCell<Option<gtk4::Box>>,
@@ -149,6 +151,9 @@ pub struct AppState {
     /// The `FoldEngine` bound to the current adapter — rebuilt per session
     /// like the macOS environment's `adapter`.
     pub fold: Option<Rc<crate::fold::FoldEngine>>,
+    /// The fold chip layer currently overlaid on the editor scroller —
+    /// tracked so `rebind_editor_widget` can remove the previous one.
+    pub fold_chip: RefCell<Option<gtk4::DrawingArea>>,
     /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
     /// capability lease like `capabilityBroker`, `workspace` opens externals).
     pub env: PlatformEnvironment,
@@ -214,6 +219,7 @@ impl AppState {
             terminal_running: false,
             editor: None,
             fold: None,
+            fold_chip: RefCell::new(None),
             env: PlatformEnvironment::make("dev.pitex.app"),
             app_version,
             active_session: None,
@@ -671,8 +677,8 @@ impl AppState {
         let adapter = Rc::new(GtkEditorAdapter::make(client));
         adapter.view().add_css_class("pitex-editor");
         a11y(adapter.view(), "pitex.editor.text", "editor.title");
-        // FoldEngine attaches before the widget rebind so the scroller hosts
-        // its overlay (view + chip layer), mirroring FoldEngine.attach.
+        // FoldEngine attaches before the widget rebind so its chip layer
+        // lands on the editor overlay, mirroring FoldEngine.attach.
         let dialect = dialect_for(self.model.active_document_url.as_deref());
         let fold = crate::fold::FoldEngine::attach(
             adapter.view(),
@@ -689,16 +695,22 @@ impl AppState {
     }
 
     /// Swap the editor child inside the scroller and (re)wire the minimap.
-    /// The scroller hosts the fold overlay (view + chip layer) when the
-    /// engine is attached; the minimap always tracks the view itself.
+    /// The view stays the scroller's direct child — a non-Scrollable child
+    /// would disconnect its adjustments and kill minimap/jump-to — while
+    /// the fold chip layer overlays the scroller from outside.
     fn rebind_editor_widget(&self) {
         let Some(editor) = &self.editor else { return };
         UI.with(|ui| {
             if let Some(scroller) = ui.editor_scroller.borrow().as_ref() {
+                scroller.set_child(Some(editor.view()));
+            }
+            if let Some(overlay) = ui.editor_overlay.borrow().as_ref() {
+                if let Some(old) = self.fold_chip.borrow_mut().take() {
+                    overlay.remove_overlay(&old);
+                }
                 if let Some(fold) = &self.fold {
-                    scroller.set_child(Some(fold.overlay()));
-                } else {
-                    scroller.set_child(Some(editor.view()));
+                    overlay.add_overlay(fold.chip_area());
+                    *self.fold_chip.borrow_mut() = Some(fold.chip_area().clone());
                 }
             }
             if let Some(map) = ui.minimap.borrow().as_ref() {
@@ -1244,8 +1256,9 @@ impl AppState {
         if px < 0.0 || py < 0.0 || px > w_pt || py > h_pt {
             return;
         }
-        // PDF origin is bottom-left; widget origin is top-left.
-        if let Ok(point) = synctex_core::PDFPoint::new(px, h_pt - py) {
+        // `synctex edit` wants top-left origin points — widget coords are
+        // already top-left, so pass them through unflipped.
+        if let Ok(point) = synctex_core::PDFPoint::new(px, py) {
             self.model.sync_inverse(self.pdf_page as i64 + 1, point);
         }
     }
@@ -2445,9 +2458,6 @@ impl AppState {
                     self.attach_session(session);
                     self.install_watchers();
                     self.refresh_phase();
-                    if let Some(tx) = self.tx.clone() {
-                        self.model.restore_session_if_needed(&self.store, tx);
-                    }
                 }
                 Err(e) => {
                     // `open()`'s catch runs `await close()` — including the
@@ -2875,6 +2885,18 @@ pub fn run(app_version: &str) -> i32 {
         let version = version.clone();
         app.connect_activate(move |app| {
             build_window(app, &version);
+            // Session restore: `open` launches skip `activate`, so this
+            // only fires when the app starts without a file argument.
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        let st = &mut *st;
+                        if let Some(tx) = st.tx.clone() {
+                            st.model.restore_session_if_needed(&st.store, tx);
+                        }
+                    }
+                }
+            });
         });
     }
     // `application(_:open:)` — files passed on the command line (or via the
@@ -3130,12 +3152,16 @@ fn build_chrome(
     // ── central three-column layout ──
     let outer = gtk4::Paned::new(gtk4::Orientation::Horizontal);
     outer.set_resize_start_child(false);
-    outer.set_shrink_start_child(false);
+    // shrink_start_child stays TRUE (GTK4 default): the sidebar must be
+    // able to shrink below its natural width or it overlaps the editor.
     ui.outer_paned.replace(Some(outer.clone()));
 
     let inner = gtk4::Paned::new(gtk4::Orientation::Horizontal);
     inner.set_resize_end_child(false);
     inner.set_shrink_end_child(false);
+    // The editor column must never be squeezed below its minimum — the
+    // preview absorbs the deficit instead (clipped, not overlapped).
+    inner.set_shrink_start_child(false);
     ui.inner_paned.replace(Some(inner.clone()));
 
     // Sidebar.
@@ -3452,7 +3478,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     let lang = state.borrow().language;
     let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     a11y(&root, "pitex.projectOutline", "sidebar.outline");
-    root.set_size_request(220, -1);
+    root.set_size_request(170, -1); // macOS sidebar minWidth parity
 
     // Section picker (segmented → DropDown is the compact GTK equivalent).
     let section_items = [
@@ -3811,7 +3837,12 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     scroller.set_vexpand(true);
     a11y(&scroller, "pitex.editor.scroll", "editor.title");
     ui.editor_scroller.replace(Some(scroller.clone()));
-    editor_row.append(&scroller);
+    // The fold chip layer overlays the scroller from outside — putting it
+    // inside would break the view's scroll adjustments (minimap, jump-to).
+    let editor_overlay = gtk4::Overlay::new();
+    editor_overlay.set_child(Some(&scroller));
+    ui.editor_overlay.replace(Some(editor_overlay.clone()));
+    editor_row.append(&editor_overlay);
     let minimap = sourceview5::Map::new();
     minimap.set_visible(state.borrow().store.minimap());
     a11y(&minimap, "pitex.minimap", "editor.title");

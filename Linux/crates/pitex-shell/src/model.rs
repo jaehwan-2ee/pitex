@@ -191,17 +191,31 @@ impl std::fmt::Debug for WorkspaceMessage {
 }
 
 /// Payload for `open` completed off-thread.
+/// Payload for `open` completed off-thread. Everything expensive —
+/// build-target resolution (lexes every project file), bibliography
+/// parsing, the built-PDF read — is computed on the worker so the main
+/// thread only applies results; a synchronous `apply_open` froze the UI
+/// for the whole scan while holding `state.borrow_mut()`.
 pub struct OpenedProject {
     pub root: PathBuf,
     pub selected: PathBuf,
     pub files: Vec<PathBuf>,
     pub initial_url: PathBuf,
     pub session: DocumentSession,
+    /// `(resolve result, direct dependencies of the resolved main)`.
+    pub resolution: (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
+    pub bibliography_items: Vec<BibliographyItem>,
+    /// Bytes of the resolved main's PDF when it exists on disk.
+    pub built_pdf: Option<Vec<u8>>,
 }
-/// Payload for `activate` completed off-thread.
+/// Payload for `activate` completed off-thread — same off-thread contract
+/// as `OpenedProject`.
 pub struct ActivatedDocument {
     pub url: PathBuf,
     pub session: DocumentSession,
+    pub resolution: (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
+    pub bibliography_items: Vec<BibliographyItem>,
+    pub built_pdf: Option<Vec<u8>>,
 }
 
 // ─── TeXProjectResolver (BuildSupport.swift port) ────────────────────────────
@@ -882,7 +896,32 @@ impl WorkspaceModel {
         if verified != initial_text {
             return Err(WorkspaceOpenError::ChangedWhileOpening);
         }
+        let resolution = Self::resolve_build_target(
+            Some(&initial_url),
+            Some(initial_text),
+            &files,
+            None,
+            None,
+        );
+        let built_pdf = resolution
+            .0
+            .as_ref()
+            .ok()
+            .and_then(|m| m.as_ref())
+            .and_then(|main| Self::built_pdf_bytes(&root, main));
+        let bib_files: Vec<PathBuf> = files
+            .iter()
+            .filter(|f| {
+                f.extension()
+                    .map(|e| e.eq_ignore_ascii_case("bib"))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
         Ok(OpenedProject {
+            bibliography_items: Self::parse_bibliography(&bib_files, Some(&root)),
+            resolution,
+            built_pdf,
             root,
             selected: selected.to_path_buf(),
             files,
@@ -895,7 +934,6 @@ impl WorkspaceModel {
     pub fn apply_open(&mut self, store: &mut SettingsStore, opened: OpenedProject) {
         self.project_url = Some(opened.root.clone());
         self.project_files = opened.files;
-        self.load_project_commands(store, &opened.root);
         self.registered_sessions = vec![opened.session.clone()];
         // `capabilityBroker`/`capabilityLease` (PitexApp.swift:369-383):
         // issue readWrite for the selected path, fall back to readOnly, then
@@ -920,16 +958,16 @@ impl WorkspaceModel {
         self.active_document_url = Some(opened.initial_url.clone());
         self.open_documents = vec![opened.initial_url];
         self.document_snapshot = Some(opened.session.snapshot());
-        self.refresh_build_target();
+        self.apply_build_resolution(opened.resolution);
         self.build_state =
             WorkspaceBuildState::Unavailable("No build has run yet for this project.".into());
         self.synctex_state = WorkspaceSyncTeXState::Unavailable(
             "SyncTeX is unavailable until a successful build produces matching metadata.".into(),
         );
         self.phase = WorkspacePhase::Ready;
-        self.restore_built_preview();
+        self.restore_built_preview_with(opened.built_pdf);
         self.record_recent(store, &opened.selected);
-        self.refresh_structure();
+        self.refresh_structure_with(Some(opened.bibliography_items));
         if let Some(cb) = &mut self.on_active_document_changed {
             cb();
         }
@@ -952,6 +990,9 @@ impl WorkspaceModel {
         // Keep the workspace mounted when switching sources: a loading phase
         // destroys the split view and PDF view, losing their size and position.
         let registry = self.registry.clone();
+        let files = self.project_files.clone();
+        let pinned = self.pinned_build_target.clone();
+        let preferred = self.automatic_build_target.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<ActivatedDocument, WorkspaceOpenError> {
                 let text = Self::read_exact_utf8(&url)?;
@@ -959,7 +1000,33 @@ impl WorkspaceModel {
                 let session = registry
                     .open(&root, &file, text.clone(), Some(DiskContentHash::hashing(&text)))
                     .map_err(|_| WorkspaceOpenError::UnreadableProject)?;
-                Ok(ActivatedDocument { url, session })
+                let resolution = Self::resolve_build_target(
+                    Some(&url),
+                    Some(text),
+                    &files,
+                    pinned.as_deref(),
+                    preferred.as_deref(),
+                );
+                let built_pdf = pinned
+                    .as_ref()
+                    .or(resolution.0.as_ref().ok().and_then(|m| m.as_ref()))
+                    .and_then(|main| Self::built_pdf_bytes(&root, main));
+                let bib_files: Vec<PathBuf> = files
+                    .iter()
+                    .filter(|f| {
+                        f.extension()
+                            .map(|e| e.eq_ignore_ascii_case("bib"))
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect();
+                Ok(ActivatedDocument {
+                    url,
+                    session,
+                    resolution,
+                    bibliography_items: Self::parse_bibliography(&bib_files, Some(&root)),
+                    built_pdf,
+                })
             })();
             let _ = sink.send(WorkspaceMessage::ActivateFinished(
                 result.map_err(|e| e.to_string()),
@@ -980,10 +1047,10 @@ impl WorkspaceModel {
             self.open_documents.push(activated.url);
         }
         self.document_snapshot = Some(activated.session.snapshot());
-        self.refresh_build_target();
+        self.apply_build_resolution(activated.resolution);
         self.phase = WorkspacePhase::Ready;
-        self.restore_built_preview();
-        self.refresh_structure();
+        self.restore_built_preview_with(activated.built_pdf);
+        self.refresh_structure_with(Some(activated.bibliography_items));
         if let Some(cb) = &mut self.on_active_document_changed {
             cb();
         }
@@ -1446,6 +1513,12 @@ impl WorkspaceModel {
     // ── Sidebar structure (verbatim port) ──
 
     pub fn refresh_structure(&mut self) {
+        self.refresh_structure_with(None);
+    }
+
+    /// `bib` carries items already parsed off-thread; `None` parses the
+    /// project's .bib files here (only cheap paths call it that way).
+    fn refresh_structure_with(&mut self, bib: Option<Vec<BibliographyItem>>) {
         let text = self
             .document_snapshot
             .as_ref()
@@ -1453,18 +1526,19 @@ impl WorkspaceModel {
             .unwrap_or_default();
         self.outline_items = Self::parse_outline(&text);
         self.label_items = Self::parse_labels(&text);
-        let bib_files: Vec<PathBuf> = self
-            .project_files
-            .iter()
-            .filter(|f| {
-                f.extension()
-                    .map(|e| e.eq_ignore_ascii_case("bib"))
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
-        self.bibliography_items =
-            Self::parse_bibliography(&bib_files, self.project_url.as_deref());
+        self.bibliography_items = bib.unwrap_or_else(|| {
+            let bib_files: Vec<PathBuf> = self
+                .project_files
+                .iter()
+                .filter(|f| {
+                    f.extension()
+                        .map(|e| e.eq_ignore_ascii_case("bib"))
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect();
+            Self::parse_bibliography(&bib_files, self.project_url.as_deref())
+        });
         if let Some(cb) = &mut self.on_structure_changed {
             cb();
         }
@@ -1647,10 +1721,27 @@ impl WorkspaceModel {
         self.restore_built_preview();
     }
 
+    /// Bytes of `<main>.pdf` under the project root — read on workers so
+    /// `restore_built_preview` never touches the disk on the main thread.
+    fn built_pdf_bytes(root: &Path, main: &Path) -> Option<Vec<u8>> {
+        let relative = Self::relative_path(main, root).ok()?;
+        let name = Path::new(relative.raw_value())
+            .with_extension("pdf")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::read(root.join(&name)).ok()
+    }
+
     /// `restoreBuiltPreview` — reopen the main document's PDF, including when
     /// a chapter or .bib file was opened first. Switching within that
     /// document keeps its preview.
     pub fn restore_built_preview(&mut self) {
+        self.restore_built_preview_with(None);
+    }
+
+    /// `prefetched` carries PDF bytes already read off-thread; `None` falls
+    /// back to a synchronous read (small, user-triggered paths only).
+    fn restore_built_preview_with(&mut self, prefetched: Option<Vec<u8>>) {
         if self.is_building() {
             return;
         }
@@ -1672,8 +1763,9 @@ impl WorkspaceModel {
             return;
         }
         let pdf = root.join(&name);
-        match std::fs::read(&pdf) {
-            Ok(data) if data.starts_with(b"%PDF") => {
+        let data = prefetched.or_else(|| std::fs::read(&pdf).ok());
+        match data {
+            Some(data) if data.starts_with(b"%PDF") => {
                 self.latest_built_pdf_name = Some(name);
                 self.build_state = WorkspaceBuildState::Succeeded {
                     pdf: data,
@@ -1883,28 +1975,36 @@ impl WorkspaceModel {
         self.restore_built_preview();
     }
 
-    /// Chapters and bibliography files share their owning main document.
-    pub fn build_source_url(&self) -> Option<PathBuf> {
-        self.pinned_build_target
-            .clone()
-            .or_else(|| self.automatic_build_target.clone())
+    /// The expensive half of `refresh_build_target`: lexes every project
+    /// file to find the main document and its direct dependencies. Pure
+    /// with respect to `self` so workers can run it off the main thread.
+    fn resolve_build_target(
+        active_url: Option<&Path>,
+        active_text: Option<String>,
+        files: &[PathBuf],
+        pinned: Option<&Path>,
+        preferred: Option<&Path>,
+    ) -> (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>) {
+        let mut resolver = TeXProjectResolver::new();
+        if let (Some(url), Some(text)) = (active_url, active_text) {
+            resolver.active_text = Some((url.to_path_buf(), text));
+        }
+        let result = resolver.resolve(active_url, files, preferred);
+        let main = pinned
+            .map(|p| p.to_path_buf())
+            .or_else(|| result.as_ref().ok().cloned().flatten());
+        let children = main
+            .map(|main| resolver.direct_dependencies(&main))
+            .unwrap_or_default();
+        (result, children)
     }
 
-    /// `refreshBuildTarget` — resolve the owning main document for the active
-    /// file; failures surface a user-facing reason instead of a dead button.
-    pub fn refresh_build_target(&mut self) {
-        let mut resolver = TeXProjectResolver::new();
-        if let (Some(url), Some(snapshot)) = (
-            self.active_document_url.clone(),
-            self.document_snapshot.clone(),
-        ) {
-            resolver.active_text = Some((url, snapshot.text));
-        }
-        match resolver.resolve(
-            self.active_document_url.as_deref(),
-            &self.project_files,
-            self.automatic_build_target.as_deref(),
-        ) {
+    /// Applies a `resolve_build_target` result — the cheap, main-thread half.
+    fn apply_build_resolution(
+        &mut self,
+        (result, children): (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
+    ) {
+        match result {
             Ok(target) => {
                 self.automatic_build_target = target;
                 self.build_target_message = if self.automatic_build_target.is_none() {
@@ -1921,10 +2021,27 @@ impl WorkspaceModel {
                 self.build_target_message = Some(e.to_string());
             }
         }
-        self.project_children = self
-            .build_source_url()
-            .map(|main| resolver.direct_dependencies(&main))
-            .unwrap_or_default();
+        self.project_children = children;
+    }
+
+    /// `refreshBuildTarget` — resolve the main document for the active
+    /// file; failures surface a user-facing reason instead of a dead button.
+    pub fn refresh_build_target(&mut self) {
+        let resolution = Self::resolve_build_target(
+            self.active_document_url.as_deref(),
+            self.document_snapshot.as_ref().map(|s| s.text.clone()),
+            &self.project_files,
+            self.pinned_build_target.as_deref(),
+            self.automatic_build_target.as_deref(),
+        );
+        self.apply_build_resolution(resolution);
+    }
+
+    /// Chapters and bibliography files share their owning main document.
+    pub fn build_source_url(&self) -> Option<PathBuf> {
+        self.pinned_build_target
+            .clone()
+            .or_else(|| self.automatic_build_target.clone())
     }
     pub fn build_source_relative_path(&self) -> Option<String> {
         let root = self.project_url.as_ref()?;
