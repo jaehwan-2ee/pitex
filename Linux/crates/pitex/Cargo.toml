@@ -30,6 +30,7 @@ section = "editors"
 priority = "optional"
 maintainer = "Pitex contributors <https://github.com/jaehwan-2ee/pitex>"
 depends = "$auto"
+maintainer-scripts = "../../packaging/debian"
 assets = [
     ["target/release/pitex", "usr/bin/pitex", "755"],
     [

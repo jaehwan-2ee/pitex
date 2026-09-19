@@ -88,6 +88,13 @@ The 22.04 package is a compatibility build: the terminal console shows
 status output and hands interactive commands (e.g. Pi sign-in) to an
 external terminal emulator, since 22.04 has no VTE-GTK4.
 
+> **Note:** `apt` may print
+> `N: Download is performed unsandboxed as root as file '…' couldn't be
+> accessed by user '_apt'` when the `.deb` sits in a directory `_apt`
+> can't read (e.g. `~/Downloads`). This is a harmless notice, not an
+> error — the install still proceeds. If it bothers you, move the file
+> to `/tmp` first.
+
 ### Windows — installer (recommended)
 
 > **Note:** Windows support is **beta** — expect bugs and instability.
@@ -228,6 +235,6 @@ or `sudo` for the package install.
 ## License
 
 Pitex is source-available under the
-[PolyForm Noncommercial License 1.0.0](LICENSE): free to use, modify, and
-share for personal, educational, and other noncommercial purposes.
-Commercial use requires a separate license from the author.
+[PolyForm Shield License 1.0.0](LICENSE): free to use, modify, and
+share, including commercially — but you may not use it to compete with
+the project or its author.
