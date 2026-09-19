@@ -1,0 +1,14 @@
+Linux/crates/pitex-shell/src/panes.rs
+  h_bcbc8ae9e599aa 1598-1600,1657,1660,1664
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0a18d331b55d46d41f33941d252dbc4cd2b92e8",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
