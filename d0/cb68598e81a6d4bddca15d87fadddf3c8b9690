@@ -1,0 +1,28 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 1807-1825,2545-2549
+Linux/crates/pitex-shell/src/model.rs
+  h_bcbc8ae9e599aa 344-422,438,618-620,704,1199,1924-1927
+Linux/crates/pitex-shell/tests/tex_project_resolver.rs
+  h_bcbc8ae9e599aa 216-230
+Linux/crates/project-feature/src/lib.rs
+  h_bcbc8ae9e599aa 287-375
+Mac/Sources/AppShell/PitexApp.swift
+  h_bcbc8ae9e599aa 172-174,632,1245
+Mac/Sources/Features/BuildSupport.swift
+  h_bcbc8ae9e599aa 191-233,239-240
+Mac/Sources/Features/ProjectSidebarView.swift
+  h_bcbc8ae9e599aa 242-246
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  h_bcbc8ae9e599aa 228-267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0cb68598e81a6d4bddca15d87fadddf3c8b9690",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
