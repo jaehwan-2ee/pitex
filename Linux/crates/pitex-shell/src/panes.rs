@@ -1595,8 +1595,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     let skills_group = adw::PreferencesGroup::new();
     skills_group.set_title(&tr(lang, "settings.ai.skills"));
     let skill_rows: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
-    let install_row = adw::EntryRow::new();
-    install_row.set_title(&tr(lang, "settings.ai.install_skill"));
+    // `compat::entry_row` — `adw::EntryRow` needs libadwaita 1.2 but the
+    // Ubuntu 22.04 compat build targets 1.1.
+    let (install_row, install_entry) = crate::compat::entry_row(&tr(lang, "settings.ai.install_skill"));
     let install_button = gtk4::Button::with_label(&tr(lang, "settings.ai.install"));
     install_button.set_valign(gtk4::Align::Center);
     install_row.add_suffix(&install_button);
@@ -1653,14 +1654,14 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     }
     {
         let state = state.clone();
-        let install_row = install_row.clone();
+        let install_entry = install_entry.clone();
         SKILLS_REBUILD.with(|t| *t.borrow_mut() = rebuild.borrow().clone());
         install_button.connect_clicked(move |_| {
-            let source = install_row.text().trim().to_string();
+            let source = install_entry.text().trim().to_string();
             if source.is_empty() {
                 return;
             }
-            install_row.set_text("");
+            install_entry.set_text("");
             if let Ok(s) = state.try_borrow() {
                 s.toast(&tr(lang, "settings.ai.skill_installing"));
             }
