@@ -162,7 +162,7 @@ final class SubscriptionUsageStore: ObservableObject {
 
     /// Labels a Codex window by its length: 5h/7d for the common buckets,
     /// `Nh`/`Nd` otherwise.
-    private static func windowLabel(seconds: Double?) -> String {
+    private nonisolated static func windowLabel(seconds: Double?) -> String {
         guard let seconds else { return "limit" }
         switch seconds {
         case ..<(6 * 3600): return "5h"
