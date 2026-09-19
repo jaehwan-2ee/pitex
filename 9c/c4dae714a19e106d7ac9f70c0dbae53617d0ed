@@ -1,0 +1,36 @@
+Linux/crates/pitex-shell/src/agent.rs
+  h_bcbc8ae9e599aa 655-656,689-690,755-756,769,781-839,1076-1080,1136-1137,1257-1258,1293-1304,1366-1372,1481-1483,1678-1690,2383-2420
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 122-124,168-172,227-228,2147-2148,2150-2152,2156-2166,2219-2232,2350-2408,2746-2769,2884
+Linux/crates/pitex-shell/src/panes.rs
+  h_bcbc8ae9e599aa 8,330-337,426-503,1542-1640,1872-1875,1883-2002
+Mac/Resources/en.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,260-268
+Mac/Resources/ja.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,261-269
+Mac/Resources/ko.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,261-269
+Mac/Resources/vi.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 188,260-268
+Mac/Sources/Features/AgentCoordinator.swift
+  h_bcbc8ae9e599aa 4,92-96,151-160,184,204-268,321-322,364-366,440,542-548
+Mac/Sources/Features/AgentPanel.swift
+  h_bcbc8ae9e599aa 70,119-126,179-187,232-305
+Mac/Sources/Features/PiAgentProcess.swift
+  h_bcbc8ae9e599aa 279-299
+Mac/Sources/Features/PiRPC.swift
+  h_bcbc8ae9e599aa 32-33,55-58,112-113,123,128-167
+Mac/Sources/Features/SettingsView.swift
+  h_bcbc8ae9e599aa 191-195,510,514-679
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9cc4dae714a19e106d7ac9f70c0dbae53617d0ed",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
