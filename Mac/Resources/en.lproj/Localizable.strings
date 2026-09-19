@@ -185,6 +185,7 @@
 "assistant.reasoning_help" = "Reasoning effort";
 "assistant.send_help" = "Send (⌘Return)";
 "assistant.stop_help" = "Stop the agent";
+"assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";
@@ -243,6 +244,9 @@
 "settings.appearance.filter" = "Filter fonts…";
 "settings.appearance.system_default" = "System Monospaced";
 "settings.appearance.size" = "Size";
+"settings.appearance.terminal_font" = "Terminal font size";
+"settings.appearance.terminal_font_custom" = "Custom terminal font";
+"settings.appearance.terminal_font_family" = "Terminal font";
 "settings.appearance.colors" = "Colors";
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "Install location";
@@ -256,6 +260,15 @@
 "settings.ai.install_runtime" = "Install Pitex Agent";
 "settings.ai.reinstall_runtime" = "Reinstall Pitex Agent";
 "settings.ai.runtime_note" = "Pitex Agent installs itself into Pitex's own folder (Application Support ▸ Pitex ▸ pi-runtime) with its LaTeX, Humanizer, and SciSpace skills. Reinstall only if it is missing or damaged. Uses Bun when available, otherwise Node.js and npm.";
+"settings.ai.skills" = "Skills";
+"settings.ai.install_skill" = "Install a skill or extension source";
+"settings.ai.install" = "Install";
+"settings.ai.remove" = "Remove";
+"settings.ai.builtin" = "Built-in";
+"settings.ai.no_skills" = "No skills installed";
+"settings.ai.skill_installing" = "Installing…";
+"settings.ai.skill_installed" = "Skill installed.";
+"settings.ai.skill_failed" = "Install failed: %@";
 
 "appearance.color.editor_background" = "Editor Background";
 "appearance.color.editor_background_d" = "Canvas behind the text";

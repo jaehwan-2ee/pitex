@@ -63,8 +63,8 @@ pub enum WorkspaceSyncTeXState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsoleSection {
     Assistant,
-    Terminal,
     Issues,
+    Terminal,
     Log,
 }
 

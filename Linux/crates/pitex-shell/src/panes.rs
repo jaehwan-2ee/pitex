@@ -43,8 +43,8 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
 
     let section_items = [
         tr(lang, "assistant.title"),
-        tr(lang, "console.terminal"),
         tr(lang, "build.issues"),
+        tr(lang, "console.terminal"),
         tr(lang, "build.log"),
     ];
     let section_strs: Vec<&str> = section_items.iter().map(String::as_str).collect();
@@ -55,8 +55,8 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
         section.connect_selected_notify(move |dd| {
             let section = match dd.selected() {
                 0 => ConsoleSection::Assistant,
-                1 => ConsoleSection::Terminal,
-                2 => ConsoleSection::Issues,
+                1 => ConsoleSection::Issues,
+                2 => ConsoleSection::Terminal,
                 _ => ConsoleSection::Log,
             };
             if let Ok(mut s) = state.try_borrow_mut() {
@@ -153,7 +153,7 @@ fn build_terminal_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     a11y(&widget, "pitex.console.terminal", "console.terminal");
     let (font, dir) = {
         let s = state.borrow();
-        (s.editor_font_desc(), s.model.project_url.clone())
+        (s.terminal_font_desc(), s.model.project_url.clone())
     };
     terminal.set_font(Some(&font));
     // Spawn a login shell rooted at the project — `TerminalShellView` parity.
@@ -484,24 +484,15 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     detail.set_wrap(true);
     status_text.append(&title);
     status_text.append(&detail);
-    let forward = gtk4::Button::from_icon_name("go-next-symbolic");
-    forward.set_tooltip_text(Some(&tr(lang, "command.sync_forward")));
-    a11y(&forward, "pitex.syncForward", "command.sync_forward");
-    {
-        let state = state.clone();
-        forward.connect_clicked(move |_| state.borrow_mut().sync_forward_action());
-    }
-    ui.sync_forward_button.replace(Some(forward.clone()));
     status.append(&status_icon);
     status.append(&status_text);
-    status.append(&forward);
     a11y(&status, "pitex.synctexStatus", "preview.synctex");
     ui.synctex_status_icon.replace(Some(status_icon.clone()));
     ui.synctex_status_label.replace(Some(detail.clone()));
     root.append(&status);
     root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
 
-    // PDF toolbar: name, forward sync, external open, save copy.
+    // PDF toolbar: name, external open, save copy.
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     toolbar.set_margin_start(10);
     toolbar.set_margin_end(10);
@@ -514,14 +505,6 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     name.add_css_class("caption");
     ui.pdf_name_label.replace(Some(name.clone()));
     toolbar.append(&name);
-    let sync_btn = gtk4::Button::from_icon_name("media-playlist-repeat-symbolic");
-    sync_btn.set_tooltip_text(Some(&tr(lang, "command.sync_forward")));
-    a11y(&sync_btn, "pitex.pdf.syncForward", "command.sync_forward");
-    {
-        let state = state.clone();
-        sync_btn.connect_clicked(move |_| state.borrow_mut().sync_forward_action());
-    }
-    toolbar.append(&sync_btn);
     let external = gtk4::Button::from_icon_name("document-send-symbolic");
     external.set_tooltip_text(Some(&tr(lang, "preview.open_external")));
     a11y(&external, "pitex.pdf.openExternal", "preview.open_external");
@@ -1187,6 +1170,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         "한국어".to_string(),
         "日本語".to_string(),
         "Tiếng Việt".to_string(),
+        "Русский".to_string(),
+        "简体中文".to_string(),
+        "Español".to_string(),
     ];
     let language_strs: Vec<&str> = language_items.iter().map(String::as_str).collect();
     let languages = gtk4::StringList::new(&language_strs);
@@ -1196,6 +1182,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         crate::settings::AppLanguage::Ko => 2,
         crate::settings::AppLanguage::Ja => 3,
         crate::settings::AppLanguage::Vi => 4,
+        crate::settings::AppLanguage::Ru => 5,
+        crate::settings::AppLanguage::ZhHans => 6,
+        crate::settings::AppLanguage::Es => 7,
         _ => 0,
     });
     // `if appearance.languageRestartPending { Text("settings.appearance.language_restart") }`
@@ -1213,6 +1202,9 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
                 2 => crate::settings::AppLanguage::Ko,
                 3 => crate::settings::AppLanguage::Ja,
                 4 => crate::settings::AppLanguage::Vi,
+                5 => crate::settings::AppLanguage::Ru,
+                6 => crate::settings::AppLanguage::ZhHans,
+                7 => crate::settings::AppLanguage::Es,
                 _ => crate::settings::AppLanguage::System,
             };
             let crate::app_ui::AppState { appearance, store, .. } = &mut *s;
@@ -1266,6 +1258,64 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     font_row.add_suffix(font_button.widget());
     font_group.add(&font_row);
     font_group.add(&preview);
+    // `Toggle("settings.appearance.terminal_font_custom")` — off means the
+    // terminal follows the editor font (empty family).
+    let (term_font_row, term_font_switch) =
+        compat::switch_row(&tr(lang, "settings.appearance.terminal_font_custom"));
+    term_font_switch.set_active(!state.borrow().appearance.terminal_font_family.is_empty());
+    let term_font_button = compat::FontPicker::new();
+    term_font_button.set_font_desc(&state.borrow().terminal_font_desc());
+    let term_font_picker_row = adw::ActionRow::new();
+    term_font_picker_row.set_title(&tr(lang, "settings.appearance.terminal_font_family"));
+    term_font_picker_row.add_suffix(term_font_button.widget());
+    term_font_picker_row.set_sensitive(term_font_switch.is_active());
+    {
+        let state = state.clone();
+        let term_font_picker_row = term_font_picker_row.clone();
+        let term_font_button = term_font_button.clone_ref();
+        term_font_switch.connect_active_notify(move |sw| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            if sw.is_active() {
+                // Seed with the editor font so the picker shows a real font.
+                let (family, size) = {
+                    let a = &s.appearance;
+                    (
+                        if a.font_family.is_empty() { "Monospace".to_string() } else { a.font_family.clone() },
+                        a.font_size,
+                    )
+                };
+                {
+                    let crate::app_ui::AppState { appearance, store, .. } = &mut *s;
+                    appearance.set_terminal_font(store.prefs_mut(), &family, size);
+                }
+                term_font_button.set_font_desc(&s.terminal_font_desc());
+            } else {
+                {
+                    let crate::app_ui::AppState { appearance, store, .. } = &mut *s;
+                    appearance.set_terminal_font(store.prefs_mut(), "", 13.0);
+                }
+            }
+            term_font_picker_row.set_sensitive(sw.is_active());
+            s.apply_editor_preferences();
+        });
+    }
+    {
+        let state = state.clone();
+        term_font_button.connect_changed(move |b| {
+            if let Some(desc) = b.font_desc() {
+                let Ok(mut s) = state.try_borrow_mut() else { return };
+                let family = desc.family().map(|f| f.to_string()).unwrap_or_default();
+                let size = (desc.size() as f64 / gtk4::pango::SCALE as f64).clamp(9.0, 24.0);
+                {
+                    let crate::app_ui::AppState { appearance, store, .. } = &mut *s;
+                    appearance.set_terminal_font(store.prefs_mut(), &family, size);
+                }
+                s.apply_editor_preferences();
+            }
+        });
+    }
+    font_group.add(&term_font_row);
+    font_group.add(&term_font_picker_row);
     appearance.add(&font_group);
 
     // `Section("settings.appearance.colors")` — one ColorWellButton per role.

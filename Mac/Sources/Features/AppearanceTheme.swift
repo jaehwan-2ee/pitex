@@ -186,6 +186,9 @@ final class AppearanceSettings: ObservableObject {
         case ko
         case ja
         case vi
+        case ru
+        case zhHans = "zh-Hans"
+        case es
         var id: Self { self }
         /// Language pickers conventionally show each option in its own
         /// language; `.system` is localized at the call site instead.
@@ -196,6 +199,9 @@ final class AppearanceSettings: ObservableObject {
             case .ko: return "한국어"
             case .ja: return "日本語"
             case .vi: return "Tiếng Việt"
+            case .ru: return "Русский"
+            case .zhHans: return "简体中文"
+            case .es: return "Español"
             }
         }
     }
@@ -220,6 +226,13 @@ final class AppearanceSettings: ObservableObject {
     }
     @Published var fontSize: Double {
         didSet { UserDefaults.standard.set(fontSize, forKey: "appearance.fontSize") }
+    }
+    /// Terminal font override; empty family = follow the editor font.
+    @Published var terminalFontFamily: String {
+        didSet { UserDefaults.standard.set(terminalFontFamily, forKey: "appearance.terminalFontFamily") }
+    }
+    @Published var terminalFontSize: Double {
+        didSet { UserDefaults.standard.set(terminalFontSize, forKey: "appearance.terminalFontSize") }
     }
     /// Bumped whenever any color changes so observers can re-apply.
     @Published private(set) var colorRevision = 0
@@ -257,6 +270,8 @@ final class AppearanceSettings: ObservableObject {
         theme = Theme(rawValue: UserDefaults.standard.string(forKey: "appearance.theme") ?? "system") ?? .system
         fontFamily = UserDefaults.standard.string(forKey: "appearance.fontFamily") ?? ""
         fontSize = UserDefaults.standard.object(forKey: "appearance.fontSize") as? Double ?? 13
+        terminalFontFamily = UserDefaults.standard.string(forKey: "appearance.terminalFontFamily") ?? ""
+        terminalFontSize = UserDefaults.standard.object(forKey: "appearance.terminalFontSize") as? Double ?? 13
         applyAppearance()
         applyLanguage()
     }
@@ -283,6 +298,20 @@ final class AppearanceSettings: ObservableObject {
             return font
         }
         return NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    }
+
+    /// The terminal font: the custom family+size when set, otherwise the
+    /// editor font so the console follows the editor by default.
+    var terminalFont: NSFont {
+        if terminalFontFamily.isEmpty { return editorFont }
+        return NSFont(name: terminalFontFamily, size: terminalFontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: terminalFontSize, weight: .regular)
+    }
+
+    /// `set_font` — writes both terminal font fields in one call.
+    func setTerminalFont(family: String, size: Double) {
+        terminalFontFamily = family
+        terminalFontSize = size
     }
 
     /// Installs the app-wide light/dark appearance for the theme choice.

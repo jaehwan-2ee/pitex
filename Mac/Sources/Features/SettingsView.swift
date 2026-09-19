@@ -379,6 +379,9 @@ struct SettingsView: View {
                         Text(verbatim: "한국어").tag(AppearanceSettings.AppLanguage.ko)
                         Text(verbatim: "日本語").tag(AppearanceSettings.AppLanguage.ja)
                         Text(verbatim: "Tiếng Việt").tag(AppearanceSettings.AppLanguage.vi)
+                        Text(verbatim: "Русский").tag(AppearanceSettings.AppLanguage.ru)
+                        Text(verbatim: "简体中文").tag(AppearanceSettings.AppLanguage.zhHans)
+                        Text(verbatim: "Español").tag(AppearanceSettings.AppLanguage.es)
                     }
                     .labelsHidden()
                     .fixedSize()
@@ -401,6 +404,20 @@ struct SettingsView: View {
                             .frame(width: 44, alignment: .trailing)
                     }
                 }
+                Toggle("settings.appearance.terminal_font_custom", isOn: terminalFontCustomBinding)
+                LabeledContent("settings.appearance.terminal_font_family") {
+                    FontFamilyPicker(selection: $appearance.terminalFontFamily)
+                }
+                .disabled(appearance.terminalFontFamily.isEmpty)
+                LabeledContent("settings.appearance.terminal_font") {
+                    HStack {
+                        Slider(value: $appearance.terminalFontSize, in: 9...24, step: 1)
+                        Text("\(Int(appearance.terminalFontSize)) pt")
+                            .monospacedDigit()
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                }
+                .disabled(appearance.terminalFontFamily.isEmpty)
                 SyntaxPreview()
             }
             Section("settings.appearance.colors") {
@@ -588,6 +605,17 @@ struct SettingsView: View {
             get: { appearance.matchingPreset },
             set: { preset in
                 if let preset { appearance.applyPreset(preset) }
+            }
+        )
+    }
+
+    /// Custom-terminal-font switch: on seeds the family from the editor
+    /// font, off clears it so the terminal follows the editor again.
+    private var terminalFontCustomBinding: Binding<Bool> {
+        Binding(
+            get: { !appearance.terminalFontFamily.isEmpty },
+            set: { on in
+                appearance.terminalFontFamily = on ? appearance.fontFamily : ""
             }
         )
     }

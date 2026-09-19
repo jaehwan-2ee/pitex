@@ -523,7 +523,7 @@ impl FontPicker {
         }
     }
 
-    fn clone_ref(&self) -> Self {
+    pub fn clone_ref(&self) -> Self {
         match self {
             #[cfg(feature = "modern-gtk")]
             Self::Button(b) => Self::Button(b.clone()),

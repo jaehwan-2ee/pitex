@@ -34,14 +34,6 @@ struct Preview: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button {
-                        Task { await workspace.syncForward() }
-                    } label: {
-                        Image(systemName: "arrow.right.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(String(localized: "command.sync_forward"))
-                    .accessibilityIdentifier("pitex.pdf.syncForward")
-                    Button {
                         openPDFExternally()
                     } label: {
                         Image(systemName: "arrow.up.forward.app")
@@ -97,15 +89,6 @@ struct Preview: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button {
-                Task { await workspace.syncForward() }
-            } label: {
-                Image(systemName: "arrow.right.doc")
-            }
-            .buttonStyle(.borderless)
-            .disabled(workspace.syncTeXBinding == nil)
-            .help("Show the cursor position in the PDF.")
-            .accessibilityIdentifier("pitex.syncForward")
         }
         .padding(10)
         .accessibilityIdentifier("pitex.synctexStatus")

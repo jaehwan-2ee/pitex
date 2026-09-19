@@ -185,6 +185,7 @@
 "assistant.reasoning_help" = "Mức suy luận";
 "assistant.send_help" = "Gửi (⌘Return)";
 "assistant.stop_help" = "Dừng agent";
+"assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";
@@ -243,6 +244,9 @@
 "settings.appearance.filter" = "Lọc phông chữ…";
 "settings.appearance.system_default" = "Đơn cách hệ thống";
 "settings.appearance.size" = "Cỡ chữ";
+"settings.appearance.terminal_font" = "Cỡ phông chữ terminal";
+"settings.appearance.terminal_font_custom" = "Phông chữ terminal tùy chỉnh";
+"settings.appearance.terminal_font_family" = "Phông chữ terminal";
 "settings.appearance.colors" = "Màu sắc";
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "Vị trí cài đặt";
@@ -256,6 +260,15 @@
 "settings.ai.install_runtime" = "Cài đặt Pitex Agent";
 "settings.ai.reinstall_runtime" = "Cài lại Pitex Agent";
 "settings.ai.runtime_note" = "Pitex Agent tự cài vào thư mục riêng của Pitex (Application Support ▸ Pitex ▸ pi-runtime) kèm các skill LaTeX, Humanizer và SciSpace. Chỉ cài lại khi bị thiếu hoặc hỏng. Ưu tiên Bun nếu có; nếu không, sử dụng Node.js và npm.";
+"settings.ai.skills" = "Skill";
+"settings.ai.install_skill" = "Cài đặt nguồn skill hoặc extension";
+"settings.ai.install" = "Cài đặt";
+"settings.ai.remove" = "Xóa";
+"settings.ai.builtin" = "Tích hợp sẵn";
+"settings.ai.no_skills" = "Chưa cài skill nào";
+"settings.ai.skill_installing" = "Đang cài đặt…";
+"settings.ai.skill_installed" = "Đã cài skill.";
+"settings.ai.skill_failed" = "Cài đặt thất bại: %@";
 
 "appearance.color.editor_background" = "Nền trình chỉnh sửa";
 "appearance.color.editor_background_d" = "Vùng nền sau văn bản";

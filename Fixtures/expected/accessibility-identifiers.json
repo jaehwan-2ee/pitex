@@ -22,7 +22,6 @@
   "pitex.pdf",
   "pitex.pdf.download",
   "pitex.pdf.openExternal",
-  "pitex.pdf.syncForward",
   "pitex.preview",
   "pitex.projectOutline",
   "pitex.settings",
@@ -38,7 +37,10 @@
   "en",
   "ko",
   "ja",
-  "vi"
+  "vi",
+  "ru",
+  "zh-Hans",
+  "es"
  ],
  "localizationKeys": [
   "app.name",

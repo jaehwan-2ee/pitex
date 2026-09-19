@@ -131,7 +131,7 @@ struct BottomConsoleView: View {
         TerminalShellView(
             workingDirectory: workspace.projectURL,
             session: workspace.terminalSession,
-            font: AppearanceSettings.shared.editorFont,
+            font: AppearanceSettings.shared.terminalFont,
             foregroundColor: AppearanceSettings.shared.color(for: .bodyText),
             backgroundColor: AppearanceSettings.shared.color(for: .editorBackground)
         )

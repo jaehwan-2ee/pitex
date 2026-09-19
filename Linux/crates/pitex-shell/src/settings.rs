@@ -476,6 +476,9 @@ pub enum AppLanguage {
     Ko,
     Ja,
     Vi,
+    Ru,
+    ZhHans,
+    Es,
 }
 impl AppLanguage {
     pub fn raw_value(self) -> &'static str {
@@ -485,6 +488,9 @@ impl AppLanguage {
             Self::Ko => "ko",
             Self::Ja => "ja",
             Self::Vi => "vi",
+            Self::Ru => "ru",
+            Self::ZhHans => "zh-Hans",
+            Self::Es => "es",
         }
     }
     pub fn from_raw(v: &str) -> Self {
@@ -493,6 +499,9 @@ impl AppLanguage {
             "ko" => Self::Ko,
             "ja" => Self::Ja,
             "vi" => Self::Vi,
+            "ru" => Self::Ru,
+            "zh-Hans" => Self::ZhHans,
+            "es" => Self::Es,
             _ => Self::System,
         }
     }
@@ -505,6 +514,8 @@ pub struct AppearanceSettings {
     pub launched_language: AppLanguage,
     pub font_family: String,
     pub font_size: f64,
+    pub terminal_font_family: String,
+    pub terminal_font_size: f64,
     pub color_revision: u64,
 }
 impl AppearanceSettings {
@@ -523,6 +534,12 @@ impl AppearanceSettings {
             launched_language: language,
             font_family: prefs.string("appearance.fontFamily").unwrap_or_default(),
             font_size: prefs.double("appearance.fontSize").unwrap_or(13.0),
+            terminal_font_family: prefs
+                .string("appearance.terminalFontFamily")
+                .unwrap_or_default(),
+            terminal_font_size: prefs
+                .double("appearance.terminalFontSize")
+                .unwrap_or(13.0),
             color_revision: 0,
         }
     }
@@ -584,12 +601,31 @@ impl AppearanceSettings {
         prefs.set("appearance.fontFamily", family);
         prefs.set("appearance.fontSize", size);
     }
+    pub fn set_terminal_font(&mut self, prefs: &mut Preferences, family: &str, size: f64) {
+        self.terminal_font_family = family.to_string();
+        self.terminal_font_size = size;
+        prefs.set("appearance.terminalFontFamily", family);
+        prefs.set("appearance.terminalFontSize", size);
+    }
     /// Font description for Pango; empty family = system monospace.
     pub fn font_description(&self) -> String {
         if self.font_family.is_empty() {
             format!("Monospace {}", self.font_size.max(1.0) as i64)
         } else {
             format!("{} {}", self.font_family, self.font_size.max(1.0) as i64)
+        }
+    }
+    /// Terminal font description; empty family = system monospace (the
+    /// "follow editor" fallback lives in `AppState::terminal_font_desc`).
+    pub fn terminal_font_description(&self) -> String {
+        if self.terminal_font_family.is_empty() {
+            format!("Monospace {}", self.terminal_font_size.max(1.0) as i64)
+        } else {
+            format!(
+                "{} {}",
+                self.terminal_font_family,
+                self.terminal_font_size.max(1.0) as i64
+            )
         }
     }
 }

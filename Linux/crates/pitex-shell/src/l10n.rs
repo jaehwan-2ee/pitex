@@ -10,6 +10,9 @@ const EN: &str = include_str!("../../../../Mac/Resources/en.lproj/Localizable.st
 const JA: &str = include_str!("../../../../Mac/Resources/ja.lproj/Localizable.strings");
 const KO: &str = include_str!("../../../../Mac/Resources/ko.lproj/Localizable.strings");
 const VI: &str = include_str!("../../../../Mac/Resources/vi.lproj/Localizable.strings");
+const ES: &str = include_str!("../../../../Mac/Resources/es.lproj/Localizable.strings");
+const RU: &str = include_str!("../../../../Mac/Resources/ru.lproj/Localizable.strings");
+const ZH_HANS: &str = include_str!("../../../../Mac/Resources/zh-Hans.lproj/Localizable.strings");
 
 static TABLES: OnceLock<HashMap<&'static str, HashMap<String, String>>> = OnceLock::new();
 
@@ -20,6 +23,9 @@ fn tables() -> &'static HashMap<&'static str, HashMap<String, String>> {
         m.insert("ja", parse_strings(JA));
         m.insert("ko", parse_strings(KO));
         m.insert("vi", parse_strings(VI));
+        m.insert("es", parse_strings(ES));
+        m.insert("ru", parse_strings(RU));
+        m.insert("zh-Hans", parse_strings(ZH_HANS));
         m
     })
 }
@@ -95,6 +101,9 @@ pub fn resolve_language(setting: AppLanguage) -> &'static str {
         AppLanguage::Ko => "ko",
         AppLanguage::Ja => "ja",
         AppLanguage::Vi => "vi",
+        AppLanguage::Ru => "ru",
+        AppLanguage::ZhHans => "zh-Hans",
+        AppLanguage::Es => "es",
         AppLanguage::System => {
             let raw = std::env::var("LANGUAGE")
                 .or_else(|_| std::env::var("LC_ALL"))
@@ -109,6 +118,9 @@ pub fn resolve_language(setting: AppLanguage) -> &'static str {
                 "ko" => "ko",
                 "ja" => "ja",
                 "vi" => "vi",
+                "ru" => "ru",
+                "es" => "es",
+                "zh" => "zh-Hans",
                 _ => "en",
             }
         }
