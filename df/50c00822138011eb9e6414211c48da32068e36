@@ -1,0 +1,24 @@
+Linux/crates/project-feature/src/lib.rs
+  h_bcbc8ae9e599aa 306-315,321-335,394-410
+Mac/Pitex.xcodeproj/project.pbxproj
+  h_bcbc8ae9e599aa 32,82,177,312
+Mac/Sources/Features/AgentCoordinator.swift
+  h_bcbc8ae9e599aa 323,442,525
+Mac/Sources/Features/AgentPanel.swift
+  h_bcbc8ae9e599aa 13,275-276,279-280,287-293
+Mac/Sources/Features/SubscriptionUsage.swift
+  h_bcbc8ae9e599aa 1-194
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  h_bcbc8ae9e599aa 242-249,257-267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df50c00822138011eb9e6414211c48da32068e36",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
