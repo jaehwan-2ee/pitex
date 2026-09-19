@@ -201,7 +201,21 @@ pub fn install(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, S
 /// interactive terminal (`sudo`).
 #[cfg(all(unix, not(target_os = "macos")))]
 fn install_impl(downloaded: &Path, _info: &UpdateInfo) -> Result<InstallOutcome, String> {
-    let deb = downloaded.to_string_lossy().into_owned();
+    // apt's `_apt` sandbox user can't read files under $HOME (0700 on
+    // Ubuntu 24.04), which makes `apt install ./file.deb` warn "Download is
+    // performed unsandboxed as root" — and fail outright on some setups.
+    // Stage the package in /tmp, world-readable, before elevating.
+    let staged = std::env::temp_dir().join(
+        downloaded
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "pitex-update.deb".into()),
+    );
+    std::fs::copy(downloaded, &staged)
+        .map_err(|e| format!("Could not stage the update package: {e}"))?;
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o644));
+    let deb = staged.to_string_lossy().into_owned();
     let elevated = Command::new("pkexec")
         .args(["apt", "install", "-y", &deb])
         .stdin(std::process::Stdio::null())

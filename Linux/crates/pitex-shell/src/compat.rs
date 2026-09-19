@@ -56,12 +56,181 @@ pub fn spin_row(title: &str, min: f64, max: f64, step: f64) -> (adw::ActionRow, 
 }
 
 // ─── File dialogs ────────────────────────────────────────────────────────
-// `FileChooserNative` is deprecated since GTK 4.10 in favor of `FileDialog`
-// but is present since 4.0 and keeps working everywhere — one code path.
+// `FileChooserNative` is deprecated since GTK 4.10 and trips
+// `GTK_IS_FILE_SYSTEM_MODEL` criticals on newer GTK (24.04+), where the
+// portal-backed `FileDialog` is the supported path. Ubuntu 22.04 (GTK 4.6)
+// keeps `FileChooserNative` — `FileDialog` doesn't exist there.
 
-#[allow(deprecated)] // FileChooserNative is deprecated in 4.10 but present
-                     // since 4.0 — it is the one file dialog that works on
-                     // every supported GTK.
+/// Single file picker filtered to TeX/BibTeX sources.
+pub fn pick_source_file(
+    window: Option<&gtk4::Window>,
+    title: &str,
+    on_path: impl Fn(PathBuf) + 'static,
+) {
+    #[cfg(feature = "modern-gtk")]
+    {
+        let dialog = gtk4::FileDialog::new();
+        dialog.set_title(title);
+        dialog.set_modal(true);
+        let filter = gtk4::FileFilter::new();
+        filter.add_suffix("tex");
+        filter.add_suffix("bib");
+        let filters = gtk4::gio::ListStore::new::<gtk4::FileFilter>();
+        filters.append(&filter);
+        dialog.set_filters(Some(&filters));
+        dialog.set_default_filter(Some(&filter));
+        dialog.open(window, gtk4::gio::Cancellable::NONE, move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    on_path(path);
+                }
+            }
+        });
+        return;
+    }
+    #[cfg(not(feature = "modern-gtk"))]
+    {
+        let dialog = native_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
+        let filter = gtk4::FileFilter::new();
+        filter.add_pattern("*.tex");
+        filter.add_pattern("*.bib");
+        dialog.add_filter(&filter);
+        dialog.connect_response(move |d, response| {
+            if response == gtk4::ResponseType::Accept {
+                if let Some(path) = d.file().and_then(|f| f.path()) {
+                    on_path(path);
+                }
+            }
+            d.destroy();
+        });
+        dialog.show();
+    }
+}
+
+/// Multi-select picker (attachment insertion) — returns every selection.
+pub fn pick_files(
+    window: Option<&gtk4::Window>,
+    title: &str,
+    on_paths: impl Fn(Vec<PathBuf>) + 'static,
+) {
+    #[cfg(feature = "modern-gtk")]
+    {
+        let dialog = gtk4::FileDialog::new();
+        dialog.set_title(title);
+        dialog.set_modal(true);
+        dialog.open_multiple(window, gtk4::gio::Cancellable::NONE, move |result| {
+            let Ok(files) = result else { return };
+            let paths: Vec<PathBuf> = (0..files.n_items())
+                .filter_map(|i| files.item(i).and_then(|o| o.downcast::<gtk4::gio::File>().ok()))
+                .filter_map(|f| f.path())
+                .collect();
+            on_paths(paths);
+        });
+        return;
+    }
+    #[cfg(not(feature = "modern-gtk"))]
+    {
+        let dialog = native_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
+        dialog.set_select_multiple(true);
+        dialog.connect_response(move |d, response| {
+            if response == gtk4::ResponseType::Accept {
+                let files = d.files();
+                let paths: Vec<PathBuf> = (0..files.n_items())
+                    .filter_map(|i| {
+                        files
+                            .item(i)
+                            .and_then(|o| o.downcast::<gtk4::gio::File>().ok())
+                    })
+                    .filter_map(|f| f.path())
+                    .collect();
+                on_paths(paths);
+            }
+            d.destroy();
+        });
+        dialog.show();
+    }
+}
+
+/// Folder picker (project open).
+pub fn pick_folder(
+    window: Option<&gtk4::Window>,
+    title: &str,
+    on_path: impl Fn(PathBuf) + 'static,
+) {
+    #[cfg(feature = "modern-gtk")]
+    {
+        let dialog = gtk4::FileDialog::new();
+        dialog.set_title(title);
+        dialog.set_modal(true);
+        dialog.select_folder(window, gtk4::gio::Cancellable::NONE, move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    on_path(path);
+                }
+            }
+        });
+        return;
+    }
+    #[cfg(not(feature = "modern-gtk"))]
+    {
+        let dialog = native_dialog(window, title, gtk4::FileChooserAction::SelectFolder, "Open");
+        dialog.connect_response(move |d, response| {
+            if response == gtk4::ResponseType::Accept {
+                if let Some(path) = d.file().and_then(|f| f.path()) {
+                    on_path(path);
+                }
+            }
+            d.destroy();
+        });
+        dialog.show();
+    }
+}
+
+/// Save-as dialog with an optional suggested name.
+pub fn save_file(
+    window: Option<&gtk4::Window>,
+    title: &str,
+    initial_name: Option<&str>,
+    on_path: impl Fn(PathBuf) + 'static,
+) {
+    #[cfg(feature = "modern-gtk")]
+    {
+        let dialog = gtk4::FileDialog::new();
+        dialog.set_title(title);
+        dialog.set_modal(true);
+        if let Some(name) = initial_name {
+            dialog.set_initial_name(Some(name));
+        }
+        dialog.save(window, gtk4::gio::Cancellable::NONE, move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    on_path(path);
+                }
+            }
+        });
+        return;
+    }
+    #[cfg(not(feature = "modern-gtk"))]
+    {
+        let dialog = native_dialog(window, title, gtk4::FileChooserAction::Save, "Save");
+        if let Some(name) = initial_name {
+            dialog.set_current_name(name);
+        }
+        dialog.connect_response(move |d, response| {
+            if response == gtk4::ResponseType::Accept {
+                if let Some(path) = d.file().and_then(|f| f.path()) {
+                    on_path(path);
+                }
+            }
+            d.destroy();
+        });
+        dialog.show();
+    }
+}
+
+#[allow(deprecated)] // FileChooserNative is deprecated in 4.10 but is the
+                     // only file dialog on GTK 4.6 (Ubuntu 22.04).
+#[cfg(not(feature = "modern-gtk"))]
 fn native_dialog(
     window: Option<&gtk4::Window>,
     title: &str,
@@ -77,107 +246,6 @@ fn native_dialog(
     );
     dialog.set_modal(true);
     dialog
-}
-
-/// Single file picker filtered to TeX/BibTeX sources.
-#[allow(deprecated)] // FileChooserNative — see `native_dialog`.
-pub fn pick_source_file(
-    window: Option<&gtk4::Window>,
-    title: &str,
-    on_path: impl Fn(PathBuf) + 'static,
-) {
-    let dialog = native_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
-    let filter = gtk4::FileFilter::new();
-    // `add_suffix` is GTK 4.10+; 4.6 has `add_pattern` (deprecated later).
-    #[cfg(feature = "modern-gtk")]
-    {
-        filter.add_suffix("tex");
-        filter.add_suffix("bib");
-    }
-    #[cfg(not(feature = "modern-gtk"))]
-    {
-        filter.add_pattern("*.tex");
-        filter.add_pattern("*.bib");
-    }
-    dialog.add_filter(&filter);
-    dialog.connect_response(move |d, response| {
-        if response == gtk4::ResponseType::Accept {
-            if let Some(path) = d.file().and_then(|f| f.path()) {
-                on_path(path);
-            }
-        }
-        d.destroy();
-    });
-    dialog.show();
-}
-
-/// Multi-select picker (attachment insertion) — returns every selection.
-#[allow(deprecated)] // FileChooserNative — see `native_dialog`.
-pub fn pick_files(
-    window: Option<&gtk4::Window>,
-    title: &str,
-    on_paths: impl Fn(Vec<PathBuf>) + 'static,
-) {
-    let dialog = native_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
-    dialog.set_select_multiple(true);
-    dialog.connect_response(move |d, response| {
-        if response == gtk4::ResponseType::Accept {
-            let files = d.files();
-            let paths: Vec<PathBuf> = (0..files.n_items())
-                .filter_map(|i| {
-                    files
-                        .item(i)
-                        .and_then(|o| o.downcast::<gtk4::gio::File>().ok())
-                })
-                .filter_map(|f| f.path())
-                .collect();
-            on_paths(paths);
-        }
-        d.destroy();
-    });
-    dialog.show();
-}
-
-/// Folder picker (project open).
-#[allow(deprecated)] // FileChooserNative — see `native_dialog`.
-pub fn pick_folder(
-    window: Option<&gtk4::Window>,
-    title: &str,
-    on_path: impl Fn(PathBuf) + 'static,
-) {
-    let dialog = native_dialog(window, title, gtk4::FileChooserAction::SelectFolder, "Open");
-    dialog.connect_response(move |d, response| {
-        if response == gtk4::ResponseType::Accept {
-            if let Some(path) = d.file().and_then(|f| f.path()) {
-                on_path(path);
-            }
-        }
-        d.destroy();
-    });
-    dialog.show();
-}
-
-/// Save-as dialog with an optional suggested name.
-#[allow(deprecated)] // FileChooserNative — see `native_dialog`.
-pub fn save_file(
-    window: Option<&gtk4::Window>,
-    title: &str,
-    initial_name: Option<&str>,
-    on_path: impl Fn(PathBuf) + 'static,
-) {
-    let dialog = native_dialog(window, title, gtk4::FileChooserAction::Save, "Save");
-    if let Some(name) = initial_name {
-        dialog.set_current_name(name);
-    }
-    dialog.connect_response(move |d, response| {
-        if response == gtk4::ResponseType::Accept {
-            if let Some(path) = d.file().and_then(|f| f.path()) {
-                on_path(path);
-            }
-        }
-        d.destroy();
-    });
-    dialog.show();
 }
 
 /// `set_content_fit(Contain)` is GTK 4.8+; on 4.6 the equivalent is
