@@ -320,6 +320,7 @@ final class AgentCoordinator: ObservableObject {
         sendSilently(.getAvailableModels)
         sendSilently(.getSessionStats)
         sendSilently(.getCommands)
+        SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
     }
 
     private func processDidExit(_ exited: PiAgentProcess?) {
@@ -438,6 +439,7 @@ final class AgentCoordinator: ObservableObject {
                 ))
             }
             sendSilently(.getSessionStats)
+            SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
             Task { await agentActivityDidFinish() }
         case "message_start":
             handleMessageStart(event)
@@ -520,6 +522,7 @@ final class AgentCoordinator: ObservableObject {
         switch event.responseCommand {
         case "get_state":
             currentModel = event.responseData?["model"].flatMap(PiModelDescriptor.init)
+            SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
             if let level = event.responseData?["thinkingLevel"] as? String {
                 thinkingLevel = level
             }

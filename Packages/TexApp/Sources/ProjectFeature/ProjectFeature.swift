@@ -239,11 +239,30 @@ public func nestProjectChildren(_ tree: [ProjectFileNode], main: String, childre
             nested.append(node)
         }
     }
+    // Same-stem .bib files nest under the main document even when dependency
+    // resolution missed them (indirect includes, stale children list).
+    let mainStem = (mainNode.name as NSString).deletingPathExtension
+    for bibPath in bibPaths(matching: mainStem, in: tree) where !nested.contains(where: { $0.path == bibPath }) {
+        if let node = removeNode(path: bibPath, from: &tree) {
+            nested.append(node)
+        }
+    }
     mainNode = ProjectFileNode(path: mainNode.path, name: mainNode.name,
                                isDirectory: mainNode.isDirectory,
                                children: nested.isEmpty ? nil : nested)
     tree.insert(mainNode, at: 0)
     return tree
+}
+
+/// All .bib file paths in the tree whose stem equals `stem`.
+private func bibPaths(matching stem: String, in nodes: [ProjectFileNode]) -> [String] {
+    nodes.flatMap { node -> [String] in
+        if node.isDirectory { return bibPaths(matching: stem, in: node.children ?? []) }
+        guard (node.name as NSString).pathExtension.lowercased() == "bib",
+              (node.name as NSString).deletingPathExtension == stem
+        else { return [] }
+        return [node.path]
+    }
 }
 
 /// Detaches the node with `path` wherever it sits, pruning directory nodes
