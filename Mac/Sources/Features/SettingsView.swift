@@ -787,7 +787,18 @@ struct SettingsView: View {
         Binding(
             get: { !appearance.terminalFontFamily.isEmpty },
             set: { on in
-                appearance.terminalFontFamily = on ? appearance.fontFamily : ""
+                if on {
+                    // Seed with the editor font; when the editor uses the
+                    // system default (empty family) fall back to the named
+                    // system fixed-pitch family — writing "" here would just
+                    // read back as "off" and the toggle could never engage.
+                    let family = appearance.fontFamily.isEmpty
+                        ? (NSFont.userFixedPitchFont(ofSize: appearance.fontSize)?.familyName ?? "Menlo")
+                        : appearance.fontFamily
+                    appearance.setTerminalFont(family: family, size: appearance.fontSize)
+                } else {
+                    appearance.terminalFontFamily = ""
+                }
             }
         )
     }
