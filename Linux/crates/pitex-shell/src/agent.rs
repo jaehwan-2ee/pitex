@@ -652,6 +652,8 @@ pub enum PiRPCCommand {
     GetState,
     GetAvailableModels,
     GetAvailableThinkingLevels,
+    GetSessionStats,
+    GetCommands,
     SetModel {
         provider: String,
         model_id: String,
@@ -684,6 +686,8 @@ impl PiRPCCommand {
             Self::GetAvailableThinkingLevels => {
                 json!({"type": "get_available_thinking_levels"})
             }
+            Self::GetSessionStats => json!({"type": "get_session_stats"}),
+            Self::GetCommands => json!({"type": "get_commands"}),
             Self::SetModel { provider, model_id } => {
                 json!({"type": "set_model", "provider": provider, "modelId": model_id})
             }
@@ -748,6 +752,8 @@ pub struct PiModelDescriptor {
     pub id: String,
     pub provider: String,
     pub name: String,
+    /// `contextWindow` from the model JSON — optional upstream.
+    pub context_window: Option<u64>,
 }
 impl PiModelDescriptor {
     pub fn from_value(v: &Value) -> Option<Self> {
@@ -760,6 +766,7 @@ impl PiModelDescriptor {
                 .and_then(|n| n.as_str())
                 .map(String::from)
                 .unwrap_or_else(|| d.get("id").unwrap().as_str().unwrap().to_string()),
+            context_window: d.get("contextWindow").and_then(|v| v.as_u64()),
         })
     }
     pub fn picker_title(&self) -> String {
@@ -768,6 +775,65 @@ impl PiModelDescriptor {
         } else {
             format!("{} ({})", self.name, self.id)
         }
+    }
+}
+
+/// `get_session_stats` response payload — token totals, cost, and the
+/// context-window occupancy pi reports for the current session.
+#[derive(Debug, Clone, Default)]
+pub struct PiSessionStats {
+    pub total_tokens: u64,
+    pub cost: f64,
+    pub context_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    pub context_percent: Option<f64>,
+}
+impl PiSessionStats {
+    pub fn from_value(d: &Map<String, Value>) -> Self {
+        let tokens = d.get("tokens").and_then(|t| t.as_object());
+        let usage = d.get("contextUsage").and_then(|u| u.as_object());
+        Self {
+            total_tokens: tokens
+                .and_then(|t| t.get("total"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            cost: d.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            context_tokens: usage
+                .and_then(|u| u.get("tokens"))
+                .and_then(|v| v.as_u64()),
+            context_window: usage
+                .and_then(|u| u.get("contextWindow"))
+                .and_then(|v| v.as_u64()),
+            context_percent: usage
+                .and_then(|u| u.get("percent"))
+                .and_then(|v| v.as_f64()),
+        }
+    }
+}
+
+/// One entry of the `get_commands` response — a slash command the composer
+/// can complete (`source`: "extension" | "prompt" | "skill").
+#[derive(Debug, Clone)]
+pub struct PiSlashCommand {
+    pub name: String,
+    pub description: Option<String>,
+    pub source: String,
+}
+impl PiSlashCommand {
+    pub fn from_value(v: &Value) -> Option<Self> {
+        let d = v.as_object()?;
+        Some(Self {
+            name: d.get("name")?.as_str()?.to_string(),
+            description: d
+                .get("description")
+                .and_then(|x| x.as_str())
+                .map(String::from),
+            source: d
+                .get("source")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
     }
 }
 
@@ -1007,6 +1073,11 @@ pub struct AgentCoordinator {
     /// model-settings refresh is in flight.
     pub thinking_levels: Vec<String>,
     pub is_updating_model_settings: bool,
+    /// `get_session_stats` payload — refreshed after spawn and on every
+    /// `agent_end`; `None` until the first reply lands.
+    pub session_stats: Option<PiSessionStats>,
+    /// `get_commands` payload — slash commands the composer completes.
+    pub commands: Vec<PiSlashCommand>,
     pub status_message: Option<String>,
     pub attach_active_document: bool,
     pub pending_composer_insertion: Option<String>,
@@ -1062,6 +1133,8 @@ impl AgentCoordinator {
             selection_attachment: None,
             suppressed_attachment: None,
             model_settings_request_id: None,
+            session_stats: None,
+            commands: Vec::new(),
             context_provider: None,
             persist_dirty_sessions: None,
             on_agent_activity_finished: None,
@@ -1181,6 +1254,8 @@ impl AgentCoordinator {
                 self.send_model_settings(PiRPCCommand::GetState, None);
                 if let Some(process) = &self.process {
                     self.send_to(process, &PiRPCCommand::GetAvailableModels);
+                    self.send_to(process, &PiRPCCommand::GetSessionStats);
+                    self.send_to(process, &PiRPCCommand::GetCommands);
                 }
             }
             Err(e) => {
@@ -1213,6 +1288,18 @@ impl AgentCoordinator {
         self.model_settings_request_id = None;
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
+    }
+
+    /// Restart after provider/config changes — `shutdown` leaves
+    /// `connection` at `Ready`, which would make `prepare` early-return, so
+    /// the state is reset to `Idle` first.
+    pub fn restart(&mut self) {
+        self.shutdown();
+        self.connection = Connection::Idle;
+        self.intentional_stop = false;
+        self.session_stats = None;
+        self.commands.clear();
+        self.prepare();
     }
 
     /// Poll one event (non-blocking) — the UI drains in its idle loop.
@@ -1276,7 +1363,13 @@ impl AgentCoordinator {
             self.status_message = Some("The agent is not running.".into());
             return;
         }
-        let message = self.envelope(trimmed);
+        // Slash commands go raw — pi expands `/skill:name` and extension
+        // commands only when the message itself starts with '/'.
+        let message = if trimmed.starts_with('/') {
+            trimmed.to_string()
+        } else {
+            self.envelope(trimmed)
+        };
         let behavior = if self.is_running {
             Some("followUp".to_string())
         } else {
@@ -1385,6 +1478,9 @@ impl AgentCoordinator {
             "response" => self.handle_response(event),
             "agent_start" => self.is_running = true,
             "agent_end" => {
+                if let Some(process) = &self.process {
+                    self.send_to(process, &PiRPCCommand::GetSessionStats);
+                }
                 self.is_running = false;
                 self.finalize_entries();
                 if let Some(failure) = self.last_assistant_error(event) {
@@ -1578,6 +1674,19 @@ impl AgentCoordinator {
                     .unwrap_or_default();
                 self.models = raw.iter().filter_map(PiModelDescriptor::from_value).collect();
                 self.apply_preferred_model_if_ready();
+            }
+            Some("get_session_stats") => {
+                if let Some(data) = event.response_data() {
+                    self.session_stats = Some(PiSessionStats::from_value(data));
+                }
+            }
+            Some("get_commands") => {
+                self.commands = event
+                    .response_data()
+                    .and_then(|d| d.get("commands"))
+                    .and_then(|c| c.as_array())
+                    .map(|a| a.iter().filter_map(PiSlashCommand::from_value).collect())
+                    .unwrap_or_default();
             }
             Some("set_model" | "set_thinking_level") => {
                 self.send_model_settings(
@@ -2268,6 +2377,44 @@ pub mod pi_installer {
                 let _ = std::fs::remove_dir_all(&target);
             }
             copy_dir_all(&entry.path(), &target).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// `pi install <source>` — install a skill (npm package, git URL, or
+    /// local path) into the app-local agent dir. Runs through the same
+    /// toolchain discovery + `launch` routing as the agent itself so
+    /// Bun/Node shims resolve; `PI_CODING_AGENT_DIR` pins the install to
+    /// `pi_paths::agent_directory()`. Blocking — call off the UI thread.
+    pub fn install_skill(source: &str) -> Result<(), String> {
+        let executable = pi_paths::runtime_executable();
+        if !is_executable(&executable) {
+            return Err("Pitex Agent is not installed yet.".into());
+        }
+        let tools = PiToolchain::discover(
+            std::env::vars().collect(),
+            &dirs::home_dir().unwrap_or_default(),
+            &PiToolchain::SYSTEM_DIRECTORIES,
+        );
+        let (exe, args) = tools.launch(&executable, &["install".into(), source.into()])?;
+        let mut environment = tools.environment.clone();
+        environment.insert(
+            "PI_CODING_AGENT_DIR".into(),
+            pi_paths::agent_directory().to_string_lossy().into_owned(),
+        );
+        let cwd = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let Some(result) = run_install(&exe, &args, &environment, &cwd, 300) else {
+            return Err("The install command could not be started.".into());
+        };
+        if result.stop_reason != build_core::ProcessStopReason::Completed
+            || result.termination != (build_core::ProcessTermination::Exited { code: 0 })
+        {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&result.standard_output),
+                String::from_utf8_lossy(&result.standard_error)
+            );
+            return Err(tail(&text, 2_000));
         }
         Ok(())
     }

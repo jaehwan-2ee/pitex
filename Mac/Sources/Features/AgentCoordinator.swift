@@ -1,6 +1,7 @@
 import AppKit
 import AppPorts
 import AppShell
+import Darwin
 import Foundation
 import PDFKit
 
@@ -88,6 +89,11 @@ final class AgentCoordinator: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var models: [PiModelDescriptor] = []
     @Published private(set) var currentModel: PiModelDescriptor?
+    /// Session token/cost accounting, refreshed after every agent run.
+    @Published private(set) var sessionStats: PiSessionStats?
+    /// Slash commands pi advertises (extensions, prompts, skills) — drives
+    /// the composer's `/` completion list.
+    @Published private(set) var commands: [PiSlashCommand] = []
     /// Both the effective level and the model's choices come from pi.
     @Published private(set) var thinkingLevel = "off"
     @Published private(set) var thinkingLevels: [String] = []
@@ -142,6 +148,16 @@ final class AgentCoordinator: ObservableObject {
     private var toolIndexByCallID: [String: Int] = [:]
     private var prepareTask: Task<Void, Never>?
     private var modelSettingsRequestID: String?
+    /// Watches `PiPaths.agentDirectory` so auth/model/settings edits made in
+    /// pi's own flows (or by hand) restart the agent without an app relaunch.
+    private struct ConfigFileState: Equatable {
+        var exists = false
+        var mtime: Date?
+        var size: UInt64 = 0
+    }
+    private var configWatcher: DispatchSourceFileSystemObject?
+    private var configSnapshot: [String: ConfigFileState] = [:]
+    private var pendingConfigRestart: DispatchWorkItem?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -165,6 +181,7 @@ final class AgentCoordinator: ObservableObject {
     /// first prompt is sent. Safe to call again after installing pi or a
     /// spawn failure.
     func prepare() {
+        startConfigWatcher()
         switch connection {
         case .connecting, .ready: return
         case .idle, .piMissing, .failed: break
@@ -182,6 +199,71 @@ final class AgentCoordinator: ObservableObject {
         modelSettingsRequestID = nil
         thinkingLevels = []
         isUpdatingModelSettings = false
+    }
+
+    /// Reconnect after provider/model/settings changes: `shutdown()` leaves
+    /// `connection` at `.ready`, which would make `prepare()` early-return,
+    /// so the state is reset to `.idle` first.
+    func restart() {
+        shutdown()
+        connection = .idle
+        intentionalStop = false
+        sessionStats = nil
+        commands = []
+        prepare()
+    }
+
+    // MARK: - Agent config watch
+
+    /// `startWatcher(for:)` in PitexApp.swift, applied to the agent
+    /// directory: a `.write` event on the directory fires for any file
+    /// create/replace inside it, and a snapshot of the three config files
+    /// filters out unrelated writes (sessions, skills, logs).
+    private func startConfigWatcher() {
+        guard configWatcher == nil else { return }
+        let directory = PiPaths.agentDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let descriptor = Darwin.open(directory.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: .write,
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            Task { @MainActor in self?.agentConfigChangedOnDisk() }
+        }
+        source.setCancelHandler { Darwin.close(descriptor) }
+        source.resume()
+        configSnapshot = Self.agentConfigSnapshot()
+        configWatcher = source
+    }
+
+    private func agentConfigChangedOnDisk() {
+        let snapshot = Self.agentConfigSnapshot()
+        guard snapshot != configSnapshot else { return }
+        configSnapshot = snapshot
+        // Coalesce write bursts (pi rewrites several files on login) into
+        // one restart once the directory settles.
+        pendingConfigRestart?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor in self?.restart() }
+        }
+        pendingConfigRestart = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    private static func agentConfigSnapshot() -> [String: ConfigFileState] {
+        var snapshot: [String: ConfigFileState] = [:]
+        for url in [PiPaths.authFileURL, PiPaths.modelsFileURL, PiPaths.settingsFileURL] {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            snapshot[url.lastPathComponent] = ConfigFileState(
+                exists: attributes != nil,
+                mtime: attributes?[.modificationDate] as? Date,
+                size: (attributes?[.size] as? UInt64) ?? 0
+            )
+        }
+        return snapshot
     }
 
     private func prepareAgent() async {
@@ -236,6 +318,8 @@ final class AgentCoordinator: ObservableObject {
         }
         sendModelSettings(.getState)
         sendSilently(.getAvailableModels)
+        sendSilently(.getSessionStats)
+        sendSilently(.getCommands)
     }
 
     private func processDidExit(_ exited: PiAgentProcess?) {
@@ -277,7 +361,9 @@ final class AgentCoordinator: ObservableObject {
                 statusMessage = "The agent is not running."
                 return
             }
-            let message = envelope(for: trimmed)
+            // Slash commands go raw so pi expands /skill:name and extension
+            // commands itself; the editor-context envelope is for prose.
+            let message = trimmed.hasPrefix("/") ? trimmed : envelope(for: trimmed)
             do {
                 let behavior = isRunning ? "followUp" : nil
                 try process.send(.prompt(message: message, streamingBehavior: behavior))
@@ -351,6 +437,7 @@ final class AgentCoordinator: ObservableObject {
                     role: .notice, title: "Assistant", text: failure, status: .failed
                 ))
             }
+            sendSilently(.getSessionStats)
             Task { await agentActivityDidFinish() }
         case "message_start":
             handleMessageStart(event)
@@ -452,6 +539,13 @@ final class AgentCoordinator: ObservableObject {
             let raw = event.responseData?["models"] as? [Any] ?? []
             models = raw.compactMap(PiModelDescriptor.init)
             applyPreferredModelIfReady()
+        case "get_session_stats":
+            if let data = event.responseData {
+                sessionStats = PiSessionStats(data)
+            }
+        case "get_commands":
+            let raw = event.responseData?["commands"] as? [Any] ?? []
+            commands = raw.compactMap(PiSlashCommand.init)
         case "set_model", "set_thinking_level":
             sendModelSettings(.getState, id: modelSettingsRequestID)
         case "new_session":

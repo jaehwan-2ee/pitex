@@ -188,6 +188,11 @@ struct SettingsView: View {
     @State private var piInstallMessage: String?
     @State private var piInstallIsError = false
     @State private var piSettingsError: String?
+    @State private var skills: [PiSkill] = []
+    @State private var skillSource = ""
+    @State private var skillInstallInFlight = false
+    @State private var skillMessage: String?
+    @State private var skillIsError = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -502,9 +507,176 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            skillsSection
         }
         .formStyle(.grouped)
         .padding(8)
+        .onAppear { refreshSkills() }
+    }
+
+    /// Skills pi discovers under `<agent dir>/skills/<name>/SKILL.md`.
+    /// Bundled skills are mirrored from the app bundle on every install and
+    /// cannot be removed here; anything else was installed by `pi install`
+    /// and gets a remove button plus the install row below.
+    private var skillsSection: some View {
+        Section("settings.ai.skills") {
+            if skills.isEmpty {
+                Text("settings.ai.no_skills")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(skills) { skill in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: skill.name)
+                        if !skill.subtitle.isEmpty {
+                            Text(verbatim: skill.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    Spacer()
+                    if !skill.bundled {
+                        Button("settings.ai.remove") {
+                            removeSkill(skill)
+                        }
+                        .accessibilityIdentifier("pitex.settings.ai.removeSkill.\(skill.name)")
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("settings.ai.install_skill", text: $skillSource)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(skillInstallInFlight)
+                    .accessibilityIdentifier("pitex.settings.ai.skillSource")
+                Button("settings.ai.install") {
+                    installSkill()
+                }
+                .disabled(skillInstallInFlight
+                          || skillSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || !PiExecutableLocator.appLocalRuntimeInstalled)
+                .accessibilityIdentifier("pitex.settings.ai.installSkill")
+                if skillInstallInFlight {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if let skillMessage {
+                Text(skillMessage)
+                    .font(.caption)
+                    .foregroundStyle(skillIsError ? .red : .secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func refreshSkills() {
+        skills = Self.loadSkills()
+    }
+
+    private func installSkill() {
+        let source = skillSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return }
+        skillInstallInFlight = true
+        skillIsError = false
+        skillMessage = String(localized: "settings.ai.skill_installing")
+        Task {
+            do {
+                try await PiRuntimeInstaller.installSkill(source: source)
+                skillMessage = String(localized: "settings.ai.skill_installed")
+                skillIsError = false
+                skillSource = ""
+            } catch {
+                skillMessage = String(format: String(localized: "settings.ai.skill_failed"), error.localizedDescription)
+                skillIsError = true
+            }
+            skillInstallInFlight = false
+            refreshSkills()
+        }
+    }
+
+    private func removeSkill(_ skill: PiSkill) {
+        try? FileManager.default.removeItem(at: skill.directory)
+        refreshSkills()
+    }
+
+    /// One installed skill directory (`SKILL.md` frontmatter supplies the
+    /// display name/description; the directory name is the fallback).
+    struct PiSkill: Identifiable {
+        var name: String
+        var description: String
+        var bundled: Bool
+        var directory: URL
+
+        var id: String { directory.path }
+
+        var subtitle: String {
+            bundled ? String(localized: "settings.ai.builtin") : description
+        }
+    }
+
+    /// Skill directory names shipped inside the app bundle — the same set
+    /// `PiRuntimeInstaller.installBundledSkills` copies (no remove button).
+    private static let bundledSkills: Set<String> = [
+        "humanizer", "latex-compile", "latex-doctor", "scispace", "texlive-runtime-installer",
+    ]
+
+    private static func loadSkills() -> [PiSkill] {
+        let fileManager = FileManager.default
+        let root = PiPaths.skillsDirectory
+        let names = (try? fileManager.contentsOfDirectory(atPath: root.path)) ?? []
+        return names.filter { !$0.hasPrefix(".") }.sorted().compactMap { name in
+            let directory = root.appendingPathComponent(name, isDirectory: true)
+            let manifest = directory.appendingPathComponent("SKILL.md")
+            guard fileManager.fileExists(atPath: manifest.path) else { return nil }
+            let (skillName, description) = skillFrontmatter(manifest)
+            return PiSkill(
+                name: skillName ?? name,
+                description: description,
+                bundled: bundledSkills.contains(name),
+                directory: directory
+            )
+        }
+    }
+
+    /// `name:`/`description:` from a `SKILL.md` YAML frontmatter block — a
+    /// simple line parse (no YAML dependency): `description: |` block
+    /// scalars take their first indented line.
+    private static func skillFrontmatter(_ url: URL) -> (name: String?, description: String) {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return (nil, "") }
+        var name: String?
+        var description = ""
+        var inside = false
+        var blockScalar = false
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "---" {
+                if inside { break }
+                inside = true
+                continue
+            }
+            guard inside else { continue }
+            if blockScalar {
+                if line.hasPrefix(" ") || line.hasPrefix("\t"), !trimmed.isEmpty {
+                    description = trimmed
+                }
+                blockScalar = false
+                continue
+            }
+            if trimmed.hasPrefix("name:") {
+                name = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            } else if trimmed.hasPrefix("description:") {
+                let value = trimmed.dropFirst(12).trimmingCharacters(in: .whitespaces)
+                if value == "|" || value == ">" {
+                    blockScalar = true
+                } else {
+                    description = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                }
+            }
+        }
+        return (name, description)
     }
 
     /// Updates pane — mirrors the GTK settings page: current version, a

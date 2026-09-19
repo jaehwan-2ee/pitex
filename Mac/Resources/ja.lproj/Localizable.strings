@@ -185,6 +185,7 @@
 "assistant.reasoning_help" = "推論レベル";
 "assistant.send_help" = "送信 (⌘Return)";
 "assistant.stop_help" = "エージェントを停止";
+"assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";
@@ -257,6 +258,15 @@
 "settings.ai.install_runtime" = "Pitex Agent をインストール";
 "settings.ai.reinstall_runtime" = "Pitex Agent を再インストール";
 "settings.ai.runtime_note" = "Pitex Agent は Pitex 専用フォルダ (Application Support ▸ Pitex ▸ pi-runtime) に LaTeX・Humanizer・SciSpace のスキルとともに自動インストールされます。紛失・破損した場合のみ再インストールしてください。 Bun がある場合は優先して使用し、ない場合は Node.js と npm を使用します。";
+"settings.ai.skills" = "スキル";
+"settings.ai.install_skill" = "スキルまたは拡張のソースをインストール";
+"settings.ai.install" = "インストール";
+"settings.ai.remove" = "削除";
+"settings.ai.builtin" = "内蔵";
+"settings.ai.no_skills" = "インストール済みのスキルはありません";
+"settings.ai.skill_installing" = "インストール中…";
+"settings.ai.skill_installed" = "スキルをインストールしました。";
+"settings.ai.skill_failed" = "インストールに失敗しました: %@";
 
 "appearance.color.editor_background" = "エディタ背景";
 "appearance.color.editor_background_d" = "テキスト背後のキャンバス";

@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::path::PathBuf;
 
 use gtk4::prelude::*;
 use libadwaita as adw;
@@ -326,6 +327,14 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
         });
     }
     controls.append(&clear);
+    let usage = gtk4::Label::new(None);
+    usage.set_hexpand(true);
+    usage.set_halign(gtk4::Align::End);
+    usage.add_css_class("dim-label");
+    usage.set_widget_name("pitex.assistant.usage");
+    usage.set_visible(false);
+    ui.agent_usage_label.replace(Some(usage.clone()));
+    controls.append(&usage);
     root.append(&controls);
 
     // Transcript.
@@ -413,6 +422,84 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     }
     ui.agent_composer.replace(Some(entry.clone()));
     composer.append(&entry);
+
+    // Slash-command completion — a popover on the entry listing
+    // `get_commands` results matching the typed prefix (max 8 rows).
+    let slash_list = gtk4::ListBox::new();
+    slash_list.set_selection_mode(gtk4::SelectionMode::Single);
+    let slash_scroll = gtk4::ScrolledWindow::new();
+    slash_scroll.set_max_content_height(280);
+    slash_scroll.set_propagate_natural_height(true);
+    slash_scroll.set_child(Some(&slash_list));
+    let slash_popover = gtk4::Popover::new();
+    slash_popover.set_child(Some(&slash_scroll));
+    slash_popover.set_position(gtk4::PositionType::Top);
+    slash_popover.set_has_arrow(false);
+    slash_popover.set_parent(&entry);
+    let slash_names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    {
+        let entry = entry.clone();
+        let popover = slash_popover.clone();
+        let names = slash_names.clone();
+        slash_list.connect_row_activated(move |_, row| {
+            if let Some(name) = names.borrow().get(row.index().max(0) as usize) {
+                entry.set_text(&format!("/{name} "));
+                entry.set_position(-1);
+            }
+            popover.popdown();
+        });
+    }
+    {
+        let state = state.clone();
+        let popover = slash_popover.clone();
+        let list = slash_list.clone();
+        let names = slash_names.clone();
+        entry.connect_changed(move |e| {
+            let text = e.text().to_string();
+            if !text.starts_with('/') || text.contains(char::is_whitespace) {
+                popover.popdown();
+                return;
+            }
+            let prefix = text[1..].to_lowercase();
+            let Ok(s) = state.try_borrow() else { return };
+            let Some(agent) = s.agent.as_ref() else {
+                popover.popdown();
+                return;
+            };
+            let matches: Vec<crate::agent::PiSlashCommand> = agent
+                .commands
+                .iter()
+                .filter(|c| c.name.to_lowercase().starts_with(&prefix))
+                .take(8)
+                .cloned()
+                .collect();
+            if matches.is_empty() {
+                popover.popdown();
+                return;
+            }
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            *names.borrow_mut() = matches.iter().map(|c| c.name.clone()).collect();
+            for command in &matches {
+                let row = adw::ActionRow::new();
+                row.set_title(&format!("/{}", command.name));
+                if let Some(description) = &command.description {
+                    row.set_subtitle(description);
+                }
+                if !command.source.is_empty() {
+                    let source = gtk4::Label::new(Some(&command.source));
+                    source.add_css_class("dim-label");
+                    source.add_css_class("caption");
+                    source.set_valign(gtk4::Align::Center);
+                    row.add_suffix(&source);
+                }
+                row.set_activatable(true);
+                list.append(&row);
+            }
+            popover.popup();
+        });
+    }
 
     let send = gtk4::Button::from_icon_name("go-up-symbolic");
     send.set_tooltip_text(Some(&tr(lang, "assistant.send_help")));
@@ -1452,6 +1539,105 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     }
     agent_group.add(&install);
     ai.add(&agent_group);
+
+    // `Section("settings.ai.skills")` — installed skills under the agent
+    // dir plus an install row (`pi install <source>` on a worker thread).
+    let skills_group = adw::PreferencesGroup::new();
+    skills_group.set_title(&tr(lang, "settings.ai.skills"));
+    let skill_rows: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    let install_row = adw::EntryRow::new();
+    install_row.set_title(&tr(lang, "settings.ai.install_skill"));
+    let install_button = gtk4::Button::with_label(&tr(lang, "settings.ai.install"));
+    install_button.set_valign(gtk4::Align::Center);
+    install_row.add_suffix(&install_button);
+    let rebuild: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    {
+        let skills_group = skills_group.clone();
+        let skill_rows = skill_rows.clone();
+        let install_row = install_row.clone();
+        let rebuild = rebuild.clone();
+        let cell = rebuild.clone();
+        *cell.borrow_mut() = Some(Rc::new(move || {
+            for row in skill_rows.borrow_mut().drain(..) {
+                skills_group.remove(&row);
+            }
+            // Re-append the install row last — `add` appends at the end.
+            skills_group.remove(&install_row);
+            for skill in installed_skills() {
+                let row = adw::ActionRow::new();
+                row.set_title(&skill.name);
+                if skill.builtin {
+                    row.set_subtitle(&tr(lang, "settings.ai.builtin"));
+                } else if !skill.description.is_empty() {
+                    row.set_subtitle(&skill.description);
+                }
+                if !skill.builtin {
+                    let remove = gtk4::Button::with_label(&tr(lang, "settings.ai.remove"));
+                    remove.set_valign(gtk4::Align::Center);
+                    remove.add_css_class("flat");
+                    let path = skill.path.clone();
+                    let rebuild = rebuild.clone();
+                    remove.connect_clicked(move |_| {
+                        let _ = std::fs::remove_dir_all(&path);
+                        if let Some(f) = rebuild.borrow().as_ref() {
+                            f();
+                        }
+                    });
+                    row.add_suffix(&remove);
+                }
+                skills_group.add(&row);
+                skill_rows.borrow_mut().push(row.upcast());
+            }
+            if skill_rows.borrow().is_empty() {
+                let empty = adw::ActionRow::new();
+                empty.set_title(&tr(lang, "settings.ai.no_skills"));
+                empty.set_sensitive(false);
+                skills_group.add(&empty);
+                skill_rows.borrow_mut().push(empty.upcast());
+            }
+            skills_group.add(&install_row);
+        }));
+    }
+    if let Some(f) = rebuild.borrow().as_ref() {
+        f();
+    }
+    {
+        let state = state.clone();
+        let install_row = install_row.clone();
+        SKILLS_REBUILD.with(|t| *t.borrow_mut() = rebuild.borrow().clone());
+        install_button.connect_clicked(move |_| {
+            let source = install_row.text().trim().to_string();
+            if source.is_empty() {
+                return;
+            }
+            install_row.set_text("");
+            if let Ok(s) = state.try_borrow() {
+                s.toast(&tr(lang, "settings.ai.skill_installing"));
+            }
+            std::thread::spawn(move || {
+                let result = crate::agent::pi_installer::install_skill(&source);
+                gtk4::glib::MainContext::default().invoke(move || {
+                    crate::app_ui::STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            if let Ok(st) = state.try_borrow() {
+                                let message = match &result {
+                                    Ok(()) => tr(lang, "settings.ai.skill_installed"),
+                                    Err(e) => tr1(lang, "settings.ai.skill_failed", e),
+                                };
+                                st.toast(&message);
+                            }
+                        }
+                    });
+                    SKILLS_REBUILD.with(|t| {
+                        if let Some(f) = t.borrow().as_ref() {
+                            f();
+                        }
+                    });
+                });
+            });
+        });
+    }
+    ai.add(&skills_group);
     window.add(&ai);
 
     // ── Updates ──
@@ -1683,10 +1869,134 @@ thread_local! {
     /// results through `MainContext::invoke` and paint them here, since the
     /// widgets themselves are !Send and can't cross the boundary.
     static UPDATE_ROWS: RefCell<Option<UpdateRows>> = const { RefCell::new(None) };
+    /// The skills list rebuild closure — the install worker posts back
+    /// through `MainContext::invoke` (Send), so the !Send `Rc` lives here
+    /// like `UPDATE_ROWS`.
+    static SKILLS_REBUILD: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
 struct UpdateRows {
     check: gtk4::glib::WeakRef<adw::ActionRow>,
     install: gtk4::glib::WeakRef<adw::ActionRow>,
     pending: Rc<RefCell<Option<crate::update::UpdateInfo>>>,
+}
+/// One installed skill row — parsed from `SKILL.md` frontmatter.
+struct SkillRow {
+    name: String,
+    description: String,
+    builtin: bool,
+    path: PathBuf,
+}
+
+/// Skill directory names shipped inside the app bundle — the same set
+/// `pi_installer::install_bundled_skills` copies (no remove button).
+const BUNDLED_SKILLS: [&str; 5] = [
+    "humanizer",
+    "latex-compile",
+    "latex-doctor",
+    "scispace",
+    "texlive-runtime-installer",
+];
+
+/// Subdirs of `pi_paths::skills_directory()` containing a `SKILL.md`.
+fn installed_skills() -> Vec<SkillRow> {
+    let mut skills = Vec::new();
+    let Ok(entries) = std::fs::read_dir(crate::agent::pi_paths::skills_directory()) else {
+        return skills;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let skill_md = path.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+        let (name, description) = skill_frontmatter(&skill_md);
+        skills.push(SkillRow {
+            name: name.unwrap_or(dir_name.clone()),
+            description,
+            builtin: BUNDLED_SKILLS.contains(&dir_name.as_str()),
+            path,
+        });
+    }
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    skills
+}
+
+/// `name:`/`description:` from a `SKILL.md` YAML frontmatter block — a
+/// simple line parse (no serde_yaml): `description: |` block scalars take
+/// their first indented line.
+fn skill_frontmatter(path: &PathBuf) -> (Option<String>, String) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, String::new());
+    };
+    let mut name = None;
+    let mut description = String::new();
+    let mut in_frontmatter = false;
+    let mut block_scalar = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            if in_frontmatter {
+                break;
+            }
+            in_frontmatter = true;
+            continue;
+        }
+        if !in_frontmatter {
+            continue;
+        }
+        if block_scalar {
+            if line.starts_with(' ') || line.starts_with('\t') {
+                if !trimmed.is_empty() {
+                    description = trimmed.to_string();
+                }
+            }
+            block_scalar = false;
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("name:") {
+            name = Some(value.trim().trim_matches('"').trim_matches('\'').to_string());
+        } else if let Some(value) = trimmed.strip_prefix("description:") {
+            let value = value.trim();
+            if value == "|" || value == ">" {
+                block_scalar = true;
+            } else {
+                description = value.trim_matches('"').trim_matches('\'').to_string();
+            }
+        }
+    }
+    (name, description)
+}
+
+#[cfg(test)]
+mod skill_frontmatter_tests {
+    use super::skill_frontmatter;
+
+    #[test]
+    fn parses_inline_and_block_scalar_descriptions() {
+        let dir = std::env::temp_dir().join(format!("pitex-skill-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("SKILL.md");
+        std::fs::write(
+            &path,
+            "---\nname: humanizer\ndescription: |\n  Rewrite AI-sounding text.\nlicense: MIT\n---\n",
+        )
+        .unwrap();
+        let (name, description) = skill_frontmatter(&path);
+        assert_eq!(name.as_deref(), Some("humanizer"));
+        assert_eq!(description, "Rewrite AI-sounding text.");
+        std::fs::write(
+            &path,
+            "---\nname: \"latex-doctor\"\ndescription: Detect TeX tools.\n---\n",
+        )
+        .unwrap();
+        let (name, description) = skill_frontmatter(&path);
+        assert_eq!(name.as_deref(), Some("latex-doctor"));
+        assert_eq!(description, "Detect TeX tools.");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
