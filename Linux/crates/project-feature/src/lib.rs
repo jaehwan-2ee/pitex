@@ -284,3 +284,92 @@ fn sort_nodes(nodes: &mut Vec<ProjectFileNode>) {
         }
     }
 }
+
+/// `nestProjectChildren` — reorders the built tree so the main document leads
+/// the root list and its direct dependencies (bibliographies, included
+/// chapters) nest one level beneath it. Missing `main` returns the tree
+/// unchanged; directories left empty by a move are pruned.
+pub fn nest_project_children(
+    mut tree: Vec<ProjectFileNode>,
+    main_rel: &str,
+    child_rels: &[String],
+) -> Vec<ProjectFileNode> {
+    let Some(mut main) = remove_node(&mut tree, main_rel) else {
+        return tree;
+    };
+    let mut children = main.children.take().unwrap_or_default();
+    for child in child_rels {
+        if let Some(node) = remove_node(&mut tree, child) {
+            children.push(node);
+        }
+    }
+    main.children = (!children.is_empty()).then_some(children);
+    tree.insert(0, main);
+    tree
+}
+
+/// Detaches the node with `path` wherever it sits, pruning directory nodes
+/// left empty by the removal.
+fn remove_node(nodes: &mut Vec<ProjectFileNode>, path: &str) -> Option<ProjectFileNode> {
+    if let Some(pos) = nodes.iter().position(|n| n.path == path) {
+        return Some(nodes.remove(pos));
+    }
+    for i in 0..nodes.len() {
+        let found = nodes[i]
+            .children
+            .as_mut()
+            .and_then(|c| remove_node(c, path));
+        if found.is_some() {
+            if nodes[i]
+                .children
+                .as_ref()
+                .map(|c| c.is_empty())
+                .unwrap_or(false)
+            {
+                nodes.remove(i);
+            }
+            return found;
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(nodes: &[ProjectFileNode]) -> Vec<&str> {
+        nodes.iter().map(|n| n.path.as_str()).collect()
+    }
+
+    #[test]
+    fn nest_project_children_moves_main_first_and_nests_children() {
+        let tree = build_project_file_tree(&[
+            "appendix.tex".into(),
+            "chapters/one.tex".into(),
+            "main.tex".into(),
+            "refs.bib".into(),
+        ]);
+        let nested = nest_project_children(
+            tree,
+            "main.tex",
+            &["refs.bib".into(), "chapters/one.tex".into()],
+        );
+        // Main leads the root list; unrelated files keep their place.
+        assert_eq!(paths(&nested), ["main.tex", "appendix.tex"]);
+        let main = &nested[0];
+        assert_eq!(
+            paths(main.children.as_deref().unwrap()),
+            ["refs.bib", "chapters/one.tex"]
+        );
+        // The directory emptied by the move is pruned.
+        assert!(nested.iter().all(|n| n.path != "chapters"));
+    }
+
+    #[test]
+    fn nest_project_children_without_main_is_noop() {
+        let tree = build_project_file_tree(&["a.tex".into(), "b.bib".into()]);
+        let nested = nest_project_children(tree.clone(), "main.tex", &["b.bib".into()]);
+        assert_eq!(nested, tree);
+    }
+}

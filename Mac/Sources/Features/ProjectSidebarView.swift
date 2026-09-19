@@ -239,7 +239,11 @@ struct ProjectSidebarView: View {
     }
 
     private var projectTree: [ProjectFileNode] {
-        buildProjectFileTree(relativePaths: workspace.projectFiles.map { relativeDisplayPath($0) })
+        nestProjectChildren(
+            buildProjectFileTree(relativePaths: workspace.projectFiles.map { relativeDisplayPath($0) }),
+            main: workspace.buildSourceURL().map { relativeDisplayPath($0) } ?? "",
+            children: workspace.projectChildren.map { relativeDisplayPath($0) }
+        )
     }
 
     private func fileRow(_ node: ProjectFileNode) -> some View {

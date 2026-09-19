@@ -213,3 +213,18 @@ fn project_root_expands_to_cover_dependencies() {
     assert!(chapter.starts_with(&root));
     assert_eq!(root, standardize(base.clone()));
 }
+
+#[test]
+fn direct_dependencies_returns_one_level_only() {
+    let root = temp_dir("directdeps");
+    let main = write(
+        &root.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}\n\\input{ch1}\n\\bibliography{refs}\n\\end{document}\n",
+    );
+    let ch1 = write(&root.join("ch1.tex"), "\\input{ch2}\n\\section{One}\n");
+    write(&root.join("ch2.tex"), "\\section{Two}\n");
+    let bib = write(&root.join("refs.bib"), "@book{a, title={A}}\n");
+    let mut resolver = TeXProjectResolver::new();
+    // ch2 is reachable through ch1 but is not a direct child of main.
+    assert_eq!(resolver.direct_dependencies(&main), vec![ch1, bib]);
+}
