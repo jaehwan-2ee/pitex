@@ -1,0 +1,14 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 3155-3159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48eec586c558e1437859294224f8c97c6b256d1b",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
