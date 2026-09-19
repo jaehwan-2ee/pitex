@@ -47,6 +47,9 @@ private enum IssueFilter: String, CaseIterable {
 /// command-entry rows, matching the reference editor's console.
 struct BottomConsoleView: View {
     @ObservedObject var workspace: WorkspaceModel
+    // Observed so terminal font/color changes re-render the pane; the
+    // representable's updateNSView applies them to the live terminal.
+    @ObservedObject private var appearance = AppearanceSettings.shared
     @State private var issueFilter: IssueFilter = .all
 
     var body: some View {
