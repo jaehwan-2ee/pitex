@@ -189,16 +189,6 @@ struct WorkspaceView: View {
             .disabled(workspace.buildUnavailableReason != nil && !workspace.isBuilding)
             .help(workspace.buildUnavailableReason ?? String(localized: "build.start"))
             .accessibilityIdentifier("pitex.build")
-
-            Button {
-                Task { await workspace.syncForward() }
-            } label: {
-                Image(systemName: "arrow.right.doc.on.clipboard")
-            }
-            .buttonStyle(.borderless)
-            .disabled(workspace.syncTeXBinding == nil)
-            .help("Show current line in PDF (⌘⇧↩)")
-            .accessibilityIdentifier("pitex.editor.syncForward")
         }
         .padding(.horizontal, 6)
         .frame(height: 34)

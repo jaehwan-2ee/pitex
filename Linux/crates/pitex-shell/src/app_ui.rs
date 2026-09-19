@@ -87,7 +87,6 @@ pub struct UiHandles {
     pub build_button: RefCell<Option<gtk4::Button>>,
     pub build_status: RefCell<Option<gtk4::Label>>,
     pub header_build_button: RefCell<Option<gtk4::Button>>,
-    pub sync_forward_button: RefCell<Option<gtk4::Button>>,
     pub build_command_entry: RefCell<Option<gtk4::Entry>>,
     pub custom_command_entry: RefCell<Option<gtk4::Entry>>,
     pub console_section_dropdown: RefCell<Option<gtk4::DropDown>>,
@@ -341,6 +340,20 @@ impl AppState {
         desc
     }
 
+    /// Terminal font: custom family when set, otherwise the editor font.
+    pub fn terminal_font_desc(&self) -> gtk4::pango::FontDescription {
+        if self.appearance.terminal_font_family.is_empty() {
+            return self.editor_font_desc();
+        }
+        let mut desc = gtk4::pango::FontDescription::from_string(
+            &self.appearance.terminal_font_description(),
+        );
+        if desc.size() <= 0 {
+            desc.set_size(13 * gtk4::pango::SCALE);
+        }
+        desc
+    }
+
     /// Name of the rendered PDF, matching the built target (or active doc).
     pub fn pdf_display_name(&self) -> String {
         self.model
@@ -505,7 +518,7 @@ impl AppState {
         if let Some(fold) = &self.fold {
             fold.set_enabled(self.store.code_folding());
         }
-        let font = self.editor_font_desc();
+        let font = self.terminal_font_desc();
         UI.with(|ui| {
             if let Some(map) = ui.minimap.borrow().as_ref() {
                 map.set_visible(self.store.minimap());
@@ -1593,8 +1606,8 @@ impl AppState {
             if let Some(dd) = ui.console_section_dropdown.borrow().as_ref() {
                 let idx = match self.model.console_section {
                     ConsoleSection::Assistant => 0,
-                    ConsoleSection::Terminal => 1,
-                    ConsoleSection::Issues => 2,
+                    ConsoleSection::Issues => 1,
+                    ConsoleSection::Terminal => 2,
                     ConsoleSection::Log => 3,
                 };
                 if dd.selected() != idx {
@@ -2093,9 +2106,6 @@ impl AppState {
             }
             if let Some(label) = ui.synctex_status_label.borrow().as_ref() {
                 label.set_text(&detail);
-            }
-            if let Some(b) = ui.sync_forward_button.borrow().as_ref() {
-                b.set_sensitive(self.model.synctex_binding.is_some());
             }
         });
     }
@@ -3608,14 +3618,6 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     ui.header_build_button.replace(Some(build_btn.clone()));
     strip.append(&build_btn);
 
-    let sync_btn = gtk4::Button::from_icon_name("go-next-symbolic");
-    sync_btn.set_tooltip_text(Some(&tr(lang, "command.sync_forward")));
-    a11y(&sync_btn, "pitex.editor.syncForward", "command.sync_forward");
-    {
-        let state = state.clone();
-        sync_btn.connect_clicked(move |_| state.borrow_mut().sync_forward_action());
-    }
-    strip.append(&sync_btn);
     root.append(&strip);
 
     // "Editor" header: caption + disk status + reload.

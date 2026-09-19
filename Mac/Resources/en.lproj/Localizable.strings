@@ -244,6 +244,9 @@
 "settings.appearance.filter" = "Filter fonts…";
 "settings.appearance.system_default" = "System Monospaced";
 "settings.appearance.size" = "Size";
+"settings.appearance.terminal_font" = "Terminal font size";
+"settings.appearance.terminal_font_custom" = "Custom terminal font";
+"settings.appearance.terminal_font_family" = "Terminal font";
 "settings.appearance.colors" = "Colors";
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "Install location";

@@ -245,6 +245,9 @@
 "settings.appearance.filter" = "글꼴 필터…";
 "settings.appearance.system_default" = "시스템 고정폭";
 "settings.appearance.size" = "크기";
+"settings.appearance.terminal_font" = "터미널 글꼴 크기";
+"settings.appearance.terminal_font_custom" = "사용자 지정 터미널 글꼴";
+"settings.appearance.terminal_font_family" = "터미널 글꼴";
 "settings.appearance.colors" = "색상";
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "설치 위치";

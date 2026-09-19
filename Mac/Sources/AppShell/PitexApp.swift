@@ -33,13 +33,13 @@ enum WorkspaceSyncTeXState: Equatable {
     case ambiguous(String)
 }
 
-/// Bottom console tabs: Assistant | Terminal | Issues | Build Log. The
+/// Bottom console tabs: Assistant | Issues | Terminal | Build Log. The
 /// assistant lives here (not in the inspector) so the PDF preview and the
 /// assistant can be visible at the same time.
 enum ConsoleSection: String, CaseIterable, Identifiable {
     case assistant
-    case terminal
     case issues
+    case terminal
     case log
     var id: Self { self }
 }

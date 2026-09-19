@@ -245,6 +245,9 @@
 "settings.appearance.filter" = "フォントを絞り込み…";
 "settings.appearance.system_default" = "システム等幅";
 "settings.appearance.size" = "サイズ";
+"settings.appearance.terminal_font" = "ターミナルフォントサイズ";
+"settings.appearance.terminal_font_custom" = "カスタムターミナルフォント";
+"settings.appearance.terminal_font_family" = "ターミナルフォント";
 "settings.appearance.colors" = "カラー";
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "インストール先";

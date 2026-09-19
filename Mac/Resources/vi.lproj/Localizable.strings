@@ -244,6 +244,9 @@
 "settings.appearance.filter" = "Lọc phông chữ…";
 "settings.appearance.system_default" = "Đơn cách hệ thống";
 "settings.appearance.size" = "Cỡ chữ";
+"settings.appearance.terminal_font" = "Cỡ phông chữ terminal";
+"settings.appearance.terminal_font_custom" = "Phông chữ terminal tùy chỉnh";
+"settings.appearance.terminal_font_family" = "Phông chữ terminal";
 "settings.appearance.colors" = "Màu sắc";
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "Vị trí cài đặt";
