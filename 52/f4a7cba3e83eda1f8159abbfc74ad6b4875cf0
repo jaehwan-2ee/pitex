@@ -1,0 +1,26 @@
+LICENSE
+  h_bcbc8ae9e599aa 3,5,9-11,15-22,26-30,34-38,44-46,50-52,54,56-58,60,62-70,72,74-98,102-103,107-110,114-118,122-128,132-135,139-151,153-155,157-160,162-163,165-166
+Linux/Cargo.toml
+  h_bcbc8ae9e599aa 27
+Linux/crates/pitex/Cargo.toml
+  h_bcbc8ae9e599aa 33
+Linux/packaging/debian/postinst
+  h_bcbc8ae9e599aa 1-16
+Linux/packaging/debian/postrm
+  h_bcbc8ae9e599aa 1-13
+README.md
+  h_bcbc8ae9e599aa 91-97,238-240
+Windows/Cargo.toml
+  h_bcbc8ae9e599aa 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52f4a7cba3e83eda1f8159abbfc74ad6b4875cf0",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
