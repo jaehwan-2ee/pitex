@@ -303,9 +303,34 @@ pub fn nest_project_children(
             children.push(node);
         }
     }
+    // Same-stem .bib files nest under the main document even when dependency
+    // resolution missed them (indirect includes, stale children list).
+    let main_stem = main.name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&main.name).to_string();
+    for bib_path in bib_paths(&main_stem, &tree) {
+        if !children.iter().any(|n| n.path == bib_path) {
+            if let Some(node) = remove_node(&mut tree, &bib_path) {
+                children.push(node);
+            }
+        }
+    }
     main.children = (!children.is_empty()).then_some(children);
     tree.insert(0, main);
     tree
+}
+
+/// All .bib file paths in the tree whose stem equals `stem`.
+fn bib_paths(stem: &str, nodes: &[ProjectFileNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    for node in nodes {
+        if node.is_directory {
+            out.extend(bib_paths(stem, node.children.as_deref().unwrap_or(&[])));
+        } else if node.name.to_lowercase().ends_with(".bib")
+            && node.name.rsplit_once('.').map(|(s, _)| s) == Some(stem)
+        {
+            out.push(node.path.clone());
+        }
+    }
+    out
 }
 
 /// Detaches the node with `path` wherever it sits, pruning directory nodes
@@ -364,6 +389,23 @@ mod tests {
         );
         // The directory emptied by the move is pruned.
         assert!(nested.iter().all(|n| n.path != "chapters"));
+    }
+
+    #[test]
+    fn nest_project_children_nests_same_stem_bib_without_dependency() {
+        let tree = build_project_file_tree(&[
+            "manuscript.bib".into(),
+            "manuscript.tex".into(),
+            "other.bib".into(),
+        ]);
+        // No dependency list — the same-stem .bib still nests under the main
+        // document; differently-named .bib files stay at the root.
+        let nested = nest_project_children(tree, "manuscript.tex", &[]);
+        assert_eq!(paths(&nested), ["manuscript.tex", "other.bib"]);
+        assert_eq!(
+            paths(nested[0].children.as_deref().unwrap()),
+            ["manuscript.bib"]
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ import SwiftUI
 struct AgentPanel: View {
     @ObservedObject var coordinator: AgentCoordinator
     @ObservedObject var settings: SettingsStore
+    @ObservedObject private var subscriptionUsage = SubscriptionUsageStore.shared
     @State private var draft = ""
 
     var body: some View {
@@ -271,21 +272,25 @@ struct AgentPanel: View {
         .accessibilityIdentifier("pitex.assistant.slashCommands")
     }
 
-    /// `12.3k/200k ctx (6%) · 45.2k tok · $0.12` — context fill first when pi
-    /// reports it, then total tokens and cost.
+    /// `12.3k/200k ctx (6%) · 5h 12% · 7d 34%` for OAuth subscription
+    /// providers (Claude, Codex); `… · 45.2k tok · $0.12` for API keys.
     private var usageText: String? {
-        guard let stats = coordinator.sessionStats else { return nil }
         var parts: [String] = []
-        if let tokens = stats.contextTokens, let window = stats.contextWindow {
+        if let stats = coordinator.sessionStats,
+           let tokens = stats.contextTokens, let window = stats.contextWindow {
             var context = "\(Self.compactTokens(tokens))/\(Self.compactTokens(window)) ctx"
             if let percent = stats.contextPercent {
                 context += " (\(Int(percent.rounded()))%)"
             }
             parts.append(context)
         }
-        parts.append("\(Self.compactTokens(stats.totalTokens)) tok")
-        parts.append(String(format: "$%.2f", stats.cost))
-        return parts.joined(separator: " · ")
+        if let windows = subscriptionUsage.windows, !windows.isEmpty {
+            parts += windows.map { "\($0.label) \(Int($0.percent.rounded()))%" }
+        } else if let stats = coordinator.sessionStats {
+            parts.append("\(Self.compactTokens(stats.totalTokens)) tok")
+            parts.append(String(format: "$%.2f", stats.cost))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private static func compactTokens(_ value: Int) -> String {

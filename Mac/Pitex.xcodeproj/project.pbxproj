@@ -29,6 +29,7 @@
 		100000000000000000000025 /* EditorFolding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* EditorFolding.swift */; };
 		100000000000000000000026 /* AgentPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000031 /* AgentPanel.swift */; };
 		100000000000000000000027 /* UpdateSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000032 /* UpdateSupport.swift */; };
+		100000000000000000000028 /* SubscriptionUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000033 /* SubscriptionUsage.swift */; };
 		10000000000000000000000E /* AppPorts in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000002 /* AppPorts */; };
 		10000000000000000000000F /* EditorMacAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000003 /* EditorMacAdapter */; };
 		100000000000000000000010 /* MacPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000004 /* MacPlatform */; };
@@ -78,6 +79,7 @@
 		20000000000000000000000F /* SyntaxHighlighting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxHighlighting.swift; sourceTree = "<group>"; };
 		200000000000000000000031 /* AgentPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanel.swift; sourceTree = "<group>"; };
 		200000000000000000000032 /* UpdateSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateSupport.swift; sourceTree = "<group>"; };
+		200000000000000000000033 /* SubscriptionUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionUsage.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -172,6 +174,7 @@
 				20000000000000000000000F /* SyntaxHighlighting.swift */,
 				200000000000000000000031 /* AgentPanel.swift */,
 				200000000000000000000032 /* UpdateSupport.swift */,
+				200000000000000000000033 /* SubscriptionUsage.swift */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -306,6 +309,7 @@
 				10000000000000000000000D /* SyntaxHighlighting.swift in Sources */,
 				100000000000000000000026 /* AgentPanel.swift in Sources */,
 				100000000000000000000027 /* UpdateSupport.swift in Sources */,
+				100000000000000000000028 /* SubscriptionUsage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
