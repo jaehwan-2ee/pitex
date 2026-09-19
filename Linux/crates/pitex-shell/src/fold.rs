@@ -29,7 +29,6 @@ const RECOMPUTE_DEBOUNCE_MS: u64 = 120;
 pub struct FoldEngine {
     view: sourceview5::View,
     buffer: sourceview5::Buffer,
-    overlay: gtk4::Overlay,
     regions: RefCell<Vec<FoldRegion>>,
     /// (byte offset, char offset) per line — rebuilt with `regions`.
     line_starts: RefCell<Vec<(usize, usize)>>,
@@ -47,8 +46,8 @@ pub struct FoldEngine {
 }
 
 impl FoldEngine {
-    /// `attach(to:)` — builds the tag, gutter renderer, overlay and hooks.
-    /// `overlay()` is what the scroller hosts instead of the raw view.
+    /// `attach(to:)` — builds the tag, gutter renderer, chip layer and hooks.
+    /// `chip_area()` is overlaid over the scroller by the caller.
     pub fn attach(view: &sourceview5::View, dialect: TeXDialect, enabled: bool) -> Rc<Self> {
         let buffer = view
             .buffer()
@@ -63,12 +62,11 @@ impl FoldEngine {
             table.add(&tag);
         }
 
-        // Overlay: view + a draw-only chip layer (never intercepts events).
-        let overlay = gtk4::Overlay::new();
-        overlay.set_child(Some(view));
+        // Chip layer: a draw-only overlay the caller hosts over the
+        // ScrolledWindow (never inside it — a non-Scrollable child would
+        // disconnect the view's adjustments and kill minimap/jump-to).
         let chip_area = gtk4::DrawingArea::new();
         chip_area.set_can_target(false);
-        overlay.add_overlay(&chip_area);
 
         // Gutter disclosure triangles, inserted leftmost in the gutter.
         let renderer = sourceview5::GutterRendererText::new();
@@ -79,7 +77,6 @@ impl FoldEngine {
         let engine = Rc::new(Self {
             view: view.clone(),
             buffer,
-            overlay,
             regions: RefCell::new(Vec::new()),
             line_starts: RefCell::new(Vec::new()),
             hidden_lines: RefCell::new(HashSet::new()),
@@ -99,8 +96,10 @@ impl FoldEngine {
         engine
     }
 
-    pub fn overlay(&self) -> &gtk4::Overlay {
-        &self.overlay
+    /// The draw-only chip layer — the caller adds it as an overlay over
+    /// the ScrolledWindow (see `attach` for why it can't live inside).
+    pub fn chip_area(&self) -> &gtk4::DrawingArea {
+        &self.chip_area
     }
 
     /// `isEnabled` — disabling reports every region unfolded and unhides all
@@ -187,6 +186,17 @@ impl FoldEngine {
             }
         });
         self.view.add_controller(click);
+
+        // The chip layer overlays the scroller (fixed to the visible area),
+        // so scroll/zoom must redraw it — rects are recomputed per draw.
+        for adjustment in [self.view.hadjustment(), self.view.vadjustment()].into_iter().flatten() {
+            let weak = Rc::downgrade(self);
+            adjustment.connect_value_changed(move |_| {
+                if let Some(engine) = weak.upgrade() {
+                    engine.chip_area.queue_draw();
+                }
+            });
+        }
     }
 
     fn schedule_recompute(&self) {
