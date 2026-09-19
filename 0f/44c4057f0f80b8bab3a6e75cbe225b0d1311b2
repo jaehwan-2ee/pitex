@@ -1,0 +1,22 @@
+Linux/Cargo.lock
+  h_bcbc8ae9e599aa 750
+Linux/crates/pitex/Cargo.toml
+  h_bcbc8ae9e599aa 3
+Mac/Config/Info.plist
+  h_bcbc8ae9e599aa 20
+Windows/Cargo.lock
+  h_bcbc8ae9e599aa 869
+Windows/crates/pitex-windows/Cargo.toml
+  h_bcbc8ae9e599aa 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f44c4057f0f80b8bab3a6e75cbe225b0d1311b2",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
