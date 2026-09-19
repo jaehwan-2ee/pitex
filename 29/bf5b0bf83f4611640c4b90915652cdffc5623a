@@ -1,0 +1,25 @@
+Linux/Cargo.lock
+  s_cdbd8869a27679::t_789ab202f2665f 750
+Linux/crates/pitex/Cargo.toml
+  s_cdbd8869a27679::t_c87961cad99245 3
+Mac/Config/Info.plist
+  s_cdbd8869a27679::t_817f0b179d56cd 20
+Windows/Cargo.lock
+  s_cdbd8869a27679::t_d74df4789a6b60 869
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29bf5b0bf83f4611640c4b90915652cdffc5623a",
+  "prompts": {},
+  "sessions": {
+    "s_cdbd8869a27679": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a095cc-f6c8-7dd1-9ce9-c35a5ee34486",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
