@@ -57,7 +57,11 @@ final class AccessibilityContractTests: XCTestCase {
             pattern: #""((?:app|workspace|editor|build|preview|assistant|command|settings|state|error|conflict|recovery|warning|accessibility)\.[A-Za-z0-9_.]+)""#,
             capture: 1
         ))
-        XCTAssertTrue(sourceKeys.isSubset(of: baseline ?? []), "Swift source uses an unlocalized key: \(sourceKeys.subtracting(baseline ?? []))")
+        // Non-UI dotted literals the key-shaped regex also matches (the
+        // Rust port only scans `tr(...)` arguments, avoiding this class).
+        let nonUIStrings: Set<String> = ["app.pitex.desktop"]
+        let uiKeys = sourceKeys.subtracting(nonUIStrings)
+        XCTAssertTrue(uiKeys.isSubset(of: baseline ?? []), "Swift source uses an unlocalized key: \(uiKeys.subtracting(baseline ?? []))")
     }
 
     func testNativeUIContainsNoAPIKeyOrUpdaterSurface() throws {
