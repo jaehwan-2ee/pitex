@@ -1,0 +1,20 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 178-186,252-255,843-844,846-854,858,1332-1345,1755-1772,1834-1843,1862,1882-1883,1909-1910,1934-1935,1977,2164-2165,2167
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  h_bcbc8ae9e599aa 157-158,166-167,282,287-289,291,313-316,318-320,329,345,383-394,414-420
+Linux/crates/document-session-core/src/lib.rs
+  h_bcbc8ae9e599aa 126-128,154,199,219,233,244
+Linux/crates/pitex-shell/src/model.rs
+  h_bcbc8ae9e599aa 52,955,1286,1288-1291,1317,1337,1527,1578,1799-1804,1936,2060,2309-2314,2521-2523,2525,2528
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5008978dad04ac7711e73e037f255542fd51e7a1",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
