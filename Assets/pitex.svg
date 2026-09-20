@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="80 72 320 320" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Pitex fountain pen and sparkles</title>
+  <desc id="desc">A diagonal fountain pen with three equal-width-and-height four-point sparkles, positioned halfway between the first two drafts. Transparent background; Pitex blue #274391. All artwork consists of editable vector paths.</desc>
+  <g fill="#274391">
+    <path d="M305.5 135C309.5 155 313.5 159 333.5 163C313.5 167 309.5 171 305.5 191C301.5 171 297.5 167 277.5 163C297.5 159 301.5 155 305.5 135Z"/>
+    <path d="M164.5 249C167.5 263 170.5 266 184.5 269C170.5 272 167.5 275 164.5 289C161.5 275 158.5 272 144.5 269C158.5 266 161.5 263 164.5 249Z"/>
+    <path d="M207 300.5C209 309.5 211 311.5 220 313.5C211 315.5 209 317.5 207 326.5C205 317.5 203 315.5 194 313.5C203 311.5 205 309.5 207 300.5Z"/>
+    <g transform="rotate(45 256 256)">
+      <path fill-rule="evenodd" d="M133 238H176V274H133A18 18 0 0 1 133 238ZM136 245A2 2 0 0 0 136 249H164A2 2 0 0 0 164 245Z"/>
+      <path d="M182 238H278A5 5 0 0 1 283 243V269A5 5 0 0 1 278 274H182Z"/>
+      <path d="M289 242H307V270H289Z"/>
+      <path fill-rule="evenodd" d="M313 242L330 232L393 256L330 280L313 270ZM393 256L346.7 258A6 6 0 1 1 346.7 254Z"/>
+    </g>
+  </g>
+</svg>

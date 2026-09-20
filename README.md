@@ -12,8 +12,6 @@ sharing one architecture across platforms.
   Rust crates — `pitex-shell` runs on the MSYS2 GTK stack and
   `windows-platform` implements the Windows side of the `app-ports`
   contracts. Windows support is still beta-quality and may be unstable.
-- **Gates**: `Tools/*.mjs` verify the target DAGs, Xcode project, release
-  surface, and cross-language parity contract.
 
 ## Key features
 
@@ -23,6 +21,40 @@ The bottom console hosts an embedded **pi** coding agent with a native
 chat surface: streamed transcript, thinking/tool-call rows, model picker,
 and document-context attachments. The agent edits project files directly;
 every proposed edit is revision-bound and can be applied or rejected.
+
+The assistant ships with five built-in skills:
+
+- [Humanizer](https://github.com/blader/humanizer) rewrites AI-sounding prose
+  while preserving its meaning and the writer's voice.
+- [SciSpace](https://scispace.com/) finds academic papers, gathers abstracts
+  and DOI links, and helps organize literature reviews and BibTeX entries.
+- **LaTeX Compile** compiles TeX projects using an available TeX runtime.
+- **LaTeX Doctor** checks installed TeX tools and diagnoses missing components.
+- **TeX Live Runtime Installer** detects existing TeX installations and helps
+  set up a TeX Live runtime when needed.
+
+### AI-based autocompletion
+
+Pi suggests inline LaTeX continuations as you type. Press **Tab** to accept
+or **Esc** to dismiss; typing or moving the caret also clears the suggestion.
+Enable it in **Settings → AI → Inline autocompletion**. It uses the configured
+Pi model and runs separately from the assistant conversation.
+
+### Ref / cite helper
+
+Get completion suggestions for `\ref{...}` and `\cite{...}` from labels in
+the project's `.tex` files and citation keys in its `.bib` files. The sidebar
+also lists labels and bibliography entries for navigation.
+
+### TODOs
+
+Track `% TODO:` and `% DONE:` comments across the project in the sidebar.
+Jump to a task's source, add or rename tasks, mark them done, or delete them.
+
+### Symbols Table
+
+Browse LaTeX symbols by category from the editor's symbols button. Select a
+glyph to insert its LaTeX command at the caret; hover to see the command.
 
 ### Forward / Inverse SyncTeX
 
@@ -114,7 +146,7 @@ external terminal (there is no VTE-GTK4 on Windows).
 ## Prerequisites
 
 Requirements for running the released app — build-time dependencies live
-under **Build** below.
+in the [build instructions](Development/README.md).
 
 ### All platforms
 
@@ -144,55 +176,7 @@ under **Build** below.
 
 ## Build
 
-### Prerequisites (build only)
-
-- **macOS**: Xcode (current release), build via `Mac/Pitex.xcodeproj`
-- **Linux** (Ubuntu 24.04):
-
-  ```sh
-  sudo apt-get install -y build-essential pkg-config libssl-dev \
-      libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-      libvte-2.91-gtk4-dev libpoppler-glib-dev
-  ```
-
-  Ubuntu 22.04 (no VTE-GTK4 package exists there):
-
-  ```sh
-  sudo apt-get install -y build-essential pkg-config libssl-dev \
-      libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-      libpoppler-glib-dev
-  ```
-
-  plus a Rust stable toolchain.
-- **Windows**: MSYS2 with UCRT64 packages `gcc rust pkgconf gtk4
-  libadwaita gtksourceview5 poppler adwaita-icon-theme
-  hicolor-icon-theme` (see `Windows/README.md`); NSIS for the installer.
-- **Tooling**: Node.js 24+ (`Tools/` gates), Swift 6.3.3+ for running
-  `swift test` in `Packages/` on Linux.
-
-### macOS
-
-```sh
-xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex -configuration Release build
-```
-
-### Linux
-
-```sh
-cargo build --workspace                          # full build (Ubuntu 24.04+)
-cargo run -p pitex
-cargo build -p pitex --no-default-features       # Ubuntu 22.04 compat build
-```
-
-See `Linux/README.md` for details.
-
-### Windows
-
-```sh
-bash Windows/build.sh    # under MSYS2 UCRT64 — builds + bundles dist/pitex
-```
-
-See `Windows/README.md` for details.
+See the [build instructions](Development/README.md) for platform dependencies and commands.
 
 ## Updates
 
@@ -231,9 +215,9 @@ or `sudo` for the package install.
 
 ## Development
 
-- CI (`.github/workflows/ci.yml`) runs the repository gates, SwiftPM tests,
-  the Linux Rust workspace tests (24.04 + 22.04 compat), and the Windows
-  workspace build under MSYS2 UCRT64 on every PR.
+- CI (`.github/workflows/ci.yml`) runs SwiftPM tests, Linux Rust workspace
+  tests (24.04 + 22.04 compat), and the Windows workspace build under
+  MSYS2 UCRT64 on every PR.
 - Cutting a release: tag `v*` and push — the release workflow builds the
   DMG, both deb variants, and the Windows zip, and attaches them to a
   GitHub Release.

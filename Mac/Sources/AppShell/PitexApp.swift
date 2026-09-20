@@ -1750,7 +1750,7 @@ final class WorkspaceModel: ObservableObject {
     ]
 
     /// Text files the editor can activate — figure rows open externally.
-    static func isSourceFile(_ url: URL) -> Bool {
+    nonisolated static func isSourceFile(_ url: URL) -> Bool {
         ["tex", "bib"].contains(url.pathExtension.lowercased())
     }
 

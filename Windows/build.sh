@@ -70,6 +70,9 @@ done
 rm -rf "$DIST/share/icons/Adwaita/cursors" "$DIST/share/icons/Adwaita/96x96" \
        "$DIST/share/icons/Adwaita/256x256" "$DIST/share/icons/Adwaita/512x512" 2>/dev/null || true
 
+mkdir -p "$DIST/share/icons/hicolor/512x512/apps"
+cp "$HERE/../Linux/packaging/dev.pitex.app.png" "$DIST/share/icons/hicolor/512x512/apps/"
+
 # Minimal fontconfig — stock MSYS2 fonts.conf names /ucrt64 paths that do not
 # exist outside MSYS2; main() sets FONTCONFIG_FILE to this file.
 cat > "$DIST/etc/fonts/fonts.conf" <<'EOF'

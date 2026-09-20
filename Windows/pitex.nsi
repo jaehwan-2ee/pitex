@@ -28,6 +28,8 @@ InstallDirRegKey HKCU "Software\Pitex" "InstallDir"
 RequestExecutionLevel user
 
 !define MUI_ABORTWARNING
+!define MUI_ICON "pitex.ico"
+!define MUI_UNICON "pitex.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\bin\pitex.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch Pitex"
 
