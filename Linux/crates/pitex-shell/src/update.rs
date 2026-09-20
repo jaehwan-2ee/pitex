@@ -148,7 +148,7 @@ fn version_newer(tag: &str, current: &str) -> bool {
     fn parts(s: &str) -> Vec<u64> {
         s.trim_start_matches('v')
             .split('.')
-            .map(|p| p.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().unwrap_or(0))
+            .map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0))
             .collect()
     }
     let (new, old) = (parts(tag), parts(current));
@@ -200,28 +200,38 @@ pub fn install(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, S
 /// restart finishes the update. Without polkit, the same command goes to an
 /// interactive terminal (`sudo`).
 #[cfg(all(unix, not(target_os = "macos")))]
-fn install_impl(downloaded: &Path, _info: &UpdateInfo) -> Result<InstallOutcome, String> {
+fn install_impl(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, String> {
     // apt's `_apt` sandbox user can't read files under $HOME (0700 on
     // Ubuntu 24.04), which makes `apt install ./file.deb` warn "Download is
     // performed unsandboxed as root" — and fail outright on some setups.
     // Stage the package in /tmp, world-readable, before elevating.
-    let staged = std::env::temp_dir().join(
-        downloaded
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "pitex-update.deb".into()),
-    );
+    let staging = std::env::temp_dir().join(format!("pitex-update-{}", crate::model::uuid_v4()));
+    std::fs::create_dir(&staging).map_err(|e| e.to_string())?;
+    let staged = staging.join("pitex.deb");
     std::fs::copy(downloaded, &staged)
         .map_err(|e| format!("Could not stage the update package: {e}"))?;
     use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o644));
+    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
+        .and_then(|_| std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o644)))
+        .map_err(|e| e.to_string())?;
     let deb = staged.to_string_lossy().into_owned();
     let elevated = Command::new("pkexec")
         .args(["apt", "install", "-y", &deb])
         .stdin(std::process::Stdio::null())
         .status();
     match elevated {
-        Ok(status) if status.success() => return Ok(InstallOutcome::AwaitingRestart),
+        Ok(status) if status.success() => {
+            let installed = Command::new("dpkg-query")
+                .args(["-W", "-f=${Status} ${Version}", "pitex"])
+                .output().map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&installed.stdout);
+            let _ = std::fs::remove_dir_all(&staging);
+            if installed.status.success() && text.strip_prefix("install ok installed ")
+                .is_some_and(|version| !version_newer(&info.tag, version.trim())) {
+                return Ok(InstallOutcome::AwaitingRestart);
+            }
+            return Err(format!("{} was not installed: {}", info.tag, text.trim()));
+        }
         _ => {}
     }
     // No polkit agent (or it failed): hand the install to the user.
@@ -248,7 +258,7 @@ fn install_impl(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, 
     }
 }
 
-/// NSIS setup.exe: the installer does all file work — an updater .cmd just
+/// NSIS setup.exe: the installer does all file work — a helper script
 /// waits for this process to exit, runs it silently (/S), and relaunches
 /// the installed exe. A portable-zip copy migrates to the installed
 /// location (%LOCALAPPDATA%\Programs\Pitex) the same way.
@@ -257,26 +267,21 @@ fn install_setup(setup: &Path) -> Result<InstallOutcome, String> {
     let staging = setup
         .parent()
         .ok_or_else(|| "The download path is invalid.".to_string())?;
-    let installed_exe = dirs::data_local_dir()
-        .map(|d| d.join("Programs").join("Pitex").join("bin").join("pitex.exe"))
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let install_root = exe.parent().and_then(|bin| bin.parent())
+        .filter(|root| root.join("uninstall.exe").is_file())
+        .map(Path::to_path_buf)
+        .or_else(|| dirs::data_local_dir().map(|d| d.join("Programs").join("Pitex")))
         .ok_or_else(|| "Could not resolve the install directory.".to_string())?;
-    let script_path = staging.join("pitex-update.cmd");
-    let script = format!(
-        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\ndel \"%~f0\"\r\n",
-        setup.to_string_lossy(),
-        installed_exe.to_string_lossy()
+    let action = format!(
+        "$installer = Start-Process -FilePath {} -ArgumentList {} -Wait -PassThru\nif ($installer.ExitCode -ne 0) {{ throw \"Installer failed: $($installer.ExitCode)\" }}",
+        powershell_quote(&setup.to_string_lossy()),
+        powershell_quote(&format!("/S /D={}", install_root.display()))
     );
-    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
-    Command::new("cmd")
-        .args(["/c", "start", "/min", "PitexUpdate"])
-        .arg(&script_path)
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(InstallOutcome::ExitRequested)
+    launch_windows_update(staging, &install_root.join("bin/pitex.exe"), &action)
 }
 
-/// Portable zip: a running exe cannot overwrite itself, so an updater .cmd
+/// Portable zip: a running exe cannot overwrite itself, so a helper script
 /// waits for the process to exit, mirrors the new tree over the install
 /// root, and relaunches it.
 #[cfg(windows)]
@@ -300,9 +305,9 @@ fn install_zip(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, S
                 "-NoProfile",
                 "-Command",
                 &format!(
-                    "Expand-Archive -Force '{}' '{}'",
-                    downloaded.to_string_lossy(),
-                    staging.to_string_lossy()
+                    "Expand-Archive -Force -LiteralPath {} -DestinationPath {}",
+                    powershell_quote(&downloaded.to_string_lossy()),
+                    powershell_quote(&staging.to_string_lossy())
                 ),
             ])
             .stdin(std::process::Stdio::null())
@@ -330,18 +335,50 @@ fn install_zip(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, S
             reveal(downloaded);
             Err(e)
         })?;
-    let script_path = staging.join("pitex-update.cmd");
-    let script = format!(
-        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\nrobocopy \"{}\" \"{}\" /E /IS /IT /NFL /NDL /NJH /NJS /NP /R:10 /W:1 >nul\r\nstart \"\" \"{}\"\r\ndel \"%~f0\"\r\n",
-        staging.join("pitex").to_string_lossy(),
-        install_root.to_string_lossy(),
-        install_root.join("bin").join("pitex.exe").to_string_lossy()
+    let action = format!(
+        "& robocopy {} {} /E /IS /IT /NFL /NDL /NJH /NJS /NP /R:10 /W:1\nif ($LASTEXITCODE -ge 8) {{ throw \"Bundle copy failed: $LASTEXITCODE\" }}",
+        powershell_quote(&staging.join("pitex").to_string_lossy()),
+        powershell_quote(&install_root.to_string_lossy())
     );
-    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
-    Command::new("cmd")
-        .args(["/c", "start", "/min", "PitexUpdate"])
+    launch_windows_update(&staging, &install_root.join("bin/pitex.exe"), &action)
+}
+
+#[cfg(any(windows, test))]
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(any(windows, test))]
+fn windows_update_script(pid: u32, executable: &Path, action: &str) -> String {
+    format!(r#"$ErrorActionPreference = 'Stop'
+try {{
+    $app = Get-Process -Id {pid} -ErrorAction SilentlyContinue
+    if ($app) {{ Wait-Process -InputObject $app -Timeout 120 }}
+    {action}
+    Start-Process -FilePath {executable}
+}} catch {{
+    $_ | Out-File -LiteralPath "$PSCommandPath.log"
+    Invoke-Item -LiteralPath "$PSCommandPath.log"
+    exit 1
+}}
+Remove-Item -LiteralPath $PSCommandPath
+"#, executable = powershell_quote(&executable.to_string_lossy()))
+}
+
+#[cfg(windows)]
+fn launch_windows_update(staging: &Path, executable: &Path, action: &str) -> Result<InstallOutcome, String> {
+    use std::os::windows::process::CommandExt;
+    let script_path = staging.join(format!("pitex-update-{}.ps1", crate::model::uuid_v4()));
+    let script = windows_update_script(std::process::id(), executable, action);
+    // Windows PowerShell 5.1 needs the BOM for non-ASCII installation paths.
+    std::fs::write(&script_path, format!("\u{feff}{script}")).map_err(|e| e.to_string())?;
+    Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&script_path)
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW; survives the app exiting.
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(InstallOutcome::ExitRequested)
@@ -389,7 +426,7 @@ pub fn auto_update(current: &str) -> Result<Option<(UpdateInfo, InstallOutcome)>
 
 #[cfg(test)]
 mod tests {
-    use super::version_newer;
+    use super::*;
 
     #[test]
     fn newer_tag_wins() {
@@ -409,5 +446,82 @@ mod tests {
     fn version_lengths_may_differ() {
         assert!(version_newer("v1.0.2.1", "1.0.2"));
         assert!(!version_newer("v1.0", "1.0.1"));
+        assert!(!version_newer("v1.1.4", "1.1.4-1"));
+    }
+
+    #[test]
+    fn windows_script_quotes_paths_and_waits_before_installing() {
+        let script = windows_update_script(123, Path::new("C:\\User's 한글\\bin\\pitex.exe"), "INSTALL_HERE");
+        assert!(script.contains("'C:\\User''s 한글\\bin\\pitex.exe'"));
+        assert!(script.find("Wait-Process").unwrap() < script.find("INSTALL_HERE").unwrap());
+        assert!(script.find("INSTALL_HERE").unwrap() < script.find("Start-Process").unwrap());
+        assert!(script.contains("catch") && script.contains("exit 1"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_checks_installed_version_after_successful_apt() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("pitex-install-check-{}", crate::model::uuid_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let old_path = std::env::var_os("PATH");
+        struct Cleanup(PathBuf, Option<std::ffi::OsString>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                if let Some(path) = &self.1 { std::env::set_var("PATH", path); }
+                else { std::env::remove_var("PATH"); }
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone(), old_path);
+        let pkexec = root.join("pkexec");
+        std::fs::write(&pkexec, "#!/bin/sh\n[ \"$1 $2 $3\" = 'apt install -y' ] && [ -r \"$4\" ]\n").unwrap();
+        std::fs::set_permissions(&pkexec, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let query = root.join("dpkg-query");
+        let package = root.join("update.deb");
+        std::fs::write(&package, "test package").unwrap();
+        std::env::set_var("PATH", &root);
+        let info = UpdateInfo { tag: "v1.1.4".into(), asset_name: "update.deb".into(), asset_url: String::new() };
+        for (version, succeeds) in [("install ok installed 1.1.3-1", false), ("install ok installed 1.1.4-1", true), ("deinstall ok config-files 1.1.4-1", false)] {
+            std::fs::write(&query, format!("#!/bin/sh\nprintf '%s' '{version}'\n")).unwrap();
+            std::fs::set_permissions(&query, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let result = install(&package, &info);
+            assert_eq!(result.is_ok(), succeeds, "{version}: {result:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_helper_waits_and_does_not_relaunch_after_failure() {
+        let root = std::env::temp_dir().join(format!("pitex update's 한글 {}", crate::model::uuid_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let launched = root.join("launched");
+        let installed = root.join("installed");
+        for fail in [false, true] {
+            let mut app = Command::new("powershell.exe").args(["-NoProfile", "-Command", "Start-Sleep -Seconds 3"]).spawn().unwrap();
+            let script_path = root.join("update.ps1");
+            let action = if fail { "throw 'install failed'".to_string() } else {
+                format!("Set-Content -LiteralPath {} -Value done", powershell_quote(&installed.to_string_lossy()))
+            };
+            // Exercise the real wait/catch flow, replacing only app launch
+            // and the error viewer to avoid opening UI during the test.
+            let mocks = format!("function Start-Process {{ Set-Content -LiteralPath {} -Value launched }}\nfunction Invoke-Item {{}}\n", powershell_quote(&launched.to_string_lossy()));
+            let script = windows_update_script(app.id(), Path::new("test.exe"), &action);
+            std::fs::write(&script_path, format!("\u{feff}{mocks}{script}")).unwrap();
+            let mut helper = Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(&script_path).spawn().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            assert!(!installed.exists() && !launched.exists(), "Installer ran before app exit");
+            let status = helper.wait().unwrap();
+            app.wait().unwrap();
+            assert_eq!(status.success(), !fail);
+            assert_eq!(launched.exists(), !fail);
+            if !fail {
+                std::fs::remove_file(&installed).unwrap();
+                std::fs::remove_file(&launched).unwrap();
+            } else { assert!(root.join("update.ps1.log").is_file()); }
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

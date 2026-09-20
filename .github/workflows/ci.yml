@@ -6,6 +6,20 @@ on:
     branches: [main]
 
 jobs:
+  updates:
+    name: Update installers (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python Tools/check-updates.py
+
   gates:
     name: Repository gates
     runs-on: ubuntu-24.04

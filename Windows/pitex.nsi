@@ -6,7 +6,7 @@
 ; Installs to %LOCALAPPDATA%\Programs\Pitex (the standard per-user
 ; Programs location), adds Start Menu/Desktop shortcuts and an
 ; Add/Remove Programs entry. Silent mode (/S) is what the in-app
-; updater drives: it closes a running copy, swaps the bundle, and
+; updater drives: it waits for the running copy to exit, swaps the bundle, and
 ; the caller relaunches the new exe.
 
 !include "MUI2.nsh"
@@ -40,15 +40,14 @@ RequestExecutionLevel user
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  ; Silent installs are updater-driven — the caller waits for the app to
-  ; exit, but kill a straggler anyway so the copy can't hit a locked file.
-  ; Interactive installs leave a running copy alone (NSIS prompts on the
-  ; locked file instead).
-  ${If} ${Silent}
-    nsExec::ExecToStack 'taskkill /F /IM pitex.exe'
-    Pop $0
-  ${EndIf}
+  ; The updater waits for its own process. Do not kill unrelated instances;
+  ; a locked file must fail the install instead of relaunching a partial copy.
+  ClearErrors
   File /r "dist\pitex\*.*"
+  ${If} ${Errors}
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
   WriteUninstaller "$INSTDIR\uninstall.exe"
   CreateDirectory "$SMPROGRAMS\Pitex"
   CreateShortcut "$SMPROGRAMS\Pitex\Pitex.lnk" "$INSTDIR\bin\pitex.exe"

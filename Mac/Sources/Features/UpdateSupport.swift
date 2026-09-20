@@ -17,7 +17,7 @@ import Foundation
 final class UpdateChecker: ObservableObject {
     enum Phase {
         case idle, checking, upToDate, available, downloading, installing
-        case installed, handedToBrew, manual, failed
+        case installed, manual, failed
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -41,6 +41,7 @@ final class UpdateChecker: ObservableObject {
     // MARK: - check
 
     func check() async {
+        guard phase != .checking && phase != .downloading && phase != .installing else { return }
         phase = .checking
         detail = ""
         do {
@@ -65,23 +66,10 @@ final class UpdateChecker: ObservableObject {
     // MARK: - install
 
     func downloadAndInstall() async {
-        guard let asset = pendingAsset else { return }
+        guard phase != .checking && phase != .downloading && phase != .installing,
+              let asset = pendingAsset, let tag = availableTag else { return }
         do {
-            phase = .downloading
-            detail = String(localized: "settings.updates.downloading")
-            let dmg = try await download(asset)
-            if isBrewManaged {
-                phase = .installing
-                if await brewUpgrade() {
-                    phase = .handedToBrew
-                    detail = String(localized: "settings.updates.installed")
-                    relaunch()
-                } else {
-                    try await installFromDMG(dmg)
-                }
-            } else {
-                try await installFromDMG(dmg)
-            }
+            try await install(tag: tag, asset: asset)
         } catch {
             phase = .failed
             detail = String(format: String(localized: "settings.updates.failed"), error.localizedDescription)
@@ -95,12 +83,7 @@ final class UpdateChecker: ObservableObject {
         do {
             let (tag, asset) = try await latestRelease()
             guard isNewer(tag: tag, than: currentVersion) else { return }
-            let dmg = try await download(asset)
-            if isBrewManaged, await brewUpgrade() {
-                relaunch()
-            } else {
-                try await installFromDMG(dmg)
-            }
+            try await install(tag: tag, asset: asset)
         } catch {
             // Auto-update failures stay silent; the manual check in Settings
             // surfaces the same error on demand.
@@ -154,6 +137,30 @@ final class UpdateChecker: ObservableObject {
 
     // MARK: - download / install
 
+    private func install(tag: String, asset: ReleaseAsset) async throws {
+        if isBrewManaged {
+            phase = .installing
+            detail = String(localized: "settings.updates.installing")
+            guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+                .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+                throw NSError(domain: "PitexUpdate", code: 7,
+                              userInfo: [NSLocalizedDescriptionKey: "Homebrew could not be found."])
+            }
+            try await brewUpgrade(brew, bundle: Bundle.main.bundleURL, tag: tag)
+        } else {
+            phase = .downloading
+            detail = String(localized: "settings.updates.downloading")
+            let dmg = try await download(asset)
+            try await installFromDMG(dmg, tag: tag)
+            guard phase != .manual else { return }
+        }
+        pendingAsset = nil
+        availableTag = nil
+        phase = .installed
+        detail = String(localized: "settings.updates.installed")
+        try relaunch()
+    }
+
     private func download(_ asset: ReleaseAsset) async throws -> URL {
         let (tmp, response) = try await URLSession.shared.download(from: asset.url)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -178,21 +185,44 @@ final class UpdateChecker: ObservableObject {
             .contains { FileManager.default.fileExists(atPath: $0) }
     }
 
-    private func brewUpgrade() async -> Bool {
-        guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
-            .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
-        else { return false }
-        do {
-            let status = try await Self.run(brew, ["upgrade", "--cask", "pitex"])
-            return status == 0
-        } catch {
-            return false
+    func brewUpgrade(_ brew: String, bundle: URL, tag: String) async throws {
+        // Automatic refresh is throttled (or disabled). A stale tap makes
+        // `brew upgrade` exit successfully without changing the app.
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("pitex-brew-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        let output = try FileHandle(forWritingTo: log)
+        defer {
+            try? output.close()
+            try? FileManager.default.removeItem(at: log)
+        }
+        for arguments in [["update"], ["upgrade", "--cask", "pitex"]] {
+            let status = try await Self.run(brew, arguments, output: output)
+            guard status == 0 else {
+                let message = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+                throw NSError(domain: "PitexUpdate", code: Int(status), userInfo: [
+                    NSLocalizedDescriptionKey: "brew \(arguments.joined(separator: " ")) failed.\n\(message.suffix(4000))"
+                ])
+            }
+        }
+        // Read the plist from disk: Bundle caches the running version.
+        try verifyInstalledBundle(bundle, tag: tag)
+    }
+
+    func verifyInstalledBundle(_ bundle: URL, tag: String) throws {
+        let data = try Data(contentsOf: bundle.appendingPathComponent("Contents/Info.plist"))
+        let info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        guard info?["CFBundleIdentifier"] as? String == "app.pitex.desktop",
+              let version = info?["CFBundleShortVersionString"] as? String,
+              !isNewer(tag: tag, than: version) else {
+            throw NSError(domain: "PitexUpdate", code: 8, userInfo: [
+                NSLocalizedDescriptionKey: "\(tag) was not installed. The Homebrew cask or downloaded app may not be updated yet. Try again later."
+            ])
         }
     }
 
     /// Mount the DMG, replace the running bundle wherever it lives, detach.
     /// Non-admin installs fall back to opening the DMG for a manual drag.
-    private func installFromDMG(_ dmg: URL) async throws {
+    private func installFromDMG(_ dmg: URL, tag: String) async throws {
         phase = .installing
         detail = String(localized: "settings.updates.installing")
         let mount = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -206,15 +236,14 @@ final class UpdateChecker: ObservableObject {
             throw NSError(domain: "PitexUpdate", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "Could not mount the downloaded image"])
         }
-        let source = mount.appendingPathComponent("Pitex.app", isDirectory: true).path
-        guard FileManager.default.fileExists(atPath: source) else {
+        let source = mount.appendingPathComponent("Pitex.app", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: source.path) else {
             throw NSError(domain: "PitexUpdate", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "The downloaded image has no Pitex.app"])
         }
-        let dest = Bundle.main.bundleURL.path
+        try verifyInstalledBundle(source, tag: tag)
         do {
-            try? FileManager.default.removeItem(atPath: dest)
-            try FileManager.default.copyItem(atPath: source, toPath: dest)
+            try replaceBundle(at: Bundle.main.bundleURL, with: source)
         } catch {
             // /Applications needs admin — hand the mounted image to the user.
             NSWorkspace.shared.open(dmg)
@@ -222,9 +251,18 @@ final class UpdateChecker: ObservableObject {
             detail = String(localized: "settings.updates.manual")
             return
         }
-        phase = .installed
-        detail = String(localized: "settings.updates.installed")
-        relaunch()
+        try verifyInstalledBundle(Bundle.main.bundleURL, tag: tag)
+    }
+
+    func replaceBundle(at destination: URL, with source: URL) throws {
+        let files = FileManager.default
+        let staged = destination.deletingLastPathComponent()
+            .appendingPathComponent(".pitex-update-\(UUID().uuidString).app")
+        defer { try? files.removeItem(at: staged) }
+        // Finish the copy before replacing the old app, so a copy failure
+        // (permissions, disk space) cannot delete the installed version.
+        try files.copyItem(at: source, to: staged)
+        _ = try files.replaceItemAt(destination, withItemAt: staged, options: .usingNewMetadataOnly)
     }
 
     /// Exit so the new build runs. A detached helper waits for this process
@@ -233,7 +271,7 @@ final class UpdateChecker: ObservableObject {
     /// (the old `createsNewApplicationInstance` relaunch produced two).
     /// The wait is bounded: if the user cancels the quit (e.g. unsaved
     /// changes), nothing relaunches behind their back.
-    private func relaunch() {
+    private func relaunch() throws {
         let bundle = Bundle.main.bundleURL.path
             .replacingOccurrences(of: "'", with: "'\\''")
         let pid = getpid()
@@ -245,17 +283,22 @@ final class UpdateChecker: ObservableObject {
         let helper = Process()
         helper.executableURL = URL(fileURLWithPath: "/bin/sh")
         helper.arguments = ["-c", script]
-        try? helper.run()
+        try helper.run()
         NSApp.terminate(nil)
     }
 
     // MARK: - process helpers
 
-    private static func run(_ launchPath: String, _ arguments: [String]) async throws -> Int32 {
+    private static func run(_ launchPath: String, _ arguments: [String], output: FileHandle? = nil) async throws -> Int32 {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: launchPath)
             process.arguments = arguments
+            process.standardInput = FileHandle.nullDevice
+            if let output {
+                process.standardOutput = output
+                process.standardError = output
+            }
             process.terminationHandler = { p in
                 continuation.resume(returning: p.terminationStatus)
             }

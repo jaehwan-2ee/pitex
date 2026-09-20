@@ -205,15 +205,22 @@ Windows.
 - **Install Update** (appears when an update is available) — downloads and
   installs:
   - *macOS*: replaces `/Applications/Pitex.app` from the DMG and relaunches.
-    Homebrew-cask installs go through `brew upgrade --cask pitex` instead;
+    Homebrew-cask installs refresh the tap with `brew update`, run
+    `brew upgrade --cask pitex`, and verify the installed app version before
+    relaunching. A stale cask or failed upgrade shows an error so you can
+    retry. DMG installs stage the new bundle before replacing the old one;
     without admin rights the DMG opens for a manual drag install.
   - *Linux*: runs `pkexec apt install` on the downloaded deb (polkit
     password prompt), falling back to `sudo apt install` in a terminal
-    window. Restart Pitex to finish.
+    window. The in-app install verifies the installed package version before
+    asking you to restart Pitex. Terminal installs must finish there first.
   - *Windows*: downloads the `*-setup.exe` installer and runs it silently
     (`/S`) after the app exits, then relaunches `pitex.exe`. A portable-zip
     install migrates to `%LOCALAPPDATA%\Programs\Pitex` automatically;
-    zip-only releases fall back to a staged bundle swap.
+    zip-only releases fall back to a staged bundle swap. Both helpers wait
+    for the app process to exit and check installation errors before
+    relaunching. Existing custom installer locations are preserved; helper
+    failures open an error log instead of silently relaunching the old app.
 - **Automatically download and install updates** — when on, Pitex runs the
   same check→download→install pass on every launch. Stored as
   `pitex.pref.update.autoInstall` on all platforms.

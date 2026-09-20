@@ -1729,7 +1729,10 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
 
     {
         let state = state.clone();
+        let install_row = install_row.clone();
         check_row.connect_activated(move |row| {
+            row.set_sensitive(false);
+            install_row.set_sensitive(false);
             row.set_subtitle(&tr(lang, "settings.updates.checking"));
             let version = state.borrow().app_version.clone();
             std::thread::spawn(move || {
@@ -1741,6 +1744,10 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
                         let rows = t.borrow();
                         let Some(rows) = rows.as_ref() else { return };
                         let Some(row) = rows.check.upgrade() else { return };
+                        row.set_sensitive(true);
+                        if let Some(install) = rows.install.upgrade() {
+                            install.set_sensitive(true);
+                        }
                         match result {
                             Ok(Some(info)) => {
                                 if let Some(install) = rows.install.upgrade() {
@@ -1777,17 +1784,28 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     update_group.add(&check_row);
 
     {
+        let check_row = check_row.clone();
         install_row.connect_activated(move |row| {
             let Some(info) = pending_update.borrow().clone() else { return };
+            row.set_sensitive(false);
+            check_row.set_sensitive(false);
             row.set_subtitle(&tr(lang, "settings.updates.downloading"));
             std::thread::spawn(move || {
                 let outcome = crate::update::download(&info)
                     .and_then(|path| crate::update::install(&path, &info));
                 gtk4::glib::MainContext::default().invoke(move || {
+                    // The installer must be released even if Settings was closed.
+                    if matches!(outcome, Ok(crate::update::InstallOutcome::ExitRequested)) {
+                        std::process::exit(0);
+                    }
                     UPDATE_ROWS.with(|t| {
                         let rows = t.borrow();
                         let Some(rows) = rows.as_ref() else { return };
                         let Some(row) = rows.install.upgrade() else { return };
+                        if let Some(check) = rows.check.upgrade() {
+                            check.set_sensitive(true);
+                        }
+                        row.set_sensitive(outcome.is_err());
                         match outcome {
                             Ok(crate::update::InstallOutcome::ExitRequested) => {
                                 std::process::exit(0);

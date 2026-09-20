@@ -725,7 +725,7 @@ struct SettingsView: View {
                     } label: {
                         Text(String(format: String(localized: "settings.updates.install_version"), tag))
                     }
-                    .disabled(updates.phase == .downloading || updates.phase == .installing)
+                    .disabled(updates.phase == .checking || updates.phase == .downloading || updates.phase == .installing)
                     .accessibilityIdentifier("pitex.settings.updates.install")
                 }
                 if !updates.detail.isEmpty {
