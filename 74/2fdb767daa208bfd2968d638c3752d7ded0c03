@@ -1,0 +1,14 @@
+Packages/TexApp/Tests/TexAppTests/AccessibilityContractTests.swift
+  h_d73c695d83f4a7 60-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "742fdb767daa208bfd2968d638c3752d7ded0c03",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
