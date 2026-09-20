@@ -123,6 +123,9 @@ impl std::error::Error for DocumentSessionError {}
 struct SessionInner {
     revision: u64,
     text: String,
+    /// FNV hash of `text` — recomputed only on text mutation, not per
+    /// snapshot (was O(doc) per snapshot, 2-3× per keystroke).
+    content_hash: DiskContentHash,
     disk_baseline_hash: DiskContentHash,
     conflict: Option<DocumentConflict>,
 }
@@ -148,6 +151,7 @@ impl DocumentSession {
             path: file.path.clone(),
             inner: Arc::new(Mutex::new(SessionInner {
                 revision: 0,
+                content_hash: DiskContentHash::hashing(&initial_text),
                 disk_baseline_hash: disk_baseline_hash
                     .unwrap_or_else(|| DiskContentHash::hashing(&initial_text)),
                 text: initial_text,
@@ -192,6 +196,7 @@ impl DocumentSession {
 
         match mutation {
             DocumentMutation::ReplaceText(replacement) => {
+                inner.content_hash = DiskContentHash::hashing(&replacement);
                 inner.text = replacement;
             }
             DocumentMutation::RecordExternalChange { observed_disk_hash } => {
@@ -211,7 +216,7 @@ impl DocumentSession {
                 }
             }
             DocumentMutation::CommitSave { written_disk_hash } => {
-                let current_hash = DiskContentHash::hashing(&inner.text);
+                let current_hash = inner.content_hash;
                 if written_disk_hash != current_hash {
                     return Err(DocumentSessionError::SavedContentHashMismatch {
                         expected: current_hash,
@@ -225,6 +230,7 @@ impl DocumentSession {
                 text,
                 disk_baseline_hash,
             } => {
+                inner.content_hash = DiskContentHash::hashing(&text);
                 inner.text = text;
                 inner.disk_baseline_hash = disk_baseline_hash;
                 inner.conflict = None;
@@ -234,9 +240,8 @@ impl DocumentSession {
         inner.revision += 1;
         Ok(self.make_snapshot(&inner))
     }
-
     fn make_snapshot(&self, inner: &SessionInner) -> DocumentSnapshot {
-        let content_hash = DiskContentHash::hashing(&inner.text);
+        let content_hash = inner.content_hash;
         let save_state = if inner.conflict.is_some() {
             DocumentSaveState::Conflicted
         } else if content_hash != inner.disk_baseline_hash {

@@ -175,6 +175,15 @@ pub struct AppState {
     /// Debounce for the per-keystroke structure parse (outline/labels) —
     /// same 120ms cadence as `highlight_pending`.
     pub structure_pending: Cell<bool>,
+    /// Last `structure_revision`/`files_revision` rendered by
+    /// `refresh_sidebar` — the list/tree rebuilds are skipped while they
+    /// match (this ran on every keystroke).
+    pub rendered_structure_revision: Cell<u64>,
+    pub rendered_files_revision: Cell<u64>,
+    /// Last `refresh_tabs` identity key — tab chips rebuild only on a bump.
+    pub rendered_tabs_key: Cell<u64>,
+    /// Last `render_pdf_page` key — the raster skips while doc/page/scale match.
+    pub rendered_pdf_key: Cell<u64>,
     /// Debounce for external-change coalescing (0.35s).
     pub disk_pending: RefCell<HashMap<PathBuf, glib::SourceId>>,
     pub watchers: Vec<gio::FileMonitor>,
@@ -240,6 +249,10 @@ impl AppState {
             active_session: None,
             highlight_pending: Cell::new(false),
             structure_pending: Cell::new(false),
+            rendered_structure_revision: Cell::new(0),
+            rendered_pdf_key: Cell::new(0),
+            rendered_files_revision: Cell::new(0),
+            rendered_tabs_key: Cell::new(0),
             disk_pending: RefCell::new(HashMap::new()),
             watchers: Vec::new(),
             pdf: None,
@@ -827,10 +840,22 @@ impl AppState {
     }
 
     /// `STATE`-free rehighlight scheduling used by the submit path.
+    /// Coalesced via `highlight_pending` — a typing burst used to queue a
+    /// full retokenize per keystroke.
     fn schedule_rehighlight_static() {
+        let pending = STATE.with(|s| {
+            s.borrow()
+                .as_ref()
+                .map(|state| state.borrow().highlight_pending.replace(true))
+                .unwrap_or(false)
+        });
+        if pending {
+            return;
+        }
         glib::timeout_add_local_once(Duration::from_millis(120), || {
             STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
+                    state.borrow().highlight_pending.set(false);
                     state.borrow().rehighlight();
                 }
             });
@@ -1304,6 +1329,20 @@ impl AppState {
     fn render_pdf_page(&self) {
         let Some(doc) = &self.pdf else { return };
         let scale = if self.pdf_auto_fit { self.pdf_fit_scale() } else { self.pdf_scale };
+        // Skip the raster when nothing changed — `refresh_pdf_ui` calls
+        // this on every keystroke.
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            self.pdf_hash.hash(&mut h);
+            self.pdf_page.hash(&mut h);
+            scale.to_bits().hash(&mut h);
+            h.finish()
+        };
+        if key == self.rendered_pdf_key.get() {
+            return;
+        }
+        self.rendered_pdf_key.set(key);
         UI.with(|ui| {
             if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
                 if let Some((pixels, w, h, stride)) = doc.render_page(self.pdf_page, scale) {
@@ -1713,6 +1752,24 @@ impl AppState {
     // ── refresh: tabs / sidebar / footer ───────────────────────────────────
 
     pub fn refresh_tabs(&mut self) {
+        // Cheap identity key — rebuilding every tab chip per keystroke was
+        // O(tabs) widget churn on each `refresh_after_document_change`.
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            self.model.open_documents.hash(&mut h);
+            self.model.active_document_url.hash(&mut h);
+            self.model
+                .document_snapshot
+                .as_ref()
+                .map(|s| s.save_state != DocumentSaveState::Clean)
+                .hash(&mut h);
+            h.finish()
+        };
+        if key == self.rendered_tabs_key.get() {
+            return;
+        }
+        self.rendered_tabs_key.set(key);
         UI.with(|ui| {
             let Some(row) = ui.tab_row.borrow().as_ref().cloned() else { return };
             while let Some(child) = row.first_child() {
@@ -1774,6 +1831,16 @@ impl AppState {
     pub fn refresh_sidebar(&mut self) {
         let lang = self.language;
         UI.with(|ui| {
+            let structure_dirty =
+                self.model.structure_revision != self.rendered_structure_revision.get();
+            let files_dirty =
+                self.model.files_revision != self.rendered_files_revision.get();
+            if structure_dirty {
+                self.rendered_structure_revision.set(self.model.structure_revision);
+            }
+            if files_dirty {
+                self.rendered_files_revision.set(self.model.files_revision);
+            }
             if let Some(stack) = ui.sidebar_stack.borrow().as_ref() {
                 let name = match self.model.sidebar_section {
                     SidebarSection::Outline => "outline",
@@ -1792,6 +1859,7 @@ impl AppState {
                     dd.set_selected(idx);
                 }
             }
+            if structure_dirty {
             if let Some(list) = ui.outline_list.borrow().as_ref() {
                 clear_list(list);
                 for (i, item) in self.model.outline_items.iter().enumerate() {
@@ -1811,6 +1879,8 @@ impl AppState {
                     list.append(&row);
                 }
             }
+            }
+            if structure_dirty {
             if let Some(list) = ui.labels_list.borrow().as_ref() {
                 clear_list(list);
                 for (i, item) in self.model.label_items.iter().enumerate() {
@@ -1836,6 +1906,8 @@ impl AppState {
                     list.append(&row);
                 }
             }
+            }
+            if structure_dirty {
             if let Some(list) = ui.bib_list.borrow().as_ref() {
                 clear_list(list);
                 for item in &self.model.bibliography_items {
@@ -1859,6 +1931,8 @@ impl AppState {
                     list.append(&row);
                 }
             }
+            }
+            if files_dirty {
             // Project file tree — always visible at the bottom. Built from
             // relative paths through the shared `project-feature` builder
             // so directories nest like SwiftUI's OutlineGroup.
@@ -1899,6 +1973,7 @@ impl AppState {
                 for node in &tree {
                     append_project_node(list, node, 0, &root, &self.model);
                 }
+            }
             }
             if let Some(pin) = ui.pin_button.borrow().as_ref() {
                 pin.set_sensitive(
@@ -2086,15 +2161,10 @@ impl AppState {
     // ── refresh: PDF / synctex ─────────────────────────────────────────────
 
     pub fn refresh_pdf_ui(&mut self) {
-        // Hash the stored bytes in place — cloning the whole PDF per
-        // refresh (this runs on every keystroke) was an O(pdf) alloc+hash.
+        // Hash computed once at `Succeeded` construction — hashing the PDF
+        // bytes per refresh (every keystroke) was an O(pdf) pass.
         let pdf_hash = match &self.model.build_state {
-            WorkspaceBuildState::Succeeded { pdf, .. } => {
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                pdf.hash(&mut hasher);
-                Some(hasher.finish())
-            }
+            WorkspaceBuildState::Succeeded { hash, .. } => Some(*hash),
             _ => None,
         };
         match (pdf_hash, &self.pdf) {

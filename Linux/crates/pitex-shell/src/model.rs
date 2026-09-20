@@ -49,7 +49,7 @@ pub enum WorkspacePhase {
 pub enum WorkspaceBuildState {
     Unavailable(String),
     Building,
-    Succeeded { pdf: Vec<u8>, log: String },
+    Succeeded { pdf: Vec<u8>, log: String, hash: u64 },
     Failed(String),
 }
 
@@ -952,6 +952,7 @@ impl WorkspaceModel {
     pub fn apply_open(&mut self, store: &mut SettingsStore, opened: OpenedProject) {
         self.project_url = Some(opened.root.clone());
         self.project_files = opened.files;
+        self.files_revision += 1;
         self.registered_sessions = vec![opened.session.clone()];
         // `capabilityBroker`/`capabilityLease` (PitexApp.swift:369-383):
         // issue readWrite for the selected path, fall back to readOnly, then
@@ -1282,18 +1283,17 @@ impl WorkspaceModel {
         }
         self.project_files.clear();
         self.project_children.clear();
+        self.files_revision += 1;
         self.open_documents.clear();
-        self.active_document_url = None;
-        self.document_snapshot = None;
-        self.latest_built_pdf_name = None;
+        self.outline_items.clear();
+        self.label_items.clear();
+        self.bibliography_items.clear();
+        self.structure_revision += 1;
         self.synctex_binding = None;
         self.pinned_build_target = None;
         self.automatic_build_target = None;
         self.build_target_message = None;
         self.console_section = ConsoleSection::Assistant;
-        self.outline_items.clear();
-        self.label_items.clear();
-        self.bibliography_items.clear();
         self.phase = WorkspacePhase::NoProject;
     }
 
@@ -1314,6 +1314,7 @@ impl WorkspaceModel {
                 if !self.project_files.contains(&url) {
                     self.project_files.push(url.clone());
                     sort_files(&mut self.project_files);
+                    self.files_revision += 1;
                 }
                 self.activate_document(url, sink);
             }
@@ -1333,6 +1334,7 @@ impl WorkspaceModel {
                 if !self.project_files.contains(&url) {
                     self.project_files.push(url.clone());
                     sort_files(&mut self.project_files);
+                    self.files_revision += 1;
                 }
                 self.activate_document(url, sink);
             }
@@ -1522,6 +1524,7 @@ impl WorkspaceModel {
                 discovered.into_iter().filter(|f| !known.contains(f)).collect();
             if !additions.is_empty() {
                 self.project_files.extend(additions);
+                self.files_revision += 1;
                 sort_files(&mut self.project_files);
             }
         }
@@ -1572,6 +1575,7 @@ impl WorkspaceModel {
         let Some(root) = self.project_url.clone() else { return };
         if let Ok(discovered) = Self::discover_tex_files(&root, &root, true) {
             self.project_files = discovered;
+            self.files_revision += 1;
             self.refresh_build_target();
             self.refresh_structure();
         }
@@ -1792,6 +1796,12 @@ impl WorkspaceModel {
             Some(data) if data.starts_with(b"%PDF") => {
                 self.latest_built_pdf_name = Some(name);
                 self.build_state = WorkspaceBuildState::Succeeded {
+                    hash: {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        data.hash(&mut h);
+                        h.finish()
+                    },
                     pdf: data,
                     log: self.build_log_text.clone(),
                 };
@@ -1923,6 +1933,7 @@ impl WorkspaceModel {
                 {
                     self.project_files.push(file_url.clone());
                     sort_files(&mut self.project_files);
+                    self.files_revision += 1;
                 }
                 let already_active = self
                     .active_document_url
@@ -2046,6 +2057,7 @@ impl WorkspaceModel {
             }
         }
         self.project_children = children;
+        self.files_revision += 1;
     }
 
     /// `refreshBuildTarget` — resolve the main document for the active
@@ -2294,6 +2306,12 @@ impl WorkspaceModel {
                             .successful_pdf()
                             .unwrap_or_default();
                         self.build_state = WorkspaceBuildState::Succeeded {
+                            hash: {
+                                use std::hash::{Hash, Hasher};
+                                let mut h = std::collections::hash_map::DefaultHasher::new();
+                                pdf.hash(&mut h);
+                                h.finish()
+                            },
                             pdf,
                             log: self.build_log_text.clone(),
                         };
@@ -2500,12 +2518,14 @@ impl WorkspaceModel {
     /// attachment chip.
     pub fn sync_selection_attachment(&mut self) {
         let attachment = (|| {
-            let text = self.document_snapshot.as_ref()?.text.clone();
+            // Borrow the text — cloning the whole document per selection
+            // change was an O(doc) alloc on every caret move.
+            let text = &self.document_snapshot.as_ref()?.text;
             let (loc, len) = self.editor_selection;
-            if len == 0 || loc + len > utf16_len(&text) {
+            if len == 0 || loc + len > utf16_len(text) {
                 return None;
             }
-            let (b0, b1) = utf16_range_to_bytes(&text, loc, len);
+            let (b0, b1) = utf16_range_to_bytes(text, loc, len);
             let selected = text[b0..b1].to_string();
             let start_line = text[..b0].bytes().filter(|b| *b == b'\n').count() + 1;
             let end_line = text[..b1].bytes().filter(|b| *b == b'\n').count() + 1;
