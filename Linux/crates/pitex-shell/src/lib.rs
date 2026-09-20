@@ -11,6 +11,7 @@ pub mod app_ui;
 pub mod compat;
 pub mod completion;
 pub mod fold;
+pub mod ghost_completion;
 pub mod l10n;
 pub mod model;
 pub mod panes;

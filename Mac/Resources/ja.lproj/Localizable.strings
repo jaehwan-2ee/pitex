@@ -275,6 +275,7 @@
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "インストール先";
 "settings.ai.attach_default" = "デフォルトでアクティブな書類をプロンプトに添付";
+"settings.ai.autocompletion" = "インライン自動補完";
 "settings.ai.font_size" = "会話のフォントサイズ";
 "settings.ai.font_preview" = "会話のテキストはこのサイズで表示されます。";
 "settings.ai.setup_providers" = "プロバイダ/サブスクリプションのサインイン…";

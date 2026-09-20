@@ -178,6 +178,10 @@ final class WorkspaceModel: ObservableObject {
     let syncTeXRunner = SyncTeXRunner()
     let highlighter = SyntaxHighlighter()
     private(set) var agent: AgentCoordinator?
+    /// The Copilot-style inline completion session — a dedicated pi
+    /// subprocess that never touches the chat transcript. Created per
+    /// project like `agent` and shut down in `close()`.
+    private(set) var completion: GhostCompletionCoordinator?
     private(set) var syncTeXBinding: SyncTeXBinding?
     var activeBuildID: BuildID?
     /// Name (relative to the project root) of the PDF produced by the most
@@ -434,6 +438,16 @@ final class WorkspaceModel: ObservableObject {
                 throw WorkspaceOpenError.changedWhileOpening
             }
 
+            // Created before `environment` publishes so no body re-evaluation
+            // can build the editor with a permanently-nil `completion:` — a
+            // struct input evaluated once per makeNSView pass.
+            let completion = GhostCompletionCoordinator()
+            completion.contextProvider = { [weak self] in
+                self?.completionContext() ?? GhostCompletionCoordinator.Context()
+            }
+            completion.attach(to: appEnvironment.editor)
+            self.completion = completion
+
             environment = appEnvironment
             activeDocumentURL = initialURL
             openDocuments = [initialURL]
@@ -502,6 +516,7 @@ final class WorkspaceModel: ObservableObject {
             if !openDocuments.contains(url) { openDocuments.append(url) }
             documentSnapshot = snapshot
             refreshBuildTarget()
+            completion?.attach(to: appEnvironment.editor)
             highlighter.attach(to: appEnvironment.editor, fileExtension: url.pathExtension)
             attachCompletion(to: appEnvironment.editor)
             startWatcher(for: url)
@@ -643,6 +658,7 @@ final class WorkspaceModel: ObservableObject {
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
         agent?.shutdown()
+        completion?.shutdown()
         highlighter.detach()
         let brokerToClose = capabilityBroker
         let leaseToClose = capabilityLease
@@ -666,6 +682,7 @@ final class WorkspaceModel: ObservableObject {
         activeDocumentURL = nil
         documentSnapshot = nil
         agent = nil
+        completion = nil
         latestBuiltPDFName = nil
         syncTeXBinding = nil
         pinnedBuildTarget = nil
@@ -757,6 +774,20 @@ final class WorkspaceModel: ObservableObject {
         agent.updateSelectionAttachment(AgentSelectionAttachment(
             path: path, startLine: startLine, endLine: endLine, text: selected
         ))
+    }
+
+    /// The fire-time gates for inline completion — setting toggle, .tex
+    /// extension, project root for the subprocess cwd, and the file name
+    /// that lands in the prompt header.
+    private func completionContext() -> GhostCompletionCoordinator.Context {
+        var context = GhostCompletionCoordinator.Context()
+        context.projectRoot = projectURL
+        context.enabled = settings.aiAutocompletion
+        context.isTeX = activeDocumentURL?.pathExtension.lowercased() == "tex"
+        context.fileName = documentSnapshot?.path.rawValue
+            ?? activeDocumentURL?.lastPathComponent
+            ?? "document.tex"
+        return context
     }
 
     /// The live context folded into every agent prompt: which document is

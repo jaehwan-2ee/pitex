@@ -274,6 +274,7 @@
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "Vị trí cài đặt";
 "settings.ai.attach_default" = "Đính kèm tài liệu đang mở vào prompt theo mặc định";
+"settings.ai.autocompletion" = "Tự động hoàn thành nội tuyến";
 "settings.ai.font_size" = "Cỡ chữ hội thoại";
 "settings.ai.font_preview" = "Nội dung hội thoại sẽ hiển thị ở cỡ chữ này.";
 "settings.ai.setup_providers" = "Thiết lập đăng nhập nhà cung cấp/gói…";

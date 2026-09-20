@@ -200,6 +200,16 @@ impl SettingsStore {
     pub fn set_ai_attach_default(&mut self, v: bool) {
         self.prefs.set("ai.attachDefault", v);
     }
+    /// `ai.autocompletion` — Copilot-style ghost text while typing LaTeX.
+    /// Same key and default-OFF as the Mac `SettingsStore`: the feature
+    /// spawns a pi subprocess, so it is opt-in, and silently no-ops until
+    /// a `.tex` document is open and pi resolves.
+    pub fn ai_autocompletion(&self) -> bool {
+        self.prefs.bool("ai.autocompletion").unwrap_or(false)
+    }
+    pub fn set_ai_autocompletion(&mut self, v: bool) {
+        self.prefs.set("ai.autocompletion", v);
+    }
     /// `ai.fontSize` — conversation text size, clamped to 10…24, default 13.
     pub fn ai_font_size(&self) -> f64 {
         self.prefs.double("ai.fontSize").unwrap_or(13.0).clamp(10.0, 24.0)

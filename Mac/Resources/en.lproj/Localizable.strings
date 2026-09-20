@@ -274,6 +274,7 @@
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "Install location";
 "settings.ai.attach_default" = "Attach the active document to prompts by default";
+"settings.ai.autocompletion" = "Inline autocompletion";
 "settings.ai.font_size" = "Conversation font size";
 "settings.ai.font_preview" = "This is how your conversation text will look.";
 "settings.ai.setup_providers" = "Set Up Provider / Sign In…";

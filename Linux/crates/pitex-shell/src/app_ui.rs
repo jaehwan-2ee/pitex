@@ -29,6 +29,7 @@ use gtk_editor_adapter::{FnSessionClient, GtkEditorAdapter, SessionClient};
 use language_core::{DeterministicTeXLexer, TeXDialect};
 
 use crate::agent::{AgentCoordinator, AgentSelectionAttachment};
+use crate::ghost_completion::{CompletionContext, GhostCompletionCoordinator};
 use crate::l10n::{resolve_language, tr};
 use crate::model::{
     ConsoleSection, DocumentTodoItem, SidebarSection, TodoLineEdit, WorkspaceBuildState,
@@ -64,8 +65,12 @@ pub struct UiHandles {
     pub inner_paned: RefCell<Option<gtk4::Paned>>,
     pub console_paned: RefCell<Option<gtk4::Paned>>,
     pub editor_scroller: RefCell<Option<gtk4::ScrolledWindow>>,
-    /// Overlay wrapping `editor_scroller`; hosts the fold chip layer.
+    /// Overlay wrapping `editor_scroller`; hosts the fold chip layer and
+    /// the ghost-completion label.
     pub editor_overlay: RefCell<Option<gtk4::Overlay>>,
+    /// The translucent ghost-text label the completion coordinator
+    /// repositions at the caret — created once in `build_editor_column`.
+    pub ghost_label: RefCell<Option<gtk4::Label>>,
     pub editor_stack: RefCell<Option<gtk4::Stack>>,
     pub minimap: RefCell<Option<sourceview5::Map>>,
     pub footer: RefCell<Option<gtk4::Box>>,
@@ -153,6 +158,10 @@ pub struct AppState {
     /// The `FoldEngine` bound to the current adapter — rebuilt per session
     /// like the macOS environment's `adapter`.
     pub fold: Option<Rc<crate::fold::FoldEngine>>,
+    /// Copilot-style inline completion — a dedicated pi subprocess that
+    /// never touches the chat transcript. Rebound per session in
+    /// `attach_session`, shut down with the workspace.
+    pub completion: Rc<GhostCompletionCoordinator>,
     /// The fold chip layer currently overlaid on the editor scroller —
     /// tracked so `rebind_editor_widget` can remove the previous one.
     pub fold_chip: RefCell<Option<gtk4::DrawingArea>>,
@@ -242,6 +251,7 @@ impl AppState {
             terminal_running: false,
             editor: None,
             fold: None,
+            completion: GhostCompletionCoordinator::new(),
             fold_chip: RefCell::new(None),
             rendered_agent_revision: Cell::new(0),
             rendered_ai_font_size: Cell::new(0.0),
@@ -280,6 +290,22 @@ impl AppState {
             tx: Some(tx),
         };
         state.wire_model_callbacks();
+        // `completion.contextProvider` — reads live workspace state
+        // through `STATE` at fire time, so the setting toggle and document
+        // switches apply immediately without re-attaching.
+        state.completion.set_context_provider(Box::new(|| {
+            STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .and_then(|state| {
+                        state
+                            .try_borrow()
+                            .ok()
+                            .map(|st| st.completion_context())
+                    })
+                    .unwrap_or_default()
+            })
+        }));
         state
     }
 
@@ -375,6 +401,43 @@ impl AppState {
             desc.set_size(12 * gtk4::pango::SCALE);
         }
         desc
+    }
+
+    /// `completionContext()` — the fire-time gates for inline completion:
+    /// setting toggle, .tex extension, project root for the subprocess
+    /// cwd, and the file name that lands in the prompt header.
+    fn completion_context(&self) -> CompletionContext {
+        let mut context = CompletionContext {
+            project_root: self.model.project_url.clone(),
+            enabled: self.store.ai_autocompletion(),
+            is_tex: self
+                .model
+                .active_document_url
+                .as_ref()
+                .and_then(|u| u.extension())
+                .map(|e| e.eq_ignore_ascii_case("tex"))
+                .unwrap_or(false),
+            editable: self
+                .editor
+                .as_ref()
+                .map(|e| e.view().is_editable())
+                .unwrap_or(false),
+            ..Default::default()
+        };
+        context.file_name = self
+            .model
+            .document_snapshot
+            .as_ref()
+            .map(|s| s.path.to_string())
+            .or_else(|| {
+                self.model
+                    .active_document_url
+                    .as_ref()
+                    .and_then(|u| u.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "document.tex".into());
+        context
     }
 
     /// Terminal font: custom family when set, otherwise the editor font.
@@ -564,6 +627,9 @@ impl AppState {
                 term.set_font(Some(&font));
             }
         });
+        // The ghost label tracks the editor font so suggestion text and
+        // document text share family and size.
+        self.completion.refresh_font(&self.editor_font_desc());
     }
 
     /// `rehighlight()` — re-tokenize and push decorations + structure.
@@ -738,8 +804,15 @@ impl AppState {
             dialect,
             self.store.code_folding(),
         );
-        self.editor = Some(adapter);
+        self.editor = Some(adapter.clone());
         self.fold = Some(fold);
+        // Ghost completion rebinds to the fresh view/buffer like
+        // FoldEngine — `completion.attach(to:)` in the Swift workspace.
+        let ghost_label = UI.with(|ui| ui.ghost_label.borrow().clone());
+        if let Some(ghost_label) = ghost_label {
+            self.completion
+                .attach(adapter.view(), adapter.buffer(), &ghost_label);
+        }
         self.rebind_editor_widget();
         self.apply_editor_preferences();
         self.apply_theme();
@@ -908,6 +981,9 @@ impl AppState {
     /// `close()`'s agent half — terminate the coordinator and its subprocess
     /// with the project; a fresh one is built on the next open.
     fn shutdown_agent(&mut self) {
+        // `completion?.shutdown()` — the dedicated subprocess dies with the
+        // workspace and `attach` respawns it on the next document.
+        self.completion.shutdown();
         if let Some(agent) = self.agent.as_mut() {
             agent.shutdown();
         }
@@ -2590,6 +2666,19 @@ impl AppState {
         self.refresh_assistant();
     }
 
+    /// The completion coordinator's 40ms half — toolchain await, event
+    /// drain and exit detection, all interior-mutated so `&self` suffices.
+    fn poll_completion(&self) {
+        let completion = self.completion.clone();
+        completion.poll_toolchain();
+        while let Some(event) = completion.poll_event() {
+            completion.handle(&event);
+        }
+        if completion.poll_exit() {
+            completion.process_did_exit();
+        }
+    }
+
     // ── watchers ───────────────────────────────────────────────────────────
 
     /// `FileSystemWatcher` — monitor every project file, coalesced 0.35s.
@@ -3764,7 +3853,8 @@ fn build_chrome(
     }
 
     // Agent event polling — the Swift `AsyncStream` drain becomes a 40ms idle
-    // tick plus an on-demand poll after each send.
+    // tick plus an on-demand poll after each send. The completion
+    // coordinator drains on the same tick.
     {
         let state = state.clone();
         glib::timeout_add_local(Duration::from_millis(40), move || {
@@ -3774,6 +3864,7 @@ fn build_chrome(
             if s.agent.is_some() {
                 s.poll_agent();
             }
+            s.poll_completion();
             glib::ControlFlow::Continue
         });
     }
@@ -4364,6 +4455,18 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     let editor_overlay = gtk4::Overlay::new();
     editor_overlay.set_child(Some(&scroller));
     ui.editor_overlay.replace(Some(editor_overlay.clone()));
+    // The ghost-completion label: translucent, non-interactive and
+    // hidden until a suggestion lands — the coordinator moves it to the
+    // caret's window position via margins. Decorative chrome like the
+    // fold chip layer, so it carries no a11y identifier.
+    let ghost = gtk4::Label::new(None);
+    ghost.set_opacity(crate::ghost_completion::GHOST_OPACITY);
+    ghost.set_halign(gtk4::Align::Start);
+    ghost.set_valign(gtk4::Align::Start);
+    ghost.set_can_target(false);
+    ghost.set_visible(false);
+    editor_overlay.add_overlay(&ghost);
+    ui.ghost_label.replace(Some(ghost));
     editor_row.append(&editor_overlay);
     let minimap = sourceview5::Map::new();
     minimap.set_visible(state.borrow().store.minimap());

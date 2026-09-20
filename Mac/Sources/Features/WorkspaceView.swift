@@ -308,6 +308,7 @@ struct WorkspaceView: View {
                 adapter: environment.editor,
                 minimapVisible: settingsStore.minimap,
                 foldingEnabled: settingsStore.codeFolding,
+                completion: workspace.completion,
                 onSyncRequest: { line, column in
                     Task { await workspace.syncForward(line: line, column: column) }
                 }

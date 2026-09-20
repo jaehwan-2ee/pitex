@@ -274,6 +274,7 @@
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "Место установки";
 "settings.ai.attach_default" = "Прикреплять активный документ к запросам по умолчанию";
+"settings.ai.autocompletion" = "Встроенное автодополнение";
 "settings.ai.font_size" = "Размер шрифта диалога";
 "settings.ai.font_preview" = "Так будет выглядеть текст вашего диалога.";
 "settings.ai.setup_providers" = "Настроить провайдера / Войти…";
