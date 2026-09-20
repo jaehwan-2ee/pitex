@@ -1,0 +1,18 @@
+Linux/crates/pitex-shell/src/agent.rs
+  h_bcbc8ae9e599aa 1090-1092,1139,1164,1174,1178,1183,1238,1288,1301,1314,1399,1409,1421,1434,1453,1494
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 157-165,175-177,235-237,242,640-642,840-858,2089-2092,2095-2106,2196-2198,2200-2206,2309,2367-2371
+Linux/crates/pitex-shell/src/model.rs
+  h_bcbc8ae9e599aa 8,301-316,682-687,772-773,1540-1551,1565,2482-2498
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "693ebe25867b8780360f1139a5b254aa5b2f0d87",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
