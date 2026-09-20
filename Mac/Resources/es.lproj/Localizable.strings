@@ -131,6 +131,13 @@
 "sidebar.no_bib_detail" = "Abre un archivo .bib para ver sus entradas.";
 "sidebar.rescan_help" = "Volver a analizar los archivos del proyecto";
 "sidebar.pin_help" = "Fijar como objetivo de compilación";
+"sidebar.todos" = "Tareas";
+"sidebar.no_todos" = "Sin tareas";
+"sidebar.no_todos_detail" = "Añade comentarios % TODO: para verlos aquí.";
+"todos.add_help" = "Añadir un comentario % TODO: en el cursor";
+"todos.rename" = "Renombrar";
+"todos.delete" = "Eliminar";
+"todos.toggle_help" = "Alternar completado";
 
 "console.terminal" = "Terminal";
 "issues.filter.all" = "Todos";

@@ -1,3 +1,4 @@
+import AppKit
 import ProjectFeature
 import SwiftUI
 
@@ -7,15 +8,19 @@ extension SidebarSection {
         case .outline: "sidebar.outline"
         case .labels: "sidebar.labels"
         case .bibtex: "sidebar.bibtex"
+        case .todos: "sidebar.todos"
         }
     }
 }
 
-/// Left sidebar: a segmented Outline | Labels | BibTeX picker whose upper
-/// pane shows structure parsed from the active document, with a fixed
+/// Left sidebar: a segmented Outline | Labels | BibTeX | TODOs picker whose
+/// upper pane shows structure parsed from the active document, with a fixed
 /// "Project" file list and the project path pinned at the bottom.
 struct ProjectSidebarView: View {
     @ObservedObject var workspace: WorkspaceModel
+    /// Inline-rename state for the TODOs pane (which row, draft text).
+    @State private var editingTodoID: DocumentTodoItem.ID?
+    @State private var editingTodoText = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,6 +71,8 @@ struct ProjectSidebarView: View {
             labelsPane
         case .bibtex:
             bibtexPane
+        case .todos:
+            todosPane
         }
     }
 
@@ -179,6 +186,94 @@ struct ProjectSidebarView: View {
         .accessibilityIdentifier("pitex.sidebar.bibtex")
     }
 
+    private var todosPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("sidebar.todos")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(verbatim: "\(workspace.todoItems.count)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button {
+                    workspace.addTodo()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!workspace.canAddTodo)
+                .help(String(localized: "todos.add_help"))
+                .accessibilityIdentifier("pitex.sidebar.todos.add")
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+
+            if workspace.todoItems.isEmpty {
+                ContentUnavailableView(
+                    "sidebar.no_todos",
+                    systemImage: "checklist",
+                    description: Text("sidebar.no_todos_detail")
+                )
+            } else {
+                List(workspace.todoItems) { item in
+                    todoRow(item)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .accessibilityIdentifier("pitex.sidebar.todos")
+    }
+
+    private func todoRow(_ item: DocumentTodoItem) -> some View {
+        HStack(spacing: 6) {
+            Toggle(isOn: Binding(
+                get: { item.done },
+                set: { _ in workspace.toggleTodo(item) }
+            )) {
+                EmptyView()
+            }
+            .toggleStyle(.checkbox)
+            .labelsHidden()
+
+            if editingTodoID == item.id {
+                TextField("", text: $editingTodoText)
+                    .textFieldStyle(.plain)
+                    .onSubmit {
+                        workspace.renameTodo(item, to: editingTodoText)
+                        editingTodoID = nil
+                    }
+            } else {
+                Button {
+                    Task { await workspace.openTodo(item) }
+                } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(verbatim: item.text)
+                            .lineLimit(1)
+                            .strikethrough(item.done)
+                            .foregroundStyle(item.done ? .secondary : .primary)
+                        Text(verbatim: "\(item.file):\(item.line)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .contextMenu {
+            Button("todos.rename") {
+                editingTodoText = item.text
+                editingTodoID = item.id
+            }
+            Button("todos.delete", role: .destructive) {
+                workspace.removeTodo(item)
+            }
+        }
+    }
+
     // MARK: - Project section (always visible)
 
     private var projectSection: some View {
@@ -242,19 +337,27 @@ struct ProjectSidebarView: View {
     private func fileRow(_ node: ProjectFileNode) -> some View {
         let url = workspace.projectURL?.appendingPathComponent(node.path)
             ?? URL(fileURLWithPath: node.path)
+        let isSource = WorkspaceModel.isSourceFile(url)
         return Button {
-            Task { await workspace.activateDocument(url) }
+            if isSource {
+                Task { await workspace.activateDocument(url) }
+            } else {
+                // Figures open in the system viewer, never the text editor.
+                _ = NSWorkspace.shared.open(url)
+            }
         } label: {
             HStack(spacing: 7) {
-                Image(systemName: url.pathExtension.lowercased() == "bib" ? "book" : "doc.text")
+                Image(systemName: isSource
+                    ? (url.pathExtension.lowercased() == "bib" ? "book" : "doc.text")
+                    : "photo")
                 Text(verbatim: node.name)
                     .lineLimit(1)
                 Spacer()
-                if url == workspace.pinnedBuildTarget {
+                if isSource, url == workspace.pinnedBuildTarget {
                     Image(systemName: "pin.fill")
                         .foregroundStyle(.orange)
                         .imageScale(.small)
-                } else if url == workspace.automaticBuildTarget {
+                } else if isSource, url == workspace.automaticBuildTarget {
                     Image(systemName: "hammer")
                         .foregroundStyle(.secondary)
                         .imageScale(.small)

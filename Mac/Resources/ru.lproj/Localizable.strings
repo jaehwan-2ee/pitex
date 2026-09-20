@@ -131,6 +131,13 @@
 "sidebar.no_bib_detail" = "Откройте файл .bib, чтобы увидеть его записи.";
 "sidebar.rescan_help" = "Повторно сканировать файлы проекта";
 "sidebar.pin_help" = "Закрепить как цель сборки";
+"sidebar.todos" = "Задачи";
+"sidebar.no_todos" = "Нет задач";
+"sidebar.no_todos_detail" = "Добавьте комментарии % TODO:, чтобы увидеть их здесь.";
+"todos.add_help" = "Добавить комментарий % TODO: в позиции курсора";
+"todos.rename" = "Переименовать";
+"todos.delete" = "Удалить";
+"todos.toggle_help" = "Переключить выполнение";
 
 "console.terminal" = "Терминал";
 "issues.filter.all" = "Все";

@@ -51,7 +51,9 @@ final class MacAdapterSourceTests: XCTestCase {
         XCTAssertTrue(combined.contains("conflict"))
         XCTAssertTrue(pdf.contains("navigation = .stale"))
         XCTAssertTrue(combined.contains("throw PlatformPortError.unavailable"))
-        XCTAssertFalse(combined.contains("TODO"))
+        // The check guards against unfinished-work comments; "% TODO:" is
+        // now a legitimate UI/feature string scanned by the TODOs pane.
+        XCTAssertFalse(combined.contains("// TODO:"))
         XCTAssertFalse(combined.contains("fake success"))
     }
 

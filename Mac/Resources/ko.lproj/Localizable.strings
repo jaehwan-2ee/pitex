@@ -130,6 +130,13 @@
 "sidebar.no_bib_detail" = ".bib 파일을 열면 항목이 표시됩니다.";
 "sidebar.rescan_help" = "프로젝트 파일 다시 검색";
 "sidebar.pin_help" = "빌드 대상으로 고정";
+"sidebar.todos" = "할 일";
+"sidebar.no_todos" = "할 일 없음";
+"sidebar.no_todos_detail" = "% TODO: 주석을 추가하면 여기에 표시됩니다.";
+"todos.add_help" = "커서에 % TODO: 주석 추가";
+"todos.rename" = "이름 바꾸기";
+"todos.delete" = "삭제";
+"todos.toggle_help" = "완료 전환";
 
 "issues.filter.all" = "전체";
 "issues.filter.errors" = "오류";

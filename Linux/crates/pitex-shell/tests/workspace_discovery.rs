@@ -82,6 +82,148 @@ fn discovery_skips_symlinks_escaping_the_project_root() {
 }
 
 #[test]
+fn discovery_lists_figures_but_not_build_artifacts() {
+    let root = temp_dir("figures");
+    std::fs::write(root.join("main.tex"), "\\documentclass{article}").unwrap();
+    std::fs::write(root.join("refs.bib"), "").unwrap();
+    // Every figure extension the project tree surfaces.
+    for name in [
+        "plot.png",
+        "photo.jpg",
+        "scan.jpeg",
+        "figure.pdf",
+        "chart.eps",
+        "icon.svg",
+        "anim.gif",
+        "scan.tif",
+        "print.tiff",
+        "raw.bmp",
+        "shot.webp",
+    ] {
+        std::fs::write(root.join(name), "x").unwrap();
+    }
+    // Generated artifacts stay hidden even though .pdf is a figure
+    // extension — artifacts are everything else the build emits.
+    for name in [
+        "main.aux",
+        "main.bbl",
+        "main.blg",
+        "main.fdb_latexmk",
+        "main.fls",
+        "main.log",
+        "main.synctex.gz",
+        "main.xdv",
+        "main.out",
+        "main.toc",
+        "main.lof",
+        "main.lot",
+        "main.nav",
+        "main.snm",
+        "main.vrb",
+        "main.run.xml",
+        "main.bcf",
+        "main.idx",
+        "main.ind",
+        "main.ilg",
+        "main.acn",
+        "main.acr",
+        "main.alg",
+        "main.glg",
+        "main.glo",
+        "main.gls",
+        "main.ist",
+        "main.dep",
+        "main.dpth",
+        "main.md5",
+        "main.auxlock",
+    ] {
+        std::fs::write(root.join(name), "x").unwrap();
+    }
+    // Nested figures are discovered too.
+    std::fs::create_dir_all(root.join("figs")).unwrap();
+    std::fs::write(root.join("figs/nested.png"), "x").unwrap();
+
+    let files = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    let listed: HashSet<PathBuf> = files.iter().cloned().collect();
+
+    for name in [
+        "main.tex",
+        "refs.bib",
+        "plot.png",
+        "photo.jpg",
+        "scan.jpeg",
+        "figure.pdf",
+        "chart.eps",
+        "icon.svg",
+        "anim.gif",
+        "scan.tif",
+        "print.tiff",
+        "raw.bmp",
+        "shot.webp",
+        "figs/nested.png",
+    ] {
+        assert!(
+            listed.contains(&standardize(root.join(name))),
+            "{name} missing from {files:?}"
+        );
+    }
+    for name in [
+        "main.aux",
+        "main.bbl",
+        "main.blg",
+        "main.fdb_latexmk",
+        "main.fls",
+        "main.log",
+        "main.synctex.gz",
+        "main.xdv",
+        "main.out",
+        "main.toc",
+        "main.lof",
+        "main.lot",
+        "main.nav",
+        "main.snm",
+        "main.vrb",
+        "main.run.xml",
+        "main.bcf",
+        "main.idx",
+        "main.ind",
+        "main.ilg",
+        "main.acn",
+        "main.acr",
+        "main.alg",
+        "main.glg",
+        "main.glo",
+        "main.gls",
+        "main.ist",
+        "main.dep",
+        "main.dpth",
+        "main.md5",
+        "main.auxlock",
+    ] {
+        assert!(
+            !listed.contains(&standardize(root.join(name))),
+            "artifact {name} leaked into {files:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn initial_document_never_picks_a_figure() {
+    // With no .tex mains, the resolver's last-ditch fallback must still land
+    // on a text file — never a figure or other discovered file.
+    let root = temp_dir("initial");
+    std::fs::write(root.join("zeta.tex"), "x").unwrap();
+    std::fs::write(root.join("aaa.png"), "x").unwrap();
+    std::fs::write(root.join("bbb.pdf"), "x").unwrap();
+    let mut resolver = pitex_shell::model::TeXProjectResolver::new();
+    let files = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    let picked = resolver.initial_document(&files).unwrap();
+    assert_eq!(picked, standardize(root.join("zeta.tex")));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn standardize_keeps_unresolvable_dotdot_on_relative_paths() {
     // Nonexistent components force the lexical (non-canonicalize) branch.
     assert_eq!(

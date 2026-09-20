@@ -74,6 +74,7 @@ pub enum SidebarSection {
     Outline,
     Labels,
     BibTeX,
+    Todos,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +95,27 @@ pub struct BibliographyItem {
     pub key: String,
     pub kind: String,
     pub file: String,
+}
+
+/// `DocumentTodoItem` — one `% TODO:`/`% DONE:` comment collected from the
+/// project's .tex files.
+#[derive(Debug, Clone)]
+pub struct DocumentTodoItem {
+    /// Project-relative path (like `BibliographyItem.file`).
+    pub file: String,
+    pub url: PathBuf,
+    /// 1-based line of the comment.
+    pub line: usize,
+    pub text: String,
+    pub done: bool,
+}
+
+/// `TodoLineEdit` — what a todo-row mutation does to its comment line.
+#[derive(Debug, Clone)]
+pub enum TodoLineEdit {
+    ToggleDone,
+    Rename(String),
+    Delete,
 }
 
 #[derive(Debug)]
@@ -539,17 +561,11 @@ impl TeXProjectResolver {
             })
             .cloned()
             .or_else(|| mains.into_iter().next())
-            .or_else(|| {
-                files
-                    .iter()
-                    .find(|f| {
-                        f.extension()
-                            .map(|e| e.eq_ignore_ascii_case("tex"))
-                            .unwrap_or(false)
-                    })
-                    .cloned()
-            })
-            .or_else(|| files.first().cloned())
+            // The last-ditch fallback stays textual — .tex first like
+            // before, then .bib — now that figures share the project list
+            // and can never open in the editor.
+            .or_else(|| files.iter().find(|f| WorkspaceModel::is_tex(f)).cloned())
+            .or_else(|| files.iter().find(|f| WorkspaceModel::is_source_file(f)).cloned())
     }
 
     /// Opening a chapter directly still opens its owning project. Parent
@@ -679,6 +695,10 @@ pub struct WorkspaceModel {
     pub outline_items: Vec<DocumentOutlineItem>,
     pub label_items: Vec<DocumentLabelItem>,
     pub bibliography_items: Vec<BibliographyItem>,
+    pub todo_items: Vec<DocumentTodoItem>,
+    /// `todoCache` — per-file (mtime | snapshot-revision, items) entries so
+    /// a per-keystroke refresh only re-parses the file that changed.
+    todo_cache: HashMap<PathBuf, ((u128, u64), Vec<DocumentTodoItem>)>,
     /// Bumped by `refresh_structure_with` — the sidebar rebuilds its lists
     /// only when this changes instead of on every refresh_sidebar call.
     pub structure_revision: u64,
@@ -769,6 +789,8 @@ impl WorkspaceModel {
             outline_items: Vec::new(),
             label_items: Vec::new(),
             bibliography_items: Vec::new(),
+            todo_items: Vec::new(),
+            todo_cache: HashMap::new(),
             structure_revision: 0,
             files_revision: 0,
             read_write: true,
@@ -1288,6 +1310,8 @@ impl WorkspaceModel {
         self.outline_items.clear();
         self.label_items.clear();
         self.bibliography_items.clear();
+        self.todo_items.clear();
+        self.todo_cache.clear();
         self.structure_revision += 1;
         self.synctex_binding = None;
         self.pinned_build_target = None;
@@ -1565,9 +1589,322 @@ impl WorkspaceModel {
                 .collect();
             Self::parse_bibliography(&bib_files, self.project_url.as_deref())
         });
+        self.refresh_todos();
         self.structure_revision += 1;
         if let Some(cb) = &mut self.on_structure_changed {
             cb();
+        }
+    }
+
+    /// `refreshTodos` — scans every project .tex file. The active document
+    /// parses its live snapshot (unsaved edits included) keyed by revision;
+    /// other files cache on mtime so unchanged files are not re-read.
+    fn refresh_todos(&mut self) {
+        // project_files are standardized at discovery; the active URL may
+        // come from a raw root.join — normalize before comparing (same
+        // rule as open_todo/edit_todo).
+        let active_url = self
+            .active_document_url
+            .as_ref()
+            .map(|u| standardize(u.clone()));
+        let active_key = (
+            0,
+            self.document_snapshot
+                .as_ref()
+                .map(|s| s.revision)
+                .unwrap_or(0),
+        );
+        let mut items = Vec::new();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        let project_files = self.project_files.clone();
+        for url in &project_files {
+            if !url
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("tex"))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            seen.insert(url.clone());
+            let is_active = active_url.as_deref() == Some(standardize(url.clone()).as_path());
+            let (key, text) = if is_active {
+                if let Some((cached_key, cached_items)) = self.todo_cache.get(url) {
+                    if *cached_key == active_key {
+                        items.extend(cached_items.iter().cloned());
+                        continue;
+                    }
+                }
+                (
+                    active_key,
+                    self.document_snapshot
+                        .as_ref()
+                        .map(|s| s.text.clone())
+                        .unwrap_or_else(|| std::fs::read_to_string(url).unwrap_or_default()),
+                )
+            } else {
+                let mtime = std::fs::metadata(url)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let key = (mtime, 0);
+                if let Some((cached_key, cached_items)) = self.todo_cache.get(url) {
+                    if *cached_key == key {
+                        items.extend(cached_items.iter().cloned());
+                        continue;
+                    }
+                }
+                (key, std::fs::read_to_string(url).unwrap_or_default())
+            };
+            let parsed = Self::parse_todos(&text, url, self.project_url.as_deref());
+            self.todo_cache.insert(url.clone(), (key, parsed.clone()));
+            items.extend(parsed);
+        }
+        self.todo_cache.retain(|path, _| seen.contains(path));
+        self.todo_items = items;
+    }
+
+    /// `parseTodos` — every `% TODO:`/`% DONE:` comment in `text`, 1-based
+    /// lines, trailing comments included.
+    pub fn parse_todos(text: &str, url: &Path, root: Option<&Path>) -> Vec<DocumentTodoItem> {
+        let name = root
+            .and_then(|r| {
+                Self::relative_path(url, r)
+                    .ok()
+                    .map(|p| p.raw_value().to_string())
+            })
+            .unwrap_or_else(|| {
+                url.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
+        let mut items = Vec::new();
+        for (index, raw_line) in text.lines().enumerate() {
+            let line = raw_line.trim_end_matches('\r');
+            if let Some((_, tail_start, done)) = Self::todo_marker(line) {
+                items.push(DocumentTodoItem {
+                    file: name.clone(),
+                    url: url.to_path_buf(),
+                    line: index + 1,
+                    text: line[tail_start..]
+                        .trim_start_matches([' ', '\t'])
+                        .to_string(),
+                    done,
+                });
+            }
+        }
+        items
+    }
+
+    /// `todoMarker` — locates `% TODO:`/`% DONE:` in a line like the Swift
+    /// version: any `%` can introduce the comment (so trailing
+    /// `code % TODO: x` lines count), spaces/tabs may follow it. Returns
+    /// (keyword byte offset, text-tail byte offset, done flag).
+    fn todo_marker(line: &str) -> Option<(usize, usize, bool)> {
+        let bytes = line.as_bytes();
+        let mut search = 0usize;
+        while let Some(pos) = line[search..].find('%') {
+            let at = search + pos;
+            let mut cursor = at + 1;
+            while cursor < line.len() && (bytes[cursor] == b' ' || bytes[cursor] == b'\t') {
+                cursor += 1;
+            }
+            for (word, done) in [("TODO:", false), ("DONE:", true)] {
+                if line[cursor..].starts_with(word) {
+                    return Some((cursor, cursor + word.len(), done));
+                }
+            }
+            search = at + 1;
+        }
+        None
+    }
+
+    /// `todoLineBounds` — byte range of the 1-based line plus its newline
+    /// (when present), matching the Swift helper's NSString semantics.
+    fn todo_line_bounds(text: &str, line: usize) -> Option<(usize, usize)> {
+        if line == 0 {
+            return None;
+        }
+        let mut start = 0usize;
+        for (n, chunk) in text.split_inclusive('\n').enumerate() {
+            let end = start + chunk.len();
+            if n + 1 == line {
+                return Some((start, end));
+            }
+            start = end;
+        }
+        None
+    }
+
+    /// Ranged transform for a todo mutation: the byte range of `text` to
+    /// replace and its replacement, like `toggleLineCommentTransform`.
+    /// `None` when the line no longer holds a marker.
+    fn todo_transform_for(
+        text: &str,
+        item: &DocumentTodoItem,
+        edit: &TodoLineEdit,
+    ) -> Option<(std::ops::Range<usize>, String)> {
+        let (start, end) = Self::todo_line_bounds(text, item.line)?;
+        let line = &text[start..end];
+        // The first marker wins — same scan order as `todo_marker`.
+        let (keyword_start, tail_start, done) = Self::todo_marker(line)?;
+        match edit {
+            TodoLineEdit::ToggleDone => Some((
+                start + keyword_start..start + tail_start,
+                if done { "TODO:" } else { "DONE:" }.to_string(),
+            )),
+            TodoLineEdit::Rename(new_text) => {
+                let trailing = line.len() - line.trim_end_matches(['\r', '\n']).len();
+                let content_end = end - trailing;
+                Some((
+                    start + tail_start..content_end,
+                    if new_text.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {new_text}")
+                    },
+                ))
+            }
+            TodoLineEdit::Delete => Some((start..end, String::new())),
+        }
+    }
+
+    /// `todoSessionIsClean` (negated) — only a clean or absent session may
+    /// be overwritten by a direct disk write; dirty *and* conflicted
+    /// sessions refuse, exactly like the Swift check.
+    fn todo_session_is_dirty(&self, url: &Path) -> bool {
+        let Some(root) = &self.project_url else { return false };
+        let Ok(relative) = Self::relative_path(url, root) else { return false };
+        self.registered_sessions.iter().any(|s| {
+            s.path() == &relative && s.snapshot().save_state != DocumentSaveState::Clean
+        })
+    }
+
+    /// Writes a todo mutation to a non-active file: reads disk, applies the
+    /// line edit, saves atomically against the read baseline, then runs the
+    /// usual external-change pass so a clean open session adopts it.
+    fn edit_todo_on_disk(&mut self, item: &DocumentTodoItem, edit: TodoLineEdit) {
+        if self.todo_session_is_dirty(&item.url) {
+            return;
+        }
+        let Ok(disk) = Self::read_exact_utf8(&item.url) else { return };
+        let Some((range, replacement)) = Self::todo_transform_for(&disk, item, &edit) else {
+            return;
+        };
+        let new_text = format!("{}{}{}", &disk[..range.start], replacement, &disk[range.end..]);
+        let outcome = AtomicDocumentStore::new().save(
+            &new_text,
+            &item.url,
+            Some(DiskContentHash::hashing(&disk)),
+        );
+        if matches!(outcome, DocumentSaveOutcome::Saved(_)) {
+            self.process_disk_change(&item.url, true);
+        }
+    }
+
+    /// `openTodo` — same-file items publish `on_jump_to` immediately;
+    /// cross-file items park the line in `pending_jump` (the inverse-
+    /// SyncTeX mechanism) so `apply_activate` replays it once the owning
+    /// document is live.
+    pub fn open_todo(&mut self, item: &DocumentTodoItem, sink: Sender<WorkspaceMessage>) {
+        let already_active = self
+            .active_document_url
+            .as_ref()
+            .map(|a| standardize(a.clone()) == standardize(item.url.clone()))
+            .unwrap_or(false);
+        if already_active {
+            if let Some(cb) = &mut self.on_jump_to {
+                cb(item.line.max(1), 0);
+            }
+        } else {
+            self.pending_jump = Some((item.line.max(1), 0));
+            self.activate_document(item.url.clone(), sink);
+        }
+    }
+
+    /// `editTodo` — active-document items return the (UTF-16 range,
+    /// replacement) the caller applies through the editor buffer as a user
+    /// action; other files write to disk unless a dirty session owns them.
+    pub fn edit_todo(
+        &mut self,
+        item: &DocumentTodoItem,
+        edit: TodoLineEdit,
+    ) -> Option<(std::ops::Range<usize>, String)> {
+        let is_active = self
+            .active_document_url
+            .as_ref()
+            .map(|a| standardize(a.clone()) == standardize(item.url.clone()))
+            .unwrap_or(false);
+        if is_active {
+            let text = self.document_snapshot.as_ref()?.text.clone();
+            let (range, replacement) = Self::todo_transform_for(&text, item, &edit)?;
+            let start16 = utf16_len(&text[..range.start]);
+            let end16 = start16 + utf16_len(&text[range.start..range.end]);
+            return Some((start16..end16, replacement));
+        }
+        self.edit_todo_on_disk(item, edit);
+        None
+    }
+
+    /// `canAddTodo` — the `+` button is live while the active document is a
+    /// .tex file or a build target exists to receive the fallback comment.
+    pub fn can_add_todo(&self) -> bool {
+        let active_is_tex = self
+            .active_document_url
+            .as_ref()
+            .and_then(|u| u.extension())
+            .map(|e| e.eq_ignore_ascii_case("tex"))
+            .unwrap_or(false);
+        active_is_tex || self.todo_append_target().is_some()
+    }
+
+    /// `isSourceFile` — .tex/.bib activate in the editor; every other
+    /// discovered extension is a figure that opens externally.
+    pub fn is_source_file(url: &Path) -> bool {
+        url.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| {
+                e.eq_ignore_ascii_case("tex") || e.eq_ignore_ascii_case("bib")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_tex(url: &Path) -> bool {
+        url.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("tex"))
+            .unwrap_or(false)
+    }
+
+    /// `appendTodoComment` — the `+` fallback when the active document is
+    /// not .tex: appends to the build target unless a dirty session owns it.
+    /// Swift uses `buildSourceURL()` alone — no wider fallback — so a
+    /// project without a resolved target keeps `+` disabled on both sides.
+    pub fn todo_append_target(&self) -> Option<PathBuf> {
+        self.build_source_url()
+            .filter(|f| Self::is_tex(f))
+    }
+
+    pub fn append_todo_to_target(&mut self) {
+        let Some(target) = self.todo_append_target() else { return };
+        if self.todo_session_is_dirty(&target) {
+            return;
+        }
+        let Ok(disk) = Self::read_exact_utf8(&target) else { return };
+        let mut new_text = disk.clone();
+        if !new_text.is_empty() && !new_text.ends_with('\n') {
+            new_text.push('\n');
+        }
+        new_text.push_str("% TODO: \n");
+        let outcome = AtomicDocumentStore::new().save(
+            &new_text,
+            &target,
+            Some(DiskContentHash::hashing(&disk)),
+        );
+        if matches!(outcome, DocumentSaveOutcome::Saved(_)) {
+            self.process_disk_change(&target, true);
         }
     }
 
@@ -2592,9 +2929,10 @@ impl WorkspaceModel {
 
     // ── Static helpers (verbatim port) ──
 
-    /// `discoverTexFiles` — recursive .tex/.bib enumeration, hidden files
-    /// skipped, path-sorted. The resolver-chosen root is scanned in full so
-    /// nested source trees appear alongside the opened file.
+    /// `discoverTexFiles` — recursive enumeration of sources (.tex/.bib) and
+    /// figures (`PROJECT_FILE_EXTENSIONS`), hidden files skipped,
+    /// path-sorted. The resolver-chosen root is scanned in full so nested
+    /// source trees appear alongside the opened file.
     pub fn discover_tex_files(
         root: &Path,
         selected: &Path,
@@ -2625,7 +2963,7 @@ impl WorkspaceModel {
                         .extension()
                         .map(|e| e.to_string_lossy().to_lowercase())
                         .unwrap_or_default();
-                    if ext == "tex" || ext == "bib" {
+                    if PROJECT_FILE_EXTENSIONS.contains(&ext.as_str()) {
                         // A symlinked source resolves to its target: skip
                         // targets that escape the project root (they could
                         // never satisfy the relative-path check anyway) and
@@ -2714,6 +3052,13 @@ impl WorkspaceModel {
 }
 
 // ─── Free helpers ────────────────────────────────────────────────────────────
+
+/// `projectFileExtensions` — everything `discoverTexFiles` lists: sources
+/// plus the figure formats LaTeX documents include. Build artifacts stay
+/// excluded except .pdf, which figures legitimately use.
+const PROJECT_FILE_EXTENSIONS: [&str; 13] = [
+    "tex", "bib", "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff", "bmp", "webp",
+];
 
 /// `standardizedFileURL` + `resolvingSymlinksInPath`: canonicalize when the
 /// path exists, otherwise strip `.`/`..` lexically.
