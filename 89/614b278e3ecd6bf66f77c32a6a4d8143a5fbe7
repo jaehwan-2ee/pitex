@@ -1,0 +1,48 @@
+Linux/crates/pitex-shell/src/agent.rs
+  h_d73c695d83f4a7 2076-2078
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_d73c695d83f4a7 32,68-69,71-73,161-164,254,293-308,406-442,630-632,807,809-815,984-986,2669-2681,3856-3857,3867,4458-4469
+Linux/crates/pitex-shell/src/ghost_completion.rs
+  h_d73c695d83f4a7 1-719
+Linux/crates/pitex-shell/src/lib.rs
+  h_d73c695d83f4a7 14
+Linux/crates/pitex-shell/src/panes.rs
+  h_d73c695d83f4a7 1474-1491
+Linux/crates/pitex-shell/src/settings.rs
+  h_d73c695d83f4a7 203-212
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 277
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 277
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 278
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 278
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 277
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 277
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 277
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 181-184,441-450,519,661,685,779-792
+Mac/Sources/Features/AgentCoordinator.swift
+  h_d73c695d83f4a7 825-827
+Mac/Sources/Features/EditorContainerView.swift
+  h_d73c695d83f4a7 10-12,85-101,126-131,143-149,185,190-191,195-219,623-1110
+Mac/Sources/Features/SettingsView.swift
+  h_d73c695d83f4a7 56-61,100,472,824-835
+Mac/Sources/Features/WorkspaceView.swift
+  h_d73c695d83f4a7 311
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89614b278e3ecd6bf66f77c32a6a4d8143a5fbe7",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
