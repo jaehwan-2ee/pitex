@@ -1,0 +1,14 @@
+Mac/Sources/Features/Preview.swift
+  h_bcbc8ae9e599aa 200-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90b948d9fc17f24d49a6d70a015666b77ca8c373",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
