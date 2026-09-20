@@ -147,7 +147,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         _ textView: NSTextView,
         completions words: [String],
         forPartialWordRange charRange: NSRange,
-        indexOfSelectedItem index: UnsafeMutablePointer<Int>
+        indexOfSelectedItem index: UnsafeMutablePointer<Int>?
     ) -> [String] {
         let caret = min(
             textView.selectedRange().location + textView.selectedRange().length,
