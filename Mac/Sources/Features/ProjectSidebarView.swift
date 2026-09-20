@@ -207,7 +207,7 @@ struct ProjectSidebarView: View {
             // the directory disclosure triangles.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    OutlineGroup(projectTree, children: \.children) { node in
+                    OutlineGroup(workspace.projectTree, children: \.children) { node in
                         if node.isDirectory {
                             HStack(spacing: 7) {
                                 Image(systemName: "folder")
@@ -238,13 +238,6 @@ struct ProjectSidebarView: View {
         }
     }
 
-    private var projectTree: [ProjectFileNode] {
-        nestProjectChildren(
-            buildProjectFileTree(relativePaths: workspace.projectFiles.map { relativeDisplayPath($0) }),
-            main: workspace.buildSourceURL().map { relativeDisplayPath($0) } ?? "",
-            children: workspace.projectChildren.map { relativeDisplayPath($0) }
-        )
-    }
 
     private func fileRow(_ node: ProjectFileNode) -> some View {
         let url = workspace.projectURL?.appendingPathComponent(node.path)
@@ -282,12 +275,4 @@ struct ProjectSidebarView: View {
         .accessibilityIdentifier("pitex.project.file.\(node.path)")
     }
 
-    private func relativeDisplayPath(_ url: URL) -> String {
-        guard let root = workspace.projectURL else { return url.lastPathComponent }
-        let rootPath = root.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        let prefix = rootPath == "/" ? "/" : rootPath + "/"
-        guard path.hasPrefix(prefix) else { return url.lastPathComponent }
-        return String(path.dropFirst(prefix.count))
-    }
 }

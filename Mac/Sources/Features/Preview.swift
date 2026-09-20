@@ -188,7 +188,16 @@ private struct PDFDocumentView: NSViewRepresentable {
     func updateNSView(_ view: PDFView, context: Context) {
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.highlightSync = highlightSync
-        guard context.coordinator.renderedData != data else { return }
+        // Fast path: Data is a value type over shared storage, so the same
+        // buffer compares equal by base address without a multi-MB memcmp
+        // on every SwiftUI pass. Distinct storage falls back to ==.
+        let unchanged = context.coordinator.renderedData.count == data.count
+            && context.coordinator.renderedData.withUnsafeBytes { rendered in
+                data.withUnsafeBytes { incoming in
+                    rendered.baseAddress == incoming.baseAddress
+                }
+            }
+        guard unchanged || context.coordinator.renderedData == data else { return }
         context.coordinator.clearSyncHighlight()
         context.coordinator.renderedData = data
         view.document = PDFDocument(data: data)

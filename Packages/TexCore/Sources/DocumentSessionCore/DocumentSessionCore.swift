@@ -88,6 +88,9 @@ public actor DocumentSession {
     private var text: String
     private var diskBaselineHash: DiskContentHash
     private var conflict: DocumentConflict?
+    /// Cached hash of `text`; recomputed only where `text` is assigned so
+    /// snapshot() stops re-hashing the whole document per call.
+    private var contentHash: DiskContentHash
 
     public init(
         file: ProjectFile,
@@ -99,6 +102,7 @@ public actor DocumentSession {
         self.revision = 0
         self.text = initialText
         self.diskBaselineHash = diskBaselineHash ?? .hashing(initialText)
+        self.contentHash = .hashing(initialText)
         self.conflict = nil
     }
 
@@ -124,6 +128,7 @@ public actor DocumentSession {
         switch mutation {
         case let .replaceText(replacement):
             text = replacement
+            contentHash = .hashing(replacement)
 
         case let .recordExternalChange(observedDiskHash):
             if observedDiskHash != diskBaselineHash && conflict == nil {
@@ -142,7 +147,7 @@ public actor DocumentSession {
             }
 
         case let .commitSave(writtenDiskHash):
-            let currentHash = DiskContentHash.hashing(text)
+            let currentHash = contentHash
             guard writtenDiskHash == currentHash else {
                 throw DocumentSessionError.savedContentHashMismatch(
                     expected: currentHash,
@@ -154,6 +159,7 @@ public actor DocumentSession {
 
         case let .resolveConflict(resolvedText, newDiskBaselineHash):
             text = resolvedText
+            contentHash = .hashing(resolvedText)
             diskBaselineHash = newDiskBaselineHash
             conflict = nil
         }
@@ -163,7 +169,7 @@ public actor DocumentSession {
     }
 
     private func makeSnapshot() -> DocumentSnapshot {
-        let contentHash = DiskContentHash.hashing(text)
+        let contentHash = self.contentHash
         let saveState: DocumentSaveState
         if conflict != nil {
             saveState = .conflicted

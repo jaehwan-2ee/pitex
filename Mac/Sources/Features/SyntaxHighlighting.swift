@@ -44,42 +44,63 @@ final class SyntaxHighlighter {
         let tokens = DeterministicTeXLexer.tokenize(text, dialect: dialect)
         let fullRange = NSRange(location: 0, length: (text as NSString).length)
 
+        // One pass over the scalars maps every UTF-8 boundary to its UTF-16
+        // offset; per-token samePosition(in:) walks from the start each time
+        // and makes the pass quadratic on large documents.
+        var utf8Bounds: [Int] = [0]
+        var utf16Bounds: [Int] = [0]
+        utf8Bounds.reserveCapacity(text.unicodeScalars.count + 1)
+        utf16Bounds.reserveCapacity(text.unicodeScalars.count + 1)
+        for scalar in text.unicodeScalars {
+            utf8Bounds.append(utf8Bounds[utf8Bounds.count - 1] + scalar.utf8.count)
+            utf16Bounds.append(utf16Bounds[utf16Bounds.count - 1] + scalar.utf16.count)
+        }
+        func utf16Offset(forUTF8 offset: Int) -> Int? {
+            var lo = 0, hi = utf8Bounds.count - 1
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if utf8Bounds[mid] < offset { lo = mid + 1 } else { hi = mid }
+            }
+            return utf8Bounds[lo] == offset ? utf16Bounds[lo] : nil
+        }
+
+        // Resolve the palette once per pass instead of a UserDefaults read +
+        // hex parse per token.
+        let appearance = AppearanceSettings.shared
+        let bodyColor = appearance.color(for: .bodyText)
+        let commandColor = appearance.color(for: .commands)
+        let commentColor = appearance.color(for: .comments)
+        let braceColor = appearance.color(for: .braces)
+        let environmentColor = appearance.color(for: .environments)
+        let mathColor = appearance.color(for: .math)
+        let punctuationColor = appearance.color(for: .lineNumbers)
+
         storage.beginEditing()
         storage.removeAttribute(.foregroundColor, range: fullRange)
-        storage.addAttribute(
-            .foregroundColor,
-            value: AppearanceSettings.shared.color(for: .bodyText),
-            range: fullRange
-        )
+        storage.addAttribute(.foregroundColor, value: bodyColor, range: fullRange)
 
         for token in tokens {
-            let utf8Start = text.utf8.startIndex
-            guard let lower = text.utf8.index(utf8Start, offsetBy: token.range.utf8Offset, limitedBy: text.utf8.endIndex),
-                  let upper = text.utf8.index(utf8Start, offsetBy: token.range.endUTF8Offset, limitedBy: text.utf8.endIndex),
-                  let lowerIndex = String.Index(lower, within: text),
-                  let upperIndex = String.Index(upper, within: text),
-                  let lower16 = lowerIndex.samePosition(in: text.utf16),
-                  let upper16 = upperIndex.samePosition(in: text.utf16)
+            guard let start16 = utf16Offset(forUTF8: token.range.utf8Offset),
+                  let end16 = utf16Offset(forUTF8: token.range.endUTF8Offset),
+                  end16 >= start16
             else { continue }
-            let start16 = text.utf16.distance(from: text.utf16.startIndex, to: lower16)
-            let end16 = text.utf16.distance(from: text.utf16.startIndex, to: upper16)
-            guard end16 >= start16 else { continue }
-            let range = NSRange(location: start16, length: end16 - start16)
-            storage.addAttribute(.foregroundColor, value: color(for: token.kind), range: range)
+            let color: NSColor
+            switch token.kind {
+            case .controlSequence: color = commandColor
+            case .comment: color = commentColor
+            case .leftBrace, .rightBrace: color = braceColor
+            case .bibEntryMarker, .environmentName: color = environmentColor
+            case .math: color = mathColor
+            case .punctuation: color = punctuationColor
+            case .whitespace, .text: color = bodyColor
+            }
+            storage.addAttribute(
+                .foregroundColor,
+                value: color,
+                range: NSRange(location: start16, length: end16 - start16)
+            )
         }
         storage.endEditing()
     }
 
-    private func color(for kind: LanguageTokenKind) -> NSColor {
-        let appearance = AppearanceSettings.shared
-        switch kind {
-        case .controlSequence: return appearance.color(for: .commands)
-        case .comment: return appearance.color(for: .comments)
-        case .leftBrace, .rightBrace: return appearance.color(for: .braces)
-        case .bibEntryMarker, .environmentName: return appearance.color(for: .environments)
-        case .math: return appearance.color(for: .math)
-        case .punctuation: return appearance.color(for: .lineNumbers)
-        case .whitespace, .text: return appearance.color(for: .bodyText)
-        }
-    }
 }

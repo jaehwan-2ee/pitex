@@ -7,6 +7,7 @@ import DocumentSessionCore
 import Foundation
 import MacPlatform
 import ProjectCore
+import ProjectFeature
 import SyncTeXCore
 import SwiftUI
 import TexDomain
@@ -128,17 +129,25 @@ actor NativeDocumentSessionPort: AppPorts.DocumentSessionPort {
 @MainActor
 final class WorkspaceModel: ObservableObject {
     @Published private(set) var phase: WorkspacePhase = .noProject
-    @Published private(set) var projectURL: URL?
-    @Published private(set) var projectFiles: [URL] = []
+    @Published private(set) var projectURL: URL? {
+        didSet { rebuildProjectTree() }
+    }
+    @Published private(set) var projectFiles: [URL] = [] {
+        didSet { rebuildProjectTree() }
+    }
     @Published private(set) var openDocuments: [URL] = []
     @Published private(set) var activeDocumentURL: URL?
     @Published private(set) var environment: AppEnvironment? {
         didSet { observeEditorSelection() }
     }
     @Published private(set) var documentSnapshot: DocumentSessionCore.DocumentSnapshot? {
-        didSet { refreshStructure(); scheduleAutosave() }
+        didSet { scheduleStructureRefresh(); scheduleAutosave() }
     }
     @Published var buildLogText = ""
+    /// Buffered build-log chunks; flushed into buildLogText once per runloop
+    /// turn by BuildSupport.scheduleLogFlush.
+    var pendingLogText = ""
+    var logFlushScheduled = false
     @Published var buildIssues: [BuildIssueRecord] = []
     @Published internal(set) var buildState: WorkspaceBuildState = .unavailable(
         "No build target has been configured for this project."
@@ -167,11 +176,20 @@ final class WorkspaceModel: ObservableObject {
     @Published var bottomPanelVisible = false
     @Published var inspectorVisible = true
     /// File pinned as the build target; nil means "build the active document".
-    @Published var pinnedBuildTarget: URL?
-    @Published internal(set) var automaticBuildTarget: URL?
+    @Published var pinnedBuildTarget: URL? {
+        didSet { rebuildProjectTree() }
+    }
+    @Published internal(set) var automaticBuildTarget: URL? {
+        didSet { rebuildProjectTree() }
+    }
     /// Direct dependencies of the build target, nested under it in the
     /// project sidebar (`project_children`).
-    @Published internal(set) var projectChildren: [URL] = []
+    @Published internal(set) var projectChildren: [URL] = [] {
+        didSet { rebuildProjectTree() }
+    }
+    /// Sidebar file tree, rebuilt only when its inputs change — computing it
+    /// in the view body re-sorted the whole tree on every keystroke.
+    @Published private(set) var projectTree: [ProjectFileNode] = []
     @Published internal(set) var buildTargetMessage: String?
     /// Recently opened documents/projects, shown in the tab bar's + menu.
     @Published private(set) var recentDocuments: [URL] = []
@@ -635,6 +653,9 @@ final class WorkspaceModel: ObservableObject {
         outlineItems = []
         labelItems = []
         bibliographyItems = []
+        bibliographyCache = nil
+        structureTask?.cancel()
+        structureTask = nil
         phase = .noProject
     }
 
@@ -695,8 +716,15 @@ final class WorkspaceModel: ObservableObject {
         }
         let nsText = text as NSString
         let selected = nsText.substring(with: range)
-        let startLine = nsText.substring(to: range.location).components(separatedBy: "\n").count
-        let endLine = nsText.substring(to: range.location + range.length).components(separatedBy: "\n").count
+        // One scan to the selection end: the previous substring+split pair
+        // allocated two document-sized arrays per selection change.
+        var startLine = 1
+        var endLine = 1
+        let end = range.location + range.length
+        for index in 0..<end where nsText.character(at: index) == 0x0A {
+            endLine += 1
+            if index < range.location { startLine += 1 }
+        }
         let path = documentSnapshot?.path.rawValue ?? activeDocumentURL?.lastPathComponent ?? "document"
         agent.updateSelectionAttachment(AgentSelectionAttachment(
             path: path, startLine: startLine, endLine: endLine, text: selected
@@ -1048,15 +1076,65 @@ final class WorkspaceModel: ObservableObject {
 
     // MARK: - Sidebar structure
 
+    /// Debounced like the syntax highlighter: parsing outline/labels is
+    /// O(document) and bibliography reads hit disk, so neither belongs on
+    /// the per-keystroke path.
+    private var structureTask: Task<Void, Never>?
+
+    private func scheduleStructureRefresh() {
+        structureTask?.cancel()
+        structureTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            self?.refreshStructure()
+        }
+    }
+
     /// Rebuilds the Outline / Labels / BibTeX sidebar data from the active
     /// document text and the project's .bib files.
     private func refreshStructure() {
         let text = documentSnapshot?.text ?? ""
         outlineItems = Self.parseOutline(text)
         labelItems = Self.parseLabels(text)
-        bibliographyItems = Self.parseBibliography(
-            files: projectFiles.filter { $0.pathExtension.lowercased() == "bib" },
-            root: projectURL
+        refreshBibliography()
+    }
+
+    /// .bib items come from disk, not the editor buffer: re-parse only when
+    /// the file list or a .bib modification date changes instead of reading
+    /// every .bib on each document snapshot.
+    private var bibliographyCache: (key: [String], items: [BibliographyItem])?
+
+    private func refreshBibliography() {
+        let files = projectFiles.filter { $0.pathExtension.lowercased() == "bib" }
+        let key = files.map { file in
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate?.timeIntervalSince1970) ?? 0
+            return "\(file.path)#\(modified)"
+        }
+        if let cache = bibliographyCache, cache.key == key {
+            bibliographyItems = cache.items
+            return
+        }
+        let items = Self.parseBibliography(files: files, root: projectURL)
+        bibliographyCache = (key, items)
+        bibliographyItems = items
+    }
+
+    /// Rebuilds the sidebar's project file tree from its inputs. Called from
+    /// the didSet of each input so the view body never re-sorts per eval.
+    private func rebuildProjectTree() {
+        func relative(_ url: URL) -> String {
+            guard let root = projectURL else { return url.lastPathComponent }
+            let rootPath = root.standardizedFileURL.path
+            let path = url.standardizedFileURL.path
+            let prefix = rootPath == "/" ? "/" : rootPath + "/"
+            guard path.hasPrefix(prefix) else { return url.lastPathComponent }
+            return String(path.dropFirst(prefix.count))
+        }
+        projectTree = nestProjectChildren(
+            buildProjectFileTree(relativePaths: projectFiles.map(relative)),
+            main: buildSourceURL().map(relative) ?? "",
+            children: projectChildren.map(relative)
         )
     }
 
@@ -1070,53 +1148,65 @@ final class WorkspaceModel: ObservableObject {
         refreshStructure()
     }
 
+    private static let outlineRegex = try? NSRegularExpression(
+        pattern: #"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}"#
+    )
+    private static let labelRegex = try? NSRegularExpression(pattern: #"\\label\{([^}]*)\}"#)
+    private static let bibliographyRegex = try? NSRegularExpression(
+        pattern: #"@([A-Za-z]+)\s*\{\s*([^,\s]+)"#
+    )
+
+    /// UTF-16 offsets of every line start, built in one pass. Line numbers
+    /// are then a binary search instead of a rescan from offset 0 per match.
+    private static func lineStartOffsets(_ text: NSString) -> [Int] {
+        var starts = [0]
+        for index in 0..<text.length where text.character(at: index) == 0x0A {
+            starts.append(index + 1)
+        }
+        return starts
+    }
+
+    /// 1-based line containing `location` — the count of '\n' strictly
+    /// before it, plus one.
+    private static func lineNumber(at location: Int, lineStarts: [Int]) -> Int {
+        var lo = 0, hi = lineStarts.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if lineStarts[mid] <= location { lo = mid } else { hi = mid - 1 }
+        }
+        return lo + 1
+    }
+
     static func parseOutline(_ text: String) -> [DocumentOutlineItem] {
-        guard let regex = try? NSRegularExpression(
-            pattern: #"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}"#
-        ) else { return [] }
+        guard let regex = outlineRegex else { return [] }
         let nsText = text as NSString
+        let lineStarts = lineStartOffsets(nsText)
         let levels = ["part": 0, "chapter": 1, "section": 2, "subsection": 3, "subsubsection": 4, "paragraph": 5]
         return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map { match in
             let name = nsText.substring(with: match.range(at: 1)).lowercased()
             let title = nsText.substring(with: match.range(at: 2))
-            var line = 1
-            var location = 0
-            while location < match.range.location {
-                let next = nsText.range(
-                    of: "\n",
-                    range: NSRange(location: location, length: nsText.length - location)
-                )
-                guard next.location != NSNotFound else { break }
-                line += 1
-                location = next.location + 1
-            }
-            return DocumentOutlineItem(title: title, level: levels[name] ?? 2, line: line)
+            return DocumentOutlineItem(
+                title: title,
+                level: levels[name] ?? 2,
+                line: lineNumber(at: match.range.location, lineStarts: lineStarts)
+            )
         }
     }
 
     static func parseLabels(_ text: String) -> [DocumentLabelItem] {
-        guard let regex = try? NSRegularExpression(pattern: #"\\label\{([^}]*)\}"#) else { return [] }
+        guard let regex = labelRegex else { return [] }
         let nsText = text as NSString
+        let lineStarts = lineStartOffsets(nsText)
         return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map { match in
-            var line = 1
-            var location = 0
-            while location < match.range.location {
-                let next = nsText.range(
-                    of: "\n",
-                    range: NSRange(location: location, length: nsText.length - location)
-                )
-                guard next.location != NSNotFound else { break }
-                line += 1
-                location = next.location + 1
-            }
-            return DocumentLabelItem(name: nsText.substring(with: match.range(at: 1)), line: line)
+            DocumentLabelItem(
+                name: nsText.substring(with: match.range(at: 1)),
+                line: lineNumber(at: match.range.location, lineStarts: lineStarts)
+            )
         }
     }
 
     static func parseBibliography(files: [URL], root: URL?) -> [BibliographyItem] {
-        guard let regex = try? NSRegularExpression(
-            pattern: #"@([A-Za-z]+)\s*\{\s*([^,\s]+)"#
-        ) else { return [] }
+        guard let regex = bibliographyRegex else { return [] }
         var items: [BibliographyItem] = []
         for file in files {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }

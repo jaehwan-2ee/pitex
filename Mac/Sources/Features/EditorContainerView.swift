@@ -94,6 +94,7 @@ struct EditorContainerView: NSViewRepresentable {
         }
         context.coordinator.textView = textView
 
+        context.coordinator.lastAppearanceKey = appearanceKey
         applyAppearance(to: scrollView)
         return scrollView
     }
@@ -113,10 +114,32 @@ struct EditorContainerView: NSViewRepresentable {
         context.coordinator.onSyncRequest = onSyncRequest
         context.coordinator.foldEngine?.isEnabled = foldingEnabled
         context.coordinator.minimap?.isHidden = !minimapVisible
+        // Re-applying fonts/colors and repainting every overlay on each
+        // SwiftUI pass costs an O(document) minimap draw per keystroke; only
+        // re-apply when an appearance input actually changed.
+        guard context.coordinator.lastAppearanceKey != appearanceKey else { return }
+        context.coordinator.lastAppearanceKey = appearanceKey
         applyAppearance(to: scrollView)
         context.coordinator.gutter?.needsDisplay = true
         context.coordinator.minimap?.needsDisplay = true
         context.coordinator.chips?.needsDisplay = true
+    }
+
+    /// The inputs applyAppearance reads: font settings plus the color
+    /// revision bumped whenever any role color changes.
+    private var appearanceKey: AppearanceKey {
+        let appearance = AppearanceSettings.shared
+        return AppearanceKey(
+            colorRevision: appearance.colorRevision,
+            fontFamily: appearance.fontFamily,
+            fontSize: appearance.fontSize
+        )
+    }
+
+    struct AppearanceKey: Equatable {
+        var colorRevision: Int
+        var fontFamily: String
+        var fontSize: Double
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -131,6 +154,7 @@ struct EditorContainerView: NSViewRepresentable {
         var bracketMatcher: BracketMatcher?
         var syncMonitor: Any?
         var onSyncRequest: ((Int, Int) -> Void)?
+        var lastAppearanceKey: AppearanceKey?
 
         /// Cmd+click inside this editor fires forward SyncTeX and reports the
         /// event as consumed so the caret and selection are left alone; every
@@ -231,7 +255,10 @@ final class LineNumberGutterView: NSView {
             forName: NSText.didChangeNotification,
             object: textView,
             queue: .main
-        ) { [weak self] _ in self?.needsDisplay = true })
+        ) { [weak self] _ in
+            self?.lineStartsDirty = true
+            self?.needsDisplay = true
+        })
         scrollView.contentView.postsBoundsChangedNotifications = true
         observers.append(NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification,
@@ -251,6 +278,28 @@ final class LineNumberGutterView: NSView {
 
     deinit {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    /// Line-start offsets (NSString lineRange semantics), rebuilt lazily on
+    /// the first draw after a text change — counting up to the first visible
+    /// line per draw was O(topLine) per scroll frame.
+    private var cachedLineStarts: [Int] = []
+    private var lineStartsDirty = true
+
+    private func lineStarts(for text: NSString) -> [Int] {
+        if lineStartsDirty {
+            var starts = [0]
+            var location = 0
+            while location < text.length {
+                let next = NSMaxRange(text.lineRange(for: NSRange(location: location, length: 0)))
+                guard next > location else { break }
+                starts.append(next)
+                location = next
+            }
+            cachedLineStarts = starts
+            lineStartsDirty = false
+        }
+        return cachedLineStarts
     }
 
     private func reposition() {
@@ -297,14 +346,16 @@ final class LineNumberGutterView: NSView {
         // charRange.location can fall mid-line; anchor the walk at the
         // start of the line containing it so numbers and rows stay paired.
         let firstLine = text.lineRange(for: NSRange(location: charRange.location, length: 0))
-        var lineNumber = 1
-        var location = 0
-        let length = text.length
-        while NSMaxRange(text.lineRange(for: NSRange(location: location, length: 0))) <= firstLine.location,
-              location < length {
-            location = NSMaxRange(text.lineRange(for: NSRange(location: location, length: 0)))
-            lineNumber += 1
+        // The first visible line's number is its index in the cached
+        // line-start table — a binary search instead of a rescan from 0.
+        let starts = lineStarts(for: text)
+        var lo = 0, hi = starts.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if starts[mid] <= firstLine.location { lo = mid } else { hi = mid - 1 }
         }
+        var lineNumber = lo + 1
+        let length = text.length
 
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
@@ -456,7 +507,10 @@ final class MinimapOverlayView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let textView, let layout = textView.layoutManager,
+        // Hidden minimaps still receive needsDisplay from text/scroll
+        // notifications; skip the O(document) row walk entirely.
+        guard !isHidden,
+              let textView, let layout = textView.layoutManager,
               let container = textView.textContainer, let storage = textView.textStorage else { return }
         NSColor(white: 0.5, alpha: 0.16).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()

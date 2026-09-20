@@ -152,8 +152,24 @@ struct TeXProjectResolver {
         return parsed
     }
 
-    private func captures(_ pattern: String, in text: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+    private static let rootHintRegex = try? NSRegularExpression(
+        pattern: #"(?im)^\s*%\s*!\s*tex\s+root\s*=\s*(.+)$"#
+    )
+    private static let subfilesClassRegex = try? NSRegularExpression(
+        pattern: #"\\documentclass\s*\[([^\]]+)\]\s*\{subfiles\}"#
+    )
+    private static let subfileRegex = try? NSRegularExpression(
+        pattern: #"\\subfile\s*\{([^}]+)\}"#
+    )
+    private static let bibliographyRegex = try? NSRegularExpression(
+        pattern: #"\\bibliography\s*\{([^}]+)\}"#
+    )
+    private static let addbibresourceRegex = try? NSRegularExpression(
+        pattern: #"\\addbibresource(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"#
+    )
+
+    private func captures(_ regex: NSRegularExpression?, in text: String) -> [String] {
+        guard let regex else { return [] }
         return regex.matches(in: text, range: NSRange(location: 0, length: text.utf16.count)).map {
             (text as NSString).substring(with: $0.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -161,8 +177,8 @@ struct TeXProjectResolver {
 
     private mutating func rootHint(_ url: URL) -> URL? {
         guard let source = snapshot(url)?.source else { return nil }
-        let hints = captures(#"(?im)^\s*%\s*!\s*tex\s+root\s*=\s*(.+)$"#, in: source)
-            + captures(#"\\documentclass\s*\[([^\]]+)\]\s*\{subfiles\}"#, in: source)
+        let hints = captures(Self.rootHintRegex, in: source)
+            + captures(Self.subfilesClassRegex, in: source)
         guard var hint = hints.first else { return nil }
         if hint.hasPrefix("\""), hint.hasSuffix("\"") { hint = String(hint.dropFirst().dropLast()) }
         if (hint as NSString).pathExtension.isEmpty { hint += ".tex" }
@@ -204,11 +220,11 @@ struct TeXProjectResolver {
             let upper = bytes.index(lower, offsetBy: token.range.utf8Length)
             source.removeSubrange(lower..<upper)
         }
-        links += captures(#"\\subfile\s*\{([^}]+)\}"#, in: source).map { ($0, "tex") }
-        for group in captures(#"\\bibliography\s*\{([^}]+)\}"#, in: source) {
+        links += captures(Self.subfileRegex, in: source).map { ($0, "tex") }
+        for group in captures(Self.bibliographyRegex, in: source) {
             links += group.split(separator: ",").map { (String($0).trimmingCharacters(in: .whitespaces), "bib") }
         }
-        links += captures(#"\\addbibresource(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"#, in: source).map { ($0, "bib") }
+        links += captures(Self.addbibresourceRegex, in: source).map { ($0, "bib") }
         var targets: [URL] = []
         for (name, ext) in links {
             let path = (name as NSString).pathExtension.isEmpty ? name + "." + ext : name
@@ -437,12 +453,14 @@ extension WorkspaceModel {
         invalidateSyncTeXForBuild()
         buildState = .building
         buildLogText = ""
+        pendingLogText = ""
         buildIssues = []
         let orchestrator = buildOrchestrator
         do {
             let outcome = try await orchestrator.build(id: buildID) { [weak self] event in
                 await self?.handleBuildEvent(event)
             }
+            flushBuildLog()
             switch outcome.lifecycle {
             case .succeeded:
                 let pdfData = await orchestrator.successfulPDF() ?? Data()
@@ -464,6 +482,7 @@ extension WorkspaceModel {
                 buildState = .failed("The build ended in an unexpected state.")
             }
         } catch {
+            flushBuildLog()
             buildState = .failed(String(describing: error))
         }
         activeBuildID = nil
@@ -478,10 +497,30 @@ extension WorkspaceModel {
         return false
     }
 
+    /// Log chunks accumulate here and flush once per runloop turn — appending
+    /// each chunk straight into the @Published log re-rendered the whole
+    /// console per chunk, O(log²) per build. Storage lives on WorkspaceModel
+    /// (extensions can't hold stored properties).
+    private func scheduleLogFlush() {
+        guard !logFlushScheduled else { return }
+        logFlushScheduled = true
+        Task { @MainActor [weak self] in
+            self?.flushBuildLog()
+        }
+    }
+
+    private func flushBuildLog() {
+        logFlushScheduled = false
+        guard !pendingLogText.isEmpty else { return }
+        buildLogText += pendingLogText
+        pendingLogText = ""
+    }
+
     private func handleBuildEvent(_ event: BuildEvent) async {
         switch event {
         case let .log(entry):
-            buildLogText += entry.text
+            pendingLogText += entry.text
+            scheduleLogFlush()
         case let .issue(record):
             buildIssues.append(record)
         case .lifecycle, .stageStarted:
