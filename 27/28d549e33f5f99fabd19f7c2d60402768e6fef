@@ -1,0 +1,40 @@
+Linux/crates/document-session-core/src/lib.rs
+  h_bcbc8ae9e599aa 126-128,154,199,219,233,244
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  h_bcbc8ae9e599aa 157-158,166-167,282,287-289,291,313-316,318-320,329,345,383-394,414-420
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 178-186,252-255,843-844,846-854,858,1332-1345,1755-1772,1834-1843,1862,1882-1883,1909-1910,1934-1935,1977,2164-2165,2167
+Linux/crates/pitex-shell/src/model.rs
+  h_bcbc8ae9e599aa 52,955,1286,1288-1291,1317,1337,1527,1578,1799-1804,1936,2060,2309-2314,2521-2523,2525,2528
+Mac/Sources/AppShell/PitexApp.swift
+  h_bcbc8ae9e599aa 10,132-137,144,147-150,179-184,187-192,656-658,719-727,1079-1092,1099-1137,1151-1179,1181,1183,1188-1192,1197,1199,1201-1204,1209
+Mac/Sources/Features/AppearanceTheme.swift
+  h_bcbc8ae9e599aa 244-249,283-290,293-301,311-316,323-325,327-328
+Mac/Sources/Features/BuildSupport.swift
+  h_bcbc8ae9e599aa 155-172,180-181,223-224,227,456,463,485,500-518,522-523
+Mac/Sources/Features/EditorContainerView.swift
+  h_bcbc8ae9e599aa 97,117-121,128-144,157,258-261,283-304,349-355,357-358,510-513
+Mac/Sources/Features/EditorFolding.swift
+  h_bcbc8ae9e599aa 56-58,68-76,103,106,137-170,172
+Mac/Sources/Features/Preview.swift
+  h_bcbc8ae9e599aa 191-200
+Mac/Sources/Features/ProjectSidebarView.swift
+  h_bcbc8ae9e599aa 210
+Mac/Sources/Features/SettingsView.swift
+  h_bcbc8ae9e599aa 1048-1052,1054-1055
+Mac/Sources/Features/SyntaxHighlighting.swift
+  h_bcbc8ae9e599aa 47-77,80,83-85,87-101
+Packages/TexCore/Sources/DocumentSessionCore/DocumentSessionCore.swift
+  h_bcbc8ae9e599aa 91-93,105,131,150,162,172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2728d549e33f5f99fabd19f7c2d60402768e6fef",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
