@@ -1,0 +1,49 @@
+Mac/Sources/AppShell/PitexApp.swift
+  s_ed44b01ef26714::t_1bda80177eee05 50
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_1bda80177eee05 4105,4164-4165,4204,4214-4229
+Tools/check-sidebar-ui.py
+  s_ed44b01ef26714::t_6c5a33d78c1553 27-28
+  s_ed44b01ef26714::t_4a6825ebd1f677 18,69-82
+  s_ed44b01ef26714::t_c9cd1a02f7587d 19
+  s_ed44b01ef26714::t_aa4bccfab68082 33-34
+  s_ed44b01ef26714::t_eb57b08ed97a6c 1-17,20-26,29-32,35-68,83-117
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_ed44b01ef26714::t_1bda80177eee05 15,18,56-73,290
+Mac/Sources/Features/WorkspaceView.swift
+  s_ed44b01ef26714::t_1bda80177eee05 488,495
+Windows/Cargo.lock
+  s_ed44b01ef26714::t_a6606495a48608 869
+Linux/Cargo.lock
+  s_b5f248b5865807::t_da649631889022 750
+Linux/crates/pitex/Cargo.toml
+  s_b5f248b5865807::t_8868f17f96b09c 3
+Mac/Config/Info.plist
+  s_b5f248b5865807::t_9bd4a7d8ae5116 20
+Windows/crates/pitex-windows/Cargo.toml
+  s_b5f248b5865807::t_8fe9a728879726 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0165c90734c0030f77dc8d5373b6c2daee75919b",
+  "prompts": {},
+  "sessions": {
+    "s_b5f248b5865807": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0be9f-ef33-72c0-a38c-60bd33bc54c9",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    },
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
