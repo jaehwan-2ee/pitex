@@ -4,7 +4,7 @@
 //! queries — runs on background threads and reports back through
 //! `WorkspaceMessage` on the channel installed with `set_event_sink`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -228,6 +228,9 @@ pub struct OpenedProject {
     /// `(resolve result, direct dependencies of the resolved main)`.
     pub resolution: (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
     pub bibliography_items: Vec<BibliographyItem>,
+    /// Project-wide `\label` scan — seeded into `label_scan_cache` so the
+    /// first `refresh_structure` never re-reads the tree on the main thread.
+    pub label_scan: LabelScanCache,
     /// Bytes of the resolved main's PDF when it exists on disk.
     pub built_pdf: Option<Vec<u8>>,
 }
@@ -238,8 +241,14 @@ pub struct ActivatedDocument {
     pub session: DocumentSession,
     pub resolution: (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
     pub bibliography_items: Vec<BibliographyItem>,
+    pub label_scan: LabelScanCache,
     pub built_pdf: Option<Vec<u8>>,
 }
+
+/// mtime-keyed per-file `\label` scan — populated off-thread on
+/// open/activate, incrementally maintained by `refresh_project_labels`.
+pub type LabelScanCache =
+    HashMap<PathBuf, (Option<std::time::SystemTime>, Vec<String>)>;
 
 // ─── TeXProjectResolver (BuildSupport.swift port) ────────────────────────────
 
@@ -699,6 +708,14 @@ pub struct WorkspaceModel {
     /// `todoCache` — per-file (mtime | snapshot-revision, items) entries so
     /// a per-keystroke refresh only re-parses the file that changed.
     todo_cache: HashMap<PathBuf, ((u128, u64), Vec<DocumentTodoItem>)>,
+    /// Merged `\label` keys from every project .tex plus the active
+    /// document's unsaved text — feeds `\ref` completion candidates.
+    pub project_label_keys: BTreeSet<String>,
+    /// Merged `.bib` entry keys — feeds `\cite` completion candidates.
+    pub citation_keys: BTreeSet<String>,
+    /// Per-file `\label` scan cache keyed on mtime — a structure refresh
+    /// re-reads only files that changed since the last scan.
+    label_scan_cache: LabelScanCache,
     /// Bumped by `refresh_structure_with` — the sidebar rebuilds its lists
     /// only when this changes instead of on every refresh_sidebar call.
     pub structure_revision: u64,
@@ -791,6 +808,9 @@ impl WorkspaceModel {
             bibliography_items: Vec::new(),
             todo_items: Vec::new(),
             todo_cache: HashMap::new(),
+            project_label_keys: BTreeSet::new(),
+            citation_keys: BTreeSet::new(),
+            label_scan_cache: HashMap::new(),
             structure_revision: 0,
             files_revision: 0,
             read_write: true,
@@ -960,6 +980,7 @@ impl WorkspaceModel {
             .collect();
         Ok(OpenedProject {
             bibliography_items: Self::parse_bibliography(&bib_files, Some(&root)),
+            label_scan: Self::scan_project_labels(&files),
             resolution,
             built_pdf,
             root,
@@ -1008,6 +1029,7 @@ impl WorkspaceModel {
         self.phase = WorkspacePhase::Ready;
         self.restore_built_preview_with(opened.built_pdf);
         self.record_recent(store, &opened.selected);
+        self.label_scan_cache = opened.label_scan;
         self.refresh_structure_with(Some(opened.bibliography_items));
         if let Some(cb) = &mut self.on_active_document_changed {
             cb();
@@ -1066,6 +1088,7 @@ impl WorkspaceModel {
                     session,
                     resolution,
                     bibliography_items: Self::parse_bibliography(&bib_files, Some(&root)),
+                    label_scan: Self::scan_project_labels(&files),
                     built_pdf,
                 })
             })();
@@ -1091,6 +1114,7 @@ impl WorkspaceModel {
         self.apply_build_resolution(activated.resolution);
         self.phase = WorkspacePhase::Ready;
         self.restore_built_preview_with(activated.built_pdf);
+        self.label_scan_cache = activated.label_scan;
         self.refresh_structure_with(Some(activated.bibliography_items));
         if let Some(cb) = &mut self.on_active_document_changed {
             cb();
@@ -1312,6 +1336,9 @@ impl WorkspaceModel {
         self.bibliography_items.clear();
         self.todo_items.clear();
         self.todo_cache.clear();
+        self.project_label_keys.clear();
+        self.citation_keys.clear();
+        self.label_scan_cache.clear();
         self.structure_revision += 1;
         self.synctex_binding = None;
         self.pinned_build_target = None;
@@ -1467,6 +1494,10 @@ impl WorkspaceModel {
                 self.set_snapshot(updated);
             }
         }
+        // A non-active .tex may have adopted new disk content — its
+        // \label contribution to project_label_keys changed with it
+        // (the mtime check makes this a no-op for untouched files).
+        self.refresh_project_labels();
     }
 
     /// `persistDirtySessions` — saves every dirty session; returns a
@@ -1590,6 +1621,25 @@ impl WorkspaceModel {
             Self::parse_bibliography(&bib_files, self.project_url.as_deref())
         });
         self.refresh_todos();
+        self.citation_keys = self
+            .bibliography_items
+            .iter()
+            .map(|item| item.key.clone())
+            .collect();
+        // An open .bib contributes its unsaved buffer keys too — parity
+        // with `refreshCompletionKeys` on macOS.
+        if self
+            .active_document_url
+            .as_ref()
+            .and_then(|u| u.extension())
+            .map(|e| e.eq_ignore_ascii_case("bib"))
+            .unwrap_or(false)
+        {
+            if let Some(text) = self.document_snapshot.as_ref().map(|s| s.text.as_str()) {
+                self.citation_keys.extend(Self::parse_bibliography_keys(text));
+            }
+        }
+        self.refresh_project_labels();
         self.structure_revision += 1;
         if let Some(cb) = &mut self.on_structure_changed {
             cb();
@@ -1908,6 +1958,101 @@ impl WorkspaceModel {
         }
     }
 
+    /// Rebuild the merged `\label` set the completion provider reads.
+    /// Cached per file on mtime — the 120ms-debounced structure refresh
+    /// re-reads only what changed, never the whole project per keystroke.
+    fn refresh_project_labels(&mut self) {
+        let active = self.active_document_url.clone();
+        let mut alive = HashSet::new();
+        for file in &self.project_files {
+            if file
+                .extension()
+                .map(|e| !e.eq_ignore_ascii_case("tex"))
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            // The active document contributes its unsaved snapshot text
+            // below — a fresh \label{} completes before the file hits disk.
+            if active.as_ref() == Some(file) {
+                continue;
+            }
+            alive.insert(file.clone());
+            let mtime = std::fs::metadata(file).and_then(|m| m.modified()).ok();
+            if self
+                .label_scan_cache
+                .get(file)
+                .map(|(cached, _)| *cached != mtime)
+                .unwrap_or(true)
+            {
+                let labels = std::fs::read_to_string(file)
+                    .map(|text| Self::label_names(&text))
+                    .unwrap_or_default();
+                self.label_scan_cache.insert(file.clone(), (mtime, labels));
+            }
+        }
+        self.label_scan_cache.retain(|file, _| alive.contains(file));
+        let mut keys: BTreeSet<String> = self
+            .label_scan_cache
+            .values()
+            .flat_map(|(_, labels)| labels.iter().cloned())
+            .collect();
+        let active_is_tex = self
+            .active_document_url
+            .as_ref()
+            .and_then(|u| u.extension())
+            .map(|e| e.eq_ignore_ascii_case("tex"))
+            .unwrap_or(false);
+        if active_is_tex {
+            if let Some(text) = self.document_snapshot.as_ref().map(|s| s.text.as_str()) {
+                keys.extend(Self::label_names(text));
+            }
+        }
+        self.project_label_keys = keys;
+    }
+
+    /// Off-thread `\label` scan of every project .tex — returns the
+    /// mtime-keyed cache `refresh_project_labels` incrementally reuses.
+    fn scan_project_labels(files: &[PathBuf]) -> LabelScanCache {
+        let mut cache = HashMap::new();
+        for file in files {
+            if file
+                .extension()
+                .map(|e| !e.eq_ignore_ascii_case("tex"))
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            let mtime = std::fs::metadata(file).and_then(|m| m.modified()).ok();
+            let labels = std::fs::read_to_string(file)
+                .map(|text| Self::label_names(&text))
+                .unwrap_or_default();
+            cache.insert(file.clone(), (mtime, labels));
+        }
+        cache
+    }
+
+    fn label_names(text: &str) -> Vec<String> {
+        Self::parse_labels(text)
+            .into_iter()
+            .map(|label| label.name)
+            .collect()
+    }
+
+    /// Completion candidates for a detected context — the data-source
+    /// closure the GTK `TexCompletionProvider` calls per populate (the
+    /// macOS adapter's `completionSource` contract).
+    pub fn editor_completions(
+        &self,
+        context: &language_core::CompletionContext,
+    ) -> Vec<language_core::LanguageCompletion> {
+        language_core::LanguageIndex::completions(
+            context,
+            &self.project_label_keys,
+            &self.citation_keys,
+        )
+    }
+
     pub fn rescan_project(&mut self) {
         let Some(root) = self.project_url.clone() else { return };
         if let Ok(discovered) = Self::discover_tex_files(&root, &root, true) {
@@ -1997,43 +2142,62 @@ impl WorkspaceModel {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default()
                 });
-            let bytes = text.as_bytes();
-            let mut i = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'@' {
-                    i += 1;
-                    let type_start = i;
-                    while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-                        i += 1;
-                    }
-                    let kind = &text[type_start..i];
-                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                        i += 1;
-                    }
-                    if i < bytes.len() && bytes[i] == b'{' && !kind.is_empty() {
-                        i += 1;
-                        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                            i += 1;
-                        }
-                        let key_start = i;
-                        while i < bytes.len() && bytes[i] != b',' && !bytes[i].is_ascii_whitespace() {
-                            i += 1;
-                        }
-                        let key = &text[key_start..i];
-                        if !key.is_empty() {
-                            items.push(BibliographyItem {
-                                key: key.to_string(),
-                                kind: kind.to_lowercase(),
-                                file: name.clone(),
-                            });
-                        }
-                    }
-                } else {
-                    i += 1;
-                }
+            for (kind, key) in Self::parse_bibliography_entries(&text) {
+                items.push(BibliographyItem {
+                    key,
+                    kind,
+                    file: name.clone(),
+                });
             }
         }
         items
+    }
+
+    /// Citation keys in a .bib buffer — the active document's unsaved
+    /// bibliography feeds `\cite` completion the same way disk items do.
+    pub fn parse_bibliography_keys(text: &str) -> BTreeSet<String> {
+        Self::parse_bibliography_entries(text)
+            .into_iter()
+            .map(|(_, key)| key)
+            .collect()
+    }
+
+    /// `(lowercased kind, key)` entry pairs — shared by the file scan and
+    /// the active-buffer merge so both paths parse identically.
+    fn parse_bibliography_entries(text: &str) -> Vec<(String, String)> {
+        let mut entries = Vec::new();
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'@' {
+                i += 1;
+                let type_start = i;
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                let kind = &text[type_start..i];
+                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if i < bytes.len() && bytes[i] == b'{' && !kind.is_empty() {
+                    i += 1;
+                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    let key_start = i;
+                    while i < bytes.len() && bytes[i] != b',' && !bytes[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    let key = &text[key_start..i];
+                    if !key.is_empty() {
+                        entries.push((kind.to_lowercase(), key.to_string()));
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+        entries
     }
 
     // ── SyncTeX ──

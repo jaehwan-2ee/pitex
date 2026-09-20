@@ -710,6 +710,26 @@ impl AppState {
         let adapter = Rc::new(GtkEditorAdapter::make(client));
         adapter.view().add_css_class("pitex-editor");
         a11y(adapter.view(), "pitex.editor.text", "editor.title");
+        // Completion provider — the GTK counterpart of the mac adapter's
+        // `completionSource`: candidates come from the model through STATE
+        // so the provider itself stays data-agnostic.
+        let provider = crate::completion::TexCompletionProvider::new(
+            &tr(self.language, "editor.completion"),
+            Rc::new(|context: &language_core::CompletionContext| {
+                STATE.with(|s| {
+                    s.borrow()
+                        .as_ref()
+                        .and_then(|state| {
+                            state
+                                .try_borrow()
+                                .ok()
+                                .map(|st| st.model.editor_completions(context))
+                        })
+                        .unwrap_or_default()
+                })
+            }),
+        );
+        adapter.view().completion().add_provider(&provider);
         // FoldEngine attaches before the widget rebind so its chip layer
         // lands on the editor overlay, mirroring FoldEngine.attach.
         let dialect = dialect_for(self.model.active_document_url.as_deref());
@@ -3497,6 +3517,17 @@ fn build_chrome(
         });
     }
     header.pack_end(&find_btn);
+
+    // TeXifier-style symbols palette — the same catalogue + ordering the
+    // macOS `SymbolsPaletteView` renders; a glyph click inserts the LaTeX
+    // command at the caret.
+    let symbols_btn = gtk4::MenuButton::new();
+    symbols_btn.set_icon_name("accessories-character-map-symbolic");
+    symbols_btn.set_tooltip_text(Some(&tr(lang, "editor.symbols")));
+    a11y(&symbols_btn, "pitex.toolbar.symbols", "editor.symbols");
+    symbols_btn.set_popover(Some(&build_symbols_popover()));
+    header.pack_end(&symbols_btn);
+
     #[cfg(not(feature = "modern-gtk"))]
     toolbar_view.append(&header);
 
@@ -3826,6 +3857,84 @@ fn error_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
     page.set_child(Some(&button));
     let _ = ui; // status_page shared with empty state
     page.upcast()
+}
+
+/// Symbols popover — the GTK counterpart of `SymbolsPaletteView`: a
+/// category picker over a glyph grid from the shared `TEX_SYMBOLS`
+/// catalogue. A click runs `insert_at_cursor`, which flows through the
+/// buffer's `changed` hook like typed text (session submit, undo,
+/// autosave all see it) and never replaces surrounding text.
+fn build_symbols_popover() -> gtk4::Popover {
+    let lang = LANG.with(|l| l.get());
+    let popover = gtk4::Popover::new();
+    let root = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    root.set_margin_top(8);
+    root.set_margin_bottom(8);
+    root.set_margin_start(8);
+    root.set_margin_end(8);
+    a11y(&root, "pitex.symbols.palette", "editor.symbols");
+
+    let titles: Vec<String> = language_core::SymbolCategory::ALL
+        .iter()
+        .map(|category| tr(lang, category.title_key()))
+        .collect();
+    let title_strs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let picker = gtk4::DropDown::from_strings(&title_strs);
+    a11y(&picker, "pitex.symbols.category", "editor.symbols");
+    root.append(&picker);
+
+    let flow = gtk4::FlowBox::new();
+    flow.set_selection_mode(gtk4::SelectionMode::None);
+    flow.set_min_children_per_line(6);
+    flow.set_max_children_per_line(12);
+    flow.set_homogeneous(true);
+    let scroller = gtk4::ScrolledWindow::new();
+    scroller.set_min_content_width(360);
+    scroller.set_min_content_height(240);
+    scroller.set_child(Some(&flow));
+    root.append(&scroller);
+    popover.set_child(Some(&root));
+
+    let rebuild = {
+        let popover = popover.clone();
+        move |flow: &gtk4::FlowBox, index: u32| {
+            while let Some(child) = flow.first_child() {
+                flow.remove(&child);
+            }
+            let Some(&category) = language_core::SymbolCategory::ALL.get(index as usize)
+            else {
+                return;
+            };
+            for symbol in language_core::symbols_in(category) {
+                let button = gtk4::Button::with_label(symbol.glyph);
+                button.set_tooltip_text(Some(symbol.command));
+                let command = symbol.command;
+                let popover = popover.clone();
+                button.connect_clicked(move |_| {
+                    STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            if let Ok(st) = state.try_borrow() {
+                                if let Some(editor) = &st.editor {
+                                    editor.buffer().insert_at_cursor(command);
+                                    editor.view().grab_focus();
+                                }
+                            }
+                        }
+                    });
+                    popover.popdown();
+                });
+                // `insert(-1)` appends — `FlowBox::append` needs gtk4 v4_6,
+                // absent from the Ubuntu 22.04 no-default-features build.
+                flow.insert(&button, -1);
+            }
+        }
+    };
+    rebuild(&flow, 0);
+    {
+        let flow = flow.clone();
+        picker.connect_selected_notify(move |picker| rebuild(&flow, picker.selected()));
+    }
+    popover
 }
 
 fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {

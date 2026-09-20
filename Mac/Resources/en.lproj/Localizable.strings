@@ -181,6 +181,22 @@
 "editor.disk_unchanged" = "No changes on disk";
 "editor.minimap" = "Minimap unavailable";
 "editor.words_unit" = "words";
+"editor.symbols" = "Symbols";
+"editor.completion" = "Completion";
+"editor.symbol_cat_greek" = "Greek Letters";
+"editor.symbol_cat_binary_relations" = "Binary Relations";
+"editor.symbol_cat_binary_operators" = "Binary Operators";
+"editor.symbol_cat_big_operators" = "Large Operators";
+"editor.symbol_cat_arrows" = "Arrows";
+"editor.symbol_cat_delimiters" = "Delimiters";
+"editor.symbol_cat_large_delimiters" = "Large Delimiters";
+"editor.symbol_cat_misc_math" = "Miscellaneous Math";
+"editor.symbol_cat_text_mode" = "Text Mode Symbols";
+"editor.symbol_cat_ams_delimiters" = "AMS Delimiters";
+"editor.symbol_cat_ams_greek_hebrew" = "AMS Greek & Hebrew";
+"editor.symbol_cat_ams_binary_operators" = "AMS Binary Operators";
+"editor.symbol_cat_ams_binary_relations" = "AMS Binary Relations";
+"editor.symbol_cat_ams_arrows" = "AMS Arrows";
 
 "assistant.attach_document" = "Attach activated document";
 "assistant.attach_files_help" = "Attach project files to the composer";
