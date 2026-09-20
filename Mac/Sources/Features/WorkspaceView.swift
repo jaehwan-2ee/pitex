@@ -143,6 +143,20 @@ struct WorkspaceView: View {
         HStack(spacing: 6) {
             documentTabs
 
+            Button {
+                showingSymbols = true
+            } label: {
+                Label("editor.symbols", systemImage: "x.squareroot")
+            }
+            .buttonStyle(.borderless)
+            .fixedSize()
+            .help(String(localized: "editor.symbols"))
+            .disabled(workspace.environment == nil)
+            .accessibilityIdentifier("pitex.toolbar.symbols")
+            .popover(isPresented: $showingSymbols, arrowEdge: .bottom) {
+                SymbolsPaletteView(onInsert: insertSymbol)
+            }
+
             Menu {
                 Button("command.new") { Task { await workspace.createDocument() } }
                 Button("command.open") { workspace.presentOpenPanel() }
@@ -440,18 +454,6 @@ struct WorkspaceView: View {
             .disabled(workspace.environment == nil)
             .keyboardShortcut("f")
             .accessibilityIdentifier("pitex.toolbar.find")
-
-            Button {
-                showingSymbols = true
-            } label: {
-                Label("editor.symbols", systemImage: "x.squareroot")
-            }
-            .help(String(localized: "editor.symbols"))
-            .disabled(workspace.environment == nil)
-            .accessibilityIdentifier("pitex.toolbar.symbols")
-            .popover(isPresented: $showingSymbols, arrowEdge: .bottom) {
-                SymbolsPaletteView(onInsert: insertSymbol)
-            }
         }
     }
 

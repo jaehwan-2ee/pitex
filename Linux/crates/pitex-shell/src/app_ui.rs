@@ -3607,16 +3607,6 @@ fn build_chrome(
     }
     header.pack_end(&find_btn);
 
-    // TeXifier-style symbols palette — the same catalogue + ordering the
-    // macOS `SymbolsPaletteView` renders; a glyph click inserts the LaTeX
-    // command at the caret.
-    let symbols_btn = gtk4::MenuButton::new();
-    symbols_btn.set_icon_name("accessories-character-map-symbolic");
-    symbols_btn.set_tooltip_text(Some(&tr(lang, "editor.symbols")));
-    a11y(&symbols_btn, "pitex.toolbar.symbols", "editor.symbols");
-    symbols_btn.set_popover(Some(&build_symbols_popover()));
-    header.pack_end(&symbols_btn);
-
     #[cfg(not(feature = "modern-gtk"))]
     toolbar_view.append(&header);
 
@@ -4246,6 +4236,17 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     scroll.set_child(Some(&tab_row));
     ui.tab_row.replace(Some(tab_row));
     strip.append(&scroll);
+
+    // TeXifier-style symbols palette — the same catalogue + ordering the
+    // macOS `SymbolsPaletteView` renders; a glyph click inserts the LaTeX
+    // command at the caret. Sits immediately left of the "+" menu like
+    // the macOS tab strip.
+    let symbols_btn = gtk4::MenuButton::new();
+    symbols_btn.set_icon_name("accessories-character-map-symbolic");
+    symbols_btn.set_tooltip_text(Some(&tr(lang, "editor.symbols")));
+    a11y(&symbols_btn, "pitex.toolbar.symbols", "editor.symbols");
+    symbols_btn.set_popover(Some(&build_symbols_popover()));
+    strip.append(&symbols_btn);
 
     // "+" menu: the File-menu equivalent — new / open / pin / close; the
     // Open Recent section is rebuilt in `refresh_phase` from the model.
