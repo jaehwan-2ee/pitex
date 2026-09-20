@@ -822,7 +822,9 @@ final class AgentCoordinator: ObservableObject {
         return text.isEmpty ? nil : text
     }
 
-    private static func childEnvironment(executable: URL, environment: [String: String]) -> [String: String] {
+    /// Internal (not private) so `GhostCompletionCoordinator` spawns its
+    /// dedicated subprocess with the same PI_CODING_AGENT_DIR/PATH hygiene.
+    static func childEnvironment(executable: URL, environment: [String: String]) -> [String: String] {
         var environment = environment
         // The app-local pi home keeps auth/settings/sessions separate from
         // any global ~/.pi the user may have.

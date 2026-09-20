@@ -7,6 +7,9 @@ struct EditorContainerView: NSViewRepresentable {
     let adapter: EditorMacAdapter
     var minimapVisible = true
     var foldingEnabled = true
+    /// The workspace's ghost-text completion session — its overlay mounts
+    /// here and its accept/dismiss keys are intercepted by the Coordinator.
+    var completion: GhostCompletionCoordinator?
     /// Fired when the user Cmd-clicks a location: (line, column), 1-based.
     var onSyncRequest: ((Int, Int) -> Void)?
 
@@ -79,6 +82,23 @@ struct EditorContainerView: NSViewRepresentable {
         bracketMatcher.attach(to: adapter)
         context.coordinator.bracketMatcher = bracketMatcher
 
+        // Ghost-text completion: the translucent suggestion layer overlays
+        // the scroll view like the gutter/minimap; Tab/Esc are intercepted
+        // by a keyDown monitor while a ghost is visible.
+        let ghost = GhostCompletionOverlayView(textView: textView, scrollView: scrollView)
+        scrollView.addSubview(ghost)
+        context.coordinator.ghost = ghost
+        completion?.overlay = ghost
+        context.coordinator.completion = completion
+        context.coordinator.ghostMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown
+        ) { [weak coordinator = context.coordinator] event in
+            let consumed = MainActor.assumeIsolated {
+                coordinator?.handleGhostKey(event) ?? false
+            }
+            return consumed ? nil : event
+        }
+
         // Cmd-click on a source location → forward SyncTeX, the reference
         // editor's Ctrl-click equivalent. A local event monitor is used
         // instead of an NSClickGestureRecognizer: recognizers lose clicks to
@@ -103,6 +123,12 @@ struct EditorContainerView: NSViewRepresentable {
         if let monitor = coordinator.syncMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        if let monitor = coordinator.ghostMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if coordinator.completion?.overlay === coordinator.ghost {
+            coordinator.completion?.overlay = nil
+        }
         coordinator.foldEngine?.detach()
         coordinator.bracketMatcher?.detach()
     }
@@ -114,6 +140,13 @@ struct EditorContainerView: NSViewRepresentable {
         context.coordinator.onSyncRequest = onSyncRequest
         context.coordinator.foldEngine?.isEnabled = foldingEnabled
         context.coordinator.minimap?.isHidden = !minimapVisible
+        // `completion` is a value input — if it arrived after makeNSView
+        // ran (e.g. a body re-eval mid-open), bind it on the update pass
+        // rather than leaving the overlay orphaned for the session.
+        if let completion, context.coordinator.completion !== completion {
+            context.coordinator.completion = completion
+            completion.overlay = context.coordinator.ghost
+        }
         // Re-applying fonts/colors and repainting every overlay on each
         // SwiftUI pass costs an O(document) minimap draw per keystroke; only
         // re-apply when an appearance input actually changed.
@@ -149,12 +182,40 @@ struct EditorContainerView: NSViewRepresentable {
         weak var minimap: MinimapOverlayView?
         weak var gutter: LineNumberGutterView?
         weak var chips: FoldChipOverlayView?
+        weak var ghost: GhostCompletionOverlayView?
         weak var textView: NSTextView?
         var foldEngine: FoldEngine?
         var bracketMatcher: BracketMatcher?
         var syncMonitor: Any?
+        var ghostMonitor: Any?
+        var completion: GhostCompletionCoordinator?
         var onSyncRequest: ((Int, Int) -> Void)?
         var lastAppearanceKey: AppearanceKey?
+
+        /// Tab/Esc while a ghost is showing — the Copilot-style accept and
+        /// dismiss pair. A keyDown monitor sees the event before the text
+        /// view: Tab must not insert a tab character and Esc must not fall
+        /// through to the find bar while a suggestion is up.
+        func handleGhostKey(_ event: NSEvent) -> Bool {
+            guard let completion, completion.suggestion != nil,
+                  let textView,
+                  event.window === textView.window,
+                  textView.window?.firstResponder === textView
+            else { return false }
+            // Only the bare key accepts/dismisses — Shift-Tab and chorded
+            // Escapes keep their normal meaning. Caps Lock is not a chord.
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers.subtracting(.capsLock).isEmpty else { return false }
+            switch event.keyCode {
+            case 48: // kVK_Tab
+                return completion.accept()
+            case 53: // kVK_Escape
+                completion.dismiss()
+                return true
+            default:
+                return false
+            }
+        }
 
         /// Cmd+click inside this editor fires forward SyncTeX and reports the
         /// event as consumed so the caret and selection are left alone; every
@@ -557,5 +618,493 @@ final class MinimapOverlayView: NSView {
         let maximum = max(textView.bounds.height - visible.height, 0)
         textView.scroll(NSPoint(x: visible.minX, y: min(max(target, 0), maximum)))
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+}
+
+/// Ghost-text layer for inline AI completion — a translucent suggestion
+/// drawn at the caret glyph, Copilot-style. A plain scroll-view subview
+/// like the gutter/minimap; it never intercepts clicks (`hitTest` → nil).
+final class GhostCompletionOverlayView: NSView {
+    private weak var textView: NSTextView?
+    private weak var scrollView: NSScrollView?
+    /// nonisolated(unsafe): removed once in deinit; tokens are only touched
+    /// on the main thread while the view is alive.
+    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
+    /// The suggestion and the UTF-16 caret index it was generated for —
+    /// drawing anchors here so a scroll repaint never drifts to a moved
+    /// caret (any caret move clears the suggestion anyway).
+    private(set) var suggestion: String?
+    private(set) var anchor = 0
+
+    /// Top-down coordinates matching the text view's document space.
+    override var isFlipped: Bool { true }
+
+    init(textView: NSTextView, scrollView: NSScrollView) {
+        self.textView = textView
+        self.scrollView = scrollView
+        super.init(frame: .zero)
+        autoresizingMask = [.width, .height]
+        // Repaint on edits, scrolls and resizes — the anchor is in document
+        // coordinates, so its viewport position must be recomputed.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSText.didChangeNotification, object: textView, queue: .main
+        ) { [weak self] _ in self?.needsDisplay = true })
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView, queue: .main
+        ) { [weak self] _ in self?.needsDisplay = true })
+        scrollView.contentView.postsFrameChangedNotifications = true
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: scrollView.contentView, queue: .main
+        ) { [weak self] _ in self?.reposition() })
+        reposition()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    deinit { observers.forEach { NotificationCenter.default.removeObserver($0) } }
+
+    private func reposition() {
+        guard let scrollView else { return }
+        frame = scrollView.contentView.frame
+        needsDisplay = true
+    }
+
+    func show(_ suggestion: String, anchor: Int) {
+        self.suggestion = suggestion
+        self.anchor = anchor
+        needsDisplay = true
+    }
+
+    func clear() {
+        guard suggestion != nil else { return }
+        suggestion = nil
+        needsDisplay = true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let suggestion, !suggestion.isEmpty,
+              let textView,
+              let layout = textView.layoutManager,
+              let container = textView.textContainer
+        else { return }
+        layout.ensureLayout(for: container)
+        let text = textView.string as NSString
+        let charIndex = min(max(anchor, 0), text.length)
+        let glyph = layout.glyphIndexForCharacter(at: charIndex)
+
+        // The caret line's glyph rect — at EOF there is no glyph, so fall
+        // back to the extra line fragment (trailing newline) or the last
+        // glyph's trailing edge, the same way the caret itself is drawn.
+        var origin = NSPoint.zero
+        var lineHeight = textView.font?.pointSize ?? 12
+        if glyph < layout.numberOfGlyphs {
+            let rect = layout.boundingRect(
+                forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+            origin = rect.origin
+            lineHeight = max(rect.height, 1)
+        } else if layout.extraLineFragmentRect.height > 0 {
+            origin = layout.extraLineFragmentRect.origin
+            lineHeight = layout.extraLineFragmentRect.height
+        } else if layout.numberOfGlyphs > 0 {
+            let rect = layout.boundingRect(
+                forGlyphRange: NSRange(location: layout.numberOfGlyphs - 1, length: 1),
+                in: container)
+            origin = NSPoint(x: rect.maxX, y: rect.minY)
+            lineHeight = rect.height
+        }
+        // Container → text-view coordinates, then into this overlay.
+        origin.x += textView.textContainerOrigin.x
+        origin.y += textView.textContainerOrigin.y
+        let local = convert(origin, from: textView)
+
+        let font = textView.font ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor.withAlphaComponent(0.38),
+        ]
+        let nsSuggestion = suggestion as NSString
+        if suggestion.contains("\n") {
+            // Multi-line replies render as a small translucent block below
+            // the caret line — the simpler correct treatment.
+            let block = nsSuggestion.boundingRect(
+                with: NSSize(
+                    width: CGFloat.greatestFiniteMagnitude,
+                    height: CGFloat.greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: attrs)
+            let x = max(local.x, 4)
+            let y = local.y + lineHeight + 2
+            let frame = NSRect(
+                x: x - 4, y: y - 2,
+                width: ceil(block.width) + 8, height: ceil(block.height) + 4)
+            NSColor.secondaryLabelColor.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: frame, xRadius: 5, yRadius: 5).fill()
+            nsSuggestion.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+        } else {
+            // Single-line: draw to the right of the caret, vertically
+            // centred on the line fragment like the gutter's numbers.
+            let size = nsSuggestion.size(withAttributes: attrs)
+            nsSuggestion.draw(
+                at: NSPoint(x: local.x, y: local.y + max((lineHeight - size.height) / 2, 0)),
+                withAttributes: attrs)
+        }
+    }
+}
+
+/// Copilot-style inline LaTeX completion. A dedicated `pi --mode rpc`
+/// subprocess — separate from the chat `AgentCoordinator`, so completion
+/// prompts never touch the transcript or contend with a running chat
+/// request — answers ~50/20-line continuation prompts; the reply renders
+/// as translucent ghost text at the caret. Tab accepts, Esc/typing/caret
+/// moves dismiss. The whole feature is a silent no-op while the setting is
+/// off, the document is not `.tex`, or pi cannot be resolved.
+@MainActor
+final class GhostCompletionCoordinator {
+    /// Workspace state read at fire time so the setting toggle and document
+    /// switches apply immediately without re-attaching.
+    struct Context {
+        var projectRoot: URL?
+        var fileName = "document.tex"
+        var isTeX = false
+        var enabled = false
+    }
+
+    var contextProvider: () -> Context = { Context() }
+    /// The overlay the suggestion renders into — bound by the editor
+    /// container when the overlay mounts, released on dismantle.
+    weak var overlay: GhostCompletionOverlayView? {
+        didSet {
+            if let suggestion { overlay?.show(suggestion, anchor: suggestionAnchor) }
+        }
+    }
+    /// The visible ghost — the key handler tests this before consuming
+    /// Tab/Esc.
+    private(set) var suggestion: String?
+    private var suggestionAnchor = 0
+    private weak var textView: NSTextView?
+    /// nonisolated(unsafe): removed in `shutdown`/`attach`; tokens are only
+    /// touched on the main actor while the coordinator is alive.
+    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
+    private var debounceTask: Task<Void, Never>?
+    private var eventTask: Task<Void, Never>?
+    private var prepareTask: Task<Void, Never>?
+    private var process: PiAgentProcess?
+    /// Spawn/resolution failures latch here until the next `attach`, so a
+    /// missing pi costs one probe per document — not one per idle pause.
+    private var piUnavailable = false
+    /// The prompt staged while the subprocess is still starting.
+    private var stagedPrompt: String?
+    /// The prompt id whose reply may produce a suggestion; a new request
+    /// supersedes it so stale replies are dropped.
+    private var pendingRequestID: String?
+    /// True while a request that may answer is in flight — armed at send
+    /// time rather than on the prompt `response`, whose position relative
+    /// to `message_end`/`agent_end` is not guaranteed by the wire order.
+    private var armed = false
+    /// Set by the first `agent_start` after arming — it marks this
+    /// request's own run. Leftover events from a superseded, aborted run
+    /// can land after the prompt was sent but always before its run
+    /// starts, so `message_end` is only honoured while this is set.
+    private var runStarted = false
+
+    /// Rebinds the text/selection observers — the adapter is rebuilt per
+    /// document like the macOS environment, mirroring
+    /// `highlighter.attach(to:fileExtension:)`.
+    func attach(to adapter: EditorMacAdapter) {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
+        let textView = adapter.textView
+        self.textView = textView
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSText.didChangeNotification, object: textView, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.editorActivity() }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.editorActivity() }
+        })
+        debounceTask?.cancel()
+        supersede()
+        dismiss()
+        // A fresh document gets one more chance to find pi.
+        piUnavailable = false
+    }
+
+    /// Edits and caret moves both count as "the user kept typing": drop the
+    /// visible ghost, supersede the in-flight request and re-arm the 600ms
+    /// debounce. O(1) here — context gathering waits for the timer.
+    private func editorActivity() {
+        dismiss()
+        debounceTask?.cancel()
+        supersede()
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.fire()
+        }
+    }
+
+    /// Tag-and-abort: a new request id makes late replies stale, and the
+    /// abort stops the old run early instead of burning provider tokens.
+    private func supersede() {
+        stagedPrompt = nil
+        if pendingRequestID != nil || armed {
+            try? process?.send(.abort)
+        }
+        pendingRequestID = nil
+        armed = false
+        runStarted = false
+    }
+
+    /// The debounced half: gates re-checked at fire time (the setting may
+    /// have flipped mid-burst), then the ~50/20-line window is staged for
+    /// the subprocess.
+    private func fire() {
+        let context = contextProvider()
+        guard context.enabled,
+              context.isTeX,
+              !piUnavailable,
+              let textView,
+              textView.isEditable,
+              !textView.hasMarkedText(),
+              let root = context.projectRoot
+        else { return }
+        let selection = textView.selectedRange()
+        // A collapsed caret only — a dragged selection never completes.
+        guard selection.length == 0 else { return }
+        let text = textView.string as NSString
+        let caret = min(selection.location, text.length)
+        stagedPrompt = Self.prompt(fileName: context.fileName, text: text, caret: caret)
+        if let process, process.isRunning {
+            sendStaged()
+        } else {
+            startProcess(root: root)
+        }
+    }
+
+    /// `prepareAgent`'s lazy counterpart: discovery runs off the main
+    /// actor; resolution/spawn failures latch `piUnavailable` silently.
+    private func startProcess(root: URL) {
+        guard prepareTask == nil else { return }
+        prepareTask = Task { [weak self] in
+            defer { self?.prepareTask = nil }
+            let tools = await PiToolchain.discover()
+            guard !Task.isCancelled, let self else { return }
+            guard let executable = PiExecutableLocator.resolve(environment: tools.environment)
+            else {
+                piUnavailable = true
+                return
+            }
+            do {
+                let launch = try tools.launch(
+                    executable, arguments: ["--mode", "rpc", "--no-session"])
+                let agent = PiAgentProcess(
+                    executableURL: launch.executable,
+                    workingDirectory: root,
+                    arguments: launch.arguments,
+                    environment: AgentCoordinator.childEnvironment(
+                        executable: launch.executable, environment: tools.environment)
+                )
+                try agent.start { [weak self, weak agent] in
+                    Task { @MainActor in self?.processDidExit(agent) }
+                }
+                process = agent
+                eventTask?.cancel()
+                eventTask = Task { [weak self] in
+                    for await event in agent.events {
+                        self?.handle(event)
+                    }
+                }
+                sendStaged()
+            } catch {
+                piUnavailable = true
+            }
+        }
+    }
+
+    /// Identity-guarded like `AgentCoordinator.processDidExit`: a queued
+    /// onExit from the old process must not clear a replacement that
+    /// already spawned between the exit and this MainActor hop.
+    private func processDidExit(_ exited: PiAgentProcess?) {
+        guard exited == nil || process === exited else { return }
+        process = nil
+        armed = false
+        runStarted = false
+        pendingRequestID = nil
+    }
+
+    /// abort + new_session + tagged prompt: the abort ends a superseded
+    /// run, `new_session` keeps every request's context cheap so earlier
+    /// completion prompts never accumulate, and the id lets `handle` drop
+    /// replies to superseded asks.
+    private func sendStaged() {
+        guard let prompt = stagedPrompt, let process, process.isRunning else { return }
+        stagedPrompt = nil
+        let id = UUID().uuidString
+        pendingRequestID = id
+        runStarted = false
+        do {
+            try process.send(.abort)
+            try process.send(.newSession)
+            try process.send(.prompt(message: prompt, streamingBehavior: nil), id: id)
+            armed = true
+        } catch {
+            pendingRequestID = nil
+        }
+    }
+
+    /// The `response`/`agent_start`/`message_end`/`agent_end` state
+    /// machine — everything else (abort/new_session acks, thinking
+    /// deltas, tool chatter) is ignored. Arming happens at send time and
+    /// `runStarted` marks the request's own run, so the machine is
+    /// correct whether the prompt `response` is a dispatch-time ack or
+    /// the run's final result, and stale events from a just-aborted run
+    /// can never produce a suggestion.
+    private func handle(_ event: PiRPCEvent) {
+        switch event.type {
+        case "response":
+            guard event.responseCommand == "prompt",
+                  event.string("id") == pendingRequestID
+            else { return }
+            pendingRequestID = nil
+            if !event.responseSucceeded {
+                armed = false
+                runStarted = false
+            }
+        case "agent_start":
+            if armed { runStarted = true }
+        case "message_end":
+            guard armed, runStarted,
+                  let message = event.nested("message"),
+                  message["role"] as? String == "assistant",
+                  let content = message["content"] as? [[String: Any]]
+            else { return }
+            let text = content
+                .filter { ($0["type"] as? String) == "text" }
+                .compactMap { $0["text"] as? String }
+                .joined()
+            applySuggestion(text)
+        case "agent_end":
+            if runStarted {
+                runStarted = false
+                armed = false
+            }
+        default:
+            break
+        }
+    }
+
+    /// The model's reply becomes the ghost only after cleanup — a stray
+    /// code-fence wrapper is dropped, one trailing newline is stripped, and
+    /// blank replies show nothing.
+    private func applySuggestion(_ raw: String) {
+        var suggestion = raw
+        if suggestion.hasPrefix("```") {
+            var lines = suggestion.components(separatedBy: "\n")
+            lines.removeFirst()
+            if lines.last?.trimmingCharacters(in: .whitespaces) == "```" {
+                lines.removeLast()
+            }
+            suggestion = lines.joined(separator: "\n")
+        }
+        if suggestion.hasSuffix("\n") { suggestion.removeLast() }
+        guard !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        self.suggestion = suggestion
+        suggestionAnchor = textView?.selectedRange().location ?? 0
+        overlay?.show(suggestion, anchor: suggestionAnchor)
+    }
+
+    /// Tab → insert through the normal edit path: `insertText` posts
+    /// `didChange`, so the insert is undo-safe and the resulting
+    /// text-change notification reschedules the next completion.
+    @discardableResult
+    func accept() -> Bool {
+        guard let suggestion, let textView else { return false }
+        dismiss()
+        textView.insertText(suggestion, replacementRange: textView.selectedRange())
+        return true
+    }
+
+    /// Esc/typing/caret move/setting-off — hide the ghost only; superseding
+    /// the in-flight request is `editorActivity`'s job.
+    func dismiss() {
+        suggestion = nil
+        overlay?.clear()
+    }
+
+    /// Workspace close — terminate the subprocess and drop every hook.
+    func shutdown() {
+        debounceTask?.cancel()
+        prepareTask?.cancel()
+        eventTask?.cancel()
+        process?.terminate()
+        process = nil
+        stagedPrompt = nil
+        pendingRequestID = nil
+        armed = false
+        runStarted = false
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
+        dismiss()
+    }
+
+    /// `~50 lines before / ~20 lines after, char-bounded` — the completion
+    /// envelope. NSString ranges keep indexing in UTF-16 like the caret;
+    /// the `<CURSOR>` marker sits exactly where the insert happens.
+    static func prompt(fileName: String, text: NSString, caret: Int) -> String {
+        let caret = min(caret, text.length)
+        // `start` is the answer; `probe` walks one newline further up per
+        // iteration — searching from `start` again would find the same
+        // newline every time.
+        var start = caret
+        var probe = caret
+        var lines = 0
+        while probe > 0, lines < 50 {
+            let previous = text.range(
+                of: "\n", options: .backwards,
+                range: NSRange(location: 0, length: probe))
+            guard previous.location != NSNotFound else { start = 0; break }
+            let candidate = previous.location + 1
+            if caret - candidate > 6_000 { break }
+            start = candidate
+            probe = previous.location
+            lines += 1
+        }
+        var end = caret
+        var forward = 0
+        while end < text.length, forward < 20 {
+            let next = text.range(
+                of: "\n", range: NSRange(location: end, length: text.length - end))
+            guard next.location != NSNotFound else { end = text.length; break }
+            let candidate = next.location + 1
+            if candidate - caret > 2_000 { break }
+            end = candidate
+            forward += 1
+        }
+        // Hard cap: a giant line still leaves the window ~6000/~2000
+        // chars wide rather than exceeding the line-granular bound.
+        start = max(start, caret - 6_000)
+        end = min(end, caret + 2_000)
+        let before = text.substring(with: NSRange(location: start, length: caret - start))
+        let after = text.substring(with: NSRange(location: caret, length: end - caret))
+        return """
+            You are the inline autocompletion engine of the Pitex LaTeX editor. \
+            Reply with ONLY the exact text to insert at <CURSOR>: no markdown, \
+            no code fences, no explanation. Prefer completing the current \
+            command, environment, or line in at most three lines. Reply with \
+            nothing when there is no useful continuation.
+
+            File: \(fileName)
+            ---
+            \(before)<CURSOR>\(after)
+            """
     }
 }

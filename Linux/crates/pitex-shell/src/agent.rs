@@ -2073,8 +2073,9 @@ impl AgentCoordinator {
     /// `childEnvironment(executable:environment:)` — starts from the
     /// discovered toolchain environment (its PATH already carries the
     /// version-manager dirs), then adds the app-local pi home and the
-    /// executable dir + TeX Live bins ahead of it.
-    fn child_environment(
+    /// executable dir + TeX Live bins ahead of it. `pub(crate)` so the
+    /// ghost-completion spawner inherits the identical environment.
+    pub(crate) fn child_environment(
         executable: &Path,
         environment: &HashMap<String, String>,
     ) -> HashMap<String, String> {

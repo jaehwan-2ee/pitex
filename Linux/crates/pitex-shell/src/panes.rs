@@ -1471,6 +1471,24 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         });
     }
     agent_group.add(&attach_default_row);
+    // `Toggle("settings.ai.autocompletion")` — Copilot-style ghost text;
+    // the completion coordinator re-reads the setting at every fire so
+    // the toggle applies without touching the editor.
+    let (autocompletion_row, autocompletion) =
+        compat::switch_row(&tr(lang, "settings.ai.autocompletion"));
+    autocompletion.set_active(state.borrow().store.ai_autocompletion());
+    {
+        let state = state.clone();
+        autocompletion.connect_active_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_ai_autocompletion(r.is_active());
+                if !r.is_active() {
+                    s.completion.dismiss();
+                }
+            }
+        });
+    }
+    agent_group.add(&autocompletion_row);
     // `LabeledContent("settings.ai.font_size")` — 10…24pt slider + pt readout
     // + a live preview line, like the Swift settings page.
     let font_row = adw::ActionRow::new();

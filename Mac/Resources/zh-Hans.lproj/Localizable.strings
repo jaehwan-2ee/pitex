@@ -251,6 +251,7 @@
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "安装位置";
 "settings.ai.attach_default" = "默认将活动文档附加到提示";
+"settings.ai.autocompletion" = "内联自动补全";
 "settings.ai.font_size" = "对话字体大小";
 "settings.ai.font_preview" = "这是您的对话文本的显示效果。";
 "settings.ai.setup_providers" = "设置提供商 / 登录…";

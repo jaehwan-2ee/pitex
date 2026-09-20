@@ -252,6 +252,7 @@
 "settings.ai.agent" = "Pitex Agent";
 "settings.ai.location" = "설치 위치";
 "settings.ai.attach_default" = "기본적으로 활성 문서를 프롬프트에 첨부";
+"settings.ai.autocompletion" = "인라인 자동 완성";
 "settings.ai.font_size" = "대화 글꼴 크기";
 "settings.ai.font_preview" = "대화 내용이 이 크기로 표시됩니다.";
 "settings.ai.setup_providers" = "제공자/구독 로그인 설정…";

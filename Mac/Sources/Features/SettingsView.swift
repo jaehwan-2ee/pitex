@@ -53,6 +53,12 @@ final class SettingsStore: ObservableObject {
     @Published var aiAttachDefault: Bool {
         didSet { UserDefaults.standard.set(aiAttachDefault, forKey: "ai.attachDefault") }
     }
+    /// `ai.autocompletion` — the Copilot-style inline ghost-text toggle,
+    /// default OFF: it spawns a pi subprocess, so opt-in (same key on
+    /// Linux/Windows).
+    @Published var aiAutocompletion: Bool {
+        didSet { UserDefaults.standard.set(aiAutocompletion, forKey: "ai.autocompletion") }
+    }
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
@@ -91,6 +97,7 @@ final class SettingsStore: ObservableObject {
         chatHistoryLimit = defaults.object(forKey: "ai.chatHistoryLimit") as? Int ?? 50
         aiDefaultModel = defaults.string(forKey: "ai.defaultModel") ?? ""
         aiAttachDefault = defaults.object(forKey: "ai.attachDefault") as? Bool ?? true
+        aiAutocompletion = defaults.object(forKey: "ai.autocompletion") as? Bool ?? false
         aiFontSize = min(max(defaults.object(forKey: "ai.fontSize") as? Double ?? 13, 10), 24)
         defaultBuildCommand = defaults.string(forKey: "project.defaultBuildCommand") ?? "xelatex -interaction=nonstopmode -synctex=1 {file}"
         defaultCustomCommand = defaults.string(forKey: "project.defaultCustomCommand") ?? ""
@@ -462,6 +469,7 @@ struct SettingsView: View {
                         .truncationMode(.middle)
                 }
                 Toggle("settings.ai.attach_default", isOn: $store.aiAttachDefault)
+                Toggle("settings.ai.autocompletion", isOn: aiAutocompletionBinding)
                 LabeledContent("settings.ai.font_size") {
                     HStack {
                         Slider(value: $store.aiFontSize, in: 10...24, step: 1)
@@ -811,6 +819,18 @@ struct SettingsView: View {
         } else {
             store.defaultBuildCommand = command
         }
+    }
+
+    /// Turning the toggle off hides the visible ghost immediately and stops
+    /// further requests (the coordinator re-checks the store at fire time).
+    private var aiAutocompletionBinding: Binding<Bool> {
+        Binding(
+            get: { store.aiAutocompletion },
+            set: { newValue in
+                store.aiAutocompletion = newValue
+                if !newValue { workspace.completion?.dismiss() }
+            }
+        )
     }
 
     private var buildCommandTextBinding: Binding<String> {
