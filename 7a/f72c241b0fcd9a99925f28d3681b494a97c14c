@@ -1,0 +1,38 @@
+Mac/Sources/Features/UpdateSupport.swift
+  s_ed44b01ef26714::t_210905dfc54330 20,44,69-70,72,86,140-163,188-219,225,239-240,244,246,254-264,274,286,292,297-301
+  s_ed44b01ef26714::t_f217c7c8bdcc4d 265
+Linux/crates/pitex-shell/src/update.rs
+  s_ed44b01ef26714::t_9942b1475fe587 228
+  s_ed44b01ef26714::t_acf754694b40ac 203,208-210,214-216,223-227,229-234,261,270-274,276-279,281,284,308-310,338-341,343-376,378,380-381
+  s_ed44b01ef26714::t_6e528bc4cd7ba8 151
+  s_ed44b01ef26714::t_c03a9effe8182c 429,449-525
+Linux/crates/pitex-shell/src/panes.rs
+  s_ed44b01ef26714::t_6e528bc4cd7ba8 1732,1734-1735,1747-1750,1787,1790-1791,1797-1800,1805-1808
+README.md
+  s_ed44b01ef26714::t_6e528bc4cd7ba8 208-211,215-216,220-223
+Windows/pitex.nsi
+  s_ed44b01ef26714::t_2b3d967023723a 9,43-45,47-50
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_f217c7c8bdcc4d 9-22
+Mac/Sources/Features/SettingsView.swift
+  s_ed44b01ef26714::t_6e528bc4cd7ba8 728
+Tools/check-updates.py
+  s_ed44b01ef26714::t_f614b8458ddd52 1-99,101-118
+  s_ed44b01ef26714::t_9942b1475fe587 100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7af72c241b0fcd9a99925f28d3681b494a97c14c",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
