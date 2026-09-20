@@ -2035,7 +2035,6 @@ impl AppState {
                     SidebarSection::Outline => "outline",
                     SidebarSection::Labels => "labels",
                     SidebarSection::BibTeX => "bibtex",
-                    SidebarSection::Todos => "todos",
                 };
                 stack.set_visible_child_name(name);
             }
@@ -2044,7 +2043,6 @@ impl AppState {
                     SidebarSection::Outline => 0,
                     SidebarSection::Labels => 1,
                     SidebarSection::BibTeX => 2,
-                    SidebarSection::Todos => 3,
                 };
                 if dd.selected() != idx {
                     dd.set_selected(idx);
@@ -4029,7 +4027,6 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         tr(lang, "sidebar.outline"),
         tr(lang, "sidebar.labels"),
         tr(lang, "sidebar.bibtex"),
-        tr(lang, "sidebar.todos"),
     ];
     let section_strs: Vec<&str> = section_items.iter().map(String::as_str).collect();
     let sections = gtk4::DropDown::from_strings(&section_strs);
@@ -4045,7 +4042,6 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
             s.model.sidebar_section = match dd.selected() {
                 1 => SidebarSection::Labels,
                 2 => SidebarSection::BibTeX,
-                3 => SidebarSection::Todos,
                 _ => SidebarSection::Outline,
             };
             s.refresh_sidebar();
@@ -4106,8 +4102,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         stack.add_named(&scroll, Some(name));
     }
 
-    // TODOs page — the only section with a header because it carries the
-    // "+" button (SwiftUI's pane header).
+    // TODOs shares the lower pane with Project; task actions stay unchanged.
     let todos_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let todos_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     todos_header.set_margin_start(10);
@@ -4160,14 +4155,14 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     todos_scroll.set_child(Some(&todo_list));
     todos_page.append(&todos_scroll);
     ui.todo_list.replace(Some(todo_list));
-    stack.add_named(&todos_page, Some("todos"));
 
     stack.set_visible_child_name("outline");
     ui.sidebar_stack.replace(Some(stack.clone()));
     root.append(&stack);
     root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
 
-    // Project section — pinned at the bottom.
+    // Project and TODOs switch independently of the document structure above.
+    let project_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     header.set_margin_start(10);
     header.set_margin_end(6);
@@ -4206,7 +4201,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     }
     ui.pin_button.replace(Some(pin.clone()));
     header.append(&pin);
-    root.append(&header);
+    project_page.append(&header);
 
     let project_scroll = gtk4::ScrolledWindow::new();
     project_scroll.set_vexpand(true);
@@ -4216,7 +4211,22 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     project_list.add_css_class("navigation-sidebar");
     project_scroll.set_child(Some(&project_list));
     ui.project_list.replace(Some(project_list));
-    root.append(&project_scroll);
+    project_page.append(&project_scroll);
+
+    let project_stack = gtk4::Stack::new();
+    project_stack.set_vexpand(true);
+    project_stack.add_titled(&project_page, Some("project"), &tr(lang, "sidebar.project"));
+    project_stack.add_titled(&todos_page, Some("todos"), &tr(lang, "sidebar.todos"));
+    project_stack.set_visible_child_name("project");
+    let project_switcher = gtk4::StackSwitcher::new();
+    project_switcher.set_stack(Some(&project_stack));
+    project_switcher.set_margin_start(6);
+    project_switcher.set_margin_end(6);
+    project_switcher.set_margin_top(6);
+    project_switcher.set_margin_bottom(6);
+    a11y(&project_switcher, "pitex.sidebar.projectSection", "sidebar.project");
+    root.append(&project_switcher);
+    root.append(&project_stack);
     root.upcast()
 }
 

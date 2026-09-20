@@ -8,16 +8,14 @@ extension SidebarSection {
         case .outline: "sidebar.outline"
         case .labels: "sidebar.labels"
         case .bibtex: "sidebar.bibtex"
-        case .todos: "sidebar.todos"
         }
     }
 }
 
-/// Left sidebar: a segmented Outline | Labels | BibTeX | TODOs picker whose
-/// upper pane shows structure parsed from the active document, with a fixed
-/// "Project" file list and the project path pinned at the bottom.
+/// Document structure above a separate Project | TODOs switcher.
 struct ProjectSidebarView: View {
     @ObservedObject var workspace: WorkspaceModel
+    @State private var showingTodos = false
     /// Inline-rename state for the TODOs pane (which row, draft text).
     @State private var editingTodoID: DocumentTodoItem.ID?
     @State private var editingTodoText = ""
@@ -55,7 +53,24 @@ struct ProjectSidebarView: View {
 
             Divider()
 
-            projectSection
+            VStack(spacing: 0) {
+                Picker("sidebar.project", selection: $showingTodos) {
+                    Text("sidebar.project").tag(false)
+                    Text("sidebar.todos").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .padding(6)
+                .accessibilityIdentifier("pitex.sidebar.projectSection")
+
+                if showingTodos {
+                    todosPane
+                        .frame(minHeight: 120, idealHeight: 180, maxHeight: 280)
+                } else {
+                    projectSection
+                }
+            }
         }
         .accessibilityIdentifier("pitex.projectOutline")
     }
@@ -71,8 +86,6 @@ struct ProjectSidebarView: View {
             labelsPane
         case .bibtex:
             bibtexPane
-        case .todos:
-            todosPane
         }
     }
 
@@ -274,7 +287,7 @@ struct ProjectSidebarView: View {
         }
     }
 
-    // MARK: - Project section (always visible)
+    // MARK: - Project section
 
     private var projectSection: some View {
         VStack(alignment: .leading, spacing: 0) {

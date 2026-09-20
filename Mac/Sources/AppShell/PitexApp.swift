@@ -47,12 +47,11 @@ enum ConsoleSection: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-/// Left sidebar sections, mirroring Outline | Labels | BibTeX | TODOs.
+/// Upper sidebar sections: Outline | Labels | BibTeX.
 enum SidebarSection: String, CaseIterable, Identifiable {
     case outline
     case labels
     case bibtex
-    case todos
     var id: Self { self }
 }
 

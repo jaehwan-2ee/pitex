@@ -485,13 +485,14 @@ private struct SymbolsPaletteView: View {
         VStack(alignment: .leading, spacing: 8) {
             Picker(selection: $category) {
                 ForEach(SymbolCategory.allCases, id: \.self) { item in
-                    Text(item.titleKey).tag(item)
+                    Text(LocalizedStringKey(item.titleKey)).tag(item)
                 }
             } label: {
                 Text("editor.symbols")
             }
             .labelsHidden()
             .pickerStyle(.menu)
+            .accessibilityIdentifier("pitex.symbols.category")
 
             ScrollView {
                 LazyVGrid(

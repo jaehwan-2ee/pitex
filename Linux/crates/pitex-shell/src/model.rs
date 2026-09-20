@@ -74,7 +74,6 @@ pub enum SidebarSection {
     Outline,
     Labels,
     BibTeX,
-    Todos,
 }
 
 #[derive(Debug, Clone)]
