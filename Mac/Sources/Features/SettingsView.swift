@@ -1045,10 +1045,14 @@ private struct FontFamilyPicker: View {
     @Binding var selection: String
     @State private var filter = ""
 
+    /// Sorted once per process: the installed family list doesn't change
+    /// during a session and sorting per body eval ran on every keystroke of
+    /// the filter field.
+    private static let sortedFamilies = NSFontManager.shared.availableFontFamilies.sorted()
+
     private var families: [String] {
-        let all = NSFontManager.shared.availableFontFamilies.sorted()
-        if filter.isEmpty { return all }
-        return all.filter { $0.localizedCaseInsensitiveContains(filter) }
+        if filter.isEmpty { return Self.sortedFamilies }
+        return Self.sortedFamilies.filter { $0.localizedCaseInsensitiveContains(filter) }
     }
 
     var body: some View {

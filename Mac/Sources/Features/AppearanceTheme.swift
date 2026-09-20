@@ -241,9 +241,12 @@ final class AppearanceSettings: ObservableObject {
     /// when the user has customised individual swatches ("Custom" in the
     /// picker, mirroring the reference editor's Theme row).
     var matchingPreset: AppearanceThemePreset? {
-        AppearanceThemePreset.allCases.first { preset in
-            AppearanceColorRole.allCases.allSatisfy { role in
-                storedHex(for: role).caseInsensitiveCompare(preset.hexValue(for: role)) == .orderedSame
+        // Read each role's stored hex once: a per-preset storedHex() call
+        // would hit UserDefaults 13 presets × 11 roles = 143 times per eval.
+        let stored = AppearanceColorRole.allCases.map { storedHex(for: $0) }
+        return AppearanceThemePreset.allCases.first { preset in
+            zip(AppearanceColorRole.allCases, stored).allSatisfy { role, hex in
+                hex.caseInsensitiveCompare(preset.hexValue(for: role)) == .orderedSame
             }
         }
     }
@@ -277,12 +280,24 @@ final class AppearanceSettings: ObservableObject {
     }
 
     func color(for role: AppearanceColorRole) -> NSColor {
-        if let hex = UserDefaults.standard.string(forKey: "appearance.color.\(role.rawValue)"),
-           let color = NSColor(hexString: hex) {
-            return color
-        }
-        return NSColor(hexString: role.defaultHex) ?? .textColor
+        let stored = UserDefaults.standard.string(forKey: "appearance.color.\(role.rawValue)") ?? ""
+        let key = "\(role.rawValue)|\(stored)"
+        if let cached = colorCache[key] { return cached }
+        let color = (stored.isEmpty ? nil : NSColor(hexString: stored))
+            ?? NSColor(hexString: role.defaultHex)
+            ?? .textColor
+        colorCache[key] = color
+        return color
     }
+
+    /// Memoized NSColor per (role, stored hex). UserDefaults is still read on
+    /// every call — external `defaults write` stays observable — but the hex
+    /// parse and NSColor allocation happen only once per distinct value.
+    private var colorCache: [String: NSColor] = [:]
+
+    /// Memoized editor/terminal fonts keyed by (family, size); the family
+    /// lookup is the expensive part of every draw/applyAppearance pass.
+    private var fontCache: [String: NSFont] = [:]
 
     func setColor(_ color: NSColor, for role: AppearanceColorRole) {
         if let hex = color.hexString {
@@ -293,19 +308,24 @@ final class AppearanceSettings: ObservableObject {
 
     /// The editor font resolved from family+size; family empty = system mono.
     var editorFont: NSFont {
-        if !fontFamily.isEmpty,
-           let font = NSFont(name: fontFamily, size: fontSize) {
-            return font
-        }
-        return NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let key = "editor|\(fontFamily)|\(fontSize)"
+        if let cached = fontCache[key] { return cached }
+        let font = (!fontFamily.isEmpty ? NSFont(name: fontFamily, size: fontSize) : nil)
+            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        fontCache[key] = font
+        return font
     }
 
     /// The terminal font: the custom family+size when set, otherwise the
     /// editor font so the console follows the editor by default.
     var terminalFont: NSFont {
         if terminalFontFamily.isEmpty { return editorFont }
-        return NSFont(name: terminalFontFamily, size: terminalFontSize)
+        let key = "terminal|\(terminalFontFamily)|\(terminalFontSize)"
+        if let cached = fontCache[key] { return cached }
+        let font = NSFont(name: terminalFontFamily, size: terminalFontSize)
             ?? NSFont.monospacedSystemFont(ofSize: terminalFontSize, weight: .regular)
+        fontCache[key] = font
+        return font
     }
 
     /// `set_font` — writes both terminal font fields in one call.

@@ -53,6 +53,9 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
         }
     }
     nonisolated(unsafe) private var observer: NSObjectProtocol?
+    /// Coalesces didChange bursts: one recompute per runloop turn instead of
+    /// one Task per notification.
+    private var recomputePending = false
 
     func attach(to textView: NSTextView) {
         self.textView = textView
@@ -62,7 +65,15 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
             object: textView,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.recompute() }
+            MainActor.assumeIsolated {
+                guard let self, !self.recomputePending else { return }
+                self.recomputePending = true
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.recomputePending = false
+                    self.recompute()
+                }
+            }
         }
         recompute()
     }
@@ -89,10 +100,10 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
         guard let textView else { return }
         let text = textView.string as NSString
         lineStarts = Self.computeLineStarts(text)
-        let previous = regions.filter(\.folded)
+        let previous = Set(regions.filter(\.folded).map(\.signature))
         regions = Self.findRegions(text: text, lineStarts: lineStarts)
         for index in regions.indices {
-            if previous.contains(where: { $0.signature == regions[index].signature }) {
+            if previous.contains(regions[index].signature) {
                 regions[index].folded = true
             }
         }
@@ -123,23 +134,48 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
         var source = text as String
         source.makeContiguousUTF8()
         let tokens = DeterministicTeXLexer.tokenize(source, dialect: .latex)
-        // Convert utf8 token ranges to utf16 indexes.
-        let utf8 = source.utf8
+
+        let sectionLevels: [String: Int] = [
+            "part": 0, "chapter": 1, "section": 2,
+            "subsection": 3, "subsubsection": 4, "paragraph": 5,
+        ]
+
+        // Map only the UTF-8 offsets we actually need (begin/end/section
+        // tokens) in a single scalar walk — the old per-token
+        // samePosition(in:) conversion was O(offset) each, quadratic overall.
+        var wanted = Set<Int>()
+        for token in tokens {
+            guard case let .controlSequence(name) = token.kind,
+                  name == "begin" || name == "end" || sectionLevels[name] != nil
+            else { continue }
+            wanted.insert(token.range.utf8Offset)
+        }
+        var utf16ByUTF8: [Int: Int] = [:]
+        utf16ByUTF8.reserveCapacity(wanted.count)
+        let wantedSorted = wanted.sorted()
+        var next = 0
+        var utf8Offset = 0
+        var utf16Offset = 0
+        for scalar in source.unicodeScalars {
+            while next < wantedSorted.count && wantedSorted[next] <= utf8Offset {
+                if wantedSorted[next] == utf8Offset { utf16ByUTF8[utf8Offset] = utf16Offset }
+                next += 1
+            }
+            utf8Offset += scalar.utf8.count
+            utf16Offset += scalar.utf16.count
+        }
+        while next < wantedSorted.count && wantedSorted[next] <= utf8Offset {
+            if wantedSorted[next] == utf8Offset { utf16ByUTF8[utf8Offset] = utf16Offset }
+            next += 1
+        }
         func utf16Index(_ utf8Offset: Int) -> Int {
-            guard let idx = utf8.index(utf8.startIndex, offsetBy: utf8Offset, limitedBy: utf8.endIndex),
-                  let scalarIdx = String.Index(idx, within: source),
-                  let idx16 = scalarIdx.samePosition(in: source.utf16) else { return -1 }
-            return source.utf16.distance(from: source.utf16.startIndex, to: idx16)
+            utf16ByUTF8[utf8Offset] ?? -1
         }
 
         var regions: [FoldRegion] = []
         // Environment matching: stack of (name, headerLine, signature).
         var envStack: [(name: String, headerLine: Int, signature: String)] = []
         var i = 0
-        let sectionLevels: [String: Int] = [
-            "part": 0, "chapter": 1, "section": 2,
-            "subsection": 3, "subsubsection": 4, "paragraph": 5,
-        ]
         var openSections: [(level: Int, headerLine: Int, signature: String)] = []
 
         func closeSections(atOrAbove level: Int, endLine: Int) {
