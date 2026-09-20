@@ -1,0 +1,60 @@
+Fixtures/expected/accessibility-identifiers.json
+  h_d73c695d83f4a7 34,37,66-81
+Linux/crates/language-core/src/completion.rs
+  h_d73c695d83f4a7 1-264
+Linux/crates/language-core/src/lib.rs
+  h_d73c695d83f4a7 5-10
+Linux/crates/language-core/src/symbols.rs
+  h_d73c695d83f4a7 1-491
+Linux/crates/language-core/tests/completion.rs
+  h_d73c695d83f4a7 1-226
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_d73c695d83f4a7 713-732,3520-3530,3862-3939
+Linux/crates/pitex-shell/src/completion.rs
+  h_d73c695d83f4a7 1-262
+Linux/crates/pitex-shell/src/lib.rs
+  h_d73c695d83f4a7 12
+Linux/crates/pitex-shell/src/model.rs
+  h_d73c695d83f4a7 7,231-233,244,248-252,711-718,811-813,983,1032,1091,1117,1339-1341,1497-1500,1624-1642,1961-2055,2145-2182,2187-2188,2191-2194,2196-2197,2200
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 184-199
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 185-200
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 184-199
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 184-199
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 185-200
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 184-199
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 185-200
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 7,9,225-229,461,506,682-684,1039-1041,1132-1216,1547-1556
+Mac/Sources/Features/UpdateSupport.swift
+  h_d73c695d83f4a7 36-39,175,218
+Mac/Sources/Features/WorkspaceView.swift
+  h_d73c695d83f4a7 2,14-15,442-453,457-465,473-517
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  h_d73c695d83f4a7 13-21,78-84,108-112,139,143-190
+Packages/TexCore/Sources/LanguageCore/CompletionContext.swift
+  h_d73c695d83f4a7 1-171
+Packages/TexCore/Sources/LanguageCore/Symbols.swift
+  h_d73c695d83f4a7 1-297
+Packages/TexCore/Tests/TexCoreTests/CompletionContextTests.swift
+  h_d73c695d83f4a7 1-133
+Packages/TexCore/Tests/TexCoreTests/SymbolsTests.swift
+  h_d73c695d83f4a7 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e910c9a6a04421bf3297ba3ec6da53487aea5025",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
