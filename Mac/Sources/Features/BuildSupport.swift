@@ -274,8 +274,13 @@ struct TeXProjectResolver {
 
     mutating func initialDocument(in files: [URL]) -> URL? {
         let mains = files.filter { isMain($0) }
+        // The last-ditch fallback stays textual — .tex first like before,
+        // then .bib — now that figures share the project list and can
+        // never be opened in the editor.
         return mains.first { $0.lastPathComponent.lowercased() == "main.tex" }
-            ?? mains.first ?? files.first { $0.pathExtension.lowercased() == "tex" } ?? files.first
+            ?? mains.first
+            ?? files.first { $0.pathExtension.lowercased() == "tex" }
+            ?? files.first { WorkspaceModel.isSourceFile($0) }
     }
 
     /// Opening a chapter directly still opens its owning project. Parent

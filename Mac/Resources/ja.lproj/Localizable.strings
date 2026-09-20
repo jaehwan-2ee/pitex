@@ -130,6 +130,13 @@
 "sidebar.no_bib_detail" = ".bib ファイルを開くと項目が表示されます。";
 "sidebar.rescan_help" = "プロジェクトファイルを再スキャン";
 "sidebar.pin_help" = "ビルド対象に固定";
+"sidebar.todos" = "TODO";
+"sidebar.no_todos" = "TODO なし";
+"sidebar.no_todos_detail" = "% TODO: コメントを追加するとここに表示されます。";
+"todos.add_help" = "カーソルに % TODO: コメントを追加";
+"todos.rename" = "名前を変更";
+"todos.delete" = "削除";
+"todos.toggle_help" = "完了を切り替え";
 
 "issues.filter.all" = "すべて";
 "issues.filter.errors" = "エラー";

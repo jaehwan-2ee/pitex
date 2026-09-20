@@ -131,6 +131,13 @@
 "sidebar.no_bib_detail" = "打开 .bib 文件以查看其条目。";
 "sidebar.rescan_help" = "重新扫描项目文件";
 "sidebar.pin_help" = "固定为构建目标";
+"sidebar.todos" = "待办事项";
+"sidebar.no_todos" = "没有待办事项";
+"sidebar.no_todos_detail" = "添加 % TODO: 注释即可在此处查看。";
+"todos.add_help" = "在光标处添加 % TODO: 注释";
+"todos.rename" = "重命名";
+"todos.delete" = "删除";
+"todos.toggle_help" = "切换完成状态";
 
 "console.terminal" = "终端";
 "issues.filter.all" = "全部";

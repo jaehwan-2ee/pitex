@@ -31,8 +31,8 @@ use language_core::{DeterministicTeXLexer, TeXDialect};
 use crate::agent::{AgentCoordinator, AgentSelectionAttachment};
 use crate::l10n::{resolve_language, tr};
 use crate::model::{
-    ConsoleSection, SidebarSection, WorkspaceBuildState, WorkspaceMessage, WorkspaceModel,
-    WorkspacePhase, WorkspaceSyncTeXState,
+    ConsoleSection, DocumentTodoItem, SidebarSection, TodoLineEdit, WorkspaceBuildState,
+    WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
 };
 use crate::pdf::PdfDocument;
 use crate::settings::{AppearanceColorRole, AppearanceSettings, Preferences, SettingsStore, Theme};
@@ -79,6 +79,8 @@ pub struct UiHandles {
     pub outline_list: RefCell<Option<gtk4::ListBox>>,
     pub labels_list: RefCell<Option<gtk4::ListBox>>,
     pub bib_list: RefCell<Option<gtk4::ListBox>>,
+    pub todo_list: RefCell<Option<gtk4::ListBox>>,
+    pub todo_add_button: RefCell<Option<gtk4::Button>>,
     pub project_list: RefCell<Option<gtk4::ListBox>>,
     pub pin_button: RefCell<Option<gtk4::Button>>,
     /// `win.save` / `win.saveas` / `win.saveall` — enabled state mirrors the
@@ -1136,6 +1138,97 @@ impl AppState {
         self.toast(&tr(self.language, "command.clean"));
     }
 
+    /// `openTodo(_:)` — the model parks cross-file jumps in `pending_jump`
+    /// (replayed by `apply_activate`); a same-file jump publishes through
+    /// `on_jump_to`, which `drain_side_effects` lands immediately here.
+    pub fn open_todo(&mut self, item: &DocumentTodoItem) {
+        if let Some(tx) = self.tx.clone() {
+            self.model.open_todo(item, tx);
+        }
+        self.drain_side_effects();
+    }
+
+    /// TODOs `+` — `addTodo()`: inserts `% TODO: ` at the caret when the
+    /// active document is .tex (the buffer's change hook submits the edit
+    /// through the session, like `insertText`), otherwise appends it to the
+    /// build target on disk — guarded against dirty sessions by the model.
+    pub fn add_todo_action(&mut self) {
+        let active_is_tex = self
+            .model
+            .active_document_url
+            .as_ref()
+            .and_then(|u| u.extension())
+            .map(|e| e.eq_ignore_ascii_case("tex"))
+            .unwrap_or(false);
+        if active_is_tex {
+            if let Some(editor) = &self.editor {
+                let buffer = editor.buffer().clone();
+                buffer.begin_user_action();
+                buffer.insert_at_cursor("% TODO: ");
+                buffer.end_user_action();
+            }
+            self.refresh_after_document_change();
+        } else {
+            self.model.append_todo_to_target();
+            self.model.refresh_structure();
+            self.refresh_sidebar();
+        }
+    }
+
+    /// `renameTodo`/`removeTodo`/`toggleTodo` — active-document edits come
+    /// back as a (UTF-16 range, replacement) applied through the buffer as
+    /// a user action (`toggle_comment_action` path); other files are written
+    /// by the model on disk unless a dirty session owns them.
+    pub fn todo_edit_action(&mut self, item: &DocumentTodoItem, edit: TodoLineEdit) {
+        if let Some((range, replacement)) = self.model.edit_todo(item, edit) {
+            if let Some(editor) = self.editor.clone() {
+                let text = editor.text();
+                let start_char =
+                    gtk_editor_adapter::utf16_offset_to_char_offset(&text, range.start);
+                let end_char =
+                    gtk_editor_adapter::utf16_offset_to_char_offset(&text, range.end);
+                let buffer = editor.buffer().clone();
+                buffer.begin_user_action();
+                let mut start = buffer.iter_at_offset(start_char as i32);
+                let mut end = buffer.iter_at_offset(end_char as i32);
+                buffer.delete(&mut start, &mut end);
+                if !replacement.is_empty() {
+                    let mut at = buffer.iter_at_offset(start_char as i32);
+                    buffer.insert(&mut at, &replacement);
+                }
+                buffer.end_user_action();
+            }
+            self.refresh_after_document_change();
+        } else {
+            // Disk write (or a guarded no-op) — rescan so the row repaints.
+            self.model.refresh_structure();
+            self.refresh_sidebar();
+        }
+    }
+
+    /// Figure rows open in the system viewer — the GTK half of
+    /// `NSWorkspace.shared.open(url)`. GTK 4.6 has no `FileLauncher`, so the
+    /// launch goes through `gio::AppInfo`; failures get a window-modal
+    /// error dialog (`MessageDialog` — `AlertDialog` needs GTK 4.10).
+    #[allow(deprecated)]
+    pub fn open_external(&self, url: &Path) {
+        let uri = gio::File::for_path(url).uri();
+        if let Err(e) =
+            gio::AppInfo::launch_default_for_uri(&uri, gio::AppLaunchContext::NONE)
+        {
+            let window = UI.with(|ui| ui.window.borrow().clone());
+            let dialog = gtk4::MessageDialog::new(
+                window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()),
+                gtk4::DialogFlags::MODAL,
+                gtk4::MessageType::Error,
+                gtk4::ButtonsType::Close,
+                &e.to_string(),
+            );
+            dialog.connect_response(|d, _| d.close());
+            dialog.present();
+        }
+    }
+
     /// Edit → Toggle Line Comment — `toggleLineComment()`: the model computes
     /// the transformed line range (UTF-16), the buffer applies it as a user
     /// action so undo groups it and the adapter's change hook submits it.
@@ -1846,6 +1939,7 @@ impl AppState {
                     SidebarSection::Outline => "outline",
                     SidebarSection::Labels => "labels",
                     SidebarSection::BibTeX => "bibtex",
+                    SidebarSection::Todos => "todos",
                 };
                 stack.set_visible_child_name(name);
             }
@@ -1854,6 +1948,7 @@ impl AppState {
                     SidebarSection::Outline => 0,
                     SidebarSection::Labels => 1,
                     SidebarSection::BibTeX => 2,
+                    SidebarSection::Todos => 3,
                 };
                 if dd.selected() != idx {
                     dd.set_selected(idx);
@@ -1931,6 +2026,23 @@ impl AppState {
                     list.append(&row);
                 }
             }
+            }
+            if structure_dirty {
+            if let Some(list) = ui.todo_list.borrow().as_ref() {
+                clear_list(list);
+                for (i, item) in self.model.todo_items.iter().enumerate() {
+                    append_todo_row(list, i, item, lang);
+                }
+                if self.model.todo_items.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "sidebar.no_todos")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(20);
+                    list.append(&row);
+                }
+            }
+            }
+            if let Some(add) = ui.todo_add_button.borrow().as_ref() {
+                add.set_sensitive(self.model.can_add_todo());
             }
             if files_dirty {
             // Project file tree — always visible at the bottom. Built from
@@ -2685,6 +2797,110 @@ fn clear_list(list: &gtk4::ListBox) {
     }
 }
 
+/// One TODOs-pane row: done checkbox, text + `file:line`, and the
+/// rename/delete affordances of the SwiftUI context menu. Activation
+/// (jump) is wired on the ListBox; the child carries the `todo-{i}` index.
+fn append_todo_row(list: &gtk4::ListBox, index: usize, item: &DocumentTodoItem, lang: &str) {
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    row.set_widget_name(&format!("todo-{index}"));
+    row.set_margin_start(8);
+    row.set_margin_end(8);
+    row.set_margin_top(3);
+    row.set_margin_bottom(3);
+
+    let check = gtk4::CheckButton::new();
+    check.set_active(item.done);
+    check.set_tooltip_text(Some(&tr(lang, "todos.toggle_help")));
+    check.connect_toggled(move |_| {
+        STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                if let Ok(mut s) = state.try_borrow_mut() {
+                    if let Some(item) = s.model.todo_items.get(index).cloned() {
+                        s.todo_edit_action(&item, TodoLineEdit::ToggleDone);
+                    }
+                }
+            }
+        });
+    });
+    row.append(&check);
+
+    let body = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
+    body.set_hexpand(true);
+    let text = gtk4::Label::new(Some(&item.text));
+    text.set_xalign(0.0);
+    text.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    if item.done {
+        // `.strikethrough + .secondary` — done items dim and strike through.
+        let attrs = gtk4::pango::AttrList::new();
+        attrs.insert(gtk4::pango::AttrInt::new_strikethrough(true));
+        text.set_attributes(Some(&attrs));
+        text.add_css_class("dim-label");
+    }
+    let meta = gtk4::Label::new(Some(&format!("{}:{}", item.file, item.line)));
+    meta.set_xalign(0.0);
+    meta.add_css_class("dim-label");
+    meta.add_css_class("caption");
+    body.append(&text);
+    body.append(&meta);
+    row.append(&body);
+
+    // Inline rename: swap the labels for an Entry; Return applies.
+    let rename = gtk4::Button::from_icon_name("document-edit-symbolic");
+    rename.add_css_class("flat");
+    rename.set_tooltip_text(Some(&tr(lang, "todos.rename")));
+    {
+        let body = body.clone();
+        rename.connect_clicked(move |_| {
+            let entry = gtk4::Entry::new();
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(s) = state.try_borrow() {
+                        if let Some(item) = s.model.todo_items.get(index) {
+                            entry.set_text(&item.text);
+                        }
+                    }
+                }
+            });
+            entry.set_hexpand(true);
+            entry.connect_activate(move |e| {
+                let new_text = e.text().to_string();
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() {
+                            if let Some(item) = s.model.todo_items.get(index).cloned() {
+                                s.todo_edit_action(&item, TodoLineEdit::Rename(new_text));
+                            }
+                        }
+                    }
+                });
+            });
+            while let Some(child) = body.first_child() {
+                body.remove(&child);
+            }
+            body.append(&entry);
+            entry.grab_focus();
+        });
+    }
+    row.append(&rename);
+
+    let delete = gtk4::Button::from_icon_name("user-trash-symbolic");
+    delete.add_css_class("flat");
+    delete.set_tooltip_text(Some(&tr(lang, "todos.delete")));
+    delete.connect_clicked(move |_| {
+        STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                if let Ok(mut s) = state.try_borrow_mut() {
+                    if let Some(item) = s.model.todo_items.get(index).cloned() {
+                        s.todo_edit_action(&item, TodoLineEdit::Delete);
+                    }
+                }
+            }
+        });
+    });
+    row.append(&delete);
+    list.append(&row);
+}
+
 /// Recursive renderer for the project tree — mirrors `OutlineGroup` in
 /// `ProjectSidebarView.swift`. Directories toggle collapse state (tracked
 /// in `WorkspaceModel::collapsed_project_dirs`); files activate documents.
@@ -2745,13 +2961,16 @@ fn append_project_node(
         .as_ref()
         .map(|r| r.join(&node.path))
         .unwrap_or_else(|| PathBuf::from(&node.path));
-    let icon = gtk4::Image::from_icon_name(
-        if url.extension().map(|e| e == "bib").unwrap_or(false) {
-            "accessories-dictionary-symbolic"
-        } else {
-            "x-office-document-symbolic"
-        },
-    );
+    // Sources activate in the editor; every other listed extension is a
+    // figure that opens in the system viewer.
+    let is_source = WorkspaceModel::is_source_file(&url);
+    let icon = gtk4::Image::from_icon_name(if !is_source {
+        "image-x-generic-symbolic"
+    } else if url.extension().map(|e| e == "bib").unwrap_or(false) {
+        "accessories-dictionary-symbolic"
+    } else {
+        "x-office-document-symbolic"
+    });
     // Spacer keeps file labels aligned under the directory labels' names —
     // files have no disclosure triangle.
     let spacer = gtk4::Label::new(None);
@@ -2763,9 +2982,9 @@ fn append_project_node(
     row.append(&spacer);
     row.append(&icon);
     row.append(&name);
-    if model.pinned_build_target.as_ref() == Some(&url) {
+    if is_source && model.pinned_build_target.as_ref() == Some(&url) {
         row.append(&gtk4::Image::from_icon_name("emblem-important-symbolic"));
-    } else if model.automatic_build_target.as_ref() == Some(&url) {
+    } else if is_source && model.automatic_build_target.as_ref() == Some(&url) {
         // `hammer` — Adwaita's engineering icon marks the inferred main
         // document like the SF Symbol does.
         row.append(&gtk4::Image::from_icon_name(
@@ -2780,7 +2999,11 @@ fn append_project_node(
         STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 if let Ok(mut s) = state.try_borrow_mut() {
-                    s.activate_document(url.clone());
+                    if WorkspaceModel::is_source_file(&url) {
+                        s.activate_document(url.clone());
+                    } else {
+                        s.open_external(&url);
+                    }
                 }
             }
         });
@@ -3616,6 +3839,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         tr(lang, "sidebar.outline"),
         tr(lang, "sidebar.labels"),
         tr(lang, "sidebar.bibtex"),
+        tr(lang, "sidebar.todos"),
     ];
     let section_strs: Vec<&str> = section_items.iter().map(String::as_str).collect();
     let sections = gtk4::DropDown::from_strings(&section_strs);
@@ -3631,6 +3855,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
             s.model.sidebar_section = match dd.selected() {
                 1 => SidebarSection::Labels,
                 2 => SidebarSection::BibTeX,
+                3 => SidebarSection::Todos,
                 _ => SidebarSection::Outline,
             };
             s.refresh_sidebar();
@@ -3690,6 +3915,63 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         handle.replace(Some(list));
         stack.add_named(&scroll, Some(name));
     }
+
+    // TODOs page — the only section with a header because it carries the
+    // "+" button (SwiftUI's pane header).
+    let todos_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let todos_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    todos_header.set_margin_start(10);
+    todos_header.set_margin_end(6);
+    todos_header.set_margin_top(4);
+    let todos_title = gtk4::Label::new(Some(&tr(lang, "sidebar.todos")));
+    todos_title.set_xalign(0.0);
+    todos_title.set_hexpand(true);
+    todos_title.add_css_class("caption");
+    todos_title.add_css_class("dim-label");
+    todos_header.append(&todos_title);
+    let todo_add = gtk4::Button::from_icon_name("list-add-symbolic");
+    todo_add.add_css_class("flat");
+    todo_add.set_tooltip_text(Some(&tr(lang, "todos.add_help")));
+    a11y(&todo_add, "pitex.sidebar.todos.add", "todos.add_help");
+    {
+        let state = state.clone();
+        todo_add.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.add_todo_action();
+        });
+    }
+    ui.todo_add_button.replace(Some(todo_add.clone()));
+    todos_header.append(&todo_add);
+    todos_page.append(&todos_header);
+    let todos_scroll = gtk4::ScrolledWindow::new();
+    todos_scroll.set_vexpand(true);
+    let todo_list = gtk4::ListBox::new();
+    todo_list.set_selection_mode(gtk4::SelectionMode::None);
+    todo_list.add_css_class("navigation-sidebar");
+    a11y(&todo_list, "pitex.sidebar.todos", "sidebar.todos");
+    {
+        let state = state.clone();
+        todo_list.connect_row_activated(move |_, row| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            let name = row
+                .child()
+                .map(|c| c.widget_name().to_string())
+                .unwrap_or_default();
+            let idx = name
+                .rsplit('-')
+                .next()
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0);
+            if let Some(item) = s.model.todo_items.get(idx).cloned() {
+                s.open_todo(&item);
+            }
+        });
+    }
+    todos_scroll.set_child(Some(&todo_list));
+    todos_page.append(&todos_scroll);
+    ui.todo_list.replace(Some(todo_list));
+    stack.add_named(&todos_page, Some("todos"));
+
     stack.set_visible_child_name("outline");
     ui.sidebar_stack.replace(Some(stack.clone()));
     root.append(&stack);

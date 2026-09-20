@@ -130,6 +130,13 @@
 "sidebar.no_bib_detail" = "Open a .bib file to see its entries.";
 "sidebar.rescan_help" = "Rescan project files";
 "sidebar.pin_help" = "Pin as build target";
+"sidebar.todos" = "TODOs";
+"sidebar.no_todos" = "No To-Dos";
+"sidebar.no_todos_detail" = "Add % TODO: comments to see them here.";
+"todos.add_help" = "Add a % TODO: comment at the caret";
+"todos.rename" = "Rename";
+"todos.delete" = "Delete";
+"todos.toggle_help" = "Toggle done";
 
 "console.terminal" = "Terminal";
 "issues.filter.all" = "All";

@@ -45,11 +45,12 @@ enum ConsoleSection: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-/// Left sidebar sections, mirroring Outline | Labels | BibTeX.
+/// Left sidebar sections, mirroring Outline | Labels | BibTeX | TODOs.
 enum SidebarSection: String, CaseIterable, Identifiable {
     case outline
     case labels
     case bibtex
+    case todos
     var id: Self { self }
 }
 
@@ -74,6 +75,18 @@ struct BibliographyItem: Identifiable, Hashable {
     let key: String
     let type: String
     let file: String
+}
+
+/// One `% TODO:`/`% DONE:` comment collected from the project's .tex files.
+struct DocumentTodoItem: Identifiable, Hashable {
+    let id = UUID()
+    /// Project-relative path (like `BibliographyItem.file`).
+    let file: String
+    let url: URL
+    /// 1-based line of the comment.
+    let line: Int
+    let text: String
+    let done: Bool
 }
 
 actor NativeDocumentSessionPort: AppPorts.DocumentSessionPort {
@@ -206,6 +219,7 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var outlineItems: [DocumentOutlineItem] = []
     @Published private(set) var labelItems: [DocumentLabelItem] = []
     @Published private(set) var bibliographyItems: [BibliographyItem] = []
+    @Published private(set) var todoItems: [DocumentTodoItem] = []
 
     var capabilityBroker: (any FileCapabilityBroker)?
     var capabilityLease: FileAccessLease?
@@ -653,7 +667,9 @@ final class WorkspaceModel: ObservableObject {
         outlineItems = []
         labelItems = []
         bibliographyItems = []
+        todoItems = []
         bibliographyCache = nil
+        todoCache.removeAll()
         structureTask?.cancel()
         structureTask = nil
         phase = .noProject
@@ -1090,13 +1106,14 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    /// Rebuilds the Outline / Labels / BibTeX sidebar data from the active
-    /// document text and the project's .bib files.
+    /// Rebuilds the Outline / Labels / BibTeX / TODOs sidebar data from the
+    /// active document text, the project's .bib files, and its .tex files.
     private func refreshStructure() {
         let text = documentSnapshot?.text ?? ""
         outlineItems = Self.parseOutline(text)
         labelItems = Self.parseLabels(text)
         refreshBibliography()
+        refreshTodos()
     }
 
     /// .bib items come from disk, not the editor buffer: re-parse only when
@@ -1120,8 +1137,213 @@ final class WorkspaceModel: ObservableObject {
         bibliographyItems = items
     }
 
-    /// Rebuilds the sidebar's project file tree from its inputs. Called from
-    /// the didSet of each input so the view body never re-sorts per eval.
+    /// The active file's todos parse from the live snapshot (keyed by
+    /// revision) while the rest keep mtime-keyed disk parses, so a typing
+    /// refresh re-reads only the file that changed.
+    private var todoCache: [URL: (key: String, items: [DocumentTodoItem])] = [:]
+
+    private func refreshTodos() {
+        let active = activeDocumentURL
+        let revision = documentSnapshot?.revision ?? 0
+        let texFiles = projectFiles.filter { $0.pathExtension.lowercased() == "tex" }
+        var items: [DocumentTodoItem] = []
+        for file in texFiles {
+            let isActive = file == active
+            let key: String
+            if isActive {
+                key = "r\(revision)"
+            } else {
+                let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                    .contentModificationDate?.timeIntervalSince1970) ?? 0
+                key = "m\(modified)"
+            }
+            if let entry = todoCache[file], entry.key == key {
+                items.append(contentsOf: entry.items)
+                continue
+            }
+            let name = (try? Self.relativePath(for: file, root: projectURL ?? file.deletingLastPathComponent()).rawValue)
+                ?? file.lastPathComponent
+            let text = isActive ? documentSnapshot?.text : try? Self.readExactUTF8(file)
+            let parsed = text.map { Self.parseTodos($0, file: name, url: file) } ?? []
+            todoCache[file] = (key, parsed)
+            items.append(contentsOf: parsed)
+        }
+        let alive = Set(texFiles)
+        todoCache = todoCache.filter { alive.contains($0.key) }
+        todoItems = items
+    }
+
+    // MARK: - TODO sidebar
+
+    /// Sidebar `+` — inserts `% TODO: ` at the caret of the active .tex
+    /// document (through the text view so undo and the session see it), or
+    /// appends it to the build target when the active file isn't a source.
+    var canAddTodo: Bool {
+        if activeDocumentURL?.pathExtension.lowercased() == "tex" { return true }
+        return buildSourceURL()?.pathExtension.lowercased() == "tex"
+    }
+
+    func addTodo() {
+        if let textView = environment?.editor.textView,
+           activeDocumentURL?.pathExtension.lowercased() == "tex" {
+            let range = textView.selectedRange()
+            guard textView.shouldChangeText(in: range, replacementString: "% TODO: ") else { return }
+            textView.replaceCharacters(in: range, with: "% TODO: ")
+            textView.didChangeText()
+            return
+        }
+        guard let target = buildSourceURL(),
+              target.pathExtension.lowercased() == "tex" else { return }
+        Task { await appendTodoComment(to: target) }
+    }
+
+    /// Click-to-jump: activate the item's file when needed, then land the
+    /// caret on the comment's line (the inverse-SyncTeX two-step).
+    func openTodo(_ item: DocumentTodoItem) async {
+        if item.url != activeDocumentURL {
+            await activateDocument(item.url)
+        }
+        guard item.url == activeDocumentURL else { return }
+        jumpTo(line: item.line, column: 0)
+    }
+
+    func toggleTodo(_ item: DocumentTodoItem) { editTodo(item, .toggleDone) }
+    func renameTodo(_ item: DocumentTodoItem, to text: String) { editTodo(item, .rename(text)) }
+    func removeTodo(_ item: DocumentTodoItem) { editTodo(item, .delete) }
+
+    /// What a todo-row mutation does to its comment line.
+    private enum TodoLineEdit {
+        case toggleDone
+        case rename(String)
+        case delete
+    }
+
+    /// The active document is edited through the live text view so revision
+    /// tracking stays consistent; every other file goes through the disk
+    /// path, which refuses while a registered session is dirty for it.
+    private func editTodo(_ item: DocumentTodoItem, _ edit: TodoLineEdit) {
+        if item.url == activeDocumentURL {
+            guard let textView = environment?.editor.textView,
+                  let bounds = Self.todoLineBounds(textView.string as NSString, line: item.line),
+                  let replacement = Self.applyTodoEdit(edit, content: bounds.content, terminator: bounds.terminator),
+                  textView.shouldChangeText(in: bounds.range, replacementString: replacement) else { return }
+            textView.replaceCharacters(in: bounds.range, with: replacement)
+            textView.didChangeText()
+            return
+        }
+        Task { await editTodoOnDisk(item.url, line: item.line, edit: edit) }
+    }
+
+    /// Rewrites a comment line in a non-active file. A registered session
+    /// must be clean — the new bytes are then adopted through
+    /// `processDiskChange` exactly like an external edit; a dirty session
+    /// (or none matching) turns the mutation into a no-op rather than
+    /// clobbering unsaved work.
+    private func editTodoOnDisk(_ url: URL, line: Int, edit: TodoLineEdit) async {
+        guard let root = projectURL,
+              let relative = try? Self.relativePath(for: url, root: root) else { return }
+        if await !todoSessionIsClean(relative: relative) { return }
+        guard let diskText = try? Self.readExactUTF8(url) else { return }
+        let nsText = diskText as NSString
+        guard let bounds = Self.todoLineBounds(nsText, line: line),
+              let replacement = Self.applyTodoEdit(edit, content: bounds.content, terminator: bounds.terminator) else { return }
+        let updated = nsText.replacingCharacters(in: bounds.range, with: replacement)
+        let outcome = FoundationAtomicDocumentStore().save(
+            text: updated,
+            to: url,
+            expectedBaselineHash: .hashing(diskText)
+        )
+        guard case .saved = outcome else { return }
+        await processDiskChange(url)
+        refreshTodos()
+    }
+
+    /// `addTodo`'s fallback — appends `% TODO: ` at the end of the build
+    /// target under the same session-clean rules as `editTodoOnDisk`.
+    private func appendTodoComment(to url: URL) async {
+        guard let root = projectURL,
+              let relative = try? Self.relativePath(for: url, root: root) else { return }
+        if await !todoSessionIsClean(relative: relative) { return }
+        guard let diskText = try? Self.readExactUTF8(url) else { return }
+        let separator = diskText.isEmpty || diskText.hasSuffix("\n") ? "" : "\n"
+        let outcome = FoundationAtomicDocumentStore().save(
+            text: diskText + separator + "% TODO: \n",
+            to: url,
+            expectedBaselineHash: .hashing(diskText)
+        )
+        guard case .saved = outcome else { return }
+        await processDiskChange(url)
+        refreshTodos()
+    }
+
+    /// True when no registered session holds unsaved edits for `relative`.
+    private func todoSessionIsClean(relative: NormalizedRelativePath) async -> Bool {
+        guard let session = registeredSessions.first(where: { $0.path == relative }) else { return true }
+        return (await session.snapshot()).saveState == .clean
+    }
+
+    /// Locates a `% TODO:`/`% DONE:` marker inside `line`: the done flag,
+    /// the keyword range (incl. colon), and the text tail after it. Any `%`
+    /// can introduce the comment, so trailing `code % TODO: x` lines count.
+    private static func todoMarker(in line: String) -> (done: Bool, keyword: Range<String.Index>, tail: Range<String.Index>)? {
+        var index = line.startIndex
+        while index < line.endIndex, let percent = line[index...].firstIndex(of: "%") {
+            var cursor = line.index(after: percent)
+            while cursor < line.endIndex, line[cursor] == " " || line[cursor] == "\t" {
+                cursor = line.index(after: cursor)
+            }
+            for (word, done) in [("TODO:", false), ("DONE:", true)] {
+                if line[cursor...].hasPrefix(word) {
+                    let keyEnd = line.index(cursor, offsetBy: word.count)
+                    return (done, cursor..<keyEnd, keyEnd..<line.endIndex)
+                }
+            }
+            index = line.index(after: percent)
+        }
+        return nil
+    }
+
+    /// UTF-16 range of the 1-based `line` including its terminator, split
+    /// into content/terminator so a rewrite can delete or preserve it.
+    private static func todoLineBounds(
+        _ text: NSString, line: Int
+    ) -> (range: NSRange, content: String, terminator: String)? {
+        guard line >= 1 else { return nil }
+        var start = 0
+        var current = 1
+        while current < line {
+            let next = text.range(of: "\n", options: [], range: NSRange(location: start, length: text.length - start))
+            guard next.location != NSNotFound else { return nil }
+            start = next.location + 1
+            current += 1
+        }
+        var lineEnd = 0, contentsEnd = 0
+        text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: start, length: 0))
+        return (
+            NSRange(location: start, length: lineEnd - start),
+            text.substring(with: NSRange(location: start, length: contentsEnd - start)),
+            text.substring(with: NSRange(location: contentsEnd, length: lineEnd - contentsEnd))
+        )
+    }
+
+    /// Full-line replacement for an edit (content + terminator); `nil`
+    /// keeps the file untouched when the marker moved since the scan.
+    private static func applyTodoEdit(_ edit: TodoLineEdit, content: String, terminator: String) -> String? {
+        switch edit {
+        case .delete:
+            return ""
+        case .toggleDone:
+            guard let marker = todoMarker(in: content) else { return nil }
+            var line = content
+            line.replaceSubrange(marker.keyword, with: marker.done ? "TODO:" : "DONE:")
+            return line + terminator
+        case .rename(let text):
+            guard let marker = todoMarker(in: content) else { return nil }
+            var line = content
+            line.replaceSubrange(marker.tail, with: text.isEmpty ? "" : " " + text)
+            return line + terminator
+        }
+    }
     private func rebuildProjectTree() {
         func relative(_ url: URL) -> String {
             guard let root = projectURL else { return url.lastPathComponent }
@@ -1203,6 +1425,23 @@ final class WorkspaceModel: ObservableObject {
                 line: lineNumber(at: match.range.location, lineStarts: lineStarts)
             )
         }
+    }
+
+    /// `%[ \t]*(TODO|DONE):[ \t]*(…)` — one item per comment line, in file
+    /// order like the reference editor's checklist.
+    static func parseTodos(_ text: String, file: String, url: URL) -> [DocumentTodoItem] {
+        var items: [DocumentTodoItem] = []
+        var line = 1
+        for rawLine in (text as NSString).components(separatedBy: "\n") {
+            if let marker = todoMarker(in: rawLine) {
+                let body = rawLine[marker.tail].drop(while: { $0 == " " || $0 == "\t" })
+                items.append(DocumentTodoItem(
+                    file: file, url: url, line: line, text: String(body), done: marker.done
+                ))
+            }
+            line += 1
+        }
+        return items
     }
 
     static func parseBibliography(files: [URL], root: URL?) -> [BibliographyItem] {
@@ -1361,6 +1600,19 @@ final class WorkspaceModel: ObservableObject {
 
     // MARK: - Helpers
 
+    /// `discoverTexFiles`' whitelist — sources plus the figure formats the
+    /// project tree lists. Build artifacts (aux/log/out/…/synctex.gz) stay
+    /// hidden by omission; .pdf stays in because papers use PDF figures.
+    static let projectFileExtensions: Set<String> = [
+        "tex", "bib",
+        "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff", "bmp", "webp",
+    ]
+
+    /// Text files the editor can activate — figure rows open externally.
+    static func isSourceFile(_ url: URL) -> Bool {
+        ["tex", "bib"].contains(url.pathExtension.lowercased())
+    }
+
     static func discoverTexFiles(
         root: URL,
         selected: URL,
@@ -1376,7 +1628,7 @@ final class WorkspaceModel: ObservableObject {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { throw WorkspaceOpenError.unreadableProject }
         var files: [URL] = []
-        for case let url as URL in enumerator where ["tex", "bib"].contains(url.pathExtension.lowercased()) {
+        for case let url as URL in enumerator where Self.projectFileExtensions.contains(url.pathExtension.lowercased()) {
             files.append(url.standardizedFileURL)
         }
         if !isDirectory, !files.contains(selected.standardizedFileURL) {

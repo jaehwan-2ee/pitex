@@ -29,6 +29,8 @@
   "pitex.settings.updates.check",
   "pitex.settings.updates.install",
   "pitex.shellWarning",
+  "pitex.sidebar.todos",
+  "pitex.sidebar.todos.add",
   "pitex.synctexStatus",
   "pitex.tabs",
   "pitex.workspace"
