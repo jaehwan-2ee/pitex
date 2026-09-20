@@ -154,7 +154,8 @@ impl GtkEditorAdapter {
 
     /// `textView.selectedRange()` in UTF-16 units.
     pub fn selected_range(&self) -> EditorTextRange {
-        let text = self.text();
+        // Only text up to the selection end is needed for the UTF-16
+        // conversion — copying the whole buffer per caret move was O(doc).
         let (start, end) = self
             .buffer
             .selection_bounds()
@@ -162,6 +163,8 @@ impl GtkEditorAdapter {
                 let cursor = self.buffer.iter_at_mark(&self.buffer.get_insert());
                 (cursor, cursor)
             });
+        let buf_start = self.buffer.start_iter();
+        let text = self.buffer.text(&buf_start, &end, false).to_string();
         let location = char_offset_to_utf16(&text, start.offset() as usize);
         let end_utf16 = char_offset_to_utf16(&text, end.offset() as usize);
         EditorTextRange {
@@ -270,21 +273,22 @@ impl GtkEditorAdapter {
             return;
         }
         shared.is_submitting.set(true);
-        let submitted_text = shared.desired_text.borrow().clone();
         let mutation = DocumentMutation {
             base_revision: shared.committed.borrow().revision,
             range: DocumentTextRange {
                 location: 0,
                 length: shared.committed.borrow().text.encode_utf16().count(),
             },
-            replacement: submitted_text.clone(),
+            replacement: shared.desired_text.borrow().clone(),
         };
         let result = session.submit(&mutation);
         match result {
             DocumentMutationResult::Applied(snapshot) => {
-                let was_same = *shared.desired_text.borrow() == submitted_text;
+                // `submit` borrows the mutation — `replacement` is still the
+                // submitted text; no second clone needed.
+                let was_same = *shared.desired_text.borrow() == mutation.replacement;
                 shared.committed.replace(snapshot.clone());
-                if was_same && snapshot.text != submitted_text {
+                if was_same && snapshot.text != mutation.replacement {
                     Self::apply_snapshot(shared.clone(), buffer, snapshot);
                 }
             }
@@ -305,23 +309,24 @@ impl GtkEditorAdapter {
     ) {
         let (s, e) = buffer.bounds();
         let current = buffer.text(&s, &e, false).to_string();
-        shared.committed.replace(snapshot.clone());
         *shared.desired_text.borrow_mut() = snapshot.text.clone();
-        if current == snapshot.text {
-            return;
+        if current != snapshot.text {
+            shared.suppress_change.set(true);
+            buffer.set_text(&snapshot.text);
+            shared.suppress_change.set(false);
         }
-        shared.suppress_change.set(true);
-        buffer.set_text(&snapshot.text);
-        shared.suppress_change.set(false);
+        // Move (not clone) the snapshot into committed — nothing observes
+        // it between the set_text above and here on the same thread.
+        shared.committed.replace(snapshot);
     }
 
     /// `apply(_:)` — push a snapshot into the buffer, preserving a clamped
     /// selection like the Swift implementation.
     pub fn apply(&self, snapshot: DocumentSnapshot) {
         let text_before = self.text();
-        self.shared.committed.replace(snapshot.clone());
         *self.shared.desired_text.borrow_mut() = snapshot.text.clone();
         if text_before == snapshot.text {
+            self.shared.committed.replace(snapshot);
             return;
         }
         let previous = self.selected_range();
@@ -337,6 +342,7 @@ impl GtkEditorAdapter {
         let end = self.buffer.iter_at_offset(end_char as i32);
         self.buffer.select_range(&start, &end);
         self.shared.suppress_change.set(false);
+        self.shared.committed.replace(snapshot);
     }
 
     /// Session-owned undo, matching `sessionUndoManager` + `allowsUndo`.
@@ -374,6 +380,18 @@ impl GtkEditorAdapter {
         for tag in stale {
             self.buffer.remove_tag(&tag, &buf_start, &buf_end);
         }
+        // char_indices() once → O(log n) lookup per token; counting chars
+        // from byte 0 per token was O(tokens × doc).
+        let byte_of_char: Vec<usize> = std::iter::once(0)
+            .chain(text.char_indices().map(|(b, _)| b))
+            .chain(std::iter::once(text.len()))
+            .collect();
+        let char_of_byte = |byte: usize| -> i32 {
+            match byte_of_char.binary_search(&byte) {
+                Ok(c) => c as i32,
+                Err(_) => -1,
+            }
+        };
         for decoration in &snapshot.decorations {
             let name = editor_feature::decoration_tag_name(&decoration.token_kind);
             if table.lookup(&name).is_none() {
@@ -393,10 +411,13 @@ impl GtkEditorAdapter {
             if !text.is_char_boundary(start_byte) || !text.is_char_boundary(end_byte) {
                 continue;
             }
-            let start_char = text[..start_byte].chars().count();
-            let end_char = text[..end_byte].chars().count();
-            let start = self.buffer.iter_at_offset(start_char as i32);
-            let end = self.buffer.iter_at_offset(end_char as i32);
+            let start_char = char_of_byte(start_byte);
+            let end_char = char_of_byte(end_byte);
+            if start_char < 0 || end_char < 0 {
+                continue;
+            }
+            let start = self.buffer.iter_at_offset(start_char);
+            let end = self.buffer.iter_at_offset(end_char);
             self.buffer.apply_tag(&tag, &start, &end);
         }
     }

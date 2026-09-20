@@ -5,6 +5,7 @@
 //! `WorkspaceMessage` on the channel installed with `set_event_sink`.
 
 use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ pub enum WorkspacePhase {
 pub enum WorkspaceBuildState {
     Unavailable(String),
     Building,
-    Succeeded { pdf: Vec<u8>, log: String },
+    Succeeded { pdf: Vec<u8>, log: String, hash: u64 },
     Failed(String),
 }
 
@@ -297,13 +298,22 @@ impl TeXProjectResolver {
     }
 
     /// `captures` — every regex group-1 match, whitespace-trimmed.
-    fn captures(pattern: &str, text: &str) -> Vec<String> {
-        let Ok(re) = regex::Regex::new(pattern) else {
-            return Vec::new();
-        };
-        re.captures_iter(text)
-            .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
-            .collect()
+    /// Patterns compile once per thread — `root_hint` calls this per file,
+    /// so per-call `Regex::new` was O(files) compiles per resolve.
+    fn captures(pattern: &'static str, text: &str) -> Vec<String> {
+        thread_local! {
+            static CACHE: RefCell<HashMap<&'static str, regex::Regex>> =
+                RefCell::new(HashMap::new());
+        }
+        CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let re = cache
+                .entry(pattern)
+                .or_insert_with(|| regex::Regex::new(pattern).unwrap());
+            re.captures_iter(text)
+                .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
+                .collect()
+        })
     }
 
     fn root_hint(&mut self, url: &Path) -> Option<PathBuf> {
@@ -669,6 +679,12 @@ pub struct WorkspaceModel {
     pub outline_items: Vec<DocumentOutlineItem>,
     pub label_items: Vec<DocumentLabelItem>,
     pub bibliography_items: Vec<BibliographyItem>,
+    /// Bumped by `refresh_structure_with` — the sidebar rebuilds its lists
+    /// only when this changes instead of on every refresh_sidebar call.
+    pub structure_revision: u64,
+    /// Bumped when `project_files`/`project_children`/the build target
+    /// change — the sidebar's file tree rebuilds only on a bump.
+    pub files_revision: u64,
 
     /// Linux has no sandbox lease — true whenever the filesystem allows it.
     pub read_write: bool,
@@ -753,6 +769,8 @@ impl WorkspaceModel {
             outline_items: Vec::new(),
             label_items: Vec::new(),
             bibliography_items: Vec::new(),
+            structure_revision: 0,
+            files_revision: 0,
             read_write: true,
             files: PlatformFileCapabilityBroker::new(),
             capability_lease: None,
@@ -934,6 +952,7 @@ impl WorkspaceModel {
     pub fn apply_open(&mut self, store: &mut SettingsStore, opened: OpenedProject) {
         self.project_url = Some(opened.root.clone());
         self.project_files = opened.files;
+        self.files_revision += 1;
         self.registered_sessions = vec![opened.session.clone()];
         // `capabilityBroker`/`capabilityLease` (PitexApp.swift:369-383):
         // issue readWrite for the selected path, fall back to readOnly, then
@@ -1264,18 +1283,17 @@ impl WorkspaceModel {
         }
         self.project_files.clear();
         self.project_children.clear();
+        self.files_revision += 1;
         self.open_documents.clear();
-        self.active_document_url = None;
-        self.document_snapshot = None;
-        self.latest_built_pdf_name = None;
+        self.outline_items.clear();
+        self.label_items.clear();
+        self.bibliography_items.clear();
+        self.structure_revision += 1;
         self.synctex_binding = None;
         self.pinned_build_target = None;
         self.automatic_build_target = None;
         self.build_target_message = None;
         self.console_section = ConsoleSection::Assistant;
-        self.outline_items.clear();
-        self.label_items.clear();
-        self.bibliography_items.clear();
         self.phase = WorkspacePhase::NoProject;
     }
 
@@ -1296,6 +1314,7 @@ impl WorkspaceModel {
                 if !self.project_files.contains(&url) {
                     self.project_files.push(url.clone());
                     sort_files(&mut self.project_files);
+                    self.files_revision += 1;
                 }
                 self.activate_document(url, sink);
             }
@@ -1315,6 +1334,7 @@ impl WorkspaceModel {
                 if !self.project_files.contains(&url) {
                     self.project_files.push(url.clone());
                     sort_files(&mut self.project_files);
+                    self.files_revision += 1;
                 }
                 self.activate_document(url, sink);
             }
@@ -1504,6 +1524,7 @@ impl WorkspaceModel {
                 discovered.into_iter().filter(|f| !known.contains(f)).collect();
             if !additions.is_empty() {
                 self.project_files.extend(additions);
+                self.files_revision += 1;
                 sort_files(&mut self.project_files);
             }
         }
@@ -1519,13 +1540,18 @@ impl WorkspaceModel {
     /// `bib` carries items already parsed off-thread; `None` parses the
     /// project's .bib files here (only cheap paths call it that way).
     fn refresh_structure_with(&mut self, bib: Option<Vec<BibliographyItem>>) {
-        let text = self
-            .document_snapshot
-            .as_ref()
-            .map(|s| s.text.clone())
-            .unwrap_or_default();
-        self.outline_items = Self::parse_outline(&text);
-        self.label_items = Self::parse_labels(&text);
+        // Parse from a borrow — cloning the whole document per refresh was
+        // an O(doc) alloc on every structure update.
+        let (outline, labels) = {
+            let text = self
+                .document_snapshot
+                .as_ref()
+                .map(|s| s.text.as_str())
+                .unwrap_or_default();
+            (Self::parse_outline(text), Self::parse_labels(text))
+        };
+        self.outline_items = outline;
+        self.label_items = labels;
         self.bibliography_items = bib.unwrap_or_else(|| {
             let bib_files: Vec<PathBuf> = self
                 .project_files
@@ -1539,6 +1565,7 @@ impl WorkspaceModel {
                 .collect();
             Self::parse_bibliography(&bib_files, self.project_url.as_deref())
         });
+        self.structure_revision += 1;
         if let Some(cb) = &mut self.on_structure_changed {
             cb();
         }
@@ -1548,6 +1575,7 @@ impl WorkspaceModel {
         let Some(root) = self.project_url.clone() else { return };
         if let Ok(discovered) = Self::discover_tex_files(&root, &root, true) {
             self.project_files = discovered;
+            self.files_revision += 1;
             self.refresh_build_target();
             self.refresh_structure();
         }
@@ -1768,6 +1796,12 @@ impl WorkspaceModel {
             Some(data) if data.starts_with(b"%PDF") => {
                 self.latest_built_pdf_name = Some(name);
                 self.build_state = WorkspaceBuildState::Succeeded {
+                    hash: {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        data.hash(&mut h);
+                        h.finish()
+                    },
                     pdf: data,
                     log: self.build_log_text.clone(),
                 };
@@ -1899,6 +1933,7 @@ impl WorkspaceModel {
                 {
                     self.project_files.push(file_url.clone());
                     sort_files(&mut self.project_files);
+                    self.files_revision += 1;
                 }
                 let already_active = self
                     .active_document_url
@@ -2022,6 +2057,7 @@ impl WorkspaceModel {
             }
         }
         self.project_children = children;
+        self.files_revision += 1;
     }
 
     /// `refreshBuildTarget` — resolve the main document for the active
@@ -2270,6 +2306,12 @@ impl WorkspaceModel {
                             .successful_pdf()
                             .unwrap_or_default();
                         self.build_state = WorkspaceBuildState::Succeeded {
+                            hash: {
+                                use std::hash::{Hash, Hasher};
+                                let mut h = std::collections::hash_map::DefaultHasher::new();
+                                pdf.hash(&mut h);
+                                h.finish()
+                            },
                             pdf,
                             log: self.build_log_text.clone(),
                         };
@@ -2455,16 +2497,35 @@ impl WorkspaceModel {
         context
     }
 
+    /// Cheap change key for `agent_context` — the 40ms poll skips the
+    /// clone-heavy rebuild while this matches (revision covers text edits,
+    /// selection covers the attachment, pdf name covers build state).
+    pub fn agent_context_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.project_url.hash(&mut h);
+        self.document_snapshot
+            .as_ref()
+            .map(|s| (s.revision, s.path.raw_value()))
+            .hash(&mut h);
+        self.editor_selection.hash(&mut h);
+        self.project_files.hash(&mut h);
+        self.latest_built_pdf_name.hash(&mut h);
+        h.finish()
+    }
+
     /// `syncSelectionAttachment` — mirrors the dragged range into the agent's
     /// attachment chip.
     pub fn sync_selection_attachment(&mut self) {
         let attachment = (|| {
-            let text = self.document_snapshot.as_ref()?.text.clone();
+            // Borrow the text — cloning the whole document per selection
+            // change was an O(doc) alloc on every caret move.
+            let text = &self.document_snapshot.as_ref()?.text;
             let (loc, len) = self.editor_selection;
-            if len == 0 || loc + len > utf16_len(&text) {
+            if len == 0 || loc + len > utf16_len(text) {
                 return None;
             }
-            let (b0, b1) = utf16_range_to_bytes(&text, loc, len);
+            let (b0, b1) = utf16_range_to_bytes(text, loc, len);
             let selected = text[b0..b1].to_string();
             let start_line = text[..b0].bytes().filter(|b| *b == b'\n').count() + 1;
             let end_line = text[..b1].bytes().filter(|b| *b == b'\n').count() + 1;
