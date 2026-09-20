@@ -1,0 +1,44 @@
+Fixtures/expected/accessibility-identifiers.json
+  h_d73c695d83f4a7 32-33
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_d73c695d83f4a7 34-35,82-83,1141-1231,1942,1951,2030-2046,2800-2903,2964-2973,2985,2987,3002-3006,3842,3858,3918-3974
+Linux/crates/pitex-shell/src/model.rs
+  h_d73c695d83f4a7 77,100-120,564-568,698-701,792-793,1313-1314,1592,1599-1910,2932-2935,2966,3056-3062
+Linux/crates/pitex-shell/tests/workspace_discovery.rs
+  h_d73c695d83f4a7 84-225
+Linux/crates/pitex-shell/tests/workspace_todos.rs
+  h_d73c695d83f4a7 1-133
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 133-139
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 134-140
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 133-139
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 133-139
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 134-140
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 133-139
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 134-140
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 48,53,80-91,222,670,672,1109-1110,1116,1140-1346,1430-1446,1603-1615,1631
+Mac/Sources/Features/BuildSupport.swift
+  h_d73c695d83f4a7 277-279,281-283
+Mac/Sources/Features/ProjectSidebarView.swift
+  h_d73c695d83f4a7 1,11,16-17,21-23,74-75,189-276,340,342-347,350-352,356,360
+Packages/TexApp/Tests/TexAppTests/MacAdapterSourceTests.swift
+  h_d73c695d83f4a7 54-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "085cae0b5b7c73efd12b9e3939560ad12bc5ce64",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
