@@ -197,7 +197,10 @@ private struct PDFDocumentView: NSViewRepresentable {
                     rendered.baseAddress == incoming.baseAddress
                 }
             }
-        guard unchanged || context.coordinator.renderedData == data else { return }
+        // Rebuilding `view.document` resets the PDF to its first page, so
+        // equal bytes — same storage or a byte-compare hit — must return
+        // early; only genuinely new build output reloads the view.
+        if unchanged || context.coordinator.renderedData == data { return }
         context.coordinator.clearSyncHighlight()
         context.coordinator.renderedData = data
         view.document = PDFDocument(data: data)
