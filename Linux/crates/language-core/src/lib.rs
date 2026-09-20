@@ -2,6 +2,12 @@
 //! cross-file language index, outline/reference parsing, and the
 //! UTF-8/UTF-16/line-column coordinate map.
 
+mod completion;
+mod symbols;
+
+pub use completion::{CompletionContext, CompletionContextDetector, CompletionContextKind};
+pub use symbols::{symbols_in, SymbolCategory, TexSymbol, TEX_SYMBOLS};
+
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};

@@ -10,6 +10,15 @@ private final class SessionTextView: NSTextView {
     let sessionUndoManager = UndoManager()
     private var pendingReveal: (range: NSRange, highlight: Bool)?
 
+    /// The UTF-16 range an in-flight completion replaces. Supplied by the
+    /// adapter from the shared context detector so `\cite{a,k` completes
+    /// only `k` — NSTextView's word-boundary default would swallow `a,k`.
+    var userCompletionRange: (() -> NSRange?)?
+
+    override var rangeForUserCompletion: NSRange {
+        userCompletionRange?() ?? super.rangeForUserCompletion
+    }
+
     override var undoManager: UndoManager? { sessionUndoManager }
 
     func reveal(_ range: NSRange, highlight: Bool) {
@@ -66,6 +75,13 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     /// Used for caret-driven chrome such as bracket matching.
     public var onSelectionDidChange: (@MainActor () -> Void)?
 
+    /// Supplies candidates for the native completion popup. Called on the
+    /// main actor with the live text and caret UTF-16 offset; returns the
+    /// UTF-16 range the chosen candidate replaces plus the candidate
+    /// strings in display order. A nil result (or empty list) keeps the
+    /// popup closed — the data source stays outside this adapter.
+    public var completionSource: (@MainActor (_ text: String, _ caretUTF16Offset: Int) -> (range: NSRange, candidates: [String])?)?
+
     private let session: any DocumentSessionPort
     private let sessionTextView: SessionTextView
     private var committed: DocumentSnapshot
@@ -89,6 +105,11 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         nativeView.allowsUndo = true
         nativeView.string = snapshot.text
         nativeView.delegate = self
+        nativeView.userCompletionRange = { [weak self, weak nativeView] in
+            guard let self, let nativeView, let completionSource = self.completionSource
+            else { return nil }
+            return completionSource(nativeView.string, nativeView.selectedRange().location)?.range
+        }
     }
 
     public static func make(session: any DocumentSessionPort) async throws -> EditorMacAdapter {
@@ -115,7 +136,56 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         guard !isApplyingSessionSnapshot else { return }
         desiredText = textView.string
         onTextDidChange?()
+        scheduleCompletionTrigger()
         submitPendingChangeIfNeeded()
+    }
+
+    /// The native completion popup's candidate query after `complete:`
+    /// resolves `rangeForUserCompletion`. The shared context detector owns
+    /// the candidate list; `words` is the fallback for plain text.
+    public func textView(
+        _ textView: NSTextView,
+        completions words: [String],
+        forPartialWordRange charRange: NSRange,
+        indexOfSelectedItem index: UnsafeMutablePointer<Int>
+    ) -> [String] {
+        let caret = min(
+            textView.selectedRange().location + textView.selectedRange().length,
+            (textView.string as NSString).length
+        )
+        return completionSource?(textView.string, caret)?.candidates ?? words
+    }
+
+    /// Shows the native completion popup when the caret sits in a
+    /// completable context (a `\command` prefix, `\cite{…}` or `\ref{…}`
+    /// group); a no-op elsewhere. F5/⌥⎋ reach the same popup through
+    /// NSTextView's own key bindings.
+    public func requestCompletion() {
+        presentCompletionIfContextual()
+    }
+
+    /// Debounced so the popup follows typing without re-evaluating the
+    /// context on every keystroke. While the popup is open the partial
+    /// completion is marked text, which suppresses retriggering.
+    private var completionTriggerTask: Task<Void, Never>?
+
+    private func scheduleCompletionTrigger() {
+        completionTriggerTask?.cancel()
+        guard completionSource != nil else { return }
+        completionTriggerTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled, let self else { return }
+            self.presentCompletionIfContextual()
+        }
+    }
+
+    private func presentCompletionIfContextual() {
+        guard let completionSource, !textView.hasMarkedText() else { return }
+        let selection = textView.selectedRange()
+        guard selection.length == 0,
+              let result = completionSource(textView.string, selection.location),
+              !result.candidates.isEmpty else { return }
+        textView.complete(nil)
     }
 
     private func submitPendingChangeIfNeeded() {

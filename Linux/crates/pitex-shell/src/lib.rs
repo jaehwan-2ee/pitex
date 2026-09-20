@@ -9,6 +9,7 @@
 pub mod agent;
 pub mod app_ui;
 pub mod compat;
+pub mod completion;
 pub mod fold;
 pub mod l10n;
 pub mod model;

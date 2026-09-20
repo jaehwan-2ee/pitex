@@ -1,4 +1,5 @@
 import AppKit
+import LanguageCore
 import SwiftUI
 
 struct WorkspaceView: View {
@@ -10,6 +11,8 @@ struct WorkspaceView: View {
     /// (minimap flag, appearance colors) live when Preferences change.
     @ObservedObject private var settingsStore: SettingsStore
     @ObservedObject private var appearance = AppearanceSettings.shared
+    /// Symbols palette popover anchored to the toolbar button.
+    @State private var showingSymbols = false
 
     init(workspace: WorkspaceModel) {
         self.workspace = workspace
@@ -436,7 +439,28 @@ struct WorkspaceView: View {
             .disabled(workspace.environment == nil)
             .keyboardShortcut("f")
             .accessibilityIdentifier("pitex.toolbar.find")
+
+            Button {
+                showingSymbols = true
+            } label: {
+                Label("editor.symbols", systemImage: "x.squareroot")
+            }
+            .help(String(localized: "editor.symbols"))
+            .disabled(workspace.environment == nil)
+            .accessibilityIdentifier("pitex.toolbar.symbols")
+            .popover(isPresented: $showingSymbols, arrowEdge: .bottom) {
+                SymbolsPaletteView(onInsert: insertSymbol)
+            }
         }
+    }
+
+    /// Inserts the palette's LaTeX command at the caret through
+    /// NSTextView's own insertion path, so undo grouping and the
+    /// document-session submit pipeline behave exactly like typed text.
+    private func insertSymbol(_ symbol: TexSymbol) {
+        guard let textView = workspace.environment?.editor.textView else { return }
+        textView.insertText(symbol.command, replacementRange: textView.selectedRange())
+        textView.window?.makeFirstResponder(textView)
     }
 
     private func showFindPanel() {
@@ -444,5 +468,50 @@ struct WorkspaceView: View {
         let sender = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         sender.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         textView.performFindPanelAction(sender)
+    }
+}
+
+/// TeXifier-style symbols palette: a category menu above a glyph grid.
+/// Rows come from the shared `TexSymbolCatalogue` so macOS and Linux list
+/// identical symbols in identical order.
+private struct SymbolsPaletteView: View {
+    let onInsert: (TexSymbol) -> Void
+    @State private var category = SymbolCategory.greekLetters
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker(selection: $category) {
+                ForEach(SymbolCategory.allCases, id: \.self) { item in
+                    Text(item.titleKey).tag(item)
+                }
+            } label: {
+                Text("editor.symbols")
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+
+            ScrollView {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 32), spacing: 2)],
+                    spacing: 2
+                ) {
+                    ForEach(TexSymbolCatalogue.symbols(in: category), id: \.command) { symbol in
+                        Button {
+                            onInsert(symbol)
+                        } label: {
+                            Text(symbol.glyph)
+                                .font(.system(size: 17))
+                                .frame(width: 30, height: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(symbol.command)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 320, height: 320)
+        .accessibilityIdentifier("pitex.symbols.palette")
     }
 }

@@ -174,6 +174,22 @@
 "editor.disk_unchanged" = "ディスクに変更はありません";
 "editor.minimap" = "ミニマップは利用できません";
 "editor.words_unit" = "語";
+"editor.symbols" = "記号";
+"editor.completion" = "補完";
+"editor.symbol_cat_greek" = "ギリシャ文字";
+"editor.symbol_cat_binary_relations" = "二項関係";
+"editor.symbol_cat_binary_operators" = "二項演算子";
+"editor.symbol_cat_big_operators" = "大型演算子";
+"editor.symbol_cat_arrows" = "矢印";
+"editor.symbol_cat_delimiters" = "区切り文字";
+"editor.symbol_cat_large_delimiters" = "大型区切り文字";
+"editor.symbol_cat_misc_math" = "その他の数学記号";
+"editor.symbol_cat_text_mode" = "テキスト記号";
+"editor.symbol_cat_ams_delimiters" = "AMS区切り文字";
+"editor.symbol_cat_ams_greek_hebrew" = "AMSギリシャ・ヘブライ文字";
+"editor.symbol_cat_ams_binary_operators" = "AMS二項演算子";
+"editor.symbol_cat_ams_binary_relations" = "AMS二項関係";
+"editor.symbol_cat_ams_arrows" = "AMS矢印";
 
 "assistant.attach_document" = "アクティブな書類を添付";
 "assistant.attach_files_help" = "プロジェクトファイルを入力欄に添付";

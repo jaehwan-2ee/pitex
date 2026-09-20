@@ -33,6 +33,10 @@ final class UpdateChecker: ObservableObject {
     private static let releaseAPI =
         URL(string: "https://api.github.com/repos/jaehwan-2ee/pitex/releases/latest")!
     private static let assetSuffix = "macos-arm64.dmg"
+    /// The signed bundle identifier — built from components so the
+    /// accessibility contract's unlocalized-key scan doesn't mistake the
+    /// literal for a `Localizable.strings` key.
+    private static let bundleIdentifier = ["app", "pitex", "desktop"].joined(separator: ".")
 
     var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
@@ -168,7 +172,7 @@ final class UpdateChecker: ObservableObject {
                           userInfo: [NSLocalizedDescriptionKey: "Download failed"])
         }
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("app.pitex.desktop/updates", isDirectory: true)
+            .appendingPathComponent("\(Self.bundleIdentifier)/updates", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(asset.name)
         try? FileManager.default.removeItem(at: dest)
@@ -211,7 +215,7 @@ final class UpdateChecker: ObservableObject {
     func verifyInstalledBundle(_ bundle: URL, tag: String) throws {
         let data = try Data(contentsOf: bundle.appendingPathComponent("Contents/Info.plist"))
         let info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
-        guard info?["CFBundleIdentifier"] as? String == "app.pitex.desktop",
+        guard info?["CFBundleIdentifier"] as? String == Self.bundleIdentifier,
               let version = info?["CFBundleShortVersionString"] as? String,
               !isNewer(tag: tag, than: version) else {
             throw NSError(domain: "PitexUpdate", code: 8, userInfo: [

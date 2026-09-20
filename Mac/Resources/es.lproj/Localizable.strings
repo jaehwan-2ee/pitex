@@ -175,6 +175,22 @@
 "editor.disk_unchanged" = "No hay cambios en el disco";
 "editor.minimap" = "Minimapa no disponible";
 "editor.words_unit" = "palabras";
+"editor.symbols" = "Símbolos";
+"editor.completion" = "Completado";
+"editor.symbol_cat_greek" = "Letras griegas";
+"editor.symbol_cat_binary_relations" = "Relaciones binarias";
+"editor.symbol_cat_binary_operators" = "Operadores binarios";
+"editor.symbol_cat_big_operators" = "Operadores grandes";
+"editor.symbol_cat_arrows" = "Flechas";
+"editor.symbol_cat_delimiters" = "Delimitadores";
+"editor.symbol_cat_large_delimiters" = "Delimitadores grandes";
+"editor.symbol_cat_misc_math" = "Símbolos matemáticos varios";
+"editor.symbol_cat_text_mode" = "Símbolos de texto";
+"editor.symbol_cat_ams_delimiters" = "Delimitadores AMS";
+"editor.symbol_cat_ams_greek_hebrew" = "Griego y hebreo AMS";
+"editor.symbol_cat_ams_binary_operators" = "Operadores binarios AMS";
+"editor.symbol_cat_ams_binary_relations" = "Relaciones binarias AMS";
+"editor.symbol_cat_ams_arrows" = "Flechas AMS";
 
 "assistant.attach_document" = "Adjuntar documento activo";
 "assistant.attach_files_help" = "Adjuntar archivos del proyecto al campo de entrada";

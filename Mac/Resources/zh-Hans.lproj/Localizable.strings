@@ -175,6 +175,22 @@
 "editor.disk_unchanged" = "磁盘上没有更改";
 "editor.minimap" = "小地图不可用";
 "editor.words_unit" = "词";
+"editor.symbols" = "符号";
+"editor.completion" = "补全";
+"editor.symbol_cat_greek" = "希腊字母";
+"editor.symbol_cat_binary_relations" = "二元关系";
+"editor.symbol_cat_binary_operators" = "二元运算符";
+"editor.symbol_cat_big_operators" = "大型运算符";
+"editor.symbol_cat_arrows" = "箭头";
+"editor.symbol_cat_delimiters" = "定界符";
+"editor.symbol_cat_large_delimiters" = "大型定界符";
+"editor.symbol_cat_misc_math" = "其他数学符号";
+"editor.symbol_cat_text_mode" = "文本符号";
+"editor.symbol_cat_ams_delimiters" = "AMS 定界符";
+"editor.symbol_cat_ams_greek_hebrew" = "AMS 希腊与希伯来字母";
+"editor.symbol_cat_ams_binary_operators" = "AMS 二元运算符";
+"editor.symbol_cat_ams_binary_relations" = "AMS 二元关系";
+"editor.symbol_cat_ams_arrows" = "AMS 箭头";
 
 "assistant.attach_document" = "附加活动文档";
 "assistant.attach_files_help" = "将项目文件附加到输入框";

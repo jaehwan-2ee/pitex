@@ -174,6 +174,22 @@
 "editor.disk_unchanged" = "디스크에 변경 사항이 없습니다";
 "editor.minimap" = "미니맵 사용 불가";
 "editor.words_unit" = "단어";
+"editor.symbols" = "기호";
+"editor.completion" = "자동 완성";
+"editor.symbol_cat_greek" = "그리스 문자";
+"editor.symbol_cat_binary_relations" = "이항 관계";
+"editor.symbol_cat_binary_operators" = "이항 연산자";
+"editor.symbol_cat_big_operators" = "대형 연산자";
+"editor.symbol_cat_arrows" = "화살표";
+"editor.symbol_cat_delimiters" = "구분 기호";
+"editor.symbol_cat_large_delimiters" = "큰 구분 기호";
+"editor.symbol_cat_misc_math" = "기타 수학 기호";
+"editor.symbol_cat_text_mode" = "텍스트 기호";
+"editor.symbol_cat_ams_delimiters" = "AMS 구분 기호";
+"editor.symbol_cat_ams_greek_hebrew" = "AMS 그리스·히브리 문자";
+"editor.symbol_cat_ams_binary_operators" = "AMS 이항 연산자";
+"editor.symbol_cat_ams_binary_relations" = "AMS 이항 관계";
+"editor.symbol_cat_ams_arrows" = "AMS 화살표";
 
 "assistant.attach_document" = "활성 문서 첨부";
 "assistant.attach_files_help" = "프로젝트 파일을 입력창에 첨부";

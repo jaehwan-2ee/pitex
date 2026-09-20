@@ -175,6 +175,22 @@
 "editor.disk_unchanged" = "Изменений на диске нет";
 "editor.minimap" = "Миникарта недоступна";
 "editor.words_unit" = "слов";
+"editor.symbols" = "Символы";
+"editor.completion" = "Дополнение";
+"editor.symbol_cat_greek" = "Греческие буквы";
+"editor.symbol_cat_binary_relations" = "Бинарные отношения";
+"editor.symbol_cat_binary_operators" = "Бинарные операторы";
+"editor.symbol_cat_big_operators" = "Крупные операторы";
+"editor.symbol_cat_arrows" = "Стрелки";
+"editor.symbol_cat_delimiters" = "Ограничители";
+"editor.symbol_cat_large_delimiters" = "Крупные ограничители";
+"editor.symbol_cat_misc_math" = "Прочие математические символы";
+"editor.symbol_cat_text_mode" = "Текстовые символы";
+"editor.symbol_cat_ams_delimiters" = "Ограничители AMS";
+"editor.symbol_cat_ams_greek_hebrew" = "Греческие и еврейские AMS";
+"editor.symbol_cat_ams_binary_operators" = "Бинарные операторы AMS";
+"editor.symbol_cat_ams_binary_relations" = "Бинарные отношения AMS";
+"editor.symbol_cat_ams_arrows" = "Стрелки AMS";
 
 "assistant.attach_document" = "Прикрепить активный документ";
 "assistant.attach_files_help" = "Прикрепить файлы проекта к полю ввода";

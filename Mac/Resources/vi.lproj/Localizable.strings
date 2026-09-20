@@ -174,6 +174,22 @@
 "editor.disk_unchanged" = "Không có thay đổi trên đĩa";
 "editor.minimap" = "Minimap không khả dụng";
 "editor.words_unit" = "từ";
+"editor.symbols" = "Ký hiệu";
+"editor.completion" = "Hoàn thành";
+"editor.symbol_cat_greek" = "Chữ Hy Lạp";
+"editor.symbol_cat_binary_relations" = "Quan hệ nhị phân";
+"editor.symbol_cat_binary_operators" = "Toán tử nhị phân";
+"editor.symbol_cat_big_operators" = "Toán tử lớn";
+"editor.symbol_cat_arrows" = "Mũi tên";
+"editor.symbol_cat_delimiters" = "Dấu phân cách";
+"editor.symbol_cat_large_delimiters" = "Dấu phân cách lớn";
+"editor.symbol_cat_misc_math" = "Ký hiệu toán khác";
+"editor.symbol_cat_text_mode" = "Ký hiệu văn bản";
+"editor.symbol_cat_ams_delimiters" = "Dấu phân cách AMS";
+"editor.symbol_cat_ams_greek_hebrew" = "Chữ Hy Lạp & Do Thái AMS";
+"editor.symbol_cat_ams_binary_operators" = "Toán tử nhị phân AMS";
+"editor.symbol_cat_ams_binary_relations" = "Quan hệ nhị phân AMS";
+"editor.symbol_cat_ams_arrows" = "Mũi tên AMS";
 
 "assistant.attach_document" = "Đính kèm tài liệu đang mở";
 "assistant.attach_files_help" = "Đính kèm tệp dự án vào khung soạn";

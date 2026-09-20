@@ -4,7 +4,9 @@ import AppShell
 import BuildCore
 import Darwin
 import DocumentSessionCore
+import EditorMacAdapter
 import Foundation
+import LanguageCore
 import MacPlatform
 import ProjectCore
 import ProjectFeature
@@ -206,6 +208,11 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var outlineItems: [DocumentOutlineItem] = []
     @Published private(set) var labelItems: [DocumentLabelItem] = []
     @Published private(set) var bibliographyItems: [BibliographyItem] = []
+    /// Project-wide \label keys and .bib citation keys feeding the editor's
+    /// native completion. Rebuilt on the structure-refresh cadence through
+    /// mtime-keyed caches — never reparsed per keystroke.
+    @Published private(set) var projectLabels: Set<String> = []
+    @Published private(set) var citationKeys: Set<String> = []
 
     var capabilityBroker: (any FileCapabilityBroker)?
     var capabilityLease: FileAccessLease?
@@ -437,6 +444,7 @@ final class WorkspaceModel: ObservableObject {
             coordinator.historyLimit = settings.chatHistoryLimit
             agent = coordinator
             highlighter.attach(to: appEnvironment.editor, fileExtension: initialURL.pathExtension)
+            attachCompletion(to: appEnvironment.editor)
             startWatcher(for: initialURL)
             coordinator.prepare()
             phase = .ready
@@ -481,6 +489,7 @@ final class WorkspaceModel: ObservableObject {
             documentSnapshot = snapshot
             refreshBuildTarget()
             highlighter.attach(to: appEnvironment.editor, fileExtension: url.pathExtension)
+            attachCompletion(to: appEnvironment.editor)
             startWatcher(for: url)
             phase = .ready
             await restoreBuiltPreview()
@@ -654,6 +663,9 @@ final class WorkspaceModel: ObservableObject {
         labelItems = []
         bibliographyItems = []
         bibliographyCache = nil
+        projectLabels = []
+        citationKeys = []
+        projectLabelCache = nil
         structureTask?.cancel()
         structureTask = nil
         phase = .noProject
@@ -1008,6 +1020,9 @@ final class WorkspaceModel: ObservableObject {
         ), snapshot.path == documentSnapshot?.path {
             documentSnapshot = updated
         }
+        // A watched non-active file's labels/citations changed on disk too —
+        // the mtime key in the structure caches picks it up on this pass.
+        scheduleStructureRefresh()
     }
 
     // MARK: - Agent integration
@@ -1097,6 +1112,91 @@ final class WorkspaceModel: ObservableObject {
         outlineItems = Self.parseOutline(text)
         labelItems = Self.parseLabels(text)
         refreshBibliography()
+        refreshCompletionKeys(text: text)
+    }
+
+    /// Completion key sets: labels merge every project .tex file
+    /// (mtime-cached disk reads) with the active buffer, which may hold
+    /// unsaved edits; citations merge every project .bib file via
+    /// `bibliographyItems` with the active buffer when a .bib is open.
+    private func refreshCompletionKeys(text: String) {
+        let activeIsTex = activeDocumentURL?.pathExtension.lowercased() == "tex"
+        var labels = cachedProjectLabels()
+        if activeIsTex {
+            labels.formUnion(labelItems.map(\.name))
+        }
+        projectLabels = labels
+
+        var citations = Set(bibliographyItems.map(\.key))
+        if activeDocumentURL?.pathExtension.lowercased() == "bib" {
+            citations.formUnion(Self.parseBibliographyKeys(text))
+        }
+        citationKeys = citations
+    }
+
+    /// mtime-keyed cache on the same contract as `bibliographyCache` —
+    /// project .tex files are only re-read when the file list or a
+    /// modification date changes. The active document is excluded: its
+    /// in-memory buffer is the authority for its labels.
+    private var projectLabelCache: (key: [String], labels: Set<String>)?
+
+    private func cachedProjectLabels() -> Set<String> {
+        let activePath = activeDocumentURL?.standardizedFileURL.path
+        let files = projectFiles.filter {
+            $0.pathExtension.lowercased() == "tex"
+                && $0.standardizedFileURL.path != activePath
+        }
+        let key = files.map { file in
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate?.timeIntervalSince1970) ?? 0
+            return "\(file.path)#\(modified)"
+        }
+        if let cache = projectLabelCache, cache.key == key {
+            return cache.labels
+        }
+        var labels = Set<String>()
+        for file in files {
+            guard let fileText = try? Self.readExactUTF8(file) else { continue }
+            labels.formUnion(Self.parseLabels(fileText).map(\.name))
+        }
+        projectLabelCache = (key, labels)
+        return labels
+    }
+
+    /// The editor's completion source: shared context detection plus the
+    /// project-wide key sets. Reattached per adapter because each document
+    /// activation builds a new EditorMacAdapter.
+    private func attachCompletion(to editor: EditorMacAdapter) {
+        editor.completionSource = { [weak self] text, caretUTF16Offset in
+            self?.editorCompletions(in: text, caretUTF16Offset: caretUTF16Offset)
+        }
+    }
+
+    /// Detects the caret's completion context in shared LanguageCore and
+    /// maps the project key sets into native candidates. The returned
+    /// UTF-16 range covers only the current prefix/token, so the popup
+    /// inserts the missing tail rather than re-typing the whole command.
+    func editorCompletions(
+        in text: String,
+        caretUTF16Offset: Int
+    ) -> (range: NSRange, candidates: [String])? {
+        guard let context = CompletionContextDetector.context(
+            in: text,
+            caretUTF16Offset: caretUTF16Offset
+        ) else { return nil }
+        let items = LanguageIndex.completions(
+            for: context,
+            labels: projectLabels,
+            citationKeys: citationKeys
+        )
+        guard !items.isEmpty else { return nil }
+        return (
+            NSRange(
+                location: context.prefixUTF16Offset,
+                length: max(0, caretUTF16Offset - context.prefixUTF16Offset)
+            ),
+            items.map(\.text)
+        )
     }
 
     /// .bib items come from disk, not the editor buffer: re-parse only when
@@ -1203,6 +1303,16 @@ final class WorkspaceModel: ObservableObject {
                 line: lineNumber(at: match.range.location, lineStarts: lineStarts)
             )
         }
+    }
+
+    /// Every @entry key in a .bib text — used for the in-memory buffer's
+    /// contribution to the project citation set.
+    static func parseBibliographyKeys(_ text: String) -> Set<String> {
+        guard let regex = bibliographyRegex else { return [] }
+        let nsText = text as NSString
+        return Set(regex
+            .matches(in: text, range: NSRange(location: 0, length: nsText.length))
+            .map { nsText.substring(with: $0.range(at: 2)) })
     }
 
     static func parseBibliography(files: [URL], root: URL?) -> [BibliographyItem] {
