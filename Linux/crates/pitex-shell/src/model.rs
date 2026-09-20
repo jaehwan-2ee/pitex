@@ -5,6 +5,7 @@
 //! `WorkspaceMessage` on the channel installed with `set_event_sink`.
 
 use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -297,13 +298,22 @@ impl TeXProjectResolver {
     }
 
     /// `captures` — every regex group-1 match, whitespace-trimmed.
-    fn captures(pattern: &str, text: &str) -> Vec<String> {
-        let Ok(re) = regex::Regex::new(pattern) else {
-            return Vec::new();
-        };
-        re.captures_iter(text)
-            .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
-            .collect()
+    /// Patterns compile once per thread — `root_hint` calls this per file,
+    /// so per-call `Regex::new` was O(files) compiles per resolve.
+    fn captures(pattern: &'static str, text: &str) -> Vec<String> {
+        thread_local! {
+            static CACHE: RefCell<HashMap<&'static str, regex::Regex>> =
+                RefCell::new(HashMap::new());
+        }
+        CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let re = cache
+                .entry(pattern)
+                .or_insert_with(|| regex::Regex::new(pattern).unwrap());
+            re.captures_iter(text)
+                .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
+                .collect()
+        })
     }
 
     fn root_hint(&mut self, url: &Path) -> Option<PathBuf> {
@@ -669,6 +679,12 @@ pub struct WorkspaceModel {
     pub outline_items: Vec<DocumentOutlineItem>,
     pub label_items: Vec<DocumentLabelItem>,
     pub bibliography_items: Vec<BibliographyItem>,
+    /// Bumped by `refresh_structure_with` — the sidebar rebuilds its lists
+    /// only when this changes instead of on every refresh_sidebar call.
+    pub structure_revision: u64,
+    /// Bumped when `project_files`/`project_children`/the build target
+    /// change — the sidebar's file tree rebuilds only on a bump.
+    pub files_revision: u64,
 
     /// Linux has no sandbox lease — true whenever the filesystem allows it.
     pub read_write: bool,
@@ -753,6 +769,8 @@ impl WorkspaceModel {
             outline_items: Vec::new(),
             label_items: Vec::new(),
             bibliography_items: Vec::new(),
+            structure_revision: 0,
+            files_revision: 0,
             read_write: true,
             files: PlatformFileCapabilityBroker::new(),
             capability_lease: None,
@@ -1519,13 +1537,18 @@ impl WorkspaceModel {
     /// `bib` carries items already parsed off-thread; `None` parses the
     /// project's .bib files here (only cheap paths call it that way).
     fn refresh_structure_with(&mut self, bib: Option<Vec<BibliographyItem>>) {
-        let text = self
-            .document_snapshot
-            .as_ref()
-            .map(|s| s.text.clone())
-            .unwrap_or_default();
-        self.outline_items = Self::parse_outline(&text);
-        self.label_items = Self::parse_labels(&text);
+        // Parse from a borrow — cloning the whole document per refresh was
+        // an O(doc) alloc on every structure update.
+        let (outline, labels) = {
+            let text = self
+                .document_snapshot
+                .as_ref()
+                .map(|s| s.text.as_str())
+                .unwrap_or_default();
+            (Self::parse_outline(text), Self::parse_labels(text))
+        };
+        self.outline_items = outline;
+        self.label_items = labels;
         self.bibliography_items = bib.unwrap_or_else(|| {
             let bib_files: Vec<PathBuf> = self
                 .project_files
@@ -1539,6 +1562,7 @@ impl WorkspaceModel {
                 .collect();
             Self::parse_bibliography(&bib_files, self.project_url.as_deref())
         });
+        self.structure_revision += 1;
         if let Some(cb) = &mut self.on_structure_changed {
             cb();
         }
@@ -2453,6 +2477,23 @@ impl WorkspaceModel {
             context.pdf_path = self.latest_built_pdf_name.clone();
         }
         context
+    }
+
+    /// Cheap change key for `agent_context` — the 40ms poll skips the
+    /// clone-heavy rebuild while this matches (revision covers text edits,
+    /// selection covers the attachment, pdf name covers build state).
+    pub fn agent_context_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.project_url.hash(&mut h);
+        self.document_snapshot
+            .as_ref()
+            .map(|s| (s.revision, s.path.raw_value()))
+            .hash(&mut h);
+        self.editor_selection.hash(&mut h);
+        self.project_files.hash(&mut h);
+        self.latest_built_pdf_name.hash(&mut h);
+        h.finish()
     }
 
     /// `syncSelectionAttachment` — mirrors the dragged range into the agent's

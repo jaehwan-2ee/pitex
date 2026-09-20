@@ -1087,6 +1087,9 @@ pub struct AgentCoordinator {
     /// different id are stale and ignored. Public for integration tests.
     #[doc(hidden)]
     pub model_settings_request_id: Option<String>,
+    /// Bumped on every mutation of UI-visible state; the panel rebuilds
+    /// only when this changes instead of every 40ms poll tick.
+    pub ui_revision: u64,
 
     /// Workspace hooks.
     pub context_provider: Option<Box<dyn Fn() -> AgentContextSnapshot>>,
@@ -1133,6 +1136,7 @@ impl AgentCoordinator {
             selection_attachment: None,
             suppressed_attachment: None,
             model_settings_request_id: None,
+            ui_revision: 0,
             session_stats: None,
             commands: Vec::new(),
             context_provider: None,
@@ -1157,6 +1161,7 @@ impl AgentCoordinator {
     ) {
         self.attach_active_document = value;
         store.prefs_mut().set(Self::ATTACH_DOCUMENT_KEY, value);
+        self.ui_revision += 1;
     }
 
     /// `updateSelectionAttachment` — verbatim suppression logic.
@@ -1166,13 +1171,16 @@ impl AgentCoordinator {
         }
         self.suppressed_attachment = None;
         self.selection_attachment = attachment;
+        self.ui_revision += 1;
     }
     pub fn clear_selection_attachment(&mut self) {
         self.suppressed_attachment = self.selection_attachment.take();
+        self.ui_revision += 1;
     }
 
     pub fn insert_into_composer(&mut self, text: &str) {
         self.pending_composer_insertion = Some(text.to_string());
+        self.ui_revision += 1;
     }
 
     /// Idempotent startup — `prepare()`. Returns the spawn error if the
@@ -1227,6 +1235,7 @@ impl AgentCoordinator {
                 self.status_message = None;
             }
         }
+        self.ui_revision += 1;
     }
 
     fn spawn_with_tools(&mut self, executable: &Path, root: &Path, tools: PiToolchain) {
@@ -1276,6 +1285,7 @@ impl AgentCoordinator {
         if !self.intentional_stop {
             self.connection = Connection::Failed("The agent process exited unexpectedly.".into());
         }
+        self.ui_revision += 1;
     }
 
     pub fn shutdown(&mut self) {
@@ -1288,6 +1298,7 @@ impl AgentCoordinator {
         self.model_settings_request_id = None;
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
+        self.ui_revision += 1;
     }
 
     /// Restart after provider/config changes — `shutdown` leaves
@@ -1300,6 +1311,7 @@ impl AgentCoordinator {
         self.session_stats = None;
         self.commands.clear();
         self.prepare();
+        self.ui_revision += 1;
     }
 
     /// Poll one event (non-blocking) — the UI drains in its idle loop.
@@ -1384,6 +1396,7 @@ impl AgentCoordinator {
         ) {
             self.status_message = Some(format!("The prompt could not be sent: {e}"));
         }
+        self.ui_revision += 1;
     }
 
     pub fn stop(&mut self) {
@@ -1393,6 +1406,7 @@ impl AgentCoordinator {
         if let Some(process) = &self.process {
             let _ = process.send(&PiRPCCommand::Abort, None);
         }
+        self.ui_revision += 1;
     }
     pub fn new_session(&mut self) {
         let Some(process) = &self.process else { return };
@@ -1404,6 +1418,7 @@ impl AgentCoordinator {
         self.assistant_entry_index = None;
         self.thinking_entry_index = None;
         let _ = process.send(&PiRPCCommand::NewSession, None);
+        self.ui_revision += 1;
     }
     pub fn select_model(&mut self, model: &PiModelDescriptor) {
         if self.is_updating_model_settings || self.current_model.as_ref() == Some(model) {
@@ -1416,6 +1431,7 @@ impl AgentCoordinator {
             },
             None,
         );
+        self.ui_revision += 1;
     }
 
     /// Reasoning-effort levels the *current model* accepts — reported by pi's
@@ -1434,6 +1450,7 @@ impl AgentCoordinator {
             },
             None,
         );
+        self.ui_revision += 1;
     }
 
     /// Read state after each change, then query capabilities for that state.
@@ -1474,6 +1491,7 @@ impl AgentCoordinator {
 
     /// `handle(_:)` — the full event switch, verbatim.
     pub fn handle(&mut self, event: &PiRPCEvent) {
+        self.ui_revision += 1;
         match event.event_type.as_str() {
             "response" => self.handle_response(event),
             "agent_start" => self.is_running = true,

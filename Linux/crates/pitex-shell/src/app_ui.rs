@@ -154,6 +154,15 @@ pub struct AppState {
     /// The fold chip layer currently overlaid on the editor scroller —
     /// tracked so `rebind_editor_widget` can remove the previous one.
     pub fold_chip: RefCell<Option<gtk4::DrawingArea>>,
+    /// Last `AgentCoordinator::ui_revision` rendered by `refresh_assistant`
+    /// — the transcript/picker rebuild is skipped while it matches.
+    pub rendered_agent_revision: Cell<u64>,
+    /// Last AI font size applied to the transcript CSS — changes force a
+    /// rebuild even when `ui_revision` is unchanged.
+    pub rendered_ai_font_size: Cell<f64>,
+    /// Last `agent_context_key` pushed into `context_cell` — the 40ms poll
+    /// skips the clone-heavy rebuild while the key is unchanged.
+    pub last_context_key: Cell<u64>,
     /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
     /// capability lease like `capabilityBroker`, `workspace` opens externals).
     pub env: PlatformEnvironment,
@@ -163,6 +172,9 @@ pub struct AppState {
     pub active_session: Option<DocumentSession>,
     /// Debounce source for post-edit re-highlighting (120ms like Swift).
     pub highlight_pending: Cell<bool>,
+    /// Debounce for the per-keystroke structure parse (outline/labels) —
+    /// same 120ms cadence as `highlight_pending`.
+    pub structure_pending: Cell<bool>,
     /// Debounce for external-change coalescing (0.35s).
     pub disk_pending: RefCell<HashMap<PathBuf, glib::SourceId>>,
     pub watchers: Vec<gio::FileMonitor>,
@@ -220,10 +232,14 @@ impl AppState {
             editor: None,
             fold: None,
             fold_chip: RefCell::new(None),
+            rendered_agent_revision: Cell::new(0),
+            rendered_ai_font_size: Cell::new(0.0),
+            last_context_key: Cell::new(0),
             env: PlatformEnvironment::make("dev.pitex.app"),
             app_version,
             active_session: None,
             highlight_pending: Cell::new(false),
+            structure_pending: Cell::new(false),
             disk_pending: RefCell::new(HashMap::new()),
             watchers: Vec::new(),
             pdf: None,
@@ -621,7 +637,9 @@ impl AppState {
         if let Some(session) = self.active_session.clone() {
             self.model.document_snapshot = Some(session.snapshot());
         }
-        self.model.refresh_structure();
+        // Structure parse is debounced — it re-parses the whole document
+        // and ran on every keystroke.
+        self.schedule_structure_refresh();
         self.refresh_after_document_change();
         self.model.sync_selection_attachment();
         self.schedule_autosave();
@@ -814,6 +832,25 @@ impl AppState {
             STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     state.borrow().rehighlight();
+                }
+            });
+        });
+    }
+
+    /// Debounced structure refresh — coalesces per-keystroke calls into one
+    /// parse+sidebar rebuild 120ms after the last edit.
+    fn schedule_structure_refresh(&self) {
+        if self.structure_pending.replace(true) {
+            return;
+        }
+        glib::timeout_add_local_once(Duration::from_millis(120), || {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.structure_pending.set(false);
+                        st.model.refresh_structure();
+                        st.refresh_sidebar();
+                    }
                 }
             });
         });
@@ -2049,16 +2086,24 @@ impl AppState {
     // ── refresh: PDF / synctex ─────────────────────────────────────────────
 
     pub fn refresh_pdf_ui(&mut self) {
-        let pdf_data = match &self.model.build_state {
-            WorkspaceBuildState::Succeeded { pdf, .. } => Some(pdf.clone()),
-            _ => None,
-        };
-        match (pdf_data, &self.pdf) {
-            (Some(data), _) => {
+        // Hash the stored bytes in place — cloning the whole PDF per
+        // refresh (this runs on every keystroke) was an O(pdf) alloc+hash.
+        let pdf_hash = match &self.model.build_state {
+            WorkspaceBuildState::Succeeded { pdf, .. } => {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                data.hash(&mut hasher);
-                let hash = hasher.finish();
+                pdf.hash(&mut hasher);
+                Some(hasher.finish())
+            }
+            _ => None,
+        };
+        match (pdf_hash, &self.pdf) {
+            (Some(hash), _) => {
+                let WorkspaceBuildState::Succeeded { pdf: data, .. } =
+                    &self.model.build_state
+                else {
+                    return;
+                };
                 if self.pdf.is_none() || self.pdf_hash != hash {
                     self.pdf = PdfDocument::from_data(&data);
                     self.pdf_hash = hash;
@@ -2148,8 +2193,17 @@ impl AppState {
         let lang = self.language;
         let agent = self.agent.as_mut().unwrap();
         UI.with(|ui| {
-            // Transcript rebuild (small transcripts; SwiftUI redraws anyway).
+            // Rebuild the transcript + pickers only when agent state or the
+            // font size changed — the 40ms poll used to rebuild the whole
+            // widget tree every tick.
             let font_size = self.store.ai_font_size();
+            let dirty = agent.ui_revision != self.rendered_agent_revision.get()
+                || font_size != self.rendered_ai_font_size.get();
+            if dirty {
+                self.rendered_agent_revision.set(agent.ui_revision);
+                self.rendered_ai_font_size.set(font_size);
+            }
+            if dirty {
             if let Some(box_) = ui.transcript_box.borrow().as_ref() {
                 while let Some(child) = box_.first_child() {
                     box_.remove(&child);
@@ -2252,6 +2306,7 @@ impl AppState {
                     ));
                 }
             }
+            } // if dirty
             if let Some(t) = ui.agent_attach_toggle.borrow().as_ref() {
                 if t.is_active() != agent.attach_active_document {
                     t.set_active(agent.attach_active_document);
@@ -2306,11 +2361,14 @@ impl AppState {
             }
         });
     }
-
     /// Drain the agent's event receiver + check for unexpected exit.
     fn poll_agent(&mut self) {
         self.ensure_agent();
-        *self.context_cell.borrow_mut() = self.model.agent_context();
+        let key = self.model.agent_context_key();
+        if key != self.last_context_key.get() {
+            self.last_context_key.set(key);
+            *self.context_cell.borrow_mut() = self.model.agent_context();
+        }
         let agent = self.agent.as_mut().unwrap();
         agent.poll_toolchain();
         while let Some(event) = agent.poll_event() {
