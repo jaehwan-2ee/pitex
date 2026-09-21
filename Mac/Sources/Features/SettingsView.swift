@@ -374,16 +374,6 @@ struct SettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                LabeledContent("settings.appearance.mode") {
-                    Picker("", selection: $appearance.theme) {
-                        Text("settings.appearance.system").tag(AppearanceSettings.Theme.system)
-                        Text("settings.appearance.light").tag(AppearanceSettings.Theme.light)
-                        Text("settings.appearance.dark").tag(AppearanceSettings.Theme.dark)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                }
                 LabeledContent("settings.appearance.language") {
                     Picker("", selection: $appearance.language) {
                         Text("settings.appearance.language_system").tag(AppearanceSettings.AppLanguage.system)

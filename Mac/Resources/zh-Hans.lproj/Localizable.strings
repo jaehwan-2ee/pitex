@@ -255,10 +255,6 @@
 "settings.synctex.forward_highlight" = "正向同步：在 PDF 中高亮目标位置";
 "settings.synctex.highlight_note" = "在目标位置短暂显示黄色高亮。关闭高亮后导航仍可使用。";
 "settings.appearance.theme" = "主题";
-"settings.appearance.mode" = "外观";
-"settings.appearance.system" = "系统";
-"settings.appearance.light" = "浅色";
-"settings.appearance.dark" = "深色";
 "settings.appearance.language" = "语言";
 "settings.appearance.language_system" = "系统";
 "settings.appearance.language_restart" = "重启 Pitex 后生效。";
@@ -353,6 +349,7 @@
 "git.discard_confirm" = "\U653e\U5f03\U5bf9\U201c%@\U201d\U7684\U66f4\U6539\Uff1f\U6b64\U64cd\U4f5c\U65e0\U6cd5\U64a4\U9500\U3002";
 "git.discard_confirm_untracked" = "\U5220\U9664\U672a\U8ddf\U8e2a\U7684\U6587\U4ef6\U201c%@\U201d\Uff1f\U6b64\U64cd\U4f5c\U65e0\U6cd5\U64a4\U9500\U3002";
 "git.open_file" = "\U6253\U5f00\U6587\U4ef6";
+"git.open_diff" = "\U67e5\U770b\U5dee\U5f02";
 "git.commit" = "\U63d0\U4ea4";
 "git.commit_placeholder" = "\U63d0\U4ea4\U4fe1\U606f \U2014 \U63d0\U4ea4\U5230\U201c%@\U201d";
 "git.suggest" = "\U5EFA\U8BAE";

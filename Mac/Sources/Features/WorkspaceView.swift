@@ -94,13 +94,15 @@ struct WorkspaceView: View {
     private var workspaceLayout: some View {
         HSplitView {
             if inspectorOnLeft {
-                if workspace.inspectorVisible { inspectorColumn }
+                // A commit diff keeps the PDF inspector closed — the pane
+                // cannot be opened while the diff is up.
+                if workspace.inspectorVisible && workspace.gitDiff == nil { inspectorColumn }
                 centerColumn
                 if workspace.sidebarVisible { sidebarColumn }
             } else {
                 if workspace.sidebarVisible { sidebarColumn }
                 centerColumn
-                if workspace.inspectorVisible { inspectorColumn }
+                if workspace.inspectorVisible && workspace.gitDiff == nil { inspectorColumn }
             }
         }
         .accessibilityIdentifier("pitex.workspace.split")
@@ -136,6 +138,13 @@ struct WorkspaceView: View {
                 }
                 .frame(minHeight: 160, maxHeight: .infinity)
                 .layoutPriority(1)
+                // An open commit diff covers the editor surface but keeps
+                // it mounted underneath, so scroll/undo state survives.
+                .overlay {
+                    if let diff = workspace.gitDiff {
+                        CommitDiffView(workspace: workspace, session: diff)
+                    }
+                }
                 if workspace.bottomPanelVisible {
                     BottomConsoleView(workspace: workspace)
                         .background(Color(nsColor: appearance.color(for: .gutterBackground)))
@@ -369,6 +378,7 @@ struct WorkspaceView: View {
             Button { workspace.inspectorVisible.toggle() } label: {
                 Image(systemName: "sidebar.right")
             }
+            .disabled(workspace.gitDiff != nil)
             .help(String(localized: workspace.inspectorVisible ? "editor.hide_inspector" : "editor.show_inspector"))
             if let path = workspace.activeDocumentRelativePath {
                 Text(verbatim: path)
@@ -439,6 +449,7 @@ struct WorkspaceView: View {
             } label: {
                 Label("preview.title", systemImage: "doc.richtext")
             }
+            .disabled(workspace.gitDiff != nil)
             .help(String(localized: workspace.inspectorVisible ? "editor.hide_inspector" : "editor.show_inspector"))
             .accessibilityIdentifier("pitex.toolbar.pdf")
 

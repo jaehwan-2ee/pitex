@@ -56,6 +56,48 @@ public struct GitCommit: Sendable, Equatable {
     }
 }
 
+/// A changed path inside one commit (`git show --name-status`).
+public struct GitCommitFile: Sendable, Equatable {
+    public let path: String
+    public let kind: GitChangeKind
+
+    public init(path: String, kind: GitChangeKind) {
+        self.path = path
+        self.kind = kind
+    }
+}
+
+/// One text line on one side of a side-by-side diff.
+public struct GitDiffLine: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
+        case context
+        case removed
+        case added
+    }
+
+    public let number: Int
+    public let text: String
+    public let kind: Kind
+
+    public init(number: Int, text: String, kind: Kind) {
+        self.number = number
+        self.text = text
+        self.kind = kind
+    }
+}
+
+/// A row of a commit diff. `pair` rows render side by side — removed
+/// lines on the left, added on the right, context on both; a nil side
+/// means that column stays empty for the row.
+public enum GitDiffRow: Sendable, Equatable {
+    /// `diff --git`, `index`, `---`/`+++`, mode/rename notes, "Binary
+    /// files differ" — shown dimmed across the full width.
+    case meta(String)
+    /// `@@ -a,b +c,d @@` section divider.
+    case hunk(String)
+    case pair(left: GitDiffLine?, right: GitDiffLine?)
+}
+
 /// Repository snapshot for the Git Integration panel.
 public struct GitStatus: Sendable, Equatable {
     public let root: String
@@ -139,6 +181,113 @@ public enum GitSupport {
     /// commit-everything fallback (untracked files produce no diff — the
     /// caller names them in the prompt's file list).
     public static func diffArgs(staged: Bool) -> [String] { staged ? ["diff", "--staged"] : ["diff"] }
+
+    /// `git show` file list for one commit: `STATUS<TAB>path` rows
+    /// (`R100<TAB>old<TAB>new` carries both paths). `--diff-merges=
+    /// first-parent` diffs merge commits against the first parent instead
+    /// of printing the (usually empty) combined diff.
+    public static func commitFilesArgs(_ hash: String) -> [String] {
+        ["show", "--format=", "--name-status", "--diff-merges=first-parent", hash]
+    }
+
+    /// One file's patch inside a commit (`diff --git` header + hunks).
+    public static func fileDiffArgs(_ hash: String, path: String) -> [String] {
+        ["show", "--format=", "--diff-merges=first-parent", hash, "--", path]
+    }
+
+    /// `commitFilesArgs` output → badge + path rows. Rename/copy rows end
+    /// with the new path — the diff targets that name.
+    public static func parseCommitFiles(_ raw: String) -> [GitCommitFile] {
+        raw.split(separator: "\n").compactMap { line in
+            let fields = line.split(separator: "\t")
+            guard fields.count >= 2, let code = fields[0].first else { return nil }
+            var path = String(fields[fields.count - 1])
+            if path.count > 1, path.hasPrefix("\""), path.hasSuffix("\"") {
+                path = String(path.dropFirst().dropLast())
+            }
+            return GitCommitFile(path: path, kind: kind(from: code))
+        }
+    }
+
+    /// Unified diff (`fileDiffArgs` output) → aligned side-by-side rows.
+    /// `---`/`+++` headers land before the first `@@`, so only lines inside
+    /// a hunk count as removed/added/context. Within each change block the
+    /// removed lines pair with the added lines in order; uneven tails
+    /// leave the opposite side empty.
+    public static func parseFileDiff(_ raw: String) -> [GitDiffRow] {
+        var rows: [GitDiffRow] = []
+        var removed: [GitDiffLine] = []
+        var added: [GitDiffLine] = []
+        var oldLine = 0
+        var newLine = 0
+        var inHunk = false
+
+        func flush() {
+            for i in 0 ..< max(removed.count, added.count) {
+                rows.append(.pair(
+                    left: i < removed.count ? removed[i] : nil,
+                    right: i < added.count ? added[i] : nil))
+            }
+            removed.removeAll()
+            added.removeAll()
+        }
+
+        for rawLine in raw.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            if line.hasPrefix("@@") {
+                flush()
+                (oldLine, newLine) = hunkStarts(line)
+                rows.append(.hunk(line))
+                inHunk = true
+            } else if inHunk, line.hasPrefix("-") {
+                removed.append(GitDiffLine(number: oldLine, text: String(line.dropFirst()), kind: .removed))
+                oldLine += 1
+            } else if inHunk, line.hasPrefix("+") {
+                added.append(GitDiffLine(number: newLine, text: String(line.dropFirst()), kind: .added))
+                newLine += 1
+            } else if inHunk, line.hasPrefix(" ") {
+                flush()
+                let text = String(line.dropFirst())
+                rows.append(.pair(
+                    left: GitDiffLine(number: oldLine, text: text, kind: .context),
+                    right: GitDiffLine(number: newLine, text: text, kind: .context)))
+                oldLine += 1
+                newLine += 1
+            } else if line.hasPrefix("\\") {
+                flush()
+                rows.append(.meta(line))
+            } else if !line.isEmpty {
+                flush()
+                // A new file block ends the current hunk so its ---/+++
+                // headers are never read as removed/added lines.
+                if line.hasPrefix("diff --git") || line.hasPrefix("Binary files") {
+                    inHunk = false
+                }
+                rows.append(.meta(line))
+            }
+        }
+        flush()
+        return rows
+    }
+
+    /// `@@ -old[,n] +new[,n] @@` → the starting line number of each side.
+    private static func hunkStarts(_ header: String) -> (old: Int, new: Int) {
+        func firstDigits(_ s: Substring) -> Int {
+            var digits = ""
+            for c in s {
+                if c.isNumber {
+                    digits.append(c)
+                } else if !digits.isEmpty {
+                    break
+                }
+            }
+            return Int(digits) ?? 0
+        }
+        let inner = header.dropFirst(2)
+        let old = firstDigits(inner)
+        let new = inner.firstIndex(of: "+").map { firstDigits(inner[$0...]) } ?? 0
+        return (old, new)
+    }
 
     /// `git status --porcelain=v1 -z --branch` output → status fields.
     /// In `-z` format each record is `XY path\0`; renames/copies append the

@@ -53,6 +53,15 @@ enum GitRunner {
     }
 }
 
+/// An open commit diff covering the editor area. `rows` is nil while
+/// `git show` is in flight; `error` carries a failed run.
+struct GitDiffSession {
+    let commit: GitCommit
+    let file: GitCommitFile
+    var rows: [GitDiffRow]?
+    var error: String?
+}
+
 extension WorkspaceModel {
     /// Refresh the Git Integration panel: repo detection, status, branches,
     /// and log — all off-actor via `GitRunner`; results land back here.
@@ -61,6 +70,7 @@ extension WorkspaceModel {
             gitStatus = nil
             gitCommits = []
             gitBranches = []
+            clearGitHistoryState()
             return
         }
         Task {
@@ -69,6 +79,7 @@ extension WorkspaceModel {
                 gitStatus = nil
                 gitCommits = []
                 gitBranches = []
+                clearGitHistoryState()
                 return
             }
             let root = URL(fileURLWithPath: top.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -200,6 +211,55 @@ extension WorkspaceModel {
         guard let root = gitStatus?.root else { return }
         let url = URL(fileURLWithPath: root).appendingPathComponent(change.path)
         Task { await activateDocument(url) }
+    }
+
+    /// Expand/collapse a commit row in the graph; the first expansion
+    /// fetches `git show --name-status` so the file list fills in.
+    func toggleGitCommit(_ commit: GitCommit) {
+        if gitExpandedCommits.contains(commit.hash) {
+            gitExpandedCommits.remove(commit.hash)
+            return
+        }
+        gitExpandedCommits.insert(commit.hash)
+        guard gitCommitFiles[commit.hash] == nil, let status = gitStatus else { return }
+        let root = URL(fileURLWithPath: status.root)
+        gitCommitFilesBusy.insert(commit.hash)
+        Task {
+            let result = await GitRunner.run(GitSupport.commitFilesArgs(commit.hash), in: root)
+            gitCommitFiles[commit.hash] =
+                result.code == 0 ? GitSupport.parseCommitFiles(result.stdout) : []
+            gitCommitFilesBusy.remove(commit.hash)
+        }
+    }
+
+    /// Clicking a file under a commit opens its diff over the editor area
+    /// — the PDF inspector hides itself while `gitDiff` is set.
+    func openGitDiff(_ commit: GitCommit, file: GitCommitFile) {
+        guard let status = gitStatus else { return }
+        let root = URL(fileURLWithPath: status.root)
+        gitDiff = GitDiffSession(commit: commit, file: file)
+        Task {
+            let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.hash, path: file.path), in: root)
+            // A second file click may have replaced the session meanwhile.
+            guard gitDiff?.commit.hash == commit.hash, gitDiff?.file == file else { return }
+            gitDiff = GitDiffSession(
+                commit: commit,
+                file: file,
+                rows: result.code == 0 ? GitSupport.parseFileDiff(result.stdout) : nil,
+                error: result.code == 0 ? nil : result.errorText
+            )
+        }
+    }
+
+    func closeGitDiff() { gitDiff = nil }
+
+    /// Project closed or repo detection lost — the history overlays refer
+    /// to commits that may no longer resolve.
+    private func clearGitHistoryState() {
+        gitExpandedCommits = []
+        gitCommitFiles = [:]
+        gitCommitFilesBusy = []
+        gitDiff = nil
     }
 
     /// The "Suggest" half of the commit box: a one-shot `pi --print` run
@@ -456,15 +516,11 @@ struct GitIntegrationView: View {
             Button("git.branch_new") { showNewBranch = true }
                 .accessibilityIdentifier("pitex.git.branchNew")
         } label: {
-            HStack(spacing: 3) {
-                Text(verbatim: status.branch)
-                    .font(gitFont(weight: .bold))
-                Image(systemName: "chevron.down")
-                    .font(gitFont(-2))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(Color.secondary.opacity(0.15)))
+            Text(verbatim: status.branch)
+                .font(gitFont(weight: .bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.secondary.opacity(0.15)))
         }
         .menuStyle(.borderlessButton)
         .accessibilityIdentifier("pitex.git.branch")
@@ -699,37 +755,99 @@ struct GitIntegrationView: View {
         .padding(.top, 4)
     }
 
+    /// Commit rows expand in place (VSCode/GitLens-style): the changed
+    /// files list fills in under the row and each file opens a fullscreen
+    /// diff over the editor area.
     private func commitRow(_ commit: GitCommit) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(commit.isHead ? Color.accentColor : Color.secondary)
-                    .frame(width: 7, height: 7)
-                    .padding(.top, 4)
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.3))
-                    .frame(width: 1.5)
-            }
-            .frame(width: 10)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(verbatim: commit.subject)
-                        .font(gitFont())
-                        .lineLimit(1)
-                    ForEach(commit.refs, id: \.self) { ref in
-                        Text(verbatim: ref.replacingOccurrences(of: "tag: ", with: ""))
-                            .font(gitFont(-2))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+        let expanded = workspace.gitExpandedCommits.contains(commit.hash)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                workspace.toggleGitCommit(commit)
+            } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(gitFont(-2))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                        .padding(.top, 5)
+                    VStack(spacing: 0) {
+                        Circle()
+                            .fill(commit.isHead ? Color.accentColor : Color.secondary)
+                            .frame(width: 7, height: 7)
+                            .padding(.top, 4)
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.3))
+                            .frame(width: 1.5)
                     }
+                    .frame(width: 10)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(verbatim: commit.subject)
+                                .font(gitFont())
+                                .lineLimit(1)
+                            ForEach(commit.refs, id: \.self) { ref in
+                                Text(verbatim: ref.replacingOccurrences(of: "tag: ", with: ""))
+                                    .font(gitFont(-2))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                            }
+                        }
+                        Text(verbatim: "\(commit.author) · \(commit.relativeDate) · \(commit.hash)")
+                            .font(gitFont(-2))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
                 }
-                Text(verbatim: "\(commit.author) · \(commit.relativeDate) · \(commit.hash)")
-                    .font(gitFont(-2))
-                    .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("pitex.git.commit.\(commit.hash)")
+            if expanded {
+                commitFileList(commit)
+            }
         }
+    }
+
+    /// Changed files under an expanded commit; clicking one opens the
+    /// side-by-side diff over the editor area.
+    private func commitFileList(_ commit: GitCommit) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if workspace.gitCommitFilesBusy.contains(commit.hash) {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.vertical, 2)
+            } else {
+                ForEach(workspace.gitCommitFiles[commit.hash] ?? [], id: \.path) { file in
+                    Button {
+                        workspace.openGitDiff(commit, file: file)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(verbatim: file.kind.badge)
+                                .font(gitFont(weight: .bold, monospaced: true))
+                                .foregroundStyle(badgeColor(file.kind))
+                                .frame(width: 12)
+                            Text(verbatim: file.path.split(separator: "/").last.map(String.init) ?? file.path)
+                                .font(gitFont())
+                                .lineLimit(1)
+                            if let slash = file.path.lastIndex(of: "/") {
+                                Text(verbatim: String(file.path[..<slash]))
+                                    .font(gitFont(-2))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "git.open_diff"))
+                    .accessibilityIdentifier("pitex.git.commitFile")
+                }
+            }
+        }
+        .padding(.leading, 28)
+        .padding(.vertical, 2)
     }
 
     // MARK: - New branch
@@ -754,5 +872,181 @@ struct GitIntegrationView: View {
         }
         .padding(16)
         .frame(width: 260)
+    }
+}
+
+// MARK: - Commit diff
+
+/// VSCode-style side-by-side diff of one file in one commit, covering the
+/// editor surface while open. Removed lines tint red on the left, added
+/// lines green on the right; clicking another file under a commit swaps
+/// the session in place.
+struct CommitDiffView: View {
+    @ObservedObject var workspace: WorkspaceModel
+    let session: GitDiffSession
+    @ObservedObject private var appearance = AppearanceSettings.shared
+
+    private var mono: Font { .system(size: appearance.fontSize, design: .monospaced) }
+    private var monoSmall: Font { .system(size: max(appearance.fontSize - 1, 8), design: .monospaced) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            content
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: appearance.color(for: .editorBackground)))
+        .accessibilityIdentifier("pitex.git.diff")
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text(verbatim: session.file.kind.badge)
+                .font(monoSmall.weight(.bold))
+                .foregroundStyle(badgeColor(session.file.kind))
+                .frame(width: 12)
+            Text(verbatim: session.file.path)
+                .font(mono)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(verbatim: session.commit.hash)
+                .font(monoSmall)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.secondary.opacity(0.15)))
+            Text(verbatim: session.commit.subject)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+            Button {
+                workspace.closeGitDiff()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help(String(localized: "command.close"))
+            .accessibilityIdentifier("pitex.git.diff.close")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let error = session.error {
+            Text(verbatim: error)
+                .font(mono)
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+        } else if let rows = session.rows {
+            if rows.isEmpty {
+                Text("git.no_changes")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                diffTable(rows)
+            }
+        } else {
+            ProgressView()
+                .controlSize(.large)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Longest cell text, so columns widen past the half-width split for
+    /// long lines instead of truncating (horizontal scroll, like VSCode).
+    private func maxCellChars(_ rows: [GitDiffRow]) -> Int {
+        var longest = 0
+        for row in rows {
+            if case let .pair(l, r) = row {
+                longest = max(longest, l?.text.count ?? 0, r?.text.count ?? 0)
+            }
+        }
+        return longest
+    }
+
+    private func diffTable(_ rows: [GitDiffRow]) -> some View {
+        let charWidth = appearance.fontSize * 0.62
+        let contentWidth = CGFloat(maxCellChars(rows)) * charWidth + 64
+        return GeometryReader { geo in
+            let columnWidth = max(geo.size.width / 2 - 1, contentWidth)
+            ScrollView([.horizontal, .vertical]) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        diffRow(row, columnWidth: columnWidth)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func diffRow(_ row: GitDiffRow, columnWidth: CGFloat) -> some View {
+        switch row {
+        case let .meta(text):
+            Text(verbatim: text)
+                .font(monoSmall)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case let .hunk(text):
+            Text(verbatim: text)
+                .font(monoSmall)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.10))
+        case let .pair(left, right):
+            HStack(spacing: 0) {
+                diffCell(left, width: columnWidth)
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.25))
+                    .frame(width: 1)
+                diffCell(right, width: columnWidth)
+            }
+        }
+    }
+
+    private func diffCell(_ line: GitDiffLine?, width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Text(verbatim: line.map { "\($0.number)" } ?? "")
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+                .padding(.trailing, 8)
+            Text(verbatim: line?.text ?? "")
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .font(mono)
+        .padding(.vertical, 1)
+        .frame(width: width, alignment: .leading)
+        .background(diffCellBackground(line))
+    }
+
+    private func diffCellBackground(_ line: GitDiffLine?) -> Color {
+        guard let line else { return Color.secondary.opacity(0.05) }
+        switch line.kind {
+        case .removed: return .red.opacity(0.16)
+        case .added: return .green.opacity(0.16)
+        case .context: return .clear
+        }
+    }
+
+    private func badgeColor(_ kind: GitChangeKind) -> Color {
+        switch kind {
+        case .modified, .typeChanged: return .orange
+        case .added, .untracked: return .green
+        case .deleted, .conflicted: return .red
+        case .renamed, .copied: return .cyan
+        }
     }
 }

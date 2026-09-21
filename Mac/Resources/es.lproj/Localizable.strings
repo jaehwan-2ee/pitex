@@ -255,10 +255,6 @@
 "settings.synctex.forward_highlight" = "Sincronización directa: resaltar el destino en el PDF";
 "settings.synctex.highlight_note" = "Muestra brevemente un resaltado amarillo en el destino. La navegación sigue funcionando con el resaltado desactivado.";
 "settings.appearance.theme" = "Tema";
-"settings.appearance.mode" = "Apariencia";
-"settings.appearance.system" = "Sistema";
-"settings.appearance.light" = "Claro";
-"settings.appearance.dark" = "Oscuro";
 "settings.appearance.language" = "Idioma";
 "settings.appearance.language_system" = "Sistema";
 "settings.appearance.language_restart" = "Se aplica tras reiniciar Pitex.";
@@ -353,6 +349,7 @@
 "git.discard_confirm" = "\U00bfDescartar los cambios de '%@'? No se puede deshacer.";
 "git.discard_confirm_untracked" = "\U00bfEliminar el archivo sin seguimiento '%@'? No se puede deshacer.";
 "git.open_file" = "Abrir archivo";
+"git.open_diff" = "Abrir diff";
 "git.commit" = "Confirmar";
 "git.commit_placeholder" = "Mensaje \U2014 confirmar en '%@'";
 "git.suggest" = "Sugerir";

@@ -255,11 +255,7 @@
 "settings.synctex.forward_highlight" = "Forward Sync: PDF の移動先を強調表示";
 "settings.synctex.highlight_note" = "移動先を黄色で一時的に表示します。強調表示をオフにしても位置への移動は動作します。";
 "settings.appearance.theme" = "テーマ";
-"settings.appearance.mode" = "外観モード";
 
-"settings.appearance.system" = "システム";
-"settings.appearance.light" = "ライト";
-"settings.appearance.dark" = "ダーク";
 "settings.appearance.language" = "言語";
 "settings.appearance.language_system" = "システム";
 "settings.appearance.language_restart" = "Pitex の再起動後に適用されます。";
@@ -354,6 +350,7 @@
 "git.discard_confirm" = "'%@' \U3078\U306e\U5909\U66f4\U3092\U7834\U68c4\U3057\U307e\U3059\U304b\Uff1f\U5143\U306b\U623b\U305b\U307e\U305b\U3093\U3002";
 "git.discard_confirm_untracked" = "\U8ffd\U8de1\U3055\U308c\U3066\U3044\U306a\U3044\U30d5\U30a1\U30a4\U30eb '%@' \U3092\U524a\U9664\U3057\U307e\U3059\U304b\Uff1f\U5143\U306b\U623b\U305b\U307e\U305b\U3093\U3002";
 "git.open_file" = "\U30d5\U30a1\U30a4\U30eb\U3092\U958b\U304f";
+"git.open_diff" = "\U5dee\U5206\U3092\U958b\U304f";
 "git.commit" = "\U30b3\U30df\U30c3\U30c8";
 "git.commit_placeholder" = "\U30e1\U30c3\U30bb\U30fc\U30b8 \U2014 '%@' \U306b\U30b3\U30df\U30c3\U30c8";
 "git.suggest" = "\U63D0\U6848";

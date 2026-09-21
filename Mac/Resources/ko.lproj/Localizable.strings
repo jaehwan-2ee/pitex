@@ -255,11 +255,7 @@
 "settings.synctex.forward_highlight" = "Forward Sync: PDF의 도착 위치 강조";
 "settings.synctex.highlight_note" = "도착 위치를 노란색으로 잠깐 표시합니다. 하이라이트를 꺼도 위치 이동은 작동합니다.";
 "settings.appearance.theme" = "테마";
-"settings.appearance.mode" = "외관 모드";
 
-"settings.appearance.system" = "시스템";
-"settings.appearance.light" = "라이트";
-"settings.appearance.dark" = "다크";
 "settings.appearance.language" = "언어";
 "settings.appearance.language_system" = "시스템";
 "settings.appearance.language_restart" = "Pitex를 재시작하면 적용됩니다.";
@@ -354,6 +350,7 @@
 "git.discard_confirm" = "'%@'\Uc758 \Ubcc0\Uacbd \Ub0b4\Uc6a9\Uc744 \Uc0ad\Uc81c\Ud558\Uc2dc\Uaca0\Uc2b5\Ub2c8\Uae4c? \Ub418\Ub3cc\Ub9b4 \Uc218 \Uc5c6\Uc2b5\Ub2c8\Ub2e4.";
 "git.discard_confirm_untracked" = "\Ucd94\Uc801\Ub418\Uc9c0 \Uc54a\Ub294 \Ud30c\Uc77c '%@'\Uc744(\Ub97c) \Uc0ad\Uc81c\Ud558\Uc2dc\Uaca0\Uc2b5\Ub2c8\Uae4c? \Ub418\Ub3cc\Ub9b4 \Uc218 \Uc5c6\Uc2b5\Ub2c8\Ub2e4.";
 "git.open_file" = "\Ud30c\Uc77c \Uc5f4\Uae30";
+"git.open_diff" = "\Ubcc0\Uacbd \Ub0b4\Uc6a9 \Ubcf4\Uae30";
 "git.commit" = "\Ucee4\Ubc0b";
 "git.commit_placeholder" = "\Uba54\Uc2dc\Uc9c0 \U2014 '%@'\Uc5d0 \Ucee4\Ubc0b";
 "git.suggest" = "\UCD94\UCC9C";

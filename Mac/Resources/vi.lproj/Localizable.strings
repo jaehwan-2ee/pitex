@@ -255,10 +255,6 @@
 "settings.synctex.forward_highlight" = "Forward Sync: tô sáng vị trí đích trong PDF";
 "settings.synctex.highlight_note" = "Hiển thị vùng tô sáng màu vàng trong chốc lát tại vị trí đích. Việc chuyển đến vị trí vẫn hoạt động khi tắt tô sáng.";
 "settings.appearance.theme" = "Chủ đề";
-"settings.appearance.mode" = "Chế độ hiển thị";
-"settings.appearance.system" = "Hệ thống";
-"settings.appearance.light" = "Sáng";
-"settings.appearance.dark" = "Tối";
 "settings.appearance.language" = "Ngôn ngữ";
 "settings.appearance.language_system" = "Hệ thống";
 "settings.appearance.language_restart" = "Có hiệu lực sau khi khởi động lại Pitex.";
@@ -353,6 +349,7 @@
 "git.discard_confirm" = "H\U1ee7y c\U00e1c thay \U0111\U1ed5i trong '%@'? Kh\U00f4ng th\U1ec3 ho\U00e0n t\U00e1c.";
 "git.discard_confirm_untracked" = "X\U00f3a t\U1ec7p ch\U01b0a theo d\U00f5i '%@'? Kh\U00f4ng th\U1ec3 ho\U00e0n t\U00e1c.";
 "git.open_file" = "M\U1edf t\U1ec7p";
+"git.open_diff" = "Xem thay \U0111\U1ed5i";
 "git.commit" = "Commit";
 "git.commit_placeholder" = "Th\U00f4ng \U0111i\U1ec7p \U2014 commit l\U00ean '%@'";
 "git.suggest" = "G\U1EE3i \U00FD";

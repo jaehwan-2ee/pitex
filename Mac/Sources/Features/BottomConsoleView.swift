@@ -56,15 +56,7 @@ struct BottomConsoleView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Picker("console.terminal", selection: $workspace.consoleSection) {
-                    ForEach(ConsoleSection.allCases) { item in
-                        Text(item.titleKey).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 420)
-                .accessibilityIdentifier("pitex.console.section")
+                consoleTabs
 
                 if workspace.consoleSection == .issues {
                     issueFilterChips
@@ -73,6 +65,11 @@ struct BottomConsoleView: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
+            // The VSplitView console height is user-adjustable: when the
+            // pane below wants more room than the console has, the VStack
+            // compresses this row — fixedSize keeps the tabs at intrinsic
+            // height and lets the pane scroll instead.
+            .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
@@ -103,6 +100,50 @@ struct BottomConsoleView: View {
             ContentUnavailableView("assistant.title", systemImage: "bubble.left.and.text.bubble.right")
                 .accessibilityIdentifier("pitex.assistant.empty")
         }
+    }
+
+    /// The tab strip. A segmented `Picker` reports a different intrinsic
+    /// width per selected segment on macOS 26+ and escapes its frame —
+    /// fixed-geometry capsule segments render identically for every tab.
+    private var consoleTabs: some View {
+        let sections = ConsoleSection.allCases
+        return HStack(spacing: 0) {
+            ForEach(Array(sections.enumerated()), id: \.element) { index, item in
+                consoleTab(item)
+                if index < sections.count - 1,
+                   workspace.consoleSection != item,
+                   workspace.consoleSection != sections[index + 1] {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.35))
+                        .frame(width: 1, height: 12)
+                }
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.secondary.opacity(0.16))
+        )
+        .accessibilityIdentifier("pitex.console.section")
+    }
+
+    private func consoleTab(_ item: ConsoleSection) -> some View {
+        let selected = workspace.consoleSection == item
+        return Button {
+            workspace.consoleSection = item
+        } label: {
+            Text(item.titleKey)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4)
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(selected ? Color.accentColor : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("pitex.console.section.\(item.rawValue)")
     }
 
     /// All / Errors / Warnings capsule chips with live counts — only visible

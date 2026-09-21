@@ -255,10 +255,6 @@
 "settings.synctex.forward_highlight" = "Forward Sync: highlight the destination in the PDF";
 "settings.synctex.highlight_note" = "Briefly show a yellow highlight at the destination. Navigation still works when highlights are off.";
 "settings.appearance.theme" = "Theme";
-"settings.appearance.mode" = "Appearance";
-"settings.appearance.system" = "System";
-"settings.appearance.light" = "Light";
-"settings.appearance.dark" = "Dark";
 "settings.appearance.language" = "Language";
 "settings.appearance.language_system" = "System";
 "settings.appearance.language_restart" = "Takes effect after restarting Pitex.";
@@ -353,6 +349,7 @@
 "git.discard_confirm" = "Discard changes to '%@'? This cannot be undone.";
 "git.discard_confirm_untracked" = "Delete untracked file '%@'? This cannot be undone.";
 "git.open_file" = "Open File";
+"git.open_diff" = "Open Diff";
 "git.commit" = "Commit";
 "git.commit_placeholder" = "Message \U2014 commit on '%@'";
 "git.suggest" = "Suggest";

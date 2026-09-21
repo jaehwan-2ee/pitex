@@ -238,6 +238,14 @@ final class WorkspaceModel: ObservableObject {
     /// a git op, so pull/push stay enabled while it runs.
     @Published internal(set) var gitSuggestBusy = false
     @Published internal(set) var gitError: String?
+    /// Commit rows expanded in the graph → their `git show --name-status`
+    /// file lists, fetched lazily and cached per hash.
+    @Published internal(set) var gitExpandedCommits: Set<String> = []
+    @Published internal(set) var gitCommitFiles: [String: [GitCommitFile]] = [:]
+    @Published internal(set) var gitCommitFilesBusy: Set<String> = []
+    /// Commit diff covering the editor area (VSCode Source Control style).
+    /// While set, the PDF inspector is hidden and its toggles disabled.
+    @Published internal(set) var gitDiff: GitDiffSession?
     /// Project-wide \label keys and .bib citation keys feeding the editor's
     /// native completion. Rebuilt on the structure-refresh cadence through
     /// mtime-keyed caches — never reparsed per keystroke.
@@ -501,6 +509,9 @@ final class WorkspaceModel: ObservableObject {
         guard url != activeDocumentURL,
               let root = projectURL,
               projectFiles.contains(url) else { return }
+        // Activating a real document dismisses a commit-diff overlay —
+        // the user asked to see the document, not the diff.
+        gitDiff = nil
         // Keep the workspace mounted when switching sources: a loading phase
         // destroys the split view and PDF view, losing their size and position.
         do {
@@ -714,6 +725,10 @@ final class WorkspaceModel: ObservableObject {
         gitCommitMessage = ""
         gitSuggestBusy = false
         gitError = nil
+        gitExpandedCommits = []
+        gitCommitFiles = [:]
+        gitCommitFilesBusy = []
+        gitDiff = nil
         bibliographyCache = nil
         todoCache.removeAll()
         projectLabels = []
@@ -1929,7 +1944,7 @@ struct AppCommands: Commands {
                 .disabled(!workspace.hasProject)
             Button("command.toggle_inspector") { workspace.inspectorVisible.toggle() }
                 .keyboardShortcut("p", modifiers: [.command, .option])
-                .disabled(!workspace.hasProject)
+                .disabled(!workspace.hasProject || workspace.gitDiff != nil)
             Button("command.toggle_bottom") { workspace.bottomPanelVisible.toggle() }
                 .keyboardShortcut("y", modifiers: [.command, .shift])
                 .disabled(!workspace.hasProject)

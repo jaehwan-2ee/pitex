@@ -1696,38 +1696,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     appearance.set_icon_name(Some("applications-graphics-symbolic"));
     let theme_group = adw::PreferencesGroup::new();
     theme_group.set_title(&tr(lang, "settings.appearance.theme"));
-    let mode = adw::ComboRow::new();
-    mode.set_title(&tr(lang, "settings.appearance.mode"));
-    let mode_items = [
-        tr(lang, "settings.appearance.system"),
-        tr(lang, "settings.appearance.light"),
-        tr(lang, "settings.appearance.dark"),
-    ];
-    let mode_strs: Vec<&str> = mode_items.iter().map(String::as_str).collect();
-    let modes = gtk4::StringList::new(&mode_strs);
-    mode.set_model(Some(&modes));
-    mode.set_selected(match state.borrow().appearance.theme {
-        crate::settings::Theme::System => 0,
-        crate::settings::Theme::Light => 1,
-        crate::settings::Theme::Dark => 2,
-    });
-    {
-        let state = state.clone();
-        mode.connect_selected_notify(move |r| {
-            let Ok(mut s) = state.try_borrow_mut() else { return };
-            let theme = match r.selected() {
-                1 => crate::settings::Theme::Light,
-                2 => crate::settings::Theme::Dark,
-                _ => crate::settings::Theme::System,
-            };
-            let crate::app_ui::AppState { appearance, store, .. } = &mut *s;
-            appearance.set_theme(store.prefs_mut(), theme);
-            s.apply_theme();
-            // Token tag colors ride the palette defaults too — re-apply.
-            s.rehighlight();
-        });
-    }
-    theme_group.add(&mode);
+    // No separate light/dark row — each theme preset already picks the
+    // app-wide mode it implies (apply_preset sets `appearance.theme`).
     let preset = adw::ComboRow::new();
     preset.set_title(&tr(lang, "settings.appearance.theme"));
     let preset_names: Vec<String> = crate::settings::AppearanceThemePreset::ALL
