@@ -1,0 +1,27 @@
+Linux/Cargo.lock
+  s_1e24465093fe05::t_37eeab2b28346f 754
+Linux/crates/pitex/Cargo.toml
+  s_1e24465093fe05::t_a631988c4318db 3
+Mac/Config/Info.plist
+  s_1e24465093fe05::t_81eb7367b4e631 20
+Windows/Cargo.lock
+  s_1e24465093fe05::t_f41ce5e19de9a4 869
+Windows/crates/pitex-windows/Cargo.toml
+  s_1e24465093fe05::t_02c302f6b2aa3a 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f49933e3fc4f1ddd206c53482235fbe4bf896cb4",
+  "prompts": {},
+  "sessions": {
+    "s_1e24465093fe05": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_1e24465093fe05",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
