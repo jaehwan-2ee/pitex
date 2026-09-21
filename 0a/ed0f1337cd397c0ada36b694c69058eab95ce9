@@ -1,0 +1,45 @@
+Linux/crates/pitex-shell/src/panes.rs
+  s_b014c4cc6c9d39::t_31a84c799a1862 1699-1700
+Mac/Resources/en.lproj/Localizable.strings
+  s_b014c4cc6c9d39::t_10843c206a46ca 352
+Mac/Resources/es.lproj/Localizable.strings
+  s_b014c4cc6c9d39::t_a74df31142f367 352
+Mac/Resources/ja.lproj/Localizable.strings
+  s_b014c4cc6c9d39::t_eca6f0f368b31d 353
+Mac/Resources/ko.lproj/Localizable.strings
+  s_b014c4cc6c9d39::t_1ce28fe32300d9 353
+Mac/Resources/ru.lproj/Localizable.strings
+  s_b014c4cc6c9d39::t_12dbdea89ac659 352
+Mac/Resources/vi.lproj/Localizable.strings
+  s_b014c4cc6c9d39::t_e48d6cdc4dbdb9 352
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_b014c4cc6c9d39::t_ad9b0d02e50d61 352
+Mac/Sources/AppShell/PitexApp.swift
+  s_b014c4cc6c9d39::t_fe2b2f8172e08d 241-248,512-514,728-731,1947
+Mac/Sources/Features/BottomConsoleView.swift
+  s_b014c4cc6c9d39::t_97984297173d63 59,68-72,105-148
+Mac/Sources/Features/GitIntegrationView.swift
+  s_b014c4cc6c9d39::t_d930cef67fb0bf 56-64,73,82,216-264,519-523,758-760,762-796,798,800-845,849-850,877-1052
+Mac/Sources/Features/WorkspaceView.swift
+  s_b014c4cc6c9d39::t_1c7d392ef2e108 97-99,105,141-147,381,452
+Packages/TexCore/Sources/GitCore/GitSupport.swift
+  s_b014c4cc6c9d39::t_c7c6ebe6e695ca 59-100,185-291
+Packages/TexCore/Tests/TexCoreTests/GitSupportTests.swift
+  s_b014c4cc6c9d39::t_8451fe6e97255f 46-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0aed0f1337cd397c0ada36b694c69058eab95ce9",
+  "prompts": {},
+  "sessions": {
+    "s_b014c4cc6c9d39": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_b014c4cc6c9d39",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
