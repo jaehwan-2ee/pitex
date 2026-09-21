@@ -16,6 +16,7 @@ use adw::prelude::*;
 #[cfg(feature = "vte")]
 use vte4::prelude::*;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 // ─── Settings rows (identical UX on every libadwaita ≥ 1.0) ─────────────
 
@@ -267,6 +268,36 @@ pub fn unhide_pointer_on_typing(view: &sourceview5::View) {
             view.set_cursor_from_name(Some("text"));
         });
     });
+}
+
+/// GTK 4.6 + ibus-hangul: with `use-event-forwarding` (the default), an
+/// unconsumed Backspace is forwarded back to the client as a synthetic key
+/// whose keycode conversion is broken in GTK4's ibus immodule — the event
+/// dies and nothing deletes. The IM filter lives in the view's own
+/// capture-phase key controller, so the only place that sees the key first
+/// is a capture controller on an ancestor: attach to the editor's scroller
+/// and let the adapter delete when safe (no active preedit — a visible
+/// composition keeps IM handling so jamo-level deletion still works).
+pub fn fix_ime_backspace(
+    ancestor: &impl IsA<gtk4::Widget>,
+    editor: impl Fn() -> Option<Rc<gtk_editor_adapter::GtkEditorAdapter>> + 'static,
+) {
+    let keys = gtk4::EventControllerKey::new();
+    keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    keys.connect_key_pressed(move |_, key, _code, state| {
+        if key != gtk4::gdk::Key::BackSpace || !state.is_empty() {
+            return gtk4::glib::Propagation::Proceed;
+        }
+        let Some(adapter) = editor() else {
+            return gtk4::glib::Propagation::Proceed;
+        };
+        if adapter.ime_backspace() {
+            gtk4::glib::Propagation::Stop
+        } else {
+            gtk4::glib::Propagation::Proceed
+        }
+    });
+    ancestor.add_controller(keys);
 }
 
 /// `set_content_fit(Contain)` is GTK 4.8+; on 4.6 the equivalent is

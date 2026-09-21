@@ -345,6 +345,25 @@ impl GtkEditorAdapter {
         self.shared.committed.replace(snapshot);
     }
 
+    /// Intercepted Backspace for `compat::fix_ime_backspace`: claims the key
+    /// only while the view is focused and no IM preedit is active (a visible
+    /// composition stays with the IM). Performs the standard interactive
+    /// delete — selection first, else one grapheme — and reports whether
+    /// anything was deleted.
+    pub fn ime_backspace(&self) -> bool {
+        let editable = self.view.is_editable();
+        if !self.view.has_focus() || self.has_marked_text() || !editable {
+            return false;
+        }
+        if let Some((start, end)) = self.buffer.selection_bounds() {
+            if start.offset() != end.offset() {
+                return self.buffer.delete_selection(true, editable);
+            }
+        }
+        let mut iter = self.buffer.iter_at_mark(&self.buffer.get_insert());
+        self.buffer.backspace(&mut iter, true, editable)
+    }
+
     /// Session-owned undo, matching `sessionUndoManager` + `allowsUndo`.
     pub fn undo(&self) {
         if self.buffer.can_undo() {
