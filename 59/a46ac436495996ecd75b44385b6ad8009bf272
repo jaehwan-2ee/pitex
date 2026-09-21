@@ -1,0 +1,63 @@
+Linux/crates/git-core/src/lib.rs
+  s_6ddc6e755d9e4b::t_5d5243b9550900 168-177
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  s_6ddc6e755d9e4b::t_cab84063d533a9 120-122,124,319,321,340,342
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_6ddc6e755d9e4b::t_b1ac19cfd18b40 91-94,161-163,2226,2229-2237,2241-2252,2496-2501,2506-2517,3214-3229,4591-4621
+Linux/crates/pitex-shell/src/git.rs
+  s_6ddc6e755d9e4b::t_3dde965a70c112 237-258,269-376
+Linux/crates/pitex-shell/src/model.rs
+  s_6ddc6e755d9e4b::t_944b22b0dd0e59 209-211,234,738-740,849,1384
+Linux/crates/pitex-shell/src/panes.rs
+  s_6ddc6e755d9e4b::t_3e027ae4d57663 348-350,352-355,358,456-458,461,473-489,491,511
+Linux/crates/project-feature/src/lib.rs
+  s_6ddc6e755d9e4b::t_fcca38b4ba7dc8 336-370,452-491
+Mac/Resources/en.lproj/Localizable.strings
+  s_6ddc6e755d9e4b::t_e9142db9b7df97 342,357-359
+Mac/Resources/es.lproj/Localizable.strings
+  s_6ddc6e755d9e4b::t_cedccaaff68071 338,342,349,351,353-354,357-360,362
+Mac/Resources/ja.lproj/Localizable.strings
+  s_6ddc6e755d9e4b::t_fcbf731aa3c18d 339-367
+Mac/Resources/ko.lproj/Localizable.strings
+  s_6ddc6e755d9e4b::t_5c95559d1c2576 339-367
+Mac/Resources/ru.lproj/Localizable.strings
+  s_6ddc6e755d9e4b::t_fe835520b5bd70 338-366
+Mac/Resources/vi.lproj/Localizable.strings
+  s_6ddc6e755d9e4b::t_419c879248e7a6 338-347,349-355,357-363,366
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_6ddc6e755d9e4b::t_6744dd5230dc9b 338-366
+Mac/Sources/AppShell/PitexApp.swift
+  s_6ddc6e755d9e4b::t_d10bec13a3f07b 237-239,715
+Mac/Sources/Features/GitIntegrationView.swift
+  s_6ddc6e755d9e4b::t_227fcdf5715b42 1,204-287,295-296,302-315,378,385-387,389,391,401,406,442,461,463,498,521,524,529,541,549,553,567,587,609,621,632-662,664-673,683,687,717,721,728
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_6ddc6e755d9e4b::t_a3c528b6affde9 316-318,321,340-354,383
+Mac/Sources/Features/WorkspaceView.swift
+  s_6ddc6e755d9e4b::t_4610b1522de531 38-40,42-43,112,118,130-142,158-159,164
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_6ddc6e755d9e4b::t_1d5a57513c621a 106,108,137-145,242-245,247
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_6ddc6e755d9e4b::t_1c0d0a6da2e58c 268-297
+Packages/TexApp/Tests/TexAppTests/FeatureStateTests.swift
+  s_6ddc6e755d9e4b::t_6cb6b2764db6a3 124-155
+Packages/TexApp/Tests/TexAppTests/MacAdapterSourceTests.swift
+  s_6ddc6e755d9e4b::t_81b7d1c2327652 15-19
+Packages/TexCore/Sources/GitCore/GitSupport.swift
+  s_6ddc6e755d9e4b::t_7ab11dbd9f7ed3 138-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59a46ac436495996ecd75b44385b6ad8009bf272",
+  "prompts": {},
+  "sessions": {
+    "s_6ddc6e755d9e4b": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_6ddc6e755d9e4b",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
