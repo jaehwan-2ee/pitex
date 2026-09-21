@@ -541,6 +541,9 @@ impl AppState {
             Theme::Light => adw::ColorScheme::ForceLight,
             Theme::System => adw::ColorScheme::Default,
         });
+        // Unset role colors default to the effective mode's palette, so the
+        // scheme must be in place before `stored_hex` reads below.
+        self.appearance.resolved_dark.set(manager.is_dark());
         // Generate a GtkSourceView style scheme from the palette — the
         // native mechanism for editor/gutter/line-number colors.
         let prefs = self.store.prefs();
@@ -3869,6 +3872,17 @@ fn build_chrome(
     }
 
     state.borrow_mut().apply_theme();
+    // System mode: when the OS flips light/dark the effective palette
+    // changes — re-resolve colors like the Swift `effectiveAppearance`
+    // observation does. Under a pinned Force* scheme `dark` never fires.
+    {
+        let state = state.clone();
+        adw::StyleManager::default().connect_dark_notify(move |_| {
+            let Ok(s) = state.try_borrow() else { return };
+            s.apply_theme();
+            s.rehighlight();
+        });
+    }
     state.borrow_mut().refresh_phase();
     window.present();
 

@@ -290,8 +290,15 @@ impl AppearanceColorRole {
             Self::BracketMatch => "bracketMatch",
         }
     }
-    pub fn default_hex(self) -> &'static str {
-        AppearanceThemePreset::Dark.hex_for(&self)
+    /// Palette default for an unset role — resolved against the effective
+    /// appearance so the editor follows light/dark mode (`defaultHex(dark:)`).
+    pub fn default_hex(self, dark: bool) -> &'static str {
+        if dark {
+            AppearanceThemePreset::Dark
+        } else {
+            AppearanceThemePreset::Light
+        }
+        .hex_for(&self)
     }
     /// `titleKey` — localization key for the row title.
     pub fn title_key(self) -> &'static str {
@@ -527,6 +534,10 @@ pub struct AppearanceSettings {
     pub terminal_font_family: String,
     pub terminal_font_size: f64,
     pub color_revision: u64,
+    /// Last effective dark state observed for `Theme::System`, refreshed by
+    /// `apply_theme` from `adw::StyleManager`. A `Cell` so the GTK-free
+    /// model stays `&self`-readable while the shell updates it in place.
+    pub resolved_dark: std::cell::Cell<bool>,
 }
 impl AppearanceSettings {
     pub fn new(prefs: &Preferences) -> Self {
@@ -551,6 +562,16 @@ impl AppearanceSettings {
                 .double("appearance.terminalFontSize")
                 .unwrap_or(13.0),
             color_revision: 0,
+            resolved_dark: std::cell::Cell::new(true),
+        }
+    }
+    /// `effectiveDark` — `Light`/`Dark` pin the answer; `System` resolves to
+    /// the last value `apply_theme` read from the style manager.
+    pub fn effective_dark(&self) -> bool {
+        match self.theme {
+            Theme::Light => false,
+            Theme::Dark => true,
+            Theme::System => self.resolved_dark.get(),
         }
     }
     pub fn language_restart_pending(&self) -> bool {
@@ -559,13 +580,13 @@ impl AppearanceSettings {
     pub fn stored_hex(&self, prefs: &Preferences, role: AppearanceColorRole) -> String {
         prefs
             .string(&format!("appearance.color.{}", role.raw_value()))
-            .unwrap_or_else(|| role.default_hex().to_string())
+            .unwrap_or_else(|| role.default_hex(self.effective_dark()).to_string())
     }
     pub fn color(&self, prefs: &Preferences, role: AppearanceColorRole) -> (f64, f64, f64, f64) {
         prefs
             .string(&format!("appearance.color.{}", role.raw_value()))
             .and_then(|h| parse_hex_color(&h))
-            .or_else(|| parse_hex_color(role.default_hex()))
+            .or_else(|| parse_hex_color(role.default_hex(self.effective_dark())))
             .unwrap_or((0.0, 0.0, 0.0, 1.0))
     }
     pub fn matching_preset(&self, prefs: &Preferences) -> Option<AppearanceThemePreset> {
@@ -681,6 +702,48 @@ mod tests {
         assert_eq!(details.len(), AppearanceColorRole::ALL.len());
         assert!(titles.contains("appearance.color.editor_background"));
         assert!(details.contains("appearance.color.bracket_match_d"));
+    }
+
+    /// Unset role colors default to the effective mode's palette — light
+    /// mode gets Light, dark gets Dark, System resolves `resolved_dark`.
+    /// An explicit stored value always wins.
+    #[test]
+    fn default_palette_follows_effective_mode() {
+        let prefs = Preferences {
+            values: BTreeMap::new(),
+            path: std::env::temp_dir().join("pitex-test-palette-defaults.json"),
+        };
+        let mut a = AppearanceSettings::new(&prefs);
+        assert_eq!(a.theme, Theme::System);
+        // System starts resolved-dark until apply_theme observes the OS.
+        assert_eq!(
+            a.stored_hex(&prefs, AppearanceColorRole::EditorBackground),
+            "#2C2C33"
+        );
+        a.resolved_dark.set(false);
+        assert_eq!(
+            a.stored_hex(&prefs, AppearanceColorRole::EditorBackground),
+            "#FFFFFF"
+        );
+        let mut prefs = prefs;
+        a.set_theme(&mut prefs, Theme::Light);
+        assert_eq!(
+            a.stored_hex(&prefs, AppearanceColorRole::EditorBackground),
+            "#FFFFFF"
+        );
+        a.set_theme(&mut prefs, Theme::Dark);
+        assert_eq!(
+            a.stored_hex(&prefs, AppearanceColorRole::EditorBackground),
+            "#2C2C33"
+        );
+        // Explicit colors survive any mode.
+        a.set_color(&mut prefs, AppearanceColorRole::EditorBackground, "#123456");
+        a.set_theme(&mut prefs, Theme::Light);
+        assert_eq!(
+            a.stored_hex(&prefs, AppearanceColorRole::EditorBackground),
+            "#123456"
+        );
+        let _ = std::fs::remove_file(&prefs.path);
     }
 
     /// `languageRestartPending` — set_language marks the delta against the

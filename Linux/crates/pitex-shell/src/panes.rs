@@ -1187,6 +1187,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             let crate::app_ui::AppState { appearance, store, .. } = &mut *s;
             appearance.set_theme(store.prefs_mut(), theme);
             s.apply_theme();
+            // Token tag colors ride the palette defaults too — re-apply.
+            s.rehighlight();
         });
     }
     theme_group.add(&mode);

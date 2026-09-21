@@ -51,10 +51,11 @@ enum AppearanceColorRole: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Palette used when no custom value is stored — the reference editor's
-    /// built-in Dark theme, sampled from rendered pixels.
-    var defaultHex: String {
-        AppearanceThemePreset.dark.hexValue(for: self)
+    /// Palette used when no custom value is stored — resolved against the
+    /// effective appearance so the editor follows light/dark mode instead
+    /// of pinning the reference editor's Dark theme.
+    func defaultHex(dark: Bool) -> String {
+        (dark ? AppearanceThemePreset.dark : .light).hexValue(for: self)
     }
 }
 
@@ -207,7 +208,13 @@ final class AppearanceSettings: ObservableObject {
     }
 
     @Published var theme: Theme {
-        didSet { UserDefaults.standard.set(theme.rawValue, forKey: "appearance.theme"); applyAppearance() }
+        didSet {
+            UserDefaults.standard.set(theme.rawValue, forKey: "appearance.theme")
+            applyAppearance()
+            // Unset colors resolve against the effective appearance, so a
+            // mode change is also an editor-palette change.
+            colorRevision += 1
+        }
     }
     @Published var language: AppLanguage {
         didSet {
@@ -261,9 +268,21 @@ final class AppearanceSettings: ObservableObject {
         colorRevision += 1
     }
 
-    /// The stored hex for a role, or its theme default when unset.
+    /// Effective light/dark resolution of the mode picker. `.system` asks
+    /// the app's current appearance, which follows macOS.
+    var effectiveDark: Bool {
+        switch theme {
+        case .light: false
+        case .dark: true
+        case .system:
+            NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+    }
+
+    /// The stored hex for a role, or the effective mode's palette default
+    /// when unset.
     func storedHex(for role: AppearanceColorRole) -> String {
-        UserDefaults.standard.string(forKey: "appearance.color.\(role.rawValue)") ?? role.defaultHex
+        UserDefaults.standard.string(forKey: "appearance.color.\(role.rawValue)") ?? role.defaultHex(dark: effectiveDark)
     }
 
     private init() {
@@ -277,14 +296,24 @@ final class AppearanceSettings: ObservableObject {
         terminalFontSize = UserDefaults.standard.object(forKey: "appearance.terminalFontSize") as? Double ?? 13
         applyAppearance()
         applyLanguage()
+        // `.system` mode: when macOS flips light/dark, the effective default
+        // palette changes — re-render the editor like a color change does.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            guard let self, self.theme == .system else { return }
+            self.colorRevision += 1
+        }
     }
+
+    private var appearanceObservation: NSKeyValueObservation?
 
     func color(for role: AppearanceColorRole) -> NSColor {
         let stored = UserDefaults.standard.string(forKey: "appearance.color.\(role.rawValue)") ?? ""
-        let key = "\(role.rawValue)|\(stored)"
+        // effectiveDark is part of the key: unset roles resolve to the
+        // mode's default palette, which differs between light and dark.
+        let key = "\(role.rawValue)|\(stored)|\(effectiveDark)"
         if let cached = colorCache[key] { return cached }
         let color = (stored.isEmpty ? nil : NSColor(hexString: stored))
-            ?? NSColor(hexString: role.defaultHex)
+            ?? NSColor(hexString: role.defaultHex(dark: effectiveDark))
             ?? .textColor
         colorCache[key] = color
         return color
