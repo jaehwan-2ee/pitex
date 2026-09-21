@@ -1,0 +1,23 @@
+Tools/rust-target-dag.json
+  s_d73a481d2dbd78::t_8616caab393d99 30,81-83,152
+Tools/target-dag.json
+  s_d73a481d2dbd78::t_7b06e35b94dabb 68-71
+Tools/verify-target-dag.mjs
+  s_d73a481d2dbd78::t_9f99a1d4f09a10 106-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f460cd92e35a730dd651ba27febbbfe856fd21a0",
+  "prompts": {},
+  "sessions": {
+    "s_d73a481d2dbd78": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_d73a481d2dbd78",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
