@@ -256,7 +256,7 @@ enum PiRuntimeInstaller {
             return check.termination == .exited(code: 0) && check.stopReason == .completed
                 ? nil : String(String(decoding: check.standardError, as: UTF8.self).suffix(2_000))
         }
-        try ensureSucceeded(runInstall())
+        try ensureSucceeded(await runInstall())
         // `bun add` exits 0 without re-extracting when a stale, incomplete
         // package tree survives in node_modules — wipe and retry once when
         // the installed CLI is missing or won't run.
@@ -266,7 +266,7 @@ enum PiRuntimeInstaller {
             for name in ["node_modules", "bun.lock", "bun.lockb", "package-lock.json"] {
                 try? FileManager.default.removeItem(at: PiPaths.runtimeDirectory.appendingPathComponent(name))
             }
-            try ensureSucceeded(runInstall())
+            try ensureSucceeded(await runInstall())
             entry = installedEntry()
             failure = if let entry { try await smokeCheck(entry) } else { "The installed agent package has no CLI entry point." }
         }
