@@ -938,10 +938,18 @@ impl AppState {
     /// Coalesced via `highlight_pending` — a typing burst used to queue a
     /// full retokenize per keystroke.
     fn schedule_rehighlight_static() {
+        // try_borrow everywhere: this runs while a submit caller may still
+        // hold a borrow_mut on AppState (e.g. sync_snapshot_from_session) —
+        // a bare borrow() panics and aborts the GTK process.
         let pending = STATE.with(|s| {
             s.borrow()
                 .as_ref()
-                .map(|state| state.borrow().highlight_pending.replace(true))
+                .and_then(|state| {
+                    state
+                        .try_borrow()
+                        .ok()
+                        .map(|st| st.highlight_pending.replace(true))
+                })
                 .unwrap_or(false)
         });
         if pending {
@@ -950,8 +958,10 @@ impl AppState {
         glib::timeout_add_local_once(Duration::from_millis(120), || {
             STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow().highlight_pending.set(false);
-                    state.borrow().rehighlight();
+                    if let Ok(st) = state.try_borrow() {
+                        st.highlight_pending.set(false);
+                        st.rehighlight();
+                    }
                 }
             });
         });
