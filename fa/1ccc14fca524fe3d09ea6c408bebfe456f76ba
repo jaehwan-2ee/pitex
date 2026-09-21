@@ -1,0 +1,23 @@
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  s_4fd140e2b33431::t_e6d1249ac703d1 348-366
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_4fd140e2b33431::t_b34558b8653de8 4489-4498
+Linux/crates/pitex-shell/src/compat.rs
+  s_4fd140e2b33431::t_73ed4c4472e948 19,273-302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa1ccc14fca524fe3d09ea6c408bebfe456f76ba",
+  "prompts": {},
+  "sessions": {
+    "s_4fd140e2b33431": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_4fd140e2b33431",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
