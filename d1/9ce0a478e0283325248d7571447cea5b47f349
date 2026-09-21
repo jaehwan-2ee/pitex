@@ -1,0 +1,19 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_0554fcac0cfca8::t_c75f54ac924689 941-943,947-952,961-964
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d19ce0a478e0283325248d7571447cea5b47f349",
+  "prompts": {},
+  "sessions": {
+    "s_0554fcac0cfca8": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_0554fcac0cfca8",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
