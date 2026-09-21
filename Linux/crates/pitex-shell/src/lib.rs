@@ -12,6 +12,7 @@ pub mod compat;
 pub mod completion;
 pub mod fold;
 pub mod ghost_completion;
+pub mod git;
 pub mod l10n;
 pub mod model;
 pub mod panes;

@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "BuildCore", targets: ["BuildCore"]),
         .library(name: "SyncTeXCore", targets: ["SyncTeXCore"]),
         .library(name: "AICore", targets: ["AICore"]),
+        .library(name: "GitCore", targets: ["GitCore"]),
         .library(name: "ParityKit", targets: ["ParityKit"])
     ],
     targets: [
@@ -37,6 +38,7 @@ let package = Package(
             name: "AICore",
             dependencies: ["TexDomain", "DocumentSessionCore"]
         ),
+        .target(name: "GitCore"),
         .target(name: "ParityKit", dependencies: ["TexDomain"]),
         .testTarget(
             name: "TexCoreTests",
@@ -48,6 +50,7 @@ let package = Package(
                 "BuildCore",
                 "SyncTeXCore",
                 "AICore",
+                "GitCore",
                 "ParityKit"
             ]
         )

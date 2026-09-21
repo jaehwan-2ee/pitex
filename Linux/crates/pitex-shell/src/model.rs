@@ -25,6 +25,7 @@ use document_session_core::{
     DocumentSaveState, DocumentSession, DocumentSessionError, DocumentSessionRegistry,
     DocumentSnapshot,
 };
+use git_core::{GitCommit, GitStatus};
 use language_core::{LanguageFileSnapshot, LanguageTokenKind, TeXDialect};
 use project_core::ProjectFile;
 use tex_domain::NormalizedRelativePath;
@@ -64,6 +65,7 @@ pub enum WorkspaceSyncTeXState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsoleSection {
     Assistant,
+    Git,
     Issues,
     Terminal,
     Log,
@@ -195,6 +197,22 @@ pub enum WorkspaceMessage {
     OpenFinished(Result<OpenedProject, String>),
     ActivateFinished(Result<ActivatedDocument, String>),
     AgentActivityFinished,
+    /// Git Integration refresh — `Ok(None)` means the project is not a
+    /// repository; `Err` means git itself could not run.
+    GitRefreshed(Result<Option<GitRefresh>, String>),
+    /// A git mutating op finished — `error` is its stderr on failure;
+    /// `clear_commit` empties the message box on success.
+    GitOpFinished {
+        error: Option<String>,
+        clear_commit: bool,
+    },
+}
+
+/// One `refreshGit()` payload — status + branches + log collected off-thread.
+pub struct GitRefresh {
+    pub status: GitStatus,
+    pub commits: Vec<GitCommit>,
+    pub branches: Vec<String>,
 }
 impl std::fmt::Debug for WorkspaceMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -208,6 +226,8 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::OpenFinished(_) => write!(f, "OpenFinished"),
             Self::ActivateFinished(_) => write!(f, "ActivateFinished"),
             Self::AgentActivityFinished => write!(f, "AgentActivityFinished"),
+            Self::GitRefreshed(_) => write!(f, "GitRefreshed"),
+            Self::GitOpFinished { .. } => write!(f, "GitOpFinished"),
         }
     }
 }
@@ -704,6 +724,14 @@ pub struct WorkspaceModel {
     pub label_items: Vec<DocumentLabelItem>,
     pub bibliography_items: Vec<BibliographyItem>,
     pub todo_items: Vec<DocumentTodoItem>,
+    /// Git Integration panel state (`gitStatus`/`gitCommits`/`gitBranches`
+    /// on the Swift model) — `None` until the first refresh reports.
+    pub git_status: Option<GitStatus>,
+    pub git_commits: Vec<GitCommit>,
+    pub git_branches: Vec<String>,
+    pub git_commit_message: String,
+    pub git_busy: bool,
+    pub git_error: Option<String>,
     /// `todoCache` — per-file (mtime | snapshot-revision, items) entries so
     /// a per-keystroke refresh only re-parses the file that changed.
     todo_cache: HashMap<PathBuf, ((u128, u64), Vec<DocumentTodoItem>)>,
@@ -806,6 +834,12 @@ impl WorkspaceModel {
             label_items: Vec::new(),
             bibliography_items: Vec::new(),
             todo_items: Vec::new(),
+            git_status: None,
+            git_commits: Vec::new(),
+            git_branches: Vec::new(),
+            git_commit_message: String::new(),
+            git_busy: false,
+            git_error: None,
             todo_cache: HashMap::new(),
             project_label_keys: BTreeSet::new(),
             citation_keys: BTreeSet::new(),
@@ -1334,6 +1368,12 @@ impl WorkspaceModel {
         self.label_items.clear();
         self.bibliography_items.clear();
         self.todo_items.clear();
+        self.git_status = None;
+        self.git_commits.clear();
+        self.git_branches.clear();
+        self.git_commit_message.clear();
+        self.git_busy = false;
+        self.git_error = None;
         self.todo_cache.clear();
         self.project_label_keys.clear();
         self.citation_keys.clear();

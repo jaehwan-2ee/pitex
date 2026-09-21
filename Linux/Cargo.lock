@@ -364,6 +364,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-core"
+version = "0.0.0"
+
+[[package]]
 name = "glib"
 version = "0.19.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -763,6 +767,7 @@ dependencies = [
  "document-session-core",
  "editor-feature",
  "flate2",
+ "git-core",
  "gtk-editor-adapter",
  "gtk4",
  "language-core",

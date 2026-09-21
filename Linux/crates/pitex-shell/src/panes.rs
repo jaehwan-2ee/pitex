@@ -22,10 +22,11 @@ use windows_platform::{
     WindowsWorkspaceOpener as PlatformWorkspaceOpener,
 };
 
-use crate::app_ui::{a11y, AppState, UiHandles};
+use crate::app_ui::{a11y, AppState, UiHandles, STATE};
 use crate::compat;
 use crate::l10n::tr;
 use crate::model::{ConsoleSection, WorkspaceBuildState};
+use git_core::{GitChange, GitChangeKind, GitCommit};
 use settings_feature::ShellExecutionPreference;
 
 // ─── Bottom console ─────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
 
     let section_items = [
         tr(lang, "assistant.title"),
+        tr(lang, "git.integration"),
         tr(lang, "build.issues"),
         tr(lang, "console.terminal"),
         tr(lang, "build.log"),
@@ -56,8 +58,9 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
         section.connect_selected_notify(move |dd| {
             let section = match dd.selected() {
                 0 => ConsoleSection::Assistant,
-                1 => ConsoleSection::Issues,
-                2 => ConsoleSection::Terminal,
+                1 => ConsoleSection::Git,
+                2 => ConsoleSection::Issues,
+                3 => ConsoleSection::Terminal,
                 _ => ConsoleSection::Log,
             };
             if let Ok(mut s) = state.try_borrow_mut() {
@@ -137,6 +140,7 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
     let stack = gtk4::Stack::new();
     stack.set_vexpand(true);
     stack.add_named(&build_assistant_pane(state, ui), Some("assistant"));
+    stack.add_named(&build_git_pane(state, ui), Some("git"));
     stack.add_named(&build_terminal_pane(state, ui), Some("terminal"));
     stack.add_named(&build_issues_pane(state, ui), Some("issues"));
     stack.add_named(&build_log_pane(state, ui), Some("log"));
@@ -224,6 +228,514 @@ fn build_issues_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
     ui.issues_list.replace(Some(list.clone()));
     root.append(&scroll);
     root.upcast()
+}
+
+/// `GitIntegrationView` — repository header (name, branch picker, sync
+/// buttons), staged/unstaged change lists, the commit box, and the commit
+/// graph. `AppState::refresh_git_panel` repopulates it from the model.
+fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
+    let lang = state.borrow().language;
+    let stack = gtk4::Stack::new();
+    stack.set_vexpand(true);
+    a11y(&stack, "pitex.git", "git.integration");
+    ui.git_stack.replace(Some(stack.clone()));
+
+    // ── Repository page ─────────────────────────────────────────────────
+    let repo = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    header.set_margin_start(8);
+    header.set_margin_end(8);
+    header.set_margin_top(6);
+    header.set_margin_bottom(6);
+
+    let repo_name = gtk4::Label::new(None);
+    repo_name.add_css_class("heading");
+    ui.git_repo_name.replace(Some(repo_name.clone()));
+    header.append(&repo_name);
+
+    // Branch picker + new-branch — the VSCode branch chip.
+    let branch_model = gtk4::StringList::new(&[]);
+    let branch_dd = gtk4::DropDown::new(Some(branch_model.clone()), gtk4::Expression::NONE);
+    a11y(&branch_dd, "pitex.git.branch", "git.branch");
+    branch_dd.set_tooltip_text(Some(&tr(lang, "git.branch")));
+    {
+        let state = state.clone();
+        branch_dd.connect_selected_notify(move |dd| {
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            if s.git_branch_updating.get() {
+                return;
+            }
+            let Some(branch) = dd
+                .selected_item()
+                .and_then(|o| o.downcast::<gtk4::StringObject>().ok())
+                .map(|o| o.string().to_string())
+            else {
+                return;
+            };
+            let current = s
+                .model
+                .git_status
+                .as_ref()
+                .map(|g| g.branch.clone())
+                .unwrap_or_default();
+            if !branch.is_empty() && branch != current {
+                s.git_switch(&branch);
+            }
+        });
+    }
+    ui.git_branch_model.replace(Some(branch_model));
+    ui.git_branch_dropdown.replace(Some(branch_dd.clone()));
+    header.append(&branch_dd);
+
+    let new_branch = gtk4::Button::from_icon_name("list-add-symbolic");
+    new_branch.set_tooltip_text(Some(&tr(lang, "git.branch_new")));
+    a11y(&new_branch, "pitex.git.branchNew", "git.branch_new");
+    {
+        let state = state.clone();
+        new_branch.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            s.git_new_branch_dialog();
+        });
+    }
+    header.append(&new_branch);
+
+    let ahead_behind = gtk4::Label::new(None);
+    ahead_behind.add_css_class("caption");
+    ahead_behind.add_css_class("dim-label");
+    ahead_behind.set_visible(false);
+    ui.git_ahead_behind.replace(Some(ahead_behind.clone()));
+    header.append(&ahead_behind);
+
+    let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    header.append(&spacer);
+
+    let busy = gtk4::Spinner::new();
+    busy.set_visible(false);
+    ui.git_busy_spinner.replace(Some(busy.clone()));
+    header.append(&busy);
+
+    let pull = git_tool_button(lang, "go-down-symbolic", "git.pull", state, git_pull);
+    a11y(&pull, "pitex.git.pull", "git.pull");
+    header.append(&pull);
+    let push = git_tool_button(lang, "go-up-symbolic", "git.push", state, git_push);
+    a11y(&push, "pitex.git.push", "git.push");
+    header.append(&push);
+    let sync = git_tool_button(lang, "emblem-synchronizing-symbolic", "git.sync", state, git_sync);
+    a11y(&sync, "pitex.git.sync", "git.sync");
+    header.append(&sync);
+    let refresh = git_tool_button(lang, "view-refresh-symbolic", "git.refresh", state, git_refresh);
+    a11y(&refresh, "pitex.git.refresh", "git.refresh");
+    header.append(&refresh);
+    repo.append(&header);
+
+    let error = gtk4::Label::new(None);
+    error.add_css_class("caption");
+    error.add_css_class("error");
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.set_margin_start(8);
+    error.set_margin_end(8);
+    error.set_visible(false);
+    ui.git_error_label.replace(Some(error.clone()));
+    repo.append(&error);
+    repo.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+
+    // Content: changes column | separator | graph column.
+    let content = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    content.set_vexpand(true);
+
+    let left = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    left.set_width_request(340);
+    left.set_margin_start(8);
+    left.set_margin_end(8);
+    left.set_margin_bottom(8);
+    let changes_scroll = gtk4::ScrolledWindow::new();
+    changes_scroll.set_vexpand(true);
+    let changes_list = gtk4::ListBox::new();
+    changes_list.set_selection_mode(gtk4::SelectionMode::None);
+    changes_list.add_css_class("boxed-list");
+    a11y(&changes_list, "pitex.git.changes", "git.changes");
+    {
+        let state = state.clone();
+        changes_list.connect_row_activated(move |_, row| {
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            let name = row
+                .child()
+                .map(|c| c.widget_name().to_string())
+                .unwrap_or_default();
+            if let Some(path) = name
+                .strip_prefix("gitc:s:")
+                .or_else(|| name.strip_prefix("gitc:u:"))
+            {
+                let staged = name.starts_with("gitc:s:");
+                let path = path.to_string();
+                let change = s
+                    .model
+                    .git_status
+                    .as_ref()
+                    .and_then(|g| {
+                        g.staged
+                            .iter()
+                            .chain(g.unstaged.iter())
+                            .find(|c| c.path == path && c.staged == staged)
+                    })
+                    .cloned();
+                if let Some(change) = change {
+                    s.git_open_change(&change);
+                }
+            }
+        });
+    }
+    changes_scroll.set_child(Some(&changes_list));
+    ui.git_changes_list.replace(Some(changes_list.clone()));
+    left.append(&changes_scroll);
+
+    // Commit box — TextView (⌃Enter commits) + suggested-action button.
+    let commit_box = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    let commit_scroll = gtk4::ScrolledWindow::new();
+    commit_scroll.set_height_request(52);
+    commit_scroll.set_propagate_natural_height(true);
+    let commit_view = gtk4::TextView::new();
+    commit_view.set_wrap_mode(gtk4::WrapMode::Word);
+    commit_view.set_top_margin(4);
+    commit_view.set_bottom_margin(4);
+    commit_view.set_left_margin(6);
+    commit_view.set_right_margin(6);
+    commit_scroll.set_child(Some(&commit_view));
+    commit_scroll.add_css_class("card");
+    commit_box.append(&commit_scroll);
+    {
+        // Buffer → `gitCommitMessage`.
+        let state = state.clone();
+        commit_view.buffer().connect_changed(move |b| {
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            s.model.git_commit_message = b.text(&b.start_iter(), &b.end_iter(), false).to_string();
+            s.refresh_git_commit_button();
+        });
+    }
+    {
+        // ⌃Enter commits — capture on the ancestor so it lands before the
+        // view inserts a newline.
+        let keyctl = gtk4::EventControllerKey::new();
+        keyctl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let view = commit_view.clone();
+        keyctl.connect_key_pressed(move |_, key, _, mods| {
+            if key == gtk4::gdk::Key::Return
+                && mods.contains(gtk4::gdk::ModifierType::CONTROL_MASK)
+                && view.has_focus()
+            {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            st.git_commit();
+                        }
+                    }
+                });
+                return gtk4::glib::Propagation::Stop;
+            }
+            gtk4::glib::Propagation::Proceed
+        });
+        commit_box.add_controller(keyctl);
+    }
+    ui.git_commit_view.replace(Some(commit_view));
+
+    let commit_button = gtk4::Button::with_label(&tr(lang, "git.commit"));
+    commit_button.add_css_class("suggested-action");
+    a11y(&commit_button, "pitex.git.commit", "git.commit");
+    {
+        let state = state.clone();
+        commit_button.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            s.git_commit();
+        });
+    }
+    ui.git_commit_button.replace(Some(commit_button.clone()));
+    commit_box.append(&commit_button);
+    left.append(&commit_box);
+    content.append(&left);
+    content.append(&gtk4::Separator::new(gtk4::Orientation::Vertical));
+
+    let right = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    right.set_hexpand(true);
+    right.set_margin_start(8);
+    right.set_margin_end(8);
+    right.set_margin_top(4);
+    let graph_title = gtk4::Label::new(Some(&tr(lang, "git.graph")));
+    graph_title.add_css_class("caption");
+    graph_title.add_css_class("heading");
+    graph_title.set_xalign(0.0);
+    right.append(&graph_title);
+    let graph_scroll = gtk4::ScrolledWindow::new();
+    graph_scroll.set_vexpand(true);
+    let graph_list = gtk4::ListBox::new();
+    graph_list.set_selection_mode(gtk4::SelectionMode::None);
+    a11y(&graph_list, "pitex.git.graph", "git.graph");
+    graph_scroll.set_child(Some(&graph_list));
+    ui.git_graph_list.replace(Some(graph_list.clone()));
+    right.append(&graph_scroll);
+    content.append(&right);
+
+    repo.append(&content);
+    stack.add_named(&repo, Some("repo"));
+
+    // ── Empty page ──────────────────────────────────────────────────────
+    let empty = adw::StatusPage::new();
+    empty.set_title(&tr(lang, "git.no_repo"));
+    empty.set_icon_name(Some("folder-symbolic"));
+    let init = gtk4::Button::with_label(&tr(lang, "git.init"));
+    init.add_css_class("suggested-action");
+    init.set_halign(gtk4::Align::Center);
+    a11y(&init, "pitex.git.init", "git.init");
+    {
+        let state = state.clone();
+        init.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            s.git_init();
+        });
+    }
+    empty.set_child(Some(&init));
+    stack.add_named(&empty, Some("empty"));
+    stack.set_visible_child_name("empty");
+    stack.upcast()
+}
+
+fn git_refresh(s: &mut AppState) {
+    s.refresh_git();
+}
+fn git_pull(s: &mut AppState) {
+    s.git_pull();
+}
+fn git_push(s: &mut AppState) {
+    s.git_push();
+}
+fn git_sync(s: &mut AppState) {
+    s.git_sync();
+}
+
+fn git_tool_button(
+    lang: &str,
+    icon: &str,
+    tip: &str,
+    state: &Rc<RefCell<AppState>>,
+    action: fn(&mut AppState),
+) -> gtk4::Button {
+    let button = gtk4::Button::from_icon_name(icon);
+    button.set_tooltip_text(Some(&tr(lang, tip)));
+    let state = state.clone();
+    button.connect_clicked(move |_| {
+        let Ok(mut s) = state.try_borrow_mut() else {
+            return;
+        };
+        action(&mut s);
+    });
+    button
+}
+
+/// Section header row inside the changes list — `git.staged`/`git.changes`
+/// label, count, and the stage-all/unstage-all action.
+pub(crate) fn git_section_row(
+    title: &str,
+    count: usize,
+    icon: &str,
+    tip: &str,
+    action: fn(&mut AppState),
+) -> gtk4::ListBoxRow {
+    let row = gtk4::ListBoxRow::new();
+    row.set_activatable(false);
+    row.set_selectable(false);
+    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    hbox.set_margin_start(8);
+    hbox.set_margin_end(8);
+    hbox.set_margin_top(4);
+    hbox.set_margin_bottom(4);
+    let label = gtk4::Label::new(Some(&format!("{title} ({count})")));
+    label.add_css_class("caption");
+    label.add_css_class("heading");
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    hbox.append(&label);
+    let button = gtk4::Button::from_icon_name(icon);
+    button.set_tooltip_text(Some(tip));
+    button.add_css_class("flat");
+    button.connect_clicked(move |_| {
+        STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    action(&mut st);
+                }
+            }
+        });
+    });
+    hbox.append(&button);
+    row.set_child(Some(&hbox));
+    row
+}
+
+/// One `GitChange` row — badge letter, file name, path, and the
+/// stage/unstage + discard actions (row activation opens the file).
+pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::ListBoxRow {
+    let row = gtk4::ListBoxRow::new();
+    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    hbox.set_margin_start(8);
+    hbox.set_margin_end(8);
+    hbox.set_margin_top(2);
+    hbox.set_margin_bottom(2);
+    hbox.set_widget_name(&format!(
+        "gitc:{}:{}",
+        if change.staged { "s" } else { "u" },
+        change.path
+    ));
+
+    let badge = gtk4::Label::new(Some(change.kind.badge()));
+    badge.add_css_class("caption");
+    badge.add_css_class("monospace");
+    badge.add_css_class(match change.kind {
+        GitChangeKind::Modified | GitChangeKind::TypeChanged => "warning",
+        GitChangeKind::Added | GitChangeKind::Untracked => "success",
+        GitChangeKind::Deleted | GitChangeKind::Conflicted => "error",
+        GitChangeKind::Renamed | GitChangeKind::Copied => "accent",
+    });
+    hbox.append(&badge);
+
+    let name = change
+        .path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&change.path)
+        .to_string();
+    let name_label = gtk4::Label::new(Some(&name));
+    name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    hbox.append(&name_label);
+    if let Some(dir) = change.path.rsplit_once('/').map(|(d, _)| d) {
+        let dir_label = gtk4::Label::new(Some(dir));
+        dir_label.add_css_class("caption");
+        dir_label.add_css_class("dim-label");
+        dir_label.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
+        dir_label.set_hexpand(true);
+        dir_label.set_xalign(0.0);
+        hbox.append(&dir_label);
+    } else {
+        let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        hbox.append(&spacer);
+    }
+
+    let change = change.clone();
+    {
+        let change = change.clone();
+        let discard = gtk4::Button::from_icon_name("user-trash-symbolic");
+        discard.set_tooltip_text(Some(&tr(lang, "git.discard")));
+        discard.add_css_class("flat");
+        discard.connect_clicked(move |_| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.git_pending_discard = Some(change.clone());
+                        st.git_discard_dialog();
+                    }
+                }
+            });
+        });
+        hbox.append(&discard);
+    }
+    {
+        let toggle = gtk4::Button::from_icon_name(if change.staged {
+            "list-remove-symbolic"
+        } else {
+            "list-add-symbolic"
+        });
+        toggle.set_tooltip_text(Some(&tr(
+            lang,
+            if change.staged {
+                "git.unstage"
+            } else {
+                "git.stage"
+            },
+        )));
+        toggle.add_css_class("flat");
+        toggle.connect_clicked(move |_| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        if change.staged {
+                            st.git_unstage(&change);
+                        } else {
+                            st.git_stage(&change);
+                        }
+                    }
+                }
+            });
+        });
+        hbox.append(&toggle);
+    }
+    row.set_child(Some(&hbox));
+    row
+}
+
+/// One `GitCommit` row — lane dot + connector, subject, ref chips, and the
+/// author · date · hash subtitle.
+pub(crate) fn git_commit_row(commit: &GitCommit) -> gtk4::ListBoxRow {
+    let row = gtk4::ListBoxRow::new();
+    row.set_activatable(false);
+    row.set_selectable(false);
+    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    hbox.set_margin_start(8);
+    hbox.set_margin_end(8);
+    hbox.set_margin_top(2);
+    hbox.set_margin_bottom(2);
+
+    let lane = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let dot = gtk4::Label::new(Some("●"));
+    if commit.is_head {
+        dot.add_css_class("accent");
+    } else {
+        dot.add_css_class("dim-label");
+    }
+    lane.append(&dot);
+    let line = gtk4::Separator::new(gtk4::Orientation::Vertical);
+    line.set_vexpand(true);
+    line.set_opacity(0.3);
+    lane.append(&line);
+    hbox.append(&lane);
+
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    let title = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let subject = gtk4::Label::new(Some(&commit.subject));
+    subject.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    subject.set_xalign(0.0);
+    title.append(&subject);
+    for r in &commit.refs {
+        let chip = gtk4::Label::new(Some(&format!("[{}]", r.replace("tag: ", ""))));
+        chip.add_css_class("caption");
+        chip.add_css_class("accent");
+        title.append(&chip);
+    }
+    vbox.append(&title);
+    let subtitle = gtk4::Label::new(Some(&format!(
+        "{} · {} · {}",
+        commit.author, commit.relative_date, commit.hash
+    )));
+    subtitle.add_css_class("caption");
+    subtitle.add_css_class("dim-label");
+    subtitle.set_xalign(0.0);
+    vbox.append(&subtitle);
+    vbox.set_hexpand(true);
+    hbox.append(&vbox);
+    row.set_child(Some(&hbox));
+    row
 }
 
 fn build_log_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {

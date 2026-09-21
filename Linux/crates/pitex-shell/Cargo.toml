@@ -14,6 +14,7 @@ project-core = { path = "../project-core" }
 document-session-core = { path = "../document-session-core" }
 language-core = { path = "../language-core" }
 build-core = { path = "../build-core" }
+git-core = { path = "../git-core" }
 synctex-core = { path = "../synctex-core" }
 app-ports = { path = "../app-ports" }
 project-feature = { path = "../project-feature" }

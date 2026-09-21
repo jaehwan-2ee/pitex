@@ -54,7 +54,7 @@ final class AccessibilityContractTests: XCTestCase {
 
         let sourceKeys = Set(matches(
             in: try appSwiftSource(),
-            pattern: #""((?:app|workspace|editor|build|preview|assistant|command|settings|state|error|conflict|recovery|warning|accessibility)\.[A-Za-z0-9_.]+)""#,
+            pattern: #""((?:app|workspace|editor|build|preview|assistant|command|settings|state|error|conflict|recovery|warning|accessibility|git)\.[A-Za-z0-9_.]+)""#,
             capture: 1
         ))
         // Non-UI dotted literals the key-shaped regex also matches (the

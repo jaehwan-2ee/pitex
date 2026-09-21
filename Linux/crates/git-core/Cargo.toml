@@ -1,0 +1,6 @@
+[package]
+name = "git-core"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]

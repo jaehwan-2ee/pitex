@@ -5,6 +5,7 @@ members = [
     "crates/project-core",
     "crates/document-session-core",
     "crates/language-core",
+    "crates/git-core",
     "crates/build-core",
     "crates/synctex-core",
     "crates/ai-core",

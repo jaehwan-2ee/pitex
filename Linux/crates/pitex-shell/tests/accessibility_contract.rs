@@ -142,6 +142,7 @@ fn every_required_localization_key_exists_in_every_locale() {
         "app", "workspace", "editor", "build", "preview", "assistant", "command",
         "settings", "state", "error", "conflict", "recovery", "warning",
         "accessibility",
+        "git",
     ];
     let baseline = baseline.unwrap_or_default();
     let source = shell_source();

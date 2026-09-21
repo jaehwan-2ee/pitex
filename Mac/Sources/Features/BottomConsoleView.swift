@@ -6,6 +6,7 @@ extension ConsoleSection {
     var titleKey: LocalizedStringKey {
         switch self {
         case .assistant: "assistant.title"
+        case .git: "git.integration"
         case .terminal: "console.terminal"
         case .issues: "build.issues"
         case .log: "build.log"
@@ -78,6 +79,8 @@ struct BottomConsoleView: View {
             switch workspace.consoleSection {
             case .assistant:
                 assistantPane
+            case .git:
+                gitPane
             case .terminal:
                 terminalPane
             case .issues:
@@ -126,6 +129,12 @@ struct BottomConsoleView: View {
                 .accessibilityIdentifier("pitex.issues.filter.\(filter.rawValue)")
             }
         }
+    }
+
+    // MARK: - Git Integration
+
+    private var gitPane: some View {
+        GitIntegrationView(workspace: workspace)
     }
 
     // MARK: - Terminal

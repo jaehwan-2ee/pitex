@@ -40,6 +40,7 @@
 		100000000000000000000016 /* DocumentSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000A /* DocumentSessionCore */; };
 		100000000000000000000017 /* LanguageCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000B /* LanguageCore */; };
 		100000000000000000000018 /* BuildCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000C /* BuildCore */; };
+		100000000000000000000029 /* GitCore in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000012 /* GitCore */; };
 		100000000000000000000019 /* SyncTeXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000D /* SyncTeXCore */; };
 		10000000000000000000001A /* AICore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000E /* AICore */; };
 		10000000000000000000001B /* EditorFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000F /* EditorFeature */; };
@@ -103,6 +104,7 @@
 				100000000000000000000018 /* BuildCore in Frameworks */,
 				100000000000000000000019 /* SyncTeXCore in Frameworks */,
 				10000000000000000000001A /* AICore in Frameworks */,
+				100000000000000000000029 /* GitCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -222,6 +224,7 @@
 				30000000000000000000000F /* EditorFeature */,
 				300000000000000000000010 /* ProjectFeature */,
 				300000000000000000000011 /* PDFFeature */,
+				300000000000000000000012 /* GitCore */,
 			);
 			productName = Pitex;
 			productReference = 200000000000000000000005 /* Pitex.app */;
@@ -489,6 +492,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 800000000000000000000002 /* XCLocalSwiftPackageReference "../../Packages/TexApp" */;
 			productName = PDFFeature;
+		};
+		300000000000000000000012 /* GitCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = GitCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

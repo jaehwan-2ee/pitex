@@ -30,13 +30,14 @@ use language_core::{DeterministicTeXLexer, TeXDialect};
 
 use crate::agent::{AgentCoordinator, AgentSelectionAttachment};
 use crate::ghost_completion::{CompletionContext, GhostCompletionCoordinator};
-use crate::l10n::{resolve_language, tr};
+use crate::l10n::{resolve_language, tr, tr1};
 use crate::model::{
-    ConsoleSection, DocumentTodoItem, SidebarSection, TodoLineEdit, WorkspaceBuildState,
-    WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
+    ConsoleSection, DocumentTodoItem, GitRefresh, SidebarSection, TodoLineEdit,
+    WorkspaceBuildState, WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
 };
 use crate::pdf::PdfDocument;
 use crate::settings::{AppearanceColorRole, AppearanceSettings, Preferences, SettingsStore, Theme};
+use git_core::GitChange;
 
 pub const APP_ID: &str = "dev.pitex.app";
 
@@ -141,6 +142,18 @@ pub struct UiHandles {
     /// Header open button — the popover's anchor when `win.open` fires from
     /// a shortcut or menu item rather than a button click.
     pub open_button: RefCell<Option<gtk4::Button>>,
+    // Git Integration pane (`GitIntegrationView`).
+    pub git_stack: RefCell<Option<gtk4::Stack>>,
+    pub git_repo_name: RefCell<Option<gtk4::Label>>,
+    pub git_branch_dropdown: RefCell<Option<gtk4::DropDown>>,
+    pub git_branch_model: RefCell<Option<gtk4::StringList>>,
+    pub git_ahead_behind: RefCell<Option<gtk4::Label>>,
+    pub git_busy_spinner: RefCell<Option<gtk4::Spinner>>,
+    pub git_error_label: RefCell<Option<gtk4::Label>>,
+    pub git_changes_list: RefCell<Option<gtk4::ListBox>>,
+    pub git_graph_list: RefCell<Option<gtk4::ListBox>>,
+    pub git_commit_view: RefCell<Option<gtk4::TextView>>,
+    pub git_commit_button: RefCell<Option<gtk4::Button>>,
 }
 
 /// Shared application state — replaces SwiftUI's `@Published` propagation
@@ -234,6 +247,12 @@ pub struct AppState {
     pub active_doc_flag: Rc<Cell<bool>>,
     pub autosave_flag: Rc<Cell<bool>>,
     pub tx: Option<Sender<WorkspaceMessage>>,
+    /// Change awaiting the discard confirmation dialog (`discardTarget`).
+    pub git_pending_discard: Option<GitChange>,
+    /// Guards the branch dropdown's `selected` notify while a refresh
+    /// re-splices the model — otherwise the programmatic selection would
+    /// read as a user branch switch.
+    pub git_branch_updating: Cell<bool>,
 }
 
 impl AppState {
@@ -288,6 +307,8 @@ impl AppState {
             active_doc_flag: Rc::new(Cell::new(false)),
             autosave_flag: Rc::new(Cell::new(false)),
             tx: Some(tx),
+            git_pending_discard: None,
+            git_branch_updating: Cell::new(false),
         };
         state.wire_model_callbacks();
         // `completion.contextProvider` — reads live workspace state
@@ -470,6 +491,9 @@ impl AppState {
 
     pub fn set_console_section(&mut self, section: ConsoleSection) {
         self.model.console_section = section;
+        if section == ConsoleSection::Git {
+            self.refresh_git();
+        }
         self.refresh_console_visibility();
     }
 
@@ -755,6 +779,7 @@ impl AppState {
                     let Ok(mut st) = state.try_borrow_mut() else { return };
                     st.model.save();
                     st.refresh_after_document_change();
+                    st.refresh_git();
                 }
             });
         });
@@ -1094,6 +1119,7 @@ impl AppState {
     pub fn save_action(&mut self) {
         self.model.save();
         self.refresh_after_document_change();
+        self.refresh_git();
     }
 
     pub fn save_all_action(&mut self) {
@@ -1101,6 +1127,7 @@ impl AppState {
             self.toast(&err);
         }
         self.refresh_after_document_change();
+        self.refresh_git();
     }
 
     pub fn save_as_action(&self) {
@@ -1889,6 +1916,7 @@ impl AppState {
             if let Some(stack) = ui.console_stack.borrow().as_ref() {
                 let name = match self.model.console_section {
                     ConsoleSection::Assistant => "assistant",
+                    ConsoleSection::Git => "git",
                     ConsoleSection::Terminal => "terminal",
                     ConsoleSection::Issues => "issues",
                     ConsoleSection::Log => "log",
@@ -1898,9 +1926,10 @@ impl AppState {
             if let Some(dd) = ui.console_section_dropdown.borrow().as_ref() {
                 let idx = match self.model.console_section {
                     ConsoleSection::Assistant => 0,
-                    ConsoleSection::Issues => 1,
-                    ConsoleSection::Terminal => 2,
-                    ConsoleSection::Log => 3,
+                    ConsoleSection::Git => 1,
+                    ConsoleSection::Issues => 2,
+                    ConsoleSection::Terminal => 3,
+                    ConsoleSection::Log => 4,
                 };
                 if dd.selected() != idx {
                     dd.set_selected(idx);
@@ -2328,6 +2357,209 @@ impl AppState {
                 }
             }
         });
+    }
+
+    /// `GitIntegrationView` body — repopulates the pane from `model.git_*`.
+    pub fn refresh_git_panel(&mut self) {
+        let lang = self.language;
+        let busy = self.model.git_busy;
+        UI.with(|ui| {
+            if let Some(stack) = ui.git_stack.borrow().as_ref() {
+                stack.set_visible_child_name(if self.model.git_status.is_some() {
+                    "repo"
+                } else {
+                    "empty"
+                });
+            }
+            if let Some(spinner) = ui.git_busy_spinner.borrow().as_ref() {
+                spinner.set_visible(busy);
+                if busy {
+                    spinner.start();
+                } else {
+                    spinner.stop();
+                }
+            }
+            if let Some(label) = ui.git_error_label.borrow().as_ref() {
+                if let Some(error) = &self.model.git_error {
+                    label.set_label(error);
+                    label.set_visible(true);
+                } else {
+                    label.set_visible(false);
+                }
+            }
+            let Some(status) = self.model.git_status.clone() else {
+                return;
+            };
+            if let Some(label) = ui.git_repo_name.borrow().as_ref() {
+                label.set_label(&status.repo_name);
+            }
+            if let Some(label) = ui.git_ahead_behind.borrow().as_ref() {
+                label.set_visible(status.ahead > 0 || status.behind > 0);
+                label.set_label(&format!("↑{} ↓{}", status.ahead, status.behind));
+            }
+            // Branch dropdown — re-splice under the guard so the selected
+            // notify does not read as a user branch switch.
+            if let (Some(dd), Some(model)) = (
+                ui.git_branch_dropdown.borrow().as_ref().cloned(),
+                ui.git_branch_model.borrow().as_ref().cloned(),
+            ) {
+                self.git_branch_updating.set(true);
+                let items = self.model.git_branches.clone();
+                let strings: Vec<&str> = items.iter().map(String::as_str).collect();
+                model.splice(0, model.n_items(), &strings);
+                if let Some(idx) = items.iter().position(|b| *b == status.branch) {
+                    dd.set_selected(idx as u32);
+                }
+                self.git_branch_updating.set(false);
+            }
+            if let Some(list) = ui.git_changes_list.borrow().as_ref() {
+                clear_list(list);
+                if status.staged.is_empty() && status.unstaged.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "git.no_changes")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(12);
+                    list.append(&row);
+                } else {
+                    if !status.staged.is_empty() {
+                        list.append(&crate::panes::git_section_row(
+                            &tr(lang, "git.staged"),
+                            status.staged.len(),
+                            "list-remove-symbolic",
+                            &tr(lang, "git.unstage_all"),
+                            |s| s.git_unstage_all(),
+                        ));
+                        for change in &status.staged {
+                            list.append(&crate::panes::git_change_row(change, lang));
+                        }
+                    }
+                    list.append(&crate::panes::git_section_row(
+                        &tr(lang, "git.changes"),
+                        status.unstaged.len(),
+                        "list-add-symbolic",
+                        &tr(lang, "git.stage_all"),
+                        |s| s.git_stage_all(),
+                    ));
+                    for change in &status.unstaged {
+                        list.append(&crate::panes::git_change_row(change, lang));
+                    }
+                }
+            }
+            if let Some(list) = ui.git_graph_list.borrow().as_ref() {
+                clear_list(list);
+                if self.model.git_commits.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "git.no_commits")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(12);
+                    list.append(&row);
+                } else {
+                    for commit in &self.model.git_commits {
+                        list.append(&crate::panes::git_commit_row(commit));
+                    }
+                }
+            }
+        });
+        self.refresh_git_commit_button();
+    }
+
+    /// Commit button sensitivity — separate so the buffer `changed` hook
+    /// does not rebuild the lists on every keystroke.
+    pub(crate) fn refresh_git_commit_button(&self) {
+        UI.with(|ui| {
+            if let Some(button) = ui.git_commit_button.borrow().as_ref() {
+                let empty_message = self.model.git_commit_message.trim().is_empty();
+                let no_changes = self
+                    .model
+                    .git_status
+                    .as_ref()
+                    .map(|s| s.staged.is_empty() && s.unstaged.is_empty())
+                    .unwrap_or(true);
+                button.set_sensitive(!empty_message && !self.model.git_busy && !no_changes);
+            }
+        });
+    }
+
+    /// VSCode discard confirmation — `MessageDialog` (AlertDialog needs
+    /// GTK 4.10); destructive styling on the Discard button.
+    #[allow(deprecated)]
+    pub fn git_discard_dialog(&mut self) {
+        let Some(change) = self.git_pending_discard.clone() else {
+            return;
+        };
+        let lang = self.language;
+        let window = UI.with(|ui| ui.window.borrow().clone());
+        let key = if change.kind == git_core::GitChangeKind::Untracked {
+            "git.discard_confirm_untracked"
+        } else {
+            "git.discard_confirm"
+        };
+        let dialog = gtk4::MessageDialog::new(
+            window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()),
+            gtk4::DialogFlags::MODAL,
+            gtk4::MessageType::Warning,
+            gtk4::ButtonsType::None,
+            &tr1(lang, key, &change.path),
+        );
+        dialog.add_button(&tr(lang, "git.cancel"), gtk4::ResponseType::Cancel);
+        dialog
+            .add_button(&tr(lang, "git.discard"), gtk4::ResponseType::Accept)
+            .add_css_class("destructive-action");
+        dialog.connect_response(|d, response| {
+            if response == gtk4::ResponseType::Accept {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            if let Some(change) = st.git_pending_discard.take() {
+                                st.git_discard(&change);
+                            }
+                        }
+                    }
+                });
+            }
+            d.close();
+        });
+        dialog.present();
+    }
+
+    /// New-branch prompt — `MessageDialog` with an entry in its message
+    /// area (the compat story for `AlertDialog` + text field).
+    #[allow(deprecated)]
+    pub fn git_new_branch_dialog(&mut self) {
+        let lang = self.language;
+        let window = UI.with(|ui| ui.window.borrow().clone());
+        let dialog = gtk4::MessageDialog::new(
+            window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()),
+            gtk4::DialogFlags::MODAL,
+            gtk4::MessageType::Question,
+            gtk4::ButtonsType::None,
+            &tr(lang, "git.branch_new"),
+        );
+        let entry = gtk4::Entry::new();
+        entry.set_placeholder_text(Some(&tr(lang, "git.branch_name")));
+        entry.set_activates_default(true);
+        dialog
+            .message_area()
+            .downcast::<gtk4::Box>()
+            .unwrap()
+            .append(&entry);
+        dialog.add_button(&tr(lang, "git.cancel"), gtk4::ResponseType::Cancel);
+        dialog
+            .add_button(&tr(lang, "git.create"), gtk4::ResponseType::Accept)
+            .add_css_class("suggested-action");
+        dialog.set_default_response(gtk4::ResponseType::Accept);
+        dialog.connect_response(move |d, response| {
+            if response == gtk4::ResponseType::Accept {
+                let name = entry.text().to_string();
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            st.git_create_branch(&name);
+                        }
+                    }
+                });
+            }
+            d.close();
+        });
+        dialog.present();
     }
 
     pub fn refresh_build_ui(&mut self) {
@@ -2819,6 +3051,7 @@ impl AppState {
                     self.attach_session(session);
                     self.install_watchers();
                     self.refresh_phase();
+                    self.refresh_git();
                 }
                 Err(e) => {
                     // `open()`'s catch runs `await close()` — including the
@@ -2886,6 +3119,9 @@ impl AppState {
                 let confirm = self.store.confirm_overwrite();
                 self.model.process_disk_change(&path, confirm);
                 self.refresh_after_document_change();
+                // External edits also move git status — refresh keeps the
+                // panel live like VSCode's filesystem watcher.
+                self.refresh_git();
             }
             WorkspaceMessage::AgentActivityFinished => {
                 let confirm = self.store.confirm_overwrite();
@@ -2894,6 +3130,46 @@ impl AppState {
                     editor.refresh_from_session();
                 }
                 self.refresh_after_document_change();
+            }
+            WorkspaceMessage::GitRefreshed(result) => {
+                match result {
+                    Ok(Some(GitRefresh {
+                        status,
+                        commits,
+                        branches,
+                    })) => {
+                        self.model.git_status = Some(status);
+                        self.model.git_commits = commits;
+                        self.model.git_branches = branches;
+                    }
+                    // `Ok(None)` = not a repository; `Err` = git unusable —
+                    // both land on the empty page with its init button.
+                    _ => {
+                        self.model.git_status = None;
+                        self.model.git_commits.clear();
+                        self.model.git_branches.clear();
+                    }
+                }
+                self.refresh_git_panel();
+            }
+            WorkspaceMessage::GitOpFinished {
+                error,
+                clear_commit,
+            } => {
+                self.model.git_busy = false;
+                self.model.git_error = error;
+                if clear_commit && self.model.git_error.is_none() {
+                    self.model.git_commit_message.clear();
+                    UI.with(|ui| {
+                        if let Some(view) = ui.git_commit_view.borrow().as_ref() {
+                            view.buffer().set_text("");
+                        }
+                    });
+                }
+                // Post-op refresh — the panel rebuilds when GitRefreshed
+                // lands; update the busy spinner immediately.
+                self.refresh_git();
+                self.refresh_git_panel();
             }
         }
         self.drain_side_effects();
@@ -3867,6 +4143,24 @@ fn build_chrome(
                 s.poll_agent();
             }
             s.poll_completion();
+            glib::ControlFlow::Continue
+        });
+    }
+
+    // Git Integration — refresh while the pane is visible. VSCode watches
+    // the worktree; a light 4s poll covers external `git` CLI changes too.
+    {
+        let state = state.clone();
+        glib::timeout_add_local(Duration::from_secs(4), move || {
+            let Ok(s) = state.try_borrow_mut() else {
+                return glib::ControlFlow::Continue;
+            };
+            if s.model.console_section == ConsoleSection::Git
+                && s.model.bottom_panel_visible
+                && !s.model.git_busy
+            {
+                s.refresh_git();
+            }
             glib::ControlFlow::Continue
         });
     }

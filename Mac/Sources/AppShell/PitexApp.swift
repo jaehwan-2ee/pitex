@@ -6,6 +6,7 @@ import Darwin
 import DocumentSessionCore
 import EditorMacAdapter
 import Foundation
+import GitCore
 import LanguageCore
 import MacPlatform
 import ProjectCore
@@ -36,11 +37,12 @@ enum WorkspaceSyncTeXState: Equatable {
     case ambiguous(String)
 }
 
-/// Bottom console tabs: Assistant | Issues | Terminal | Build Log. The
-/// assistant lives here (not in the inspector) so the PDF preview and the
-/// assistant can be visible at the same time.
+/// Bottom console tabs: Assistant | Git Integration | Issues | Terminal |
+/// Build Log. The assistant lives here (not in the inspector) so the PDF
+/// preview and the assistant can be visible at the same time.
 enum ConsoleSection: String, CaseIterable, Identifiable {
     case assistant
+    case git
     case issues
     case terminal
     case log
@@ -225,6 +227,14 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var labelItems: [DocumentLabelItem] = []
     @Published private(set) var bibliographyItems: [BibliographyItem] = []
     @Published private(set) var todoItems: [DocumentTodoItem] = []
+    /// Git Integration panel — driven by `WorkspaceModel+Git.swift`; nil
+    /// until the first refresh reports whether the project is a repository.
+    @Published private(set) var gitStatus: GitStatus?
+    @Published private(set) var gitCommits: [GitCommit] = []
+    @Published private(set) var gitBranches: [String] = []
+    @Published var gitCommitMessage = ""
+    @Published private(set) var gitBusy = false
+    @Published private(set) var gitError: String?
     /// Project-wide \label keys and .bib citation keys feeding the editor's
     /// native completion. Rebuilt on the structure-refresh cadence through
     /// mtime-keyed caches — never reparsed per keystroke.
@@ -413,6 +423,7 @@ final class WorkspaceModel: ObservableObject {
             projectFiles = files
             registeredSessions = [session]
             loadProjectCommands(root: root)
+            refreshGit()
             let port = NativeDocumentSessionPort(session: session) { [weak self] snapshot in
                 self?.documentSnapshot = snapshot
             }
@@ -563,6 +574,7 @@ final class WorkspaceModel: ObservableObject {
                     expectedRevision: snapshot.revision
                 )
                 documentSnapshot = saved
+                refreshGit()
             case let .staleBaseline(conflict):
                 let observedHash = conflict.observedDisk?.hash ?? .hashing("")
                 let conflicted = try await session.apply(
@@ -693,6 +705,11 @@ final class WorkspaceModel: ObservableObject {
         labelItems = []
         bibliographyItems = []
         todoItems = []
+        gitStatus = nil
+        gitCommits = []
+        gitBranches = []
+        gitCommitMessage = ""
+        gitError = nil
         bibliographyCache = nil
         todoCache.removeAll()
         projectLabels = []
@@ -1016,6 +1033,7 @@ final class WorkspaceModel: ObservableObject {
             guard !Task.isCancelled else { return }
             await processDiskChange(url)
             pendingDiskChecks[url] = nil
+            refreshGit()
         }
         // The watcher fd is invalidated by rename/delete; re-arm it.
         if FileManager.default.fileExists(atPath: url.path) {
