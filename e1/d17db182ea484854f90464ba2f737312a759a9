@@ -1,0 +1,21 @@
+Mac/Sources/AppShell/PitexApp.swift
+  s_c691e504d170dc::t_63cf027c432643 232-234,236-237
+Mac/Sources/Features/GitIntegrationView.swift
+  s_c691e504d170dc::t_77e1694d4fa999 229-238,240-248,343,430,488,509
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1d17db182ea484854f90464ba2f737312a759a9",
+  "prompts": {},
+  "sessions": {
+    "s_c691e504d170dc": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_c691e504d170dc",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
