@@ -1,0 +1,19 @@
+Mac/Sources/AppShell/PitexApp.swift
+  s_15e1cd126bd9a3::t_72a02e06687c9f 1963-1978,1980
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96bf43283ceeb92da372a7d28e0dd36c2770e6a6",
+  "prompts": {},
+  "sessions": {
+    "s_15e1cd126bd9a3": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_15e1cd126bd9a3",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
