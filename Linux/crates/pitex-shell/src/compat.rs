@@ -56,10 +56,11 @@ pub fn spin_row(title: &str, min: f64, max: f64, step: f64) -> (adw::ActionRow, 
 }
 
 // ─── File dialogs ────────────────────────────────────────────────────────
-// `FileChooserNative` is deprecated since GTK 4.10 and trips
-// `GTK_IS_FILE_SYSTEM_MODEL` criticals on newer GTK (24.04+), where the
-// portal-backed `FileDialog` is the supported path. Ubuntu 22.04 (GTK 4.6)
-// keeps `FileChooserNative` — `FileDialog` doesn't exist there.
+// Newer GTK (24.04+) uses the portal-backed `FileDialog`, which doesn't exist
+// on Ubuntu 22.04 (GTK 4.6). The compat path uses `FileChooserDialog` rather
+// than `FileChooserNative`: FileChooserNative's fallback never maps a real
+// window when no usable xdg-desktop-portal is around, so Open/Save appeared
+// to do nothing.
 
 /// Single file picker filtered to TeX/BibTeX sources.
 pub fn pick_source_file(
@@ -90,7 +91,7 @@ pub fn pick_source_file(
     }
     #[cfg(not(feature = "modern-gtk"))]
     {
-        let dialog = native_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
+        let dialog = chooser_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
         let filter = gtk4::FileFilter::new();
         filter.add_pattern("*.tex");
         filter.add_pattern("*.bib");
@@ -103,7 +104,7 @@ pub fn pick_source_file(
             }
             d.destroy();
         });
-        dialog.show();
+        dialog.present();
     }
 }
 
@@ -130,7 +131,7 @@ pub fn pick_files(
     }
     #[cfg(not(feature = "modern-gtk"))]
     {
-        let dialog = native_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
+        let dialog = chooser_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
         dialog.set_select_multiple(true);
         dialog.connect_response(move |d, response| {
             if response == gtk4::ResponseType::Accept {
@@ -147,7 +148,7 @@ pub fn pick_files(
             }
             d.destroy();
         });
-        dialog.show();
+        dialog.present();
     }
 }
 
@@ -173,7 +174,7 @@ pub fn pick_folder(
     }
     #[cfg(not(feature = "modern-gtk"))]
     {
-        let dialog = native_dialog(window, title, gtk4::FileChooserAction::SelectFolder, "Open");
+        let dialog = chooser_dialog(window, title, gtk4::FileChooserAction::SelectFolder, "Open");
         dialog.connect_response(move |d, response| {
             if response == gtk4::ResponseType::Accept {
                 if let Some(path) = d.file().and_then(|f| f.path()) {
@@ -182,7 +183,7 @@ pub fn pick_folder(
             }
             d.destroy();
         });
-        dialog.show();
+        dialog.present();
     }
 }
 
@@ -212,7 +213,7 @@ pub fn save_file(
     }
     #[cfg(not(feature = "modern-gtk"))]
     {
-        let dialog = native_dialog(window, title, gtk4::FileChooserAction::Save, "Save");
+        let dialog = chooser_dialog(window, title, gtk4::FileChooserAction::Save, "Save");
         if let Some(name) = initial_name {
             dialog.set_current_name(name);
         }
@@ -224,25 +225,27 @@ pub fn save_file(
             }
             d.destroy();
         });
-        dialog.show();
+        dialog.present();
     }
 }
 
-#[allow(deprecated)] // FileChooserNative is deprecated in 4.10 but is the
-                     // only file dialog on GTK 4.6 (Ubuntu 22.04).
+// FileChooserNative routes through xdg-desktop-portal; without a working
+// portal its fallback dialog never maps a real window, so the picker appears
+// to do nothing (reported on Ubuntu 22.04). FileChooserDialog renders
+// in-process and works everywhere GTK 4.6 runs.
+#[allow(deprecated)]
 #[cfg(not(feature = "modern-gtk"))]
-fn native_dialog(
+fn chooser_dialog(
     window: Option<&gtk4::Window>,
     title: &str,
     action: gtk4::FileChooserAction,
     accept_label: &str,
-) -> gtk4::FileChooserNative {
-    let dialog = gtk4::FileChooserNative::new(
+) -> gtk4::FileChooserDialog {
+    let dialog = gtk4::FileChooserDialog::new(
         Some(title),
         window,
         action,
-        Some(accept_label),
-        Some("Cancel"),
+        &[("Cancel", gtk4::ResponseType::Cancel), (accept_label, gtk4::ResponseType::Accept)],
     );
     dialog.set_modal(true);
     dialog
