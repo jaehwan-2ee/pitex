@@ -1,0 +1,21 @@
+Linux/crates/pitex-shell/src/compat.rs
+  s_d1616a529397a7::t_9e890948ce1e4d 254-261,267
+Linux/crates/pitex-shell/tests/cursor_unhide.rs
+  s_d1616a529397a7::t_b87015545840f9 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44c721090b9b7f459ecf6345958043fb4bdbc14d",
+  "prompts": {},
+  "sessions": {
+    "s_d1616a529397a7": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_d1616a529397a7",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
