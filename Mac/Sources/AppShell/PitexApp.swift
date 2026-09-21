@@ -1960,7 +1960,24 @@ struct AppCommands: Commands {
 final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     weak var workspace: WorkspaceModel?
 
+    /// LaunchServices caches the Dock/Finder icon keyed by the app bundle's
+    /// modification date — a drag-copied update preserves it, so a new icon
+    /// can stay invisible. Bump the bundle's mtime once per app version and
+    /// force the running Dock tile to redraw from the bundled icon now.
+    private func refreshBundleIconCache() {
+        let defaults = UserDefaults.standard
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        NSApp.applicationIconImage = NSImage(named: "AppIcon") ?? NSApp.applicationIconImage
+        guard defaults.string(forKey: "iconRefreshVersion") != version else { return }
+        let now = Date()
+        for url in [Bundle.main.bundleURL, Bundle.main.bundleURL.appendingPathComponent("Contents")] {
+            try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: url.path)
+        }
+        defaults.set(version, forKey: "iconRefreshVersion")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        refreshBundleIconCache()
         // The Pitex Agent installs itself into the app's own support folder
         // on first launch (and refreshes its bundled skills on every launch)
         // — no install button required.
