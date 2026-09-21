@@ -135,6 +135,10 @@ public enum GitSupport {
     /// Staged-new discard — drops index entry and the worktree file.
     public static func removeFileArgs(_ path: String) -> [String] { ["rm", "-f", "--", path] }
     public static func cleanArgs(_ path: String) -> [String] { ["clean", "-f", "--", path] }
+    /// `--staged` describes the pending commit; plain `diff` covers the
+    /// commit-everything fallback (untracked files produce no diff — the
+    /// caller names them in the prompt's file list).
+    public static func diffArgs(staged: Bool) -> [String] { staged ? ["diff", "--staged"] : ["diff"] }
 
     /// `git status --porcelain=v1 -z --branch` output → status fields.
     /// In `-z` format each record is `XY path\0`; renames/copies append the

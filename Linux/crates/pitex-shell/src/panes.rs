@@ -345,12 +345,17 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     repo.append(&error);
     repo.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
 
-    // Content: changes column | separator | graph column.
-    let content = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    // Content: changes column | graph column — a draggable Paned like the
+    // macOS HSplitView (`set_position` seeds the old fixed 340).
+    let content = gtk4::Paned::new(gtk4::Orientation::Horizontal);
     content.set_vexpand(true);
+    content.set_wide_handle(true);
+    content.set_position(340);
+    content.set_shrink_start_child(false);
+    content.set_shrink_end_child(false);
 
     let left = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-    left.set_width_request(340);
+    left.set_width_request(240);
     left.set_margin_start(8);
     left.set_margin_end(8);
     left.set_margin_bottom(8);
@@ -448,8 +453,12 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     }
     ui.git_commit_view.replace(Some(commit_view));
 
+    // Commit | Suggest — the right half asks Pitex Agent to draft the
+    // message into the box; Commit still requires a message.
+    let commit_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     let commit_button = gtk4::Button::with_label(&tr(lang, "git.commit"));
     commit_button.add_css_class("suggested-action");
+    commit_button.set_hexpand(true);
     a11y(&commit_button, "pitex.git.commit", "git.commit");
     {
         let state = state.clone();
@@ -461,10 +470,25 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
         });
     }
     ui.git_commit_button.replace(Some(commit_button.clone()));
-    commit_box.append(&commit_button);
+    commit_row.append(&commit_button);
+    let suggest_button = gtk4::Button::with_label(&tr(lang, "git.suggest"));
+    suggest_button.set_hexpand(true);
+    suggest_button.set_tooltip_text(Some(&tr(lang, "git.suggest_help")));
+    a11y(&suggest_button, "pitex.git.suggest", "git.suggest");
+    {
+        let state = state.clone();
+        suggest_button.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            s.git_suggest_message();
+        });
+    }
+    ui.git_suggest_button.replace(Some(suggest_button.clone()));
+    commit_row.append(&suggest_button);
+    commit_box.append(&commit_row);
     left.append(&commit_box);
-    content.append(&left);
-    content.append(&gtk4::Separator::new(gtk4::Orientation::Vertical));
+    content.set_start_child(Some(&left));
 
     let right = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
     right.set_hexpand(true);
@@ -484,7 +508,7 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     graph_scroll.set_child(Some(&graph_list));
     ui.git_graph_list.replace(Some(graph_list.clone()));
     right.append(&graph_scroll);
-    content.append(&right);
+    content.set_end_child(Some(&right));
 
     repo.append(&content);
     stack.add_named(&repo, Some("repo"));

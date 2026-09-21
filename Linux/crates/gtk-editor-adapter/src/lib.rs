@@ -117,7 +117,11 @@ impl GtkEditorAdapter {
 
         view.set_monospace(true);
         view.set_wrap_mode(gtk4::WrapMode::Word);
+        // Not undoable — the initial fill must not land on the user's undo
+        // stack (`disableUndoRegistration` around `textView.string` on Mac).
+        buffer.begin_irreversible_action();
         buffer.set_text(&snapshot.text);
+        buffer.end_irreversible_action();
 
         // Track IM preedit so `has_marked_text` mirrors `hasMarkedText()`:
         // `preedit-changed` fires with the current preedit string, empty
@@ -312,7 +316,9 @@ impl GtkEditorAdapter {
         *shared.desired_text.borrow_mut() = snapshot.text.clone();
         if current != snapshot.text {
             shared.suppress_change.set(true);
+            buffer.begin_irreversible_action();
             buffer.set_text(&snapshot.text);
+            buffer.end_irreversible_action();
             shared.suppress_change.set(false);
         }
         // Move (not clone) the snapshot into committed — nothing observes
@@ -331,7 +337,9 @@ impl GtkEditorAdapter {
         }
         let previous = self.selected_range();
         self.shared.suppress_change.set(true);
+        self.buffer.begin_irreversible_action();
         self.buffer.set_text(&snapshot.text);
+        self.buffer.end_irreversible_action();
         let maximum = snapshot.text.encode_utf16().count() as i64;
         let location = previous.location.min(maximum);
         let length = previous.length.min(maximum - location);

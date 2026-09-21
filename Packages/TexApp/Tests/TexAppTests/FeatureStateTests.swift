@@ -121,4 +121,36 @@ final class FeatureStateTests: XCTestCase {
             XCTAssertEqual(error as? BuildFeatureError, .customShellAuthorityNotAcknowledged)
         }
     }
+
+    /// The main document's same-stem .pdf is a build artifact: the sidebar
+    /// pins it below the tree, at any depth, while other PDFs stay put.
+    func testExtractOutputPDFsPullsMainStemPDFAtAnyDepth() {
+        let tree = buildProjectFileTree(relativePaths: [
+            "main.tex",
+            "main.pdf",
+            "figures/diagram.pdf",
+            "build/main.pdf",
+            "refs.bib",
+        ])
+        let (filtered, outputs) = extractOutputPDFs(tree, mainStem: "main")
+        XCTAssertEqual(outputs.map(\.path), ["build/main.pdf", "main.pdf"].sorted())
+        let remaining = filtered.flatMap { flatten($0) }
+        XCTAssertFalse(remaining.contains("main.pdf"))
+        XCTAssertFalse(remaining.contains("build/main.pdf"))
+        XCTAssertTrue(remaining.contains("main.tex"))
+        XCTAssertTrue(remaining.contains("figures/diagram.pdf"))
+        // A directory emptied by the extraction is pruned, not left hollow.
+        XCTAssertNil(filtered.first { $0.name == "build" })
+    }
+
+    func testExtractOutputPDFsWithoutMainIsNoop() {
+        let tree = buildProjectFileTree(relativePaths: ["main.tex", "main.pdf"])
+        let (filtered, outputs) = extractOutputPDFs(tree, mainStem: "")
+        XCTAssertEqual(filtered, tree)
+        XCTAssertTrue(outputs.isEmpty)
+    }
+
+    private func flatten(_ node: ProjectFileNode) -> [String] {
+        [node.path] + (node.children ?? []).flatMap(flatten)
+    }
 }

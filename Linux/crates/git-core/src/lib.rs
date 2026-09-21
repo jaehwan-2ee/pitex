@@ -165,6 +165,16 @@ pub fn remove_file_args(path: &str) -> [String; 4] {
 pub fn clean_args(path: &str) -> [String; 4] {
     ["clean".into(), "-f".into(), "--".into(), path.into()]
 }
+/// `--staged` describes the pending commit; plain `diff` covers the
+/// commit-everything fallback (untracked files produce no diff — the
+/// caller names them in the prompt's file list).
+pub fn diff_args(staged: bool) -> [&'static str; 2] {
+    if staged {
+        ["diff", "--staged"]
+    } else {
+        ["diff", "--"]
+    }
+}
 
 fn kind_from(code: char) -> GitChangeKind {
     match code {

@@ -206,6 +206,9 @@ pub enum WorkspaceMessage {
         error: Option<String>,
         clear_commit: bool,
     },
+    /// `suggestCommitMessage()` — the one-shot `pi --print` run returned a
+    /// drafted message (Ok) or an error string for the panel's error line.
+    GitSuggestFinished(Result<String, String>),
 }
 
 /// One `refreshGit()` payload — status + branches + log collected off-thread.
@@ -228,6 +231,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::AgentActivityFinished => write!(f, "AgentActivityFinished"),
             Self::GitRefreshed(_) => write!(f, "GitRefreshed"),
             Self::GitOpFinished { .. } => write!(f, "GitOpFinished"),
+            Self::GitSuggestFinished(_) => write!(f, "GitSuggestFinished"),
         }
     }
 }
@@ -731,6 +735,9 @@ pub struct WorkspaceModel {
     pub git_branches: Vec<String>,
     pub git_commit_message: String,
     pub git_busy: bool,
+    /// `gitSuggestBusy` — a pi subprocess, not a git op, so pull/push stay
+    /// enabled while a suggestion runs.
+    pub git_suggest_busy: bool,
     pub git_error: Option<String>,
     /// `todoCache` — per-file (mtime | snapshot-revision, items) entries so
     /// a per-keystroke refresh only re-parses the file that changed.
@@ -839,6 +846,7 @@ impl WorkspaceModel {
             git_branches: Vec::new(),
             git_commit_message: String::new(),
             git_busy: false,
+            git_suggest_busy: false,
             git_error: None,
             todo_cache: HashMap::new(),
             project_label_keys: BTreeSet::new(),
@@ -1373,6 +1381,7 @@ impl WorkspaceModel {
         self.git_branches.clear();
         self.git_commit_message.clear();
         self.git_busy = false;
+        self.git_suggest_busy = false;
         self.git_error = None;
         self.todo_cache.clear();
         self.project_label_keys.clear();

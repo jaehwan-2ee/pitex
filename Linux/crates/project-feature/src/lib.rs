@@ -333,6 +333,41 @@ fn bib_paths(stem: &str, nodes: &[ProjectFileNode]) -> Vec<String> {
     out
 }
 
+/// `extractOutputPDFs` — pulls the build output out of the file tree:
+/// `.pdf` files whose stem matches the main document's (`manuscript.tex` →
+/// `manuscript.pdf`, wherever the build wrote it). The sidebar pins them
+/// below the tree — artifacts, not sources. Empty stem → no-op.
+pub fn extract_output_pdfs(
+    mut tree: Vec<ProjectFileNode>,
+    main_stem: &str,
+) -> (Vec<ProjectFileNode>, Vec<ProjectFileNode>) {
+    if main_stem.is_empty() {
+        return (tree, Vec::new());
+    }
+    let mut outputs = Vec::new();
+    for path in pdf_paths(main_stem, &tree) {
+        if let Some(node) = remove_node(&mut tree, &path) {
+            outputs.push(node);
+        }
+    }
+    (tree, outputs)
+}
+
+/// All .pdf paths in the tree whose stem equals `stem`.
+fn pdf_paths(stem: &str, nodes: &[ProjectFileNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    for node in nodes {
+        if node.is_directory {
+            out.extend(pdf_paths(stem, node.children.as_deref().unwrap_or(&[])));
+        } else if node.name.to_lowercase().ends_with(".pdf")
+            && node.name.rsplit_once('.').map(|(s, _)| s) == Some(stem)
+        {
+            out.push(node.path.clone());
+        }
+    }
+    out
+}
+
 /// Detaches the node with `path` wherever it sits, pruning directory nodes
 /// left empty by the removal.
 fn remove_node(nodes: &mut Vec<ProjectFileNode>, path: &str) -> Option<ProjectFileNode> {
@@ -413,5 +448,45 @@ mod tests {
         let tree = build_project_file_tree(&["a.tex".into(), "b.bib".into()]);
         let nested = nest_project_children(tree.clone(), "main.tex", &["b.bib".into()]);
         assert_eq!(nested, tree);
+    }
+
+    fn all_paths(nodes: &[ProjectFileNode]) -> Vec<String> {
+        nodes
+            .iter()
+            .flat_map(|n| {
+                let mut v = vec![n.path.clone()];
+                v.extend(all_paths(n.children.as_deref().unwrap_or(&[])));
+                v
+            })
+            .collect()
+    }
+
+    #[test]
+    fn extract_output_pdfs_pulls_main_stem_pdf_at_any_depth() {
+        let tree = build_project_file_tree(&[
+            "main.tex".into(),
+            "main.pdf".into(),
+            "figures/diagram.pdf".into(),
+            "build/main.pdf".into(),
+            "refs.bib".into(),
+        ]);
+        let (filtered, outputs) = extract_output_pdfs(tree, "main");
+        let mut out: Vec<&str> = outputs.iter().map(|n| n.path.as_str()).collect();
+        out.sort();
+        assert_eq!(out, ["build/main.pdf", "main.pdf"]);
+        let remaining = all_paths(&filtered);
+        assert!(!remaining.iter().any(|p| p == "main.pdf" || p == "build/main.pdf"));
+        assert!(remaining.iter().any(|p| p == "main.tex"));
+        assert!(remaining.iter().any(|p| p == "figures/diagram.pdf"));
+        // A directory emptied by the extraction is pruned, not left hollow.
+        assert!(!filtered.iter().any(|n| n.name == "build"));
+    }
+
+    #[test]
+    fn extract_output_pdfs_without_main_is_noop() {
+        let tree = build_project_file_tree(&["main.tex".into(), "main.pdf".into()]);
+        let (filtered, outputs) = extract_output_pdfs(tree.clone(), "");
+        assert_eq!(filtered, tree);
+        assert!(outputs.is_empty());
     }
 }

@@ -339,7 +339,7 @@
 "git.no_repo" = "This project is not a Git repository.";
 "git.init" = "Initialize Repository";
 "git.branch" = "Branch";
-"git.branch_new" = "New Branch\u2026";
+"git.branch_new" = "New Branch\U2026";
 "git.branch_name" = "Branch name";
 "git.create" = "Create";
 "git.cancel" = "Cancel";
@@ -354,7 +354,9 @@
 "git.discard_confirm_untracked" = "Delete untracked file '%@'? This cannot be undone.";
 "git.open_file" = "Open File";
 "git.commit" = "Commit";
-"git.commit_placeholder" = "Message \u2014 commit on '%@'";
+"git.commit_placeholder" = "Message \U2014 commit on '%@'";
+"git.suggest" = "Suggest";
+"git.suggest_help" = "Write the commit message with Pitex Agent";
 "git.graph" = "Graph";
 "git.no_changes" = "No changes";
 "git.no_commits" = "No commits yet";

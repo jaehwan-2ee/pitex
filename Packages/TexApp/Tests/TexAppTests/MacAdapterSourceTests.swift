@@ -12,6 +12,11 @@ final class MacAdapterSourceTests: XCTestCase {
         XCTAssertTrue(source.contains("textView.hasMarkedText()"))
         XCTAssertTrue(source.contains("textView.markedRange()"))
         XCTAssertTrue(source.contains("override var undoManager: UndoManager?"))
+        // The delegate hook is what NSTextView's internal registration
+        // resolves — the property override alone leaves ⌘Z dispatching to
+        // an empty manager.
+        XCTAssertTrue(source.contains("func undoManager(for view: NSTextView)"))
+        XCTAssertTrue(source.contains("disableUndoRegistration()"))
         XCTAssertTrue(source.contains("nativeUndoManager = nativeView.sessionUndoManager"))
         XCTAssertTrue(source.contains("textView.setSelectedRange"))
         XCTAssertFalse(source.contains("var shadowSelection"))

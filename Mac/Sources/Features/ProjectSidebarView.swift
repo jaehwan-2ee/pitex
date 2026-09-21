@@ -313,9 +313,12 @@ struct ProjectSidebarView: View {
             // rows selected (accent wash) even without a selection binding —
             // we want only our own active-file highlight. OutlineGroup draws
             // the directory disclosure triangles.
+            let mainStem = workspace.buildSourceURL()?
+                .deletingPathExtension().lastPathComponent ?? ""
+            let project = extractOutputPDFs(workspace.projectTree, mainStem: mainStem)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    OutlineGroup(workspace.projectTree, children: \.children) { node in
+                    OutlineGroup(project.tree, children: \.children) { node in
                         if node.isDirectory {
                             HStack(spacing: 7) {
                                 Image(systemName: "folder")
@@ -333,6 +336,21 @@ struct ProjectSidebarView: View {
                 .padding(.horizontal, 4)
             }
             .frame(minHeight: 80, idealHeight: 140, maxHeight: 220)
+
+            // The compiled PDF (main-stem .pdf) is pinned just above the
+            // project path, set off by a dotted separator — an artifact,
+            // not a source row.
+            if !project.outputs.isEmpty {
+                Rectangle()
+                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                    .foregroundStyle(.secondary)
+                    .frame(height: 1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                ForEach(project.outputs) { fileRow($0) }
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 4)
+            }
 
             if let path = workspace.projectURL?.path {
                 Text(verbatim: path)
@@ -362,7 +380,7 @@ struct ProjectSidebarView: View {
             HStack(spacing: 7) {
                 Image(systemName: isSource
                     ? (url.pathExtension.lowercased() == "bib" ? "book" : "doc.text")
-                    : "photo")
+                    : (url.pathExtension.lowercased() == "pdf" ? "doc.richtext" : "photo"))
                 Text(verbatim: node.name)
                     .lineLimit(1)
                 Spacer()

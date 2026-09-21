@@ -265,6 +265,36 @@ private func bibPaths(matching stem: String, in nodes: [ProjectFileNode]) -> [St
     }
 }
 
+/// Pulls the build output out of the file tree: `.pdf` files whose stem
+/// matches the main document's (`manuscript.tex` → `manuscript.pdf`, in
+/// whichever directory the build wrote it). The sidebar pins them below
+/// the tree — they are artifacts, not sources. Empty stem → no-op.
+public func extractOutputPDFs(
+    _ tree: [ProjectFileNode],
+    mainStem: String
+) -> (tree: [ProjectFileNode], outputs: [ProjectFileNode]) {
+    guard !mainStem.isEmpty else { return (tree, []) }
+    var tree = tree
+    var outputs: [ProjectFileNode] = []
+    for path in pdfPaths(matching: mainStem, in: tree) {
+        if let node = removeNode(path: path, from: &tree) {
+            outputs.append(node)
+        }
+    }
+    return (tree, outputs)
+}
+
+/// All .pdf paths in the tree whose stem equals `stem`.
+private func pdfPaths(matching stem: String, in nodes: [ProjectFileNode]) -> [String] {
+    nodes.flatMap { node -> [String] in
+        if node.isDirectory { return pdfPaths(matching: stem, in: node.children ?? []) }
+        guard (node.name as NSString).pathExtension.lowercased() == "pdf",
+              (node.name as NSString).deletingPathExtension == stem
+        else { return [] }
+        return [node.path]
+    }
+}
+
 /// Detaches the node with `path` wherever it sits, pruning directory nodes
 /// left empty by the removal.
 private func removeNode(path: String, from nodes: inout [ProjectFileNode]) -> ProjectFileNode? {

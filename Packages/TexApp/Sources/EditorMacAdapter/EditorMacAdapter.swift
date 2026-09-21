@@ -103,7 +103,9 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         nativeView.isRichText = false
         nativeView.importsGraphics = false
         nativeView.allowsUndo = true
+        sessionTextView.sessionUndoManager.disableUndoRegistration()
         nativeView.string = snapshot.text
+        sessionTextView.sessionUndoManager.enableUndoRegistration()
         nativeView.delegate = self
         nativeView.userCompletionRange = { [weak self, weak nativeView] in
             guard let self, let nativeView, let completionSource = self.completionSource
@@ -130,6 +132,15 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
 
     public func textViewDidChangeSelection(_ notification: Notification) {
         onSelectionDidChange?()
+    }
+
+    /// The documented NSTextView hook for a custom undo manager — the
+    /// `undoManager` override alone reports the session manager to the
+    /// responder chain while internal registration still resolves the
+    /// delegate, so without this ⌘Z dispatches to a manager that never
+    /// saw the edits.
+    public func undoManager(for view: NSTextView) -> UndoManager? {
+        sessionTextView.sessionUndoManager
     }
 
     public func textDidChange(_ notification: Notification) {
@@ -228,7 +239,12 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
 
         let previousSelection = textView.selectedRange()
         isApplyingSessionSnapshot = true
+        // A session-applied snapshot is not a user edit — registering it
+        // would push a whole-document undo entry (and, on AppKit, reset
+        // the coalesced typing history around it).
+        sessionTextView.sessionUndoManager.disableUndoRegistration()
         textView.string = snapshot.text
+        sessionTextView.sessionUndoManager.enableUndoRegistration()
         let maximum = snapshot.text.utf16.count
         let location = min(previousSelection.location, maximum)
         let length = min(previousSelection.length, maximum - location)

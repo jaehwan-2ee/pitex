@@ -234,6 +234,28 @@ impl AppState {
         });
     }
 
+    /// `suggestCommitMessage()` — the "Suggest" half of the commit box: a
+    /// one-shot `pi --print` run with the pending diff inline. A dedicated
+    /// subprocess (like ghost completion) keeps the chat transcript and any
+    /// in-flight ask untouched; failures surface in the panel's error line.
+    pub fn git_suggest_message(&mut self) {
+        let Some(status) = self.model.git_status.clone() else {
+            return;
+        };
+        if self.model.git_suggest_busy {
+            return;
+        }
+        let Some(tx) = self.tx.clone() else { return };
+        self.model.git_suggest_busy = true;
+        self.model.git_error = None;
+        self.refresh_git_commit_button();
+        std::thread::spawn(move || {
+            let _ = tx.send(WorkspaceMessage::GitSuggestFinished(
+                suggest_commit_message(&status),
+            ));
+        });
+    }
+
     /// `openGitChange` — open the file at its repo-relative path.
     pub fn git_open_change(&mut self, change: &GitChange) {
         let Some(root) = self.model.git_status.as_ref().map(|s| s.root.clone()) else {
@@ -243,4 +265,112 @@ impl AppState {
         self.model
             .activate_document(PathBuf::from(root).join(&change.path), tx);
     }
+}
+
+/// Off-thread half of `git_suggest_message`: gather the diff, discover the
+/// toolchain, then run one-shot `pi --print`. Mirrors the Swift extension
+/// in `GitIntegrationView.swift` step for step.
+fn suggest_commit_message(status: &git_core::GitStatus) -> Result<String, String> {
+    use crate::agent::{locate_pi_executable_in, AgentCoordinator, PiToolchain};
+    let root = PathBuf::from(&status.root);
+    let staged = !status.staged.is_empty();
+    let diff = run_git(&root, git_core::diff_args(staged)).unwrap_or_default();
+    let tools = PiToolchain::discover(
+        std::env::vars().collect(),
+        &dirs::home_dir().unwrap_or_default(),
+        &PiToolchain::SYSTEM_DIRECTORIES,
+    );
+    let Some(executable) = locate_pi_executable_in(&tools.environment) else {
+        return Err("Pitex Agent is not installed yet — see Settings → AI.".into());
+    };
+    let files: Vec<String> = (if staged { &status.staged } else { &status.unstaged })
+        .iter()
+        .map(|c| format!("{} {}", c.kind.badge(), c.path))
+        .collect();
+    let prompt = commit_message_prompt(&status.branch, &files, &diff);
+    let arguments = vec![
+        "--no-session".to_string(),
+        "--no-tools".to_string(),
+        "--print".to_string(),
+        prompt,
+    ];
+    let (executable, arguments) = tools.launch(&executable, &arguments)?;
+    let environment = AgentCoordinator::child_environment(&executable, &tools.environment);
+    let plan = build_core::DirectCommandPlan::new(
+        executable.to_string_lossy().into_owned(),
+        arguments,
+        build_core::WorkingDirectoryPolicy::Explicit(status.root.clone()),
+        build_core::EnvironmentPolicy::Inherit {
+            overrides: environment,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    let result = build_core::ProcessRunner::default()
+        .run(
+            &plan,
+            &root,
+            None,
+            Some(std::time::Duration::from_secs(90)),
+            None,
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let text = cleaned_commit_message(&String::from_utf8_lossy(&result.standard_output));
+    if result.termination == (build_core::ProcessTermination::Exited { code: 0 })
+        && !text.is_empty()
+    {
+        return Ok(text);
+    }
+    let detail = String::from_utf8_lossy(&result.standard_error)
+        .trim()
+        .to_string();
+    Err(if detail.is_empty() {
+        "Pitex Agent did not return a commit message.".into()
+    } else {
+        detail
+            .chars()
+            .skip(detail.chars().count().saturating_sub(400))
+            .collect()
+    })
+}
+
+/// Conventional-commit ask: branch + change list + the diff itself. The
+/// diff is capped so a generated/mass-rename changeset cannot blow past the
+/// model's context on a one-shot prompt.
+fn commit_message_prompt(branch: &str, files: &[String], diff: &str) -> String {
+    const LIMIT: usize = 20_000;
+    let body = if diff.len() > LIMIT {
+        let mut end = LIMIT;
+        while !diff.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}\n… [diff truncated]", &diff[..end])
+    } else {
+        diff.to_string()
+    };
+    format!(
+        "Write the git commit message for this change set on branch '{branch}'.\n\
+         Changed files:\n{}\n\nDiff:\n{body}\n\n\
+         Reply with ONLY the commit message: one imperative subject line of at \
+         most 72 characters, then optionally a blank line and a short body. No \
+         quotes, no code fences, no commentary.",
+        files.join("\n")
+    )
+}
+
+/// `pi --print` should already answer with just the message; this drops a
+/// wrapping code fence or quote pair when a model adds one anyway.
+fn cleaned_commit_message(raw: &str) -> String {
+    let mut text = raw.trim().to_string();
+    if let Some(rest) = text.strip_prefix("```") {
+        let mut lines: Vec<&str> = rest.lines().collect();
+        if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) {
+            lines.pop();
+        }
+        text = lines.join("\n").trim().to_string();
+    }
+    if text.len() > 1 && text.starts_with('"') && text.ends_with('"') {
+        text = text[1..text.len() - 1].to_string();
+    }
+    text.chars().take(500).collect()
 }

@@ -88,6 +88,10 @@ pub struct UiHandles {
     pub todo_list: RefCell<Option<gtk4::ListBox>>,
     pub todo_add_button: RefCell<Option<gtk4::Button>>,
     pub project_list: RefCell<Option<gtk4::ListBox>>,
+    /// Compiled-artifact strip under the project list — the dashed divider
+    /// plus the same-stem PDF rows `extract_output_pdfs` pulled out.
+    pub project_output_sep: RefCell<Option<gtk4::Widget>>,
+    pub project_output_list: RefCell<Option<gtk4::ListBox>>,
     pub pin_button: RefCell<Option<gtk4::Button>>,
     /// `win.save` / `win.saveas` / `win.saveall` — enabled state mirrors the
     /// macOS File menu's `.disabled(...)` conditions.
@@ -154,6 +158,9 @@ pub struct UiHandles {
     pub git_graph_list: RefCell<Option<gtk4::ListBox>>,
     pub git_commit_view: RefCell<Option<gtk4::TextView>>,
     pub git_commit_button: RefCell<Option<gtk4::Button>>,
+    /// The "Suggest" half of the commit box — child swaps to a Spinner
+    /// while `git_suggest_busy`.
+    pub git_suggest_button: RefCell<Option<gtk4::Button>>,
 }
 
 /// Shared application state — replaces SwiftUI's `@Published` propagation
@@ -2216,11 +2223,32 @@ impl AppState {
                     .collect();
                 let tree = project_feature::nest_project_children(
                     project_feature::build_project_file_tree(&rel_paths),
-                    &main_rel.unwrap_or_default(),
+                    &main_rel.clone().unwrap_or_default(),
                     &child_rels,
                 );
+                // Same-stem PDFs are build artifacts — pinned under the
+                // tree behind the dashed divider (`outputPDFs` in the
+                // SwiftUI sidebar).
+                let main_stem = main_rel
+                    .as_deref()
+                    .and_then(|p| Path::new(p).file_stem())
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let (tree, outputs) = project_feature::extract_output_pdfs(tree, &main_stem);
                 for node in &tree {
                     append_project_node(list, node, 0, &root, &self.model);
+                }
+                if let (Some(sep), Some(output_list)) = (
+                    ui.project_output_sep.borrow().as_ref(),
+                    ui.project_output_list.borrow().as_ref(),
+                ) {
+                    clear_list(output_list);
+                    let has_outputs = !outputs.is_empty();
+                    sep.set_visible(has_outputs);
+                    output_list.set_visible(has_outputs);
+                    for node in &outputs {
+                        append_project_node(output_list, node, 0, &root, &self.model);
+                    }
                 }
             }
             }
@@ -2465,15 +2493,27 @@ impl AppState {
     /// does not rebuild the lists on every keystroke.
     pub(crate) fn refresh_git_commit_button(&self) {
         UI.with(|ui| {
+            let no_changes = self
+                .model
+                .git_status
+                .as_ref()
+                .map(|s| s.staged.is_empty() && s.unstaged.is_empty())
+                .unwrap_or(true);
             if let Some(button) = ui.git_commit_button.borrow().as_ref() {
                 let empty_message = self.model.git_commit_message.trim().is_empty();
-                let no_changes = self
-                    .model
-                    .git_status
-                    .as_ref()
-                    .map(|s| s.staged.is_empty() && s.unstaged.is_empty())
-                    .unwrap_or(true);
                 button.set_sensitive(!empty_message && !self.model.git_busy && !no_changes);
+            }
+            if let Some(button) = ui.git_suggest_button.borrow().as_ref() {
+                button.set_sensitive(
+                    !self.model.git_busy && !self.model.git_suggest_busy && !no_changes,
+                );
+                if self.model.git_suggest_busy {
+                    let spinner = gtk4::Spinner::new();
+                    spinner.start();
+                    button.set_child(Some(&spinner));
+                } else {
+                    button.set_label(&tr(LANG.get(), "git.suggest"));
+                }
             }
         });
     }
@@ -3170,6 +3210,22 @@ impl AppState {
                 // lands; update the busy spinner immediately.
                 self.refresh_git();
                 self.refresh_git_panel();
+            }
+            WorkspaceMessage::GitSuggestFinished(result) => {
+                self.model.git_suggest_busy = false;
+                match result {
+                    Ok(message) => {
+                        self.model.git_commit_message = message.clone();
+                        UI.with(|ui| {
+                            if let Some(view) = ui.git_commit_view.borrow().as_ref() {
+                                view.buffer().set_text(&message);
+                            }
+                        });
+                    }
+                    Err(error) => self.model.git_error = Some(error),
+                }
+                self.refresh_git_panel();
+                self.refresh_git_commit_button();
             }
         }
         self.drain_side_effects();
@@ -4531,6 +4587,37 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     project_scroll.set_child(Some(&project_list));
     ui.project_list.replace(Some(project_list));
     project_page.append(&project_scroll);
+
+    // Compiled artifacts — PDFs sharing the main document's stem sit pinned
+    // under the tree behind a dashed divider (the SwiftUI `outputPDFs`
+    // section in `ProjectSidebarView`). Hidden until `refresh_sidebar`
+    // finds matching outputs.
+    let output_sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+    output_sep.add_css_class("pitex-dash-sep");
+    output_sep.set_margin_start(10);
+    output_sep.set_margin_end(10);
+    output_sep.set_margin_top(4);
+    output_sep.set_visible(false);
+    let output_list = gtk4::ListBox::new();
+    output_list.set_selection_mode(gtk4::SelectionMode::None);
+    output_list.add_css_class("navigation-sidebar");
+    output_list.set_visible(false);
+    a11y(&output_list, "pitex.sidebar.outputs", "sidebar.project");
+    ui.project_output_sep.replace(Some(output_sep.clone().upcast()));
+    ui.project_output_list.replace(Some(output_list.clone()));
+    project_page.append(&output_sep);
+    project_page.append(&output_list);
+    if let Some(display) = gdk::Display::default() {
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_data(
+            ".pitex-dash-sep { border-top: 1px dashed alpha(currentColor, 0.35); min-height: 0; }",
+        );
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 
     let project_stack = gtk4::Stack::new();
     project_stack.set_vexpand(true);

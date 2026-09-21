@@ -35,10 +35,12 @@ struct WorkspaceView: View {
         .accessibilityIdentifier("pitex.workspace")
         .toolbar { toolbar }
         // The selected theme colors the whole window chrome, not just the
-        // editor: accent comes from the palette's command color and the
-        // window background follows the editor background.
+        // editor: accent comes from the palette's command color, primary
+        // text follows the body color (secondary/tertiary derive from it),
+        // and the window surface is the palette's editor background.
         .tint(Color(nsColor: appearance.color(for: .commands)))
-        .background(Color(nsColor: appearance.color(for: .editorBackground)).opacity(0.25))
+        .foregroundStyle(Color(nsColor: appearance.color(for: .bodyText)))
+        .background(Color(nsColor: appearance.color(for: .editorBackground)))
     }
 
     private var noProject: some View {
@@ -107,13 +109,13 @@ struct WorkspaceView: View {
     private var sidebarColumn: some View {
         ProjectSidebarView(workspace: workspace)
             .frame(minWidth: 170, idealWidth: 200, maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: appearance.color(for: .gutterBackground)).opacity(0.35))
+            .background(Color(nsColor: appearance.color(for: .gutterBackground)))
     }
 
     private var inspectorColumn: some View {
         Preview(workspace: workspace)
             .frame(minWidth: 300, idealWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: appearance.color(for: .gutterBackground)).opacity(0.35))
+            .background(Color(nsColor: appearance.color(for: .gutterBackground)))
     }
 
     // MARK: - Center column
@@ -125,12 +127,19 @@ struct WorkspaceView: View {
             Divider()
             editorHeader
             conflictBanner
-            editor
-            editorFooter
-            if workspace.bottomPanelVisible {
-                Divider()
-                BottomConsoleView(workspace: workspace)
-                    .background(Color(nsColor: appearance.color(for: .gutterBackground)).opacity(0.35))
+            // VSplitView gives the console's top edge a draggable divider,
+            // like the outer HSplitView does for the side panes.
+            VSplitView {
+                VStack(spacing: 0) {
+                    editor
+                    editorFooter
+                }
+                .frame(minHeight: 160, maxHeight: .infinity)
+                .layoutPriority(1)
+                if workspace.bottomPanelVisible {
+                    BottomConsoleView(workspace: workspace)
+                        .background(Color(nsColor: appearance.color(for: .gutterBackground)))
+                }
             }
         }
         .frame(minWidth: 460, maxHeight: .infinity)
@@ -146,11 +155,13 @@ struct WorkspaceView: View {
             Button {
                 showingSymbols = true
             } label: {
-                Label("editor.symbols", systemImage: "x.squareroot")
+                // Icon-only — the √ glyph reads as the symbol palette.
+                Image(systemName: "x.squareroot")
             }
             .buttonStyle(.borderless)
             .fixedSize()
             .help(String(localized: "editor.symbols"))
+            .accessibilityLabel(String(localized: "editor.symbols"))
             .disabled(workspace.environment == nil)
             .accessibilityIdentifier("pitex.toolbar.symbols")
             .popover(isPresented: $showingSymbols, arrowEdge: .bottom) {

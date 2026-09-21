@@ -234,6 +234,9 @@ final class WorkspaceModel: ObservableObject {
     @Published internal(set) var gitBranches: [String] = []
     @Published var gitCommitMessage = ""
     @Published internal(set) var gitBusy = false
+    /// Separate spinner for `suggestCommitMessage` — a pi subprocess, not
+    /// a git op, so pull/push stay enabled while it runs.
+    @Published internal(set) var gitSuggestBusy = false
     @Published internal(set) var gitError: String?
     /// Project-wide \label keys and .bib citation keys feeding the editor's
     /// native completion. Rebuilt on the structure-refresh cadence through
@@ -709,6 +712,7 @@ final class WorkspaceModel: ObservableObject {
         gitCommits = []
         gitBranches = []
         gitCommitMessage = ""
+        gitSuggestBusy = false
         gitError = nil
         bibliographyCache = nil
         todoCache.removeAll()

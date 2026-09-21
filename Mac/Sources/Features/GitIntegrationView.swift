@@ -1,3 +1,4 @@
+import BuildCore
 import GitCore
 import SwiftUI
 
@@ -200,6 +201,90 @@ extension WorkspaceModel {
         let url = URL(fileURLWithPath: root).appendingPathComponent(change.path)
         Task { await activateDocument(url) }
     }
+
+    /// The "Suggest" half of the commit box: a one-shot `pi --print` run
+    /// with the pending diff inline. A dedicated subprocess (like ghost
+    /// completion) keeps the chat transcript and any in-flight ask
+    /// untouched; failures surface in the panel's error line.
+    func suggestCommitMessage() {
+        guard let status = gitStatus, !gitSuggestBusy else { return }
+        gitSuggestBusy = true
+        gitError = nil
+        Task {
+            defer { gitSuggestBusy = false }
+            let root = URL(fileURLWithPath: status.root)
+            let staged = !status.staged.isEmpty
+            let diff = await GitRunner.run(GitSupport.diffArgs(staged: staged), in: root)
+            let tools = await PiToolchain.discover()
+            guard let executable = PiExecutableLocator.resolve(environment: tools.environment) else {
+                gitError = "Pitex Agent is not installed yet — see Settings → AI."
+                return
+            }
+            let files = (staged ? status.staged : status.unstaged)
+                .map { "\($0.kind.badge) \($0.path)" }
+            let prompt = Self.commitMessagePrompt(branch: status.branch, files: files, diff: diff.stdout)
+            do {
+                let launch = try tools.launch(
+                    executable, arguments: ["--no-session", "--no-tools", "--print", prompt])
+                let plan = try DirectCommandPlan(
+                    executable: launch.executable.path,
+                    arguments: launch.arguments,
+                    environment: .inherit(overrides: AgentCoordinator.childEnvironment(
+                        executable: launch.executable, environment: tools.environment))
+                )
+                let result = try await ProcessRunner().run(plan, projectRoot: root, timeout: .seconds(90))
+                let text = Self.cleanedCommitMessage(String(decoding: result.standardOutput, as: UTF8.self))
+                if result.termination == .exited(code: 0), !text.isEmpty {
+                    gitCommitMessage = text
+                } else {
+                    let detail = String(decoding: result.standardError, as: UTF8.self)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    gitError = detail.isEmpty
+                        ? "Pitex Agent did not return a commit message."
+                        : String(detail.suffix(400))
+                }
+            } catch {
+                gitError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Conventional-commit ask: branch + change list + the diff itself.
+    /// The diff is capped so a generated/mass-rename changeset cannot blow
+    /// past the model's context on a one-shot prompt.
+    private static func commitMessagePrompt(branch: String, files: [String], diff: String) -> String {
+        let limit = 20_000
+        let body = diff.count > limit
+            ? String(diff.prefix(limit)) + "\n… [diff truncated]"
+            : diff
+        return """
+            Write the git commit message for this change set on branch '\(branch)'.
+            Changed files:
+            \(files.joined(separator: "\n"))
+
+            Diff:
+            \(body)
+
+            Reply with ONLY the commit message: one imperative subject line of \
+            at most 72 characters, then optionally a blank line and a short \
+            body. No quotes, no code fences, no commentary.
+            """
+    }
+
+    /// `pi --print` should already answer with just the message; this drops
+    /// a wrapping code fence or quote pair when a model adds one anyway.
+    static func cleanedCommitMessage(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            var lines = text.components(separatedBy: "\n").dropFirst()
+            if lines.last?.hasPrefix("```") == true { lines = lines.dropLast() }
+            text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if text.count > 1, text.hasPrefix("\""), text.hasSuffix("\"") {
+            text = String(text.dropFirst().dropLast())
+        }
+        return String(text.prefix(500))
+    }
 }
 
 /// Git Integration console pane — VSCode Source Control layout adapted to
@@ -207,10 +292,26 @@ extension WorkspaceModel {
 /// per-file actions, the commit box, and the commit graph.
 struct GitIntegrationView: View {
     @ObservedObject var workspace: WorkspaceModel
+    /// Observed so Appearance → Editor Font Size resizes the pane live.
+    @ObservedObject private var appearance = AppearanceSettings.shared
     @State private var discardTarget: GitChange?
     @State private var showNewBranch = false
     @State private var newBranchName = ""
     private let refreshTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+
+    /// Git text follows the editor font size; `delta` keeps the
+    /// caption/caption2 hierarchy the fixed styles expressed before.
+    private func gitFont(
+        _ delta: Double = 0,
+        weight: Font.Weight = .regular,
+        monospaced: Bool = false
+    ) -> Font {
+        .system(
+            size: max(appearance.fontSize + delta, 8),
+            weight: weight,
+            design: monospaced ? .monospaced : .default
+        )
+    }
 
     var body: some View {
         Group {
@@ -274,19 +375,20 @@ struct GitIntegrationView: View {
             header(status)
             if let error = workspace.gitError {
                 Text(verbatim: error)
-                    .font(.caption)
+                    .font(gitFont())
                     .foregroundStyle(.red)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
             }
             Divider()
-            HStack(spacing: 0) {
+            // HSplitView: the Changes|Graph divider drags like the outer
+            // workspace split — the fixed 340/HStack pairing could not.
+            HSplitView {
                 changesColumn(status)
-                    .frame(width: 340)
-                Divider()
+                    .frame(minWidth: 240, idealWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
                 graphColumn
-                    .frame(maxWidth: .infinity)
+                    .frame(minWidth: 200, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -296,12 +398,12 @@ struct GitIntegrationView: View {
             Image(systemName: "arrow.triangle.branch")
                 .foregroundStyle(.secondary)
             Text(verbatim: status.repoName)
-                .font(.callout.bold())
+                .font(gitFont(1, weight: .bold))
                 .lineLimit(1)
             branchMenu(status)
             if status.ahead > 0 || status.behind > 0 {
                 Text(verbatim: "↑\(status.ahead) ↓\(status.behind)")
-                    .font(.caption)
+                    .font(gitFont())
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -337,7 +439,7 @@ struct GitIntegrationView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.caption)
+                .font(gitFont())
         }
         .buttonStyle(.borderless)
         .help(help)
@@ -356,9 +458,9 @@ struct GitIntegrationView: View {
         } label: {
             HStack(spacing: 3) {
                 Text(verbatim: status.branch)
-                    .font(.caption.bold())
+                    .font(gitFont(weight: .bold))
                 Image(systemName: "chevron.down")
-                    .font(.caption2)
+                    .font(gitFont(-2))
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -393,7 +495,7 @@ struct GitIntegrationView: View {
                     )
                     if status.staged.isEmpty && status.unstaged.isEmpty {
                         Text("git.no_changes")
-                            .font(.caption)
+                            .font(gitFont())
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     }
@@ -416,15 +518,15 @@ struct GitIntegrationView: View {
     ) -> some View {
         HStack {
             Text(title)
-                .font(.caption.bold())
+                .font(gitFont(weight: .bold))
                 .foregroundStyle(.secondary)
             Text(verbatim: "(\(count))")
-                .font(.caption)
+                .font(gitFont())
                 .foregroundStyle(.secondary)
             Spacer()
             Button(action: action) {
                 Image(systemName: icon)
-                    .font(.caption)
+                    .font(gitFont())
             }
             .buttonStyle(.borderless)
             .help(help)
@@ -436,7 +538,7 @@ struct GitIntegrationView: View {
     private func changeRow(_ change: GitChange) -> some View {
         HStack(spacing: 6) {
             Text(verbatim: change.kind.badge)
-                .font(.caption.bold().monospaced())
+                .font(gitFont(weight: .bold, monospaced: true))
                 .foregroundStyle(badgeColor(change.kind))
                 .frame(width: 12)
             Button {
@@ -444,11 +546,11 @@ struct GitIntegrationView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text(verbatim: change.path.split(separator: "/").last.map(String.init) ?? change.path)
-                        .font(.caption)
+                        .font(gitFont())
                         .lineLimit(1)
                     if let slash = change.path.lastIndex(of: "/") {
                         Text(verbatim: String(change.path[..<slash]))
-                            .font(.caption2)
+                            .font(gitFont(-2))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -462,7 +564,7 @@ struct GitIntegrationView: View {
                 workspace.openGitChange(change)
             } label: {
                 Image(systemName: "arrow.up.forward.square")
-                    .font(.caption)
+                    .font(gitFont())
             }
             .buttonStyle(.borderless)
             .help(String(localized: "git.open_file"))
@@ -482,7 +584,7 @@ struct GitIntegrationView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.caption)
+                .font(gitFont())
         }
         .buttonStyle(.borderless)
         .help(help)
@@ -504,7 +606,7 @@ struct GitIntegrationView: View {
         VStack(spacing: 6) {
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $workspace.gitCommitMessage)
-                    .font(.caption)
+                    .font(gitFont())
                     .frame(height: 42)
                     .onKeyPress(keys: [.return]) { press in
                         guard press.modifiers == .command else { return .ignored }
@@ -516,7 +618,7 @@ struct GitIntegrationView: View {
                         format: String(localized: "git.commit_placeholder"),
                         status.branch
                     ))
-                    .font(.caption)
+                    .font(gitFont())
                     .foregroundStyle(.secondary)
                     .padding(.top, 8)
                     .padding(.leading, 5)
@@ -527,21 +629,49 @@ struct GitIntegrationView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color.secondary.opacity(0.4))
             )
-            Button {
-                workspace.commitGit()
-            } label: {
-                Label("git.commit", systemImage: "checkmark")
-                    .font(.caption)
+            // Commit | Suggest — the right half asks Pitex Agent to draft
+            // the message into the editor; Commit still requires a message.
+            HStack(spacing: 6) {
+                Button {
+                    workspace.commitGit()
+                } label: {
+                    Label("git.commit", systemImage: "checkmark")
+                        .font(gitFont())
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(
+                    workspace.gitCommitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || workspace.gitBusy
+                        || (status.staged.isEmpty && status.unstaged.isEmpty)
+                )
+                .accessibilityIdentifier("pitex.git.commit")
+
+                Button {
+                    workspace.suggestCommitMessage()
+                } label: {
+                    Group {
+                        if workspace.gitSuggestBusy {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("git.suggest", systemImage: "wand.and.stars")
+                        }
+                    }
+                    .font(gitFont())
                     .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(
+                    workspace.gitBusy
+                        || workspace.gitSuggestBusy
+                        || (status.staged.isEmpty && status.unstaged.isEmpty)
+                )
+                .help(String(localized: "git.suggest_help"))
+                .accessibilityIdentifier("pitex.git.suggest")
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(
-                workspace.gitCommitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || workspace.gitBusy
-                    || (status.staged.isEmpty && status.unstaged.isEmpty)
-            )
-            .accessibilityIdentifier("pitex.git.commit")
         }
     }
 
@@ -550,11 +680,11 @@ struct GitIntegrationView: View {
     private var graphColumn: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("git.graph")
-                .font(.caption.bold())
+                .font(gitFont(weight: .bold))
                 .foregroundStyle(.secondary)
             if workspace.gitCommits.isEmpty {
                 Text("git.no_commits")
-                    .font(.caption)
+                    .font(gitFont())
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             }
@@ -584,18 +714,18 @@ struct GitIntegrationView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(verbatim: commit.subject)
-                        .font(.caption)
+                        .font(gitFont())
                         .lineLimit(1)
                     ForEach(commit.refs, id: \.self) { ref in
                         Text(verbatim: ref.replacingOccurrences(of: "tag: ", with: ""))
-                            .font(.caption2)
+                            .font(gitFont(-2))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().fill(Color.accentColor.opacity(0.18)))
                     }
                 }
                 Text(verbatim: "\(commit.author) · \(commit.relativeDate) · \(commit.hash)")
-                    .font(.caption2)
+                    .font(gitFont(-2))
                     .foregroundStyle(.secondary)
             }
             Spacer()
