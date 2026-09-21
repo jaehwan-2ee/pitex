@@ -1,0 +1,19 @@
+Windows/Cargo.lock
+  s_b51744592f3278::t_a0926c9fd84413 868
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0a75e226704b6e1d21c389fed11ecd9f2f432142",
+  "prompts": {},
+  "sessions": {
+    "s_b51744592f3278": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_b51744592f3278",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
