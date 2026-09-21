@@ -1,0 +1,29 @@
+Mac/Sources/AppShell/PitexApp.swift
+  s_ed44b01ef26714::t_b7e2f372a31ecf 1965-1966
+Windows/crates/pitex-windows/Cargo.toml
+  s_ed44b01ef26714::t_b7e2f372a31ecf 3
+Linux/crates/pitex/Cargo.toml
+  s_ed44b01ef26714::t_b7e2f372a31ecf 3
+Mac/Config/Info.plist
+  s_ed44b01ef26714::t_b7e2f372a31ecf 20
+Linux/Cargo.lock
+  s_ed44b01ef26714::t_4f08b9aa469836 754
+Windows/Cargo.lock
+  s_ed44b01ef26714::t_e4ca8e3febadff 869
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dae54ad82ccd9fbf32bf449401b8f725e943c4da",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
