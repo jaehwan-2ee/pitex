@@ -251,6 +251,23 @@ fn chooser_dialog(
     dialog
 }
 
+/// `GtkTextView` hides the mouse pointer while typing and restores it on
+/// motion; on GTK 4.6 (Ubuntu 22.04) the restore is unreliable and the
+/// pointer can stay invisible. After each buffer commit, re-assert the
+/// toplevel cursor at idle — runs after the whole commit handler, so it
+/// always lands after GTK's hide.
+pub fn unhide_pointer_on_typing(view: &sourceview5::View) {
+    let weak = view.downgrade();
+    view.buffer().connect_changed(move |_| {
+        let Some(view) = weak.upgrade() else { return };
+        gtk4::glib::idle_add_local_once(move || {
+            if let Some(surface) = view.native().and_then(|n| n.surface()) {
+                surface.set_cursor(view.cursor().as_ref());
+            }
+        });
+    });
+}
+
 /// `set_content_fit(Contain)` is GTK 4.8+; on 4.6 the equivalent is
 /// `can_shrink` — the widget preserves aspect by default either way.
 pub fn fit_picture(picture: &gtk4::Picture) {

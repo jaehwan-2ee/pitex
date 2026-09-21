@@ -776,6 +776,7 @@ impl AppState {
         let adapter = Rc::new(GtkEditorAdapter::make(client));
         adapter.view().add_css_class("pitex-editor");
         a11y(adapter.view(), "pitex.editor.text", "editor.title");
+        compat::unhide_pointer_on_typing(adapter.view());
         // Completion provider — the GTK counterpart of the mac adapter's
         // `completionSource`: candidates come from the model through STATE
         // so the provider itself stays data-agnostic.
