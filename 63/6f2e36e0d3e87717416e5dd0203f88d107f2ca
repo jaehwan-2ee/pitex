@@ -1,0 +1,19 @@
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_7bb5a5d178b695::t_260977bb2905c5 27,76,173,310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "636f2e36e0d3e87717416e5dd0203f88d107f2ca",
+  "prompts": {},
+  "sessions": {
+    "s_7bb5a5d178b695": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_7bb5a5d178b695",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
