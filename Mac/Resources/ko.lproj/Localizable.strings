@@ -220,6 +220,13 @@
 "settings.tab.editor" = "편집기";
 "settings.tab.appearance" = "외관";
 "settings.tab.ai" = "AI";
+"settings.tab.general" = "\UC77C\UBC18";
+"settings.general.section" = "\UC124\UC815";
+"settings.general.export" = "\UC124\UC815 \UB0B4\UBCF4\UB0B4\UAE30\U2026";
+"settings.general.import" = "\UC124\UC815 \UBD88\UB7EC\UC624\UAE30\U2026";
+"settings.general.note" = "Pitex Agent \UC124\UC815\UC740 \UBC31\UC5C5\UC5D0 \UD3EC\UD568\UB418\UC9C0 \UC54A\UC2B5\UB2C8\UB2E4.";
+"settings.general.exported" = "\UC124\UC815\UC744\UBCF4\UB0C8\UC2B5\UB2C8\UB2E4.";
+"settings.general.imported" = "%@\UAC1C \UC124\UC815\UC744 \UBD88\UB7EC\UC654\UC2B5\UB2C8\UB2E4 \U2014 \UBAA8\UB4E0 \UD56D\UBAA9\UC744 \UC801\UC6A9\UD558\UB824\UBA74 Pitex\UB97C \UC7AC\UC2DC\UC791\UD558\UC138\UC694.";
 "settings.compile.presets" = "프리셋";
 "settings.compile.commands" = "명령";
 "settings.compile.build_command" = "빌드 명령";
@@ -314,7 +321,6 @@
 "appearance.color.bracket_match" = "괄호 일치";
 "appearance.color.bracket_match_d" = "일치하는 구분자 아래 강조";
 
-"settings.tab.updates" = "업데이트";
 "settings.updates.section" = "업데이트";
 "settings.updates.current_version" = "현재 버전";
 "settings.updates.check" = "업데이트 확인";
@@ -362,3 +368,9 @@
 "git.pull" = "\Ub04c\Uc5b4\Uc624\Uae30";
 "git.push" = "\Ubc00\Uc5b4\Ub123\Uae30";
 "git.sync" = "\Ub3d9\Uae30\Ud654";
+"git.open_changes" = "\UBCC0\UACBD \UB0B4\UC6A9 \UC5F4\UAE30";
+"git.copy_hash" = "\UCEE4\UBC0B \UD574\UC2DC \UBCF5\UC0AC";
+"git.copy_message" = "\UCEE4\UBC0B \UBA54\UC2DC\UC9C0 \UBCF5\UC0AC";
+"git.folded_lines" = "\UBCC0\UACBD \UC5C6\UB294 %@\UC904";
+"git.diff.files" = "\UD30C\UC77C %@\UAC1C";
+"git.diff.binary" = "\UBC14\UC774\UB108\UB9AC \UD30C\UC77C";

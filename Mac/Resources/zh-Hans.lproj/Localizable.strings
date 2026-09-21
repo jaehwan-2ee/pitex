@@ -220,6 +220,13 @@
 "settings.tab.editor" = "编辑器";
 "settings.tab.appearance" = "外观";
 "settings.tab.ai" = "AI";
+"settings.tab.general" = "\U901A\U7528";
+"settings.general.section" = "\U8BBE\U7F6E";
+"settings.general.export" = "\U5BFC\U51FA\U8BBE\U7F6E\U2026";
+"settings.general.import" = "\U5BFC\U5165\U8BBE\U7F6E\U2026";
+"settings.general.note" = "\U5907\U4EFD\U4E2D\U4E0D\U5305\U542B Pitex Agent \U8BBE\U7F6E\U3002";
+"settings.general.exported" = "\U8BBE\U7F6E\U5DF2\U5BFC\U51FA\U3002";
+"settings.general.imported" = "\U5DF2\U5BFC\U5165 %@ \U9879\U8BBE\U7F6E \U2014 \U91CD\U542F Pitex \U4EE5\U5168\U90E8\U5E94\U7528\U3002";
 "settings.compile.presets" = "预设";
 "settings.compile.commands" = "命令";
 "settings.compile.build_command" = "构建命令";
@@ -313,7 +320,6 @@
 "appearance.color.bracket_match" = "括号匹配";
 "appearance.color.bracket_match_d" = "匹配分隔符下的高亮";
 
-"settings.tab.updates" = "更新";
 "settings.updates.section" = "更新";
 "settings.updates.current_version" = "当前版本";
 "settings.updates.check" = "检查更新";
@@ -361,3 +367,9 @@
 "git.pull" = "\U62c9\U53d6";
 "git.push" = "\U63a8\U9001";
 "git.sync" = "\U540c\U6b65";
+"git.open_changes" = "\U6253\U5F00\U66F4\U6539";
+"git.copy_hash" = "\U590D\U5236\U63D0\U4EA4\U54C8\U5E0C";
+"git.copy_message" = "\U590D\U5236\U63D0\U4EA4\U6D88\U606F";
+"git.folded_lines" = "%@ \U884C\U672A\U66F4\U6539";
+"git.diff.files" = "%@ \U4E2A\U6587\U4EF6";
+"git.diff.binary" = "\U4E8C\U8FDB\U5236\U6587\U4EF6";

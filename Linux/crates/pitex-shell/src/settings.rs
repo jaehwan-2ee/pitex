@@ -73,6 +73,61 @@ impl Preferences {
         self.values.remove(key);
         self.persist();
     }
+
+    /// Settings backup — the same key filter the macOS `SettingsBackup`
+    /// applies. The `ai.*` Pitex Agent section and session state
+    /// (`pitex.pref.workspace.*`, `commands.<path>`) are per-machine and
+    /// never exported.
+    const BACKUP_PREFIXES: &'static [&'static str] = &[
+        "dev.pitex.",
+        "pitex.pref.",
+        "appearance.",
+        "project.",
+        "customShellExecutable",
+    ];
+    const BACKUP_EXCLUDES: &'static [&'static str] = &["ai.", "pitex.pref.workspace."];
+
+    fn backup_key(key: &str) -> bool {
+        Self::BACKUP_PREFIXES.iter().any(|p| key.starts_with(p))
+            && !Self::BACKUP_EXCLUDES.iter().any(|p| key.starts_with(p))
+    }
+
+    /// `{format, version, preferences:{key: value}}` — the envelope the
+    /// macOS export writes, so one file moves between platforms.
+    pub fn export_backup(&self) -> serde_json::Value {
+        let prefs: serde_json::Map<String, serde_json::Value> = self
+            .values
+            .iter()
+            .filter(|(k, _)| Self::backup_key(k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        serde_json::json!({
+            "format": "pitex-settings",
+            "version": 1,
+            "preferences": prefs,
+        })
+    }
+
+    /// Merge a backup file (the envelope above, or a bare key→value map)
+    /// into the store; returns the number of applied keys.
+    pub fn import_backup(&mut self, data: &[u8]) -> Result<usize, String> {
+        let parsed: serde_json::Value =
+            serde_json::from_slice(data).map_err(|e| e.to_string())?;
+        let root = parsed.as_object().ok_or("Not a settings file")?;
+        let prefs = parsed
+            .get("preferences")
+            .and_then(|v| v.as_object())
+            .unwrap_or(root);
+        let mut applied = 0;
+        for (key, value) in prefs {
+            if Self::backup_key(key) {
+                self.values.insert(key.clone(), value.clone());
+                applied += 1;
+            }
+        }
+        self.persist();
+        Ok(applied)
+    }
 }
 
 /// Port of `SettingsStore` — every @Published field with its UserDefaults key
@@ -235,6 +290,15 @@ impl SettingsStore {
     pub fn update_settings(&mut self, next: PersistedSettings) {
         self.settings = next;
         self.persist_settings();
+    }
+    /// Re-read the `PersistedSettings` blob after a settings import wrote
+    /// new values behind the store's back (flat keys read live already).
+    pub fn reload(&mut self) {
+        if let Some(v) = self.prefs.get(Self::SETTINGS_KEY) {
+            if let Ok(decoded) = serde_json::from_value(v.clone()) {
+                self.settings = decoded;
+            }
+        }
     }
     pub fn prefs(&self) -> &Preferences {
         &self.prefs
@@ -637,6 +701,27 @@ impl AppearanceSettings {
         self.terminal_font_size = size;
         prefs.set("appearance.terminalFontFamily", family);
         prefs.set("appearance.terminalFontSize", size);
+    }
+    /// Re-read after a settings import — mirrors `AppearanceSettings.reload`
+    /// on macOS: `launched_language` stays so the restart hint still works.
+    pub fn reload(&mut self, prefs: &Preferences) {
+        self.language = AppLanguage::from_raw(
+            &prefs.string("appearance.language").unwrap_or_else(|| "system".into()),
+        );
+        self.theme = match prefs.string("appearance.theme").as_deref() {
+            Some("light") => Theme::Light,
+            Some("dark") => Theme::Dark,
+            _ => Theme::System,
+        };
+        self.font_family = prefs.string("appearance.fontFamily").unwrap_or_default();
+        self.font_size = prefs.double("appearance.fontSize").unwrap_or(13.0);
+        self.terminal_font_family = prefs
+            .string("appearance.terminalFontFamily")
+            .unwrap_or_default();
+        self.terminal_font_size = prefs
+            .double("appearance.terminalFontSize")
+            .unwrap_or(13.0);
+        self.color_revision += 1;
     }
     /// Font description for Pango; empty family = system monospace.
     pub fn font_description(&self) -> String {

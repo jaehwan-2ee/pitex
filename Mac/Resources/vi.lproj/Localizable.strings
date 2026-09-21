@@ -220,6 +220,13 @@
 "settings.tab.editor" = "Trình chỉnh sửa";
 "settings.tab.appearance" = "Giao diện";
 "settings.tab.ai" = "AI";
+"settings.tab.general" = "Chung";
+"settings.general.section" = "C\U00E0i \U0111\U1EB7t";
+"settings.general.export" = "Xu\U1EA5t c\U00E0i \U0111\U1EB7t\U2026";
+"settings.general.import" = "Nh\U1EADp c\U00E0i \U0111\U1EB7t\U2026";
+"settings.general.note" = "C\U00E0i \U0111\U1EB7t Pitex Agent kh\U00F4ng n\U1EB1m trong b\U1EA3n sao l\U01B0u.";
+"settings.general.exported" = "\U0110\U00E3 xu\U1EA5t c\U00E0i \U0111\U1EB7t.";
+"settings.general.imported" = "\U0110\U00E3 nh\U1EADp %@ c\U00E0i \U0111\U1EB7t \U2014 kh\U1EDFi \U0111\U1ED9ng l\U1EA1i Pitex \U0111\U1EC3 \U00E1p d\U1EE5ng t\U1EA5t c\U1EA3.";
 "settings.compile.presets" = "Mẫu có sẵn";
 "settings.compile.commands" = "Lệnh";
 "settings.compile.build_command" = "Lệnh biên dịch";
@@ -313,7 +320,6 @@
 "appearance.color.bracket_match" = "Khớp ngoặc";
 "appearance.color.bracket_match_d" = "Tô sáng dưới cặp dấu tương ứng";
 
-"settings.tab.updates" = "Cập nhật";
 "settings.updates.section" = "Cập nhật";
 "settings.updates.current_version" = "Phiên bản hiện tại";
 "settings.updates.check" = "Kiểm tra cập nhật";
@@ -361,3 +367,9 @@
 "git.pull" = "Pull";
 "git.push" = "Push";
 "git.sync" = "\U0110\U1ed3ng b\U1ed9";
+"git.open_changes" = "M\U1EDF thay \U0111\U1ED5i";
+"git.copy_hash" = "Sao ch\U00E9p m\U00E3 commit";
+"git.copy_message" = "Sao ch\U00E9p th\U00F4ng \U0111i\U1EC7p commit";
+"git.folded_lines" = "%@ d\U00F2ng kh\U00F4ng \U0111\U1ED5i";
+"git.diff.files" = "%@ t\U1EC7p";
+"git.diff.binary" = "T\U1EC7p nh\U1ECB ph\U00E2n";

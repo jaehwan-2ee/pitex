@@ -363,6 +363,20 @@ final class AppearanceSettings: ObservableObject {
         terminalFontSize = size
     }
 
+    /// Re-read every key from UserDefaults after a settings import wrote
+    /// new values; `didSet` hooks re-apply appearance/language and the
+    /// colorRevision bump repaints role colors.
+    func reload() {
+        let defaults = UserDefaults.standard
+        language = AppLanguage(rawValue: defaults.string(forKey: "appearance.language") ?? "system") ?? .system
+        theme = Theme(rawValue: defaults.string(forKey: "appearance.theme") ?? "system") ?? .system
+        fontFamily = defaults.string(forKey: "appearance.fontFamily") ?? ""
+        fontSize = defaults.object(forKey: "appearance.fontSize") as? Double ?? 13
+        terminalFontFamily = defaults.string(forKey: "appearance.terminalFontFamily") ?? ""
+        terminalFontSize = defaults.object(forKey: "appearance.terminalFontSize") as? Double ?? 13
+        colorRevision += 1
+    }
+
     /// Installs the app-wide light/dark appearance for the theme choice.
     func applyAppearance() {
         switch theme {

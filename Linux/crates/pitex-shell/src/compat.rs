@@ -153,6 +153,50 @@ pub fn pick_files(
     }
 }
 
+/// Single `.json` picker (settings import) — same dual-path pattern as
+/// `pick_source_file` but filtered to JSON with an all-files fallback.
+pub fn pick_settings_file(
+    window: Option<&gtk4::Window>,
+    title: &str,
+    on_path: impl Fn(PathBuf) + 'static,
+) {
+    #[cfg(feature = "modern-gtk")]
+    {
+        let dialog = gtk4::FileDialog::new();
+        dialog.set_title(title);
+        dialog.set_modal(true);
+        let filter = gtk4::FileFilter::new();
+        filter.add_suffix("json");
+        let filters = gtk4::gio::ListStore::new::<gtk4::FileFilter>();
+        filters.append(&filter);
+        dialog.set_filters(Some(&filters));
+        dialog.open(window, gtk4::gio::Cancellable::NONE, move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    on_path(path);
+                }
+            }
+        });
+        return;
+    }
+    #[cfg(not(feature = "modern-gtk"))]
+    {
+        let dialog = chooser_dialog(window, title, gtk4::FileChooserAction::Open, "Open");
+        let filter = gtk4::FileFilter::new();
+        filter.add_pattern("*.json");
+        dialog.add_filter(&filter);
+        dialog.connect_response(move |d, response| {
+            if response == gtk4::ResponseType::Accept {
+                if let Some(path) = d.file().and_then(|f| f.path()) {
+                    on_path(path);
+                }
+            }
+            d.destroy();
+        });
+        dialog.present();
+    }
+}
+
 /// Folder picker (project open).
 pub fn pick_folder(
     window: Option<&gtk4::Window>,

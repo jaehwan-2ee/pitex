@@ -337,6 +337,15 @@ impl AppState {
         state
     }
 
+    /// Re-read imported preferences into the live stores after a settings
+    /// backup import — `store`'s encoded blob plus every appearance value.
+    /// (On `self`, not the call site: `RefMut`'s deref_mut holds `s` while
+    /// `store`/`appearance` split cleanly only through `&mut self`.)
+    pub fn reload_imported_settings(&mut self) {
+        self.store.reload();
+        self.appearance.reload(self.store.prefs());
+    }
+
     /// Wire `WorkspaceModel.on_*` callbacks into the `Rc` side-effect cells.
     fn wire_model_callbacks(&mut self) {
         let highlight = self.highlight_cell.clone();
@@ -2481,7 +2490,7 @@ impl AppState {
                     list.append(&row);
                 } else {
                     for commit in &self.model.git_commits {
-                        list.append(&crate::panes::git_commit_row(commit));
+                        list.append(&crate::panes::git_commit_row(commit, lang));
                     }
                 }
             }
@@ -2561,9 +2570,11 @@ impl AppState {
     }
 
     /// New-branch prompt — `MessageDialog` with an entry in its message
-    /// area (the compat story for `AlertDialog` + text field).
+    /// area (the compat story for `AlertDialog` + text field). `at` pins
+    /// the branch's start point — the graph context menu's "New Branch…"
+    /// branches off the selected commit (VSCode parity).
     #[allow(deprecated)]
-    pub fn git_new_branch_dialog(&mut self) {
+    pub fn git_new_branch_dialog(&mut self, at: Option<String>) {
         let lang = self.language;
         let window = UI.with(|ui| ui.window.borrow().clone());
         let dialog = gtk4::MessageDialog::new(
@@ -2589,10 +2600,11 @@ impl AppState {
         dialog.connect_response(move |d, response| {
             if response == gtk4::ResponseType::Accept {
                 let name = entry.text().to_string();
+                let at = at.clone();
                 STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
                         if let Ok(mut st) = state.try_borrow_mut() {
-                            st.git_create_branch(&name);
+                            st.git_create_branch(&name, at.as_deref());
                         }
                     }
                 });
@@ -2600,6 +2612,44 @@ impl AppState {
             d.close();
         });
         dialog.present();
+    }
+
+    /// The graph context menu's "Open Changes" — `git show` on a worker,
+    /// then a read-only scrolled window with the raw patch (the Linux
+    /// panel has no side-by-side diff surface like macOS).
+    pub fn git_open_commit_diff(&self, commit: &git_core::GitCommit) {
+        let Some(root) = self.model.git_status.as_ref().map(|s| s.root.clone()) else {
+            return;
+        };
+        let title = format!("{} — {}", commit.hash, commit.subject);
+        let hash = commit.full_hash.clone();
+        std::thread::spawn(move || {
+            let result = crate::git::run_git(
+                Path::new(&root),
+                git_core::show_commit_args(&hash),
+            );
+            glib::idle_add_once(move || {
+                let text = result.unwrap_or_else(|e| e);
+                let window = UI.with(|ui| ui.window.borrow().clone());
+                let dialog = gtk4::Window::new();
+                dialog.set_title(Some(&title));
+                dialog.set_transient_for(window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()));
+                dialog.set_default_size(880, 560);
+                dialog.set_titlebar(Some(&gtk4::HeaderBar::new()));
+                let scroll = gtk4::ScrolledWindow::new();
+                let view = gtk4::TextView::new();
+                view.set_editable(false);
+                view.set_monospace(true);
+                view.set_top_margin(8);
+                view.set_bottom_margin(8);
+                view.set_left_margin(10);
+                view.set_right_margin(10);
+                view.buffer().set_text(&text);
+                scroll.set_child(Some(&view));
+                dialog.set_child(Some(&scroll));
+                dialog.present();
+            });
+        });
     }
 
     pub fn refresh_build_ui(&mut self) {

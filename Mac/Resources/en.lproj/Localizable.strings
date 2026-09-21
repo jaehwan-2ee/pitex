@@ -220,6 +220,13 @@
 "settings.tab.editor" = "Editor";
 "settings.tab.appearance" = "Appearance";
 "settings.tab.ai" = "AI";
+"settings.tab.general" = "General";
+"settings.general.section" = "Settings";
+"settings.general.export" = "Export Settings\U2026";
+"settings.general.import" = "Import Settings\U2026";
+"settings.general.note" = "Pitex Agent settings are not included in the backup.";
+"settings.general.exported" = "Settings exported.";
+"settings.general.imported" = "Imported %@ settings \U2014 restart Pitex to apply everything.";
 "settings.compile.presets" = "Presets";
 "settings.compile.commands" = "Commands";
 "settings.compile.build_command" = "Build Command";
@@ -313,7 +320,6 @@
 "appearance.color.bracket_match" = "Bracket Match";
 "appearance.color.bracket_match_d" = "Highlight under matching delimiters";
 
-"settings.tab.updates" = "Updates";
 "settings.updates.section" = "Updates";
 "settings.updates.current_version" = "Current version";
 "settings.updates.check" = "Check for Updates";
@@ -361,3 +367,9 @@
 "git.pull" = "Pull";
 "git.push" = "Push";
 "git.sync" = "Sync";
+"git.open_changes" = "Open Changes";
+"git.copy_hash" = "Copy Commit Hash";
+"git.copy_message" = "Copy Commit Message";
+"git.folded_lines" = "%@ unchanged lines";
+"git.diff.files" = "%@ files";
+"git.diff.binary" = "Binary file";

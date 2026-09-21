@@ -220,6 +220,13 @@
 "settings.tab.editor" = "エディタ";
 "settings.tab.appearance" = "外観";
 "settings.tab.ai" = "AI";
+"settings.tab.general" = "\U4E00\U822C";
+"settings.general.section" = "\U8A2D\U5B9A";
+"settings.general.export" = "\U8A2D\U5B9A\U3092\U66F8\U304D\U51FA\U3059\U2026";
+"settings.general.import" = "\U8A2D\U5B9A\U3092\U8AAD\U307F\U8FBC\U3080\U2026";
+"settings.general.note" = "Pitex Agent \U306E\U8A2D\U5B9A\U306F\U30D0\U30C3\U30AF\U30A2\U30C3\U30D7\U306B\U542B\U307E\U308C\U307E\U305B\U3093\U3002";
+"settings.general.exported" = "\U8A2D\U5B9A\U3092\U66F8\U304D\U51FA\U3057\U307E\U3057\U305F\U3002";
+"settings.general.imported" = "%@ \U4EF6\U306E\U8A2D\U5B9A\U3092\U8AAD\U307F\U8FBC\U307F\U307E\U3057\U305F \U2014 \U3059\U3079\U3066\U9069\U7528\U3059\U308B\U306B\U306F Pitex \U3092\U518D\U8D77\U52D5\U3057\U3066\U304F\U3060\U3055\U3044\U3002";
 "settings.compile.presets" = "プリセット";
 "settings.compile.commands" = "コマンド";
 "settings.compile.build_command" = "ビルドコマンド";
@@ -314,7 +321,6 @@
 "appearance.color.bracket_match" = "ブラケット一致";
 "appearance.color.bracket_match_d" = "一致する区切り文字のハイライト";
 
-"settings.tab.updates" = "アップデート";
 "settings.updates.section" = "アップデート";
 "settings.updates.current_version" = "現在のバージョン";
 "settings.updates.check" = "アップデートを確認";
@@ -362,3 +368,9 @@
 "git.pull" = "\U30d7\U30eb";
 "git.push" = "\U30d7\U30c3\U30b7\U30e5";
 "git.sync" = "\U540c\U671f";
+"git.open_changes" = "\U5909\U66F4\U3092\U958B\U304F";
+"git.copy_hash" = "\U30B3\U30DF\U30C3\U30C8\U30CF\U30C3\U30B7\U30E5\U3092\U30B3\U30D4\U30FC";
+"git.copy_message" = "\U30B3\U30DF\U30C3\U30C8\U30E1\U30C3\U30BB\U30FC\U30B8\U3092\U30B3\U30D4\U30FC";
+"git.folded_lines" = "\U5909\U66F4\U306A\U3057 %@ \U884C";
+"git.diff.files" = "%@ \U30D5\U30A1\U30A4\U30EB";
+"git.diff.binary" = "\U30D0\U30A4\U30CA\U30EA\U30D5\U30A1\U30A4\U30EB";

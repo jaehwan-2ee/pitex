@@ -50,6 +50,10 @@ pub struct GitCommit {
     /// Branch/tag decorations (`main`, `origin/main`, `tag: v1.2.0`, …).
     pub refs: Vec<String>,
     pub is_head: bool,
+    /// Full 40-char id — `hash` is abbreviated for display only.
+    pub full_hash: String,
+    /// `%B` — subject + body, for "Copy Commit Message".
+    pub message: String,
 }
 
 /// Repository snapshot for the Git Integration panel.
@@ -88,7 +92,7 @@ pub fn log_args(limit: usize) -> [String; 7] {
         "-n".into(),
         limit.to_string(),
         "--date=relative".into(),
-        "--pretty=tformat:%h%x1f%an%x1f%ar%x1f%D%x1f%s%x1e".into(),
+        "--pretty=tformat:%h%x1f%an%x1f%ar%x1f%D%x1f%s%x1f%H%x1f%B%x1e".into(),
     ]
 }
 
@@ -145,8 +149,25 @@ pub fn init_args() -> [&'static str; 1] {
 pub fn switch_args(branch: &str) -> [String; 2] {
     ["switch".into(), branch.into()]
 }
-pub fn create_branch_args(name: &str) -> [String; 3] {
-    ["switch".into(), "-c".into(), name.into()]
+/// `git switch -c` — `at` pins the start point (graph context menu's
+/// "Create Branch" branches off the selected commit, like VSCode).
+pub fn create_branch_args(name: &str, at: Option<&str>) -> Vec<String> {
+    let mut args = vec!["switch".into(), "-c".into(), name.into()];
+    if let Some(at) = at {
+        args.push(at.into());
+    }
+    args
+}
+/// `git show` for a whole commit — header (hash/author/date/message) plus
+/// the full patch. The Linux "Open Changes" payload: the panel has no
+/// side-by-side diff surface, so the raw patch opens in a read-only
+/// dialog with git itself doing the formatting.
+pub fn show_commit_args(hash: &str) -> [String; 3] {
+    [
+        "show".into(),
+        "--diff-merges=first-parent".into(),
+        hash.into(),
+    ]
 }
 /// Unstaged tracked discard; staged and untracked paths need
 /// `discard_staged_args`/`clean_args` instead.
@@ -354,6 +375,18 @@ pub fn parse_log(raw: &str) -> Vec<GitCommit> {
                 relative_date: fields[2].to_string(),
                 refs,
                 is_head,
+                full_hash: fields
+                    .get(5)
+                    .map(|h| h.trim().to_string())
+                    .filter(|h| !h.is_empty())
+                    .unwrap_or_else(|| hash.to_string()),
+                // %B is the last field; rejoining tail fragments keeps a
+                // (pathological) \x1f inside the body from truncating it.
+                message: if fields.len() > 6 {
+                    fields[6..].join("\u{1f}").trim_matches('\n').to_string()
+                } else {
+                    fields[4].to_string()
+                },
             })
         })
         .collect()
@@ -414,14 +447,18 @@ mod tests {
 
     #[test]
     fn log_parses_refs_and_head() {
-        let raw = "abc1234\x1fJane\x1f2 days ago\x1fHEAD -> main, origin/main, tag: v1.2.0\x1fRelease v1.2.0\x1edef5678\x1fBob\x1f3 days ago\x1f\x1fAdd feature\x1e";
+        // %h %an %ar %D %s %H %B — %B repeats the subject and adds the body.
+        let raw = "abc1234\x1fJane\x1f2 days ago\x1fHEAD -> main, origin/main, tag: v1.2.0\x1fRelease v1.2.0\x1fabc1234fullhash00\x1fRelease v1.2.0\n\nBody line.\n\x1edef5678\x1fBob\x1f3 days ago\x1f\x1fAdd feature\x1fdef5678fullhash00\x1fAdd feature\n\x1e";
         let commits = parse_log(raw);
         assert_eq!(commits.len(), 2);
         assert!(commits[0].is_head);
         assert_eq!(commits[0].refs, ["main", "origin/main", "tag: v1.2.0"]);
         assert_eq!(commits[0].subject, "Release v1.2.0");
+        assert_eq!(commits[0].full_hash, "abc1234fullhash00");
+        assert_eq!(commits[0].message, "Release v1.2.0\n\nBody line.");
         assert!(!commits[1].is_head);
         assert!(commits[1].refs.is_empty());
+        assert_eq!(commits[1].message, "Add feature");
     }
 
     #[test]

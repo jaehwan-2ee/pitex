@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
+pub(crate) fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -189,12 +189,14 @@ impl AppState {
     pub fn git_switch(&mut self, branch: &str) {
         self.git_operation(vec![git_core::switch_args(branch).to_vec()], false);
     }
-    pub fn git_create_branch(&mut self, name: &str) {
+    /// `at` pins the start point — the graph context menu branches off
+    /// the selected commit, like VSCode's "Create Branch…" there.
+    pub fn git_create_branch(&mut self, name: &str, at: Option<&str>) {
         let name = name.trim();
         if name.is_empty() {
             return;
         }
-        self.git_operation(vec![git_core::create_branch_args(name).to_vec()], false);
+        self.git_operation(vec![git_core::create_branch_args(name, at)], false);
     }
 
     /// Discard like VSCode: untracked files are deleted, staged-new files

@@ -298,7 +298,7 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
             let Ok(mut s) = state.try_borrow_mut() else {
                 return;
             };
-            s.git_new_branch_dialog();
+            s.git_new_branch_dialog(None);
         });
     }
     header.append(&new_branch);
@@ -711,7 +711,7 @@ pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::ListBoxRow
 
 /// One `GitCommit` row — lane dot + connector, subject, ref chips, and the
 /// author · date · hash subtitle.
-pub(crate) fn git_commit_row(commit: &GitCommit) -> gtk4::ListBoxRow {
+pub(crate) fn git_commit_row(commit: &GitCommit, lang: &'static str) -> gtk4::ListBoxRow {
     let row = gtk4::ListBoxRow::new();
     row.set_activatable(false);
     row.set_selectable(false);
@@ -759,7 +759,95 @@ pub(crate) fn git_commit_row(commit: &GitCommit) -> gtk4::ListBoxRow {
     vbox.set_hexpand(true);
     hbox.append(&vbox);
     row.set_child(Some(&hbox));
+    attach_commit_menu(&row, commit, lang);
     row
+}
+
+/// Right-click popover on a graph row — VSCode's commit context menu:
+/// Open Changes, Copy Commit Hash, Copy Commit Message, New Branch.
+fn attach_commit_menu(row: &gtk4::ListBoxRow, commit: &GitCommit, lang: &'static str) {
+    let click = gtk4::GestureClick::new();
+    click.set_button(gtk4::gdk::BUTTON_SECONDARY);
+    let commit = commit.clone();
+    click.connect_pressed(move |gesture, _n, x, y| {
+        let row = gesture.widget();
+        let popover = gtk4::Popover::new();
+        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        vbox.set_margin_top(4);
+        vbox.set_margin_bottom(4);
+        vbox.set_margin_start(4);
+        vbox.set_margin_end(4);
+        popover.set_child(Some(&vbox));
+
+        let open = gtk4::Button::with_label(&tr(lang, "git.open_changes"));
+        open.set_has_frame(false);
+        {
+            let commit = commit.clone();
+            let popover = popover.clone();
+            open.connect_clicked(move |_| {
+                popover.popdown();
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(st) = state.try_borrow() {
+                            st.git_open_commit_diff(&commit);
+                        }
+                    }
+                });
+            });
+        }
+        vbox.append(&open);
+
+        let copy_hash = gtk4::Button::with_label(&tr(lang, "git.copy_hash"));
+        copy_hash.set_has_frame(false);
+        {
+            let text = commit.full_hash.clone();
+            let popover = popover.clone();
+            copy_hash.connect_clicked(move |b| {
+                b.clipboard().set_text(&text);
+                popover.popdown();
+            });
+        }
+        vbox.append(&copy_hash);
+
+        let copy_message = gtk4::Button::with_label(&tr(lang, "git.copy_message"));
+        copy_message.set_has_frame(false);
+        {
+            let text = commit.message.clone();
+            let popover = popover.clone();
+            copy_message.connect_clicked(move |b| {
+                b.clipboard().set_text(&text);
+                popover.popdown();
+            });
+        }
+        vbox.append(&copy_message);
+
+        vbox.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+
+        let branch = gtk4::Button::with_label(&tr(lang, "git.branch_new"));
+        branch.set_has_frame(false);
+        {
+            let hash = commit.full_hash.clone();
+            let popover = popover.clone();
+            branch.connect_clicked(move |_| {
+                popover.popdown();
+                let hash = hash.clone();
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            st.git_new_branch_dialog(Some(hash.clone()));
+                        }
+                    }
+                });
+            });
+        }
+        vbox.append(&branch);
+
+        popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.set_parent(&row);
+        popover.connect_closed(|p| p.unparent());
+        popover.popup();
+    });
+    row.add_controller(click);
 }
 
 fn build_log_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
@@ -2104,7 +2192,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
                 // main-thread-local `STATE` inside the callback instead of
                 // capturing the `Rc` here.
                 gtk4::glib::MainContext::default().invoke(move || {
-                    crate::app_ui::STATE.with(|s| {
+                    STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
                             if let Ok(s) = state.try_borrow_mut() { s.toast(&msg); }
                         }
@@ -2194,7 +2282,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             std::thread::spawn(move || {
                 let result = crate::agent::pi_installer::install_skill(&source);
                 gtk4::glib::MainContext::default().invoke(move || {
-                    crate::app_ui::STATE.with(|s| {
+                    STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
                             if let Ok(st) = state.try_borrow() {
                                 let message = match &result {
@@ -2217,14 +2305,93 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     ai.add(&skills_group);
     window.add(&ai);
 
-    // ── Updates ──
-    // Check GitHub Releases on a worker thread; widgets are touched back on
-    // the main loop through `SendWrapper` (they are !Send like every GTK
-    // object). The pending UpdateInfo is main-thread `Rc` state shared by
-    // the check and install buttons.
+    // ── General ──
+    // Settings backup (export/import — the file moves between macOS and
+    // Linux/Windows unchanged) plus the update controls. Check GitHub
+    // Releases on a worker thread; widgets are touched back on the main
+    // loop through `SendWrapper` (they are !Send like every GTK object).
+    // The pending UpdateInfo is main-thread `Rc` state shared by the
+    // check and install buttons.
     let updates_page = adw::PreferencesPage::new();
-    updates_page.set_title(&tr(lang, "settings.tab.updates"));
-    updates_page.set_icon_name(Some("software-update-available-symbolic"));
+    updates_page.set_title(&tr(lang, "settings.tab.general"));
+    updates_page.set_icon_name(Some("emblem-system-symbolic"));
+
+    let backup_group = adw::PreferencesGroup::new();
+    backup_group.set_title(&tr(lang, "settings.general.section"));
+    let export_row = adw::ActionRow::new();
+    export_row.set_title(&tr(lang, "settings.general.export"));
+    export_row.set_activatable(true);
+    a11y(&export_row, "pitex.settings.general.export", "settings.general.export");
+    {
+        let state = state.clone();
+        let window = window.clone();
+        export_row.connect_activated(move |row| {
+            let row = row.clone();
+            let window = window.clone().upcast::<gtk4::Window>();
+            let state = state.clone();
+            crate::compat::save_file(
+                Some(&window),
+                &tr(lang, "settings.general.export"),
+                Some("pitex-settings.json"),
+                move |path| {
+                    let json = state.borrow().store.prefs().export_backup();
+                    let msg = match std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap_or_default()) {
+                        Ok(()) => tr(lang, "settings.general.exported"),
+                        Err(e) => e.to_string(),
+                    };
+                    row.set_subtitle(&msg);
+                },
+            );
+        });
+    }
+    backup_group.add(&export_row);
+    let import_row = adw::ActionRow::new();
+    import_row.set_title(&tr(lang, "settings.general.import"));
+    import_row.set_activatable(true);
+    a11y(&import_row, "pitex.settings.general.import", "settings.general.import");
+    {
+        let state = state.clone();
+        let window = window.clone();
+        import_row.connect_activated(move |row| {
+            let row = row.clone();
+            let window = window.clone().upcast::<gtk4::Window>();
+            let state = state.clone();
+            crate::compat::pick_settings_file(
+                Some(&window),
+                &tr(lang, "settings.general.import"),
+                move |path| {
+                    let msg = match std::fs::read(&path) {
+                        Ok(data) => {
+                            let mut s = state.borrow_mut();
+                            // Bind first — a match scrutinee keeps its
+                            // temporaries (the prefs_mut borrow) alive for
+                            // the whole match.
+                            let result = s.store.prefs_mut().import_backup(&data);
+                            match result {
+                                Ok(count) => {
+                                    s.reload_imported_settings();
+                                    tr1(lang, "settings.general.imported", &count.to_string())
+                                }
+                                Err(e) => e,
+                            }
+                        }
+                        Err(e) => e.to_string(),
+                    };
+                    row.set_subtitle(&msg);
+                },
+            );
+        });
+    }
+    backup_group.add(&import_row);
+    let backup_note = gtk4::Label::new(Some(&tr(lang, "settings.general.note")));
+    backup_note.set_xalign(0.0);
+    backup_note.set_wrap(true);
+    backup_note.add_css_class("dim-label");
+    backup_note.set_margin_start(12);
+    backup_note.set_margin_bottom(8);
+    backup_group.add(&backup_note);
+    updates_page.add(&backup_group);
+
     let update_group = adw::PreferencesGroup::new();
     update_group.set_title(&tr(lang, "settings.updates.section"));
 

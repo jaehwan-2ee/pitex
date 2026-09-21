@@ -76,11 +76,35 @@ final class SettingsStore: ObservableObject {
     private static let settingsKey = "dev.pitex.settings"
 
     init() {
+        settings = .safeDefaults
+        customShellExecutable = "/bin/zsh"
+        switchToPDFOnBuild = true
+        jumpToCursorAfterBuild = true
+        restoreSession = true
+        codeFolding = true
+        minimap = true
+        inverseSyncHighlight = false
+        forwardSyncHighlight = false
+        autoSave = false
+        autoSaveDelay = 5
+        confirmOverwrite = true
+        chatHistoryLimit = 50
+        aiDefaultModel = ""
+        aiAttachDefault = true
+        aiAutocompletion = false
+        aiFontSize = 13
+        defaultBuildCommand = "xelatex -interaction=nonstopmode -synctex=1 {file}"
+        defaultCustomCommand = ""
+        autoInstallUpdates = false
+        reload()
+    }
+
+    /// Re-read every key from UserDefaults — used after a settings import
+    /// wrote new values behind the store's back.
+    func reload() {
         if let data = UserDefaults.standard.data(forKey: Self.settingsKey),
            let decoded = try? JSONDecoder().decode(PersistedSettings.self, from: data) {
             settings = decoded
-        } else {
-            settings = .safeDefaults
         }
         let defaults = UserDefaults.standard
         customShellExecutable = defaults.string(forKey: "customShellExecutable") ?? "/bin/zsh"
@@ -159,7 +183,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case editor
     case appearance
     case ai
-    case updates
+    case general
 
     var id: Self { self }
 
@@ -169,7 +193,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .editor: "settings.tab.editor"
         case .appearance: "settings.tab.appearance"
         case .ai: "settings.tab.ai"
-        case .updates: "settings.tab.updates"
+        case .general: "settings.tab.general"
         }
     }
 
@@ -179,7 +203,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .editor: "textformat"
         case .appearance: "paintpalette"
         case .ai: "wand.and.stars"
-        case .updates: "arrow.triangle.2.circlepath"
+        case .general: "gearshape"
         }
     }
 }
@@ -200,6 +224,8 @@ struct SettingsView: View {
     @State private var skillInstallInFlight = false
     @State private var skillMessage: String?
     @State private var skillIsError = false
+    @State private var settingsTransferMessage: String?
+    @State private var settingsTransferIsError = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -213,7 +239,7 @@ struct SettingsView: View {
                 case .editor: editorTab
                 case .appearance: appearanceTab
                 case .ai: aiTab
-                case .updates: updatesTab
+                case .general: generalTab
                 }
             }
 
@@ -694,12 +720,30 @@ struct SettingsView: View {
         return (name, description)
     }
 
-    /// Updates pane — mirrors the GTK settings page: current version, a
-    /// check button, an install button that appears when a newer release
-    /// exists, and the auto-install preference (same UserDefaults key the
-    /// Linux and Windows shells read).
-    private var updatesTab: some View {
+    /// General pane — mirrors the GTK settings page: settings backup
+    /// (export/import for syncing several Macs/PCs) plus the update
+    /// controls: current version, a check button, an install button that
+    /// appears when a newer release exists, and the auto-install
+    /// preference (same UserDefaults key the Linux and Windows shells read).
+    private var generalTab: some View {
         Form {
+            Section("settings.general.section") {
+                HStack(spacing: 12) {
+                    Button("settings.general.export") { exportSettings() }
+                        .accessibilityIdentifier("pitex.settings.general.export")
+                    Button("settings.general.import") { importSettings() }
+                        .accessibilityIdentifier("pitex.settings.general.import")
+                }
+                Text("settings.general.note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let settingsTransferMessage {
+                    Text(verbatim: settingsTransferMessage)
+                        .font(.caption)
+                        .foregroundStyle(settingsTransferIsError ? Color.red : Color.secondary)
+                        .textSelection(.enabled)
+                }
+            }
             Section("settings.updates.section") {
                 LabeledContent("settings.updates.current_version") {
                     Text(updates.currentVersion)
@@ -737,6 +781,42 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(8)
+    }
+
+    /// "설정보내기" — write every backupable preference to a JSON file.
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "pitex-settings.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try SettingsBackup.export().write(to: url)
+            settingsTransferMessage = String(localized: "settings.general.exported")
+            settingsTransferIsError = false
+        } catch {
+            settingsTransferMessage = error.localizedDescription
+            settingsTransferIsError = true
+        }
+    }
+
+    /// "설정 불러오기" — merge a backup file into UserDefaults and reload
+    /// the live stores so the open window reflects it.
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let applied = try SettingsBackup.importData(Data(contentsOf: url))
+            store.reload()
+            AppearanceSettings.shared.reload()
+            settingsTransferMessage = String(
+                format: String(localized: "settings.general.imported"), "\(applied)")
+            settingsTransferIsError = false
+        } catch {
+            settingsTransferMessage = error.localizedDescription
+            settingsTransferIsError = true
+        }
     }
 
     private func performAgentSettingsAction(_ action: @escaping @MainActor () async throws -> Void) {
@@ -1153,6 +1233,76 @@ private struct ColorWellButton: NSViewRepresentable {
         var onChange: (NSColor) -> Void
         init(onChange: @escaping (NSColor) -> Void) { self.onChange = onChange }
         @objc func colorChanged(_ sender: NSColorWell) { onChange(sender.color) }
+    }
+}
+
+/// Settings export/import — a flat `preferences` map of the same keys the
+/// Linux shell stores in `~/.config/pitex/preferences.json`, so a backup
+/// file moves between macOS and Linux/Windows unchanged. The Pitex Agent
+/// section's keys (`ai.*`) and session state (`pitex.pref.workspace.*`,
+/// per-project command paths, internal bookkeeping) stay out: auth and
+/// the agent runtime are per-machine, not user preferences.
+enum SettingsBackup {
+    private static let includedPrefixes = [
+        "dev.pitex.", "pitex.pref.", "appearance.", "project.", "customShellExecutable",
+    ]
+    private static let excludedPrefixes = ["ai.", "pitex.pref.workspace."]
+
+    static func includes(_ key: String) -> Bool {
+        includedPrefixes.contains { key.hasPrefix($0) }
+            && !excludedPrefixes.contains { key.hasPrefix($0) }
+    }
+
+    /// `{format, version, preferences:{key: value}}` — Data values (the
+    /// `dev.pitex.settings` blob) become embedded JSON objects so the file
+    /// is portable.
+    static func export() throws -> Data {
+        let identifier = Bundle.main.bundleIdentifier ?? "dev.pitex"
+        let domain = UserDefaults.standard.persistentDomain(forName: identifier) ?? [:]
+        var preferences: [String: Any] = [:]
+        for (key, value) in domain where includes(key) {
+            if let data = value as? Data,
+               let object = try? JSONSerialization.jsonObject(with: data) {
+                preferences[key] = object
+            } else {
+                preferences[key] = value
+            }
+        }
+        return try JSONSerialization.data(
+            withJSONObject: [
+                "format": "pitex-settings",
+                "version": 1,
+                "preferences": preferences,
+            ],
+            options: [.prettyPrinted, .sortedKeys])
+    }
+
+    /// Merge a backup file (the envelope above, or a bare key→value map
+    /// like Linux's `preferences.json`) into UserDefaults. Returns the
+    /// number of applied keys; unknown/non-backup keys are ignored.
+    @discardableResult
+    static func importData(_ data: Data) throws -> Int {
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let root = object as? [String: Any] else {
+            throw NSError(domain: "SettingsBackup", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Not a settings file"])
+        }
+        let preferences = (root["preferences"] as? [String: Any]) ?? root
+        var applied = 0
+        let defaults = UserDefaults.standard
+        for (key, value) in preferences where includes(key) {
+            // JSON null is NSNull — not plist-valid, would raise in set().
+            if value is NSNull { continue }
+            if key == "dev.pitex.settings", value is [String: Any] {
+                // The blob is stored as Data — re-encode the JSON object.
+                guard let encoded = try? JSONSerialization.data(withJSONObject: value) else { continue }
+                defaults.set(encoded, forKey: key)
+            } else {
+                defaults.set(value, forKey: key)
+            }
+            applied += 1
+        }
+        return applied
     }
 }
 

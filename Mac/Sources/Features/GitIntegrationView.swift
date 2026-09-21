@@ -1,3 +1,4 @@
+import AppKit
 import BuildCore
 import GitCore
 import SwiftUI
@@ -53,12 +54,13 @@ enum GitRunner {
     }
 }
 
-/// An open commit diff covering the editor area. `rows` is nil while
-/// `git show` is in flight; `error` carries a failed run.
+/// An open commit diff covering the editor area. `file` nil means the
+/// whole commit ("Open Changes"); `sections` is nil while `git show` is
+/// in flight and `error` carries a failed run.
 struct GitDiffSession {
     let commit: GitCommit
-    let file: GitCommitFile
-    var rows: [GitDiffRow]?
+    let file: GitCommitFile?
+    var sections: [GitDiffFileSection]?
     var error: String?
 }
 
@@ -170,10 +172,12 @@ extension WorkspaceModel {
     func pushGit() { gitOperation([GitSupport.pushArgs]) }
     func syncGit() { gitOperation([GitSupport.pullArgs, GitSupport.pushArgs]) }
     func switchGit(_ branch: String) { gitOperation([GitSupport.switchArgs(branch)]) }
-    func createGitBranch(_ name: String) {
+    /// `at` pins the start point — the graph context menu branches off
+    /// the selected commit, like VSCode's "Create Branch…" there.
+    func createGitBranch(_ name: String, at commit: GitCommit? = nil) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        gitOperation([GitSupport.createBranchArgs(name)])
+        gitOperation([GitSupport.createBranchArgs(name, at: commit?.fullHash)])
     }
 
     /// Discard like VSCode: untracked files are deleted, staged-new files
@@ -225,7 +229,7 @@ extension WorkspaceModel {
         let root = URL(fileURLWithPath: status.root)
         gitCommitFilesBusy.insert(commit.hash)
         Task {
-            let result = await GitRunner.run(GitSupport.commitFilesArgs(commit.hash), in: root)
+            let result = await GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root)
             gitCommitFiles[commit.hash] =
                 result.code == 0 ? GitSupport.parseCommitFiles(result.stdout) : []
             gitCommitFilesBusy.remove(commit.hash)
@@ -239,16 +243,67 @@ extension WorkspaceModel {
         let root = URL(fileURLWithPath: status.root)
         gitDiff = GitDiffSession(commit: commit, file: file)
         Task {
-            let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.hash, path: file.path), in: root)
+            let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.fullHash, path: file.path), in: root)
             // A second file click may have replaced the session meanwhile.
             guard gitDiff?.commit.hash == commit.hash, gitDiff?.file == file else { return }
             gitDiff = GitDiffSession(
                 commit: commit,
                 file: file,
-                rows: result.code == 0 ? GitSupport.parseFileDiff(result.stdout) : nil,
+                sections: result.code == 0
+                    ? [GitDiffFileSection(
+                        file: file,
+                        binary: result.stdout.contains("Binary files"),
+                        rows: GitSupport.parseFileDiff(result.stdout))]
+                    : nil,
                 error: result.code == 0 ? nil : result.errorText
             )
         }
+    }
+
+    /// The context menu's "Open Changes" — the whole commit as a
+    /// multi-file diff, like VSCode's multi-diff editor.
+    func openGitDiff(_ commit: GitCommit) {
+        guard let status = gitStatus else { return }
+        let root = URL(fileURLWithPath: status.root)
+        gitDiff = GitDiffSession(commit: commit, file: nil)
+        Task {
+            async let filesResult = GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root)
+            async let diffResult = GitRunner.run(GitSupport.commitDiffArgs(commit.fullHash), in: root)
+            let (files, diff) = await (filesResult, diffResult)
+            guard gitDiff?.commit.hash == commit.hash, gitDiff?.file == nil else { return }
+            guard diff.code == 0 else {
+                gitDiff = GitDiffSession(commit: commit, file: nil, error: diff.errorText)
+                return
+            }
+            var kinds: [String: GitChangeKind] = [:]
+            if files.code == 0 {
+                for f in GitSupport.parseCommitFiles(files.stdout) { kinds[f.path] = f.kind }
+            }
+            gitDiff = GitDiffSession(
+                commit: commit,
+                file: nil,
+                sections: GitSupport.parseCommitDiff(diff.stdout).map { section in
+                    GitDiffFileSection(
+                        file: GitCommitFile(
+                            path: section.path,
+                            kind: kinds[section.path] ?? .modified),
+                        binary: section.binary,
+                        rows: section.rows)
+                }
+            )
+        }
+    }
+
+    /// "Copy Commit Hash" — the full 40-char id, not the display short one.
+    func copyGitCommitHash(_ commit: GitCommit) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(commit.fullHash, forType: .string)
+    }
+
+    /// "Copy Commit Message" — subject plus body (`%B`), like VSCode.
+    func copyGitCommitMessage(_ commit: GitCommit) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(commit.message, forType: .string)
     }
 
     func closeGitDiff() { gitDiff = nil }
@@ -357,6 +412,9 @@ struct GitIntegrationView: View {
     @State private var discardTarget: GitChange?
     @State private var showNewBranch = false
     @State private var newBranchName = ""
+    /// Set when "New Branch…" came from a commit's context menu — the
+    /// branch starts at that commit instead of HEAD.
+    @State private var newBranchBase: GitCommit?
     private let refreshTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
 
     /// Git text follows the editor font size; `delta` keeps the
@@ -513,8 +571,11 @@ struct GitIntegrationView: View {
                     .disabled(branch == status.branch)
             }
             if !workspace.gitBranches.isEmpty { Divider() }
-            Button("git.branch_new") { showNewBranch = true }
-                .accessibilityIdentifier("pitex.git.branchNew")
+            Button("git.branch_new") {
+                newBranchBase = nil
+                showNewBranch = true
+            }
+            .accessibilityIdentifier("pitex.git.branchNew")
         } label: {
             Text(verbatim: status.branch)
                 .font(gitFont(weight: .bold))
@@ -803,6 +864,21 @@ struct GitIntegrationView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("pitex.git.commit.\(commit.hash)")
+            .contextMenu {
+                Button("git.open_changes") { workspace.openGitDiff(commit) }
+                    .accessibilityIdentifier("pitex.git.commit.openChanges")
+                Divider()
+                Button("git.copy_hash") { workspace.copyGitCommitHash(commit) }
+                    .accessibilityIdentifier("pitex.git.commit.copyHash")
+                Button("git.copy_message") { workspace.copyGitCommitMessage(commit) }
+                    .accessibilityIdentifier("pitex.git.commit.copyMessage")
+                Divider()
+                Button("git.branch_new") {
+                    newBranchBase = commit
+                    showNewBranch = true
+                }
+                .accessibilityIdentifier("pitex.git.commit.newBranch")
+            }
             if expanded {
                 commitFileList(commit)
             }
@@ -862,9 +938,10 @@ struct GitIntegrationView: View {
                 Button("git.cancel") { showNewBranch = false }
                 Spacer()
                 Button("git.create") {
-                    workspace.createGitBranch(newBranchName)
+                    workspace.createGitBranch(newBranchName, at: newBranchBase)
                     showNewBranch = false
                     newBranchName = ""
+                    newBranchBase = nil
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(newBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -877,16 +954,21 @@ struct GitIntegrationView: View {
 
 // MARK: - Commit diff
 
-/// VSCode-style side-by-side diff of one file in one commit, covering the
-/// editor surface while open. Removed lines tint red on the left, added
-/// lines green on the right; clicking another file under a commit swaps
-/// the session in place.
+/// VSCode-style diff covering the editor surface: the original on the
+/// left, the new revision on the right, unchanged regions folded behind
+/// an expandable bar, and the changed character range of a modified line
+/// shaded darker — like the source-control diff editor. `session.file`
+/// nil renders every file of the commit ("Open Changes", multi-diff).
 struct CommitDiffView: View {
     @ObservedObject var workspace: WorkspaceModel
     let session: GitDiffSession
     @ObservedObject private var appearance = AppearanceSettings.shared
+    /// Expanded fold bars, keyed "path#foldID".
+    @State private var expandedFolds: Set<String> = []
+    /// Collapsed file sections in multi-file mode.
+    @State private var collapsedFiles: Set<String> = []
 
-    private var mono: Font { .system(size: appearance.fontSize, design: .monospaced) }
+    private var mono: Font { Font(appearance.editorFont) }
     private var monoSmall: Font { .system(size: max(appearance.fontSize - 1, 8), design: .monospaced) }
 
     var body: some View {
@@ -902,14 +984,24 @@ struct CommitDiffView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text(verbatim: session.file.kind.badge)
-                .font(monoSmall.weight(.bold))
-                .foregroundStyle(badgeColor(session.file.kind))
-                .frame(width: 12)
-            Text(verbatim: session.file.path)
-                .font(mono)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            if let file = session.file {
+                Text(verbatim: file.kind.badge)
+                    .font(monoSmall.weight(.bold))
+                    .foregroundStyle(badgeColor(file.kind))
+                    .frame(width: 12)
+                Text(verbatim: file.path)
+                    .font(mono)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let section = session.sections?.first {
+                    stats(section)
+                }
+            } else if let sections = session.sections {
+                Text(String(format: String(localized: "git.diff.files"),
+                            "\(sections.count)"))
+                    .font(monoSmall)
+                    .foregroundStyle(.secondary)
+            }
             Text(verbatim: session.commit.hash)
                 .font(monoSmall)
                 .foregroundStyle(.secondary)
@@ -934,6 +1026,17 @@ struct CommitDiffView: View {
         .padding(.vertical, 6)
     }
 
+    /// `+N −N` chip matching the SCM file rows.
+    private func stats(_ section: GitDiffFileSection) -> some View {
+        HStack(spacing: 4) {
+            Text(verbatim: "+\(section.additions)")
+                .foregroundStyle(.green)
+            Text(verbatim: "−\(section.deletions)")
+                .foregroundStyle(.red)
+        }
+        .font(monoSmall)
+    }
+
     @ViewBuilder
     private var content: some View {
         if let error = session.error {
@@ -942,13 +1045,13 @@ struct CommitDiffView: View {
                 .foregroundStyle(.red)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
-        } else if let rows = session.rows {
-            if rows.isEmpty {
+        } else if let sections = session.sections {
+            if sections.isEmpty {
                 Text("git.no_changes")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                diffTable(rows)
+                diffTable(sections)
             }
         } else {
             ProgressView()
@@ -957,27 +1060,44 @@ struct CommitDiffView: View {
         }
     }
 
-    /// Longest cell text, so columns widen past the half-width split for
-    /// long lines instead of truncating (horizontal scroll, like VSCode).
-    private func maxCellChars(_ rows: [GitDiffRow]) -> Int {
+    /// Longest text across every section so columns widen past the
+    /// half-width split instead of truncating (horizontal scroll).
+    private func maxCellChars(_ sections: [GitDiffFileSection]) -> Int {
         var longest = 0
-        for row in rows {
-            if case let .pair(l, r) = row {
-                longest = max(longest, l?.text.count ?? 0, r?.text.count ?? 0)
+        for section in sections {
+            for item in GitSupport.displayItems(section.rows) {
+                switch item {
+                case let .pair(l, r):
+                    longest = max(longest, l?.text.count ?? 0, r?.text.count ?? 0)
+                case let .fold(_, pairs):
+                    for p in pairs {
+                        longest = max(longest, p.left?.text.count ?? 0, p.right?.text.count ?? 0)
+                    }
+                case .gap, .note:
+                    break
+                }
             }
         }
         return longest
     }
 
-    private func diffTable(_ rows: [GitDiffRow]) -> some View {
+    private func diffTable(_ sections: [GitDiffFileSection]) -> some View {
         let charWidth = appearance.fontSize * 0.62
-        let contentWidth = CGFloat(maxCellChars(rows)) * charWidth + 64
+        let contentWidth = CGFloat(maxCellChars(sections)) * charWidth + 64
         return GeometryReader { geo in
             let columnWidth = max(geo.size.width / 2 - 1, contentWidth)
             ScrollView([.horizontal, .vertical]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                        diffRow(row, columnWidth: columnWidth)
+                    ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                        if session.file == nil {
+                            fileHeader(section)
+                        }
+                        if session.file != nil || !collapsedFiles.contains(section.file.path) {
+                            fileRows(section, columnWidth: columnWidth)
+                        }
+                        if index < sections.count - 1 {
+                            Divider().padding(.vertical, 4)
+                        }
                     }
                 }
                 .padding(.vertical, 4)
@@ -985,10 +1105,81 @@ struct CommitDiffView: View {
         }
     }
 
+    /// Collapsible file banner between sections (VSCode's multi-diff
+    /// editor header): badge, path, and the +/− counts.
+    private func fileHeader(_ section: GitDiffFileSection) -> some View {
+        Button {
+            if collapsedFiles.contains(section.file.path) {
+                collapsedFiles.remove(section.file.path)
+            } else {
+                collapsedFiles.insert(section.file.path)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: collapsedFiles.contains(section.file.path)
+                      ? "chevron.right" : "chevron.down")
+                    .font(monoSmall)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 10)
+                Text(verbatim: section.file.kind.badge)
+                    .font(monoSmall.weight(.bold))
+                    .foregroundStyle(badgeColor(section.file.kind))
+                    .frame(width: 12)
+                Text(verbatim: section.file.path)
+                    .font(mono)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                stats(section)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.08))
+        .accessibilityIdentifier("pitex.git.diff.file.\(section.file.path)")
+    }
+
+    /// A Group, not a container: the rows stay direct children of the
+    /// outer LazyVStack, so an expanded fold of thousands of lines still
+    /// renders lazily.
     @ViewBuilder
-    private func diffRow(_ row: GitDiffRow, columnWidth: CGFloat) -> some View {
-        switch row {
-        case let .meta(text):
+    private func fileRows(_ section: GitDiffFileSection, columnWidth: CGFloat) -> some View {
+        if section.binary {
+            noteRow("git.diff.binary")
+        }
+        ForEach(
+            Array(GitSupport.displayItems(section.rows).enumerated()),
+            id: \.offset
+        ) { _, item in
+            diffItem(item, path: section.file.path, columnWidth: columnWidth)
+        }
+    }
+
+    @ViewBuilder
+    private func diffItem(_ item: GitDiffItem, path: String, columnWidth: CGFloat) -> some View {
+        switch item {
+        case let .pair(left, right):
+            pairRow(left: left, right: right, columnWidth: columnWidth)
+        case let .fold(id, pairs):
+            let key = "\(path)#\(id)"
+            if expandedFolds.contains(key) {
+                ForEach(Array(pairs.enumerated()), id: \.offset) { _, p in
+                    pairRow(left: p.left, right: p.right, columnWidth: columnWidth)
+                }
+            } else {
+                Button {
+                    expandedFolds.insert(key)
+                } label: {
+                    foldedLabel(pairs.count)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("pitex.git.diff.fold")
+            }
+        case let .gap(oldLines):
+            foldedLabel(oldLines)
+        case let .note(text):
             Text(verbatim: text)
                 .font(monoSmall)
                 .foregroundStyle(.secondary)
@@ -996,40 +1187,85 @@ struct CommitDiffView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        case let .hunk(text):
-            Text(verbatim: text)
-                .font(monoSmall)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.secondary.opacity(0.10))
-        case let .pair(left, right):
-            HStack(spacing: 0) {
-                diffCell(left, width: columnWidth)
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.25))
-                    .frame(width: 1)
-                diffCell(right, width: columnWidth)
-            }
         }
     }
 
-    private func diffCell(_ line: GitDiffLine?, width: CGFloat) -> some View {
+    /// The "⋯ N unchanged lines" bar spanning both panes — VSCode's
+    /// collapsed-region widget look.
+    private func foldedLabel(_ count: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "ellipsis")
+            Text(String(format: String(localized: "git.folded_lines"), "\(count)"))
+                .lineLimit(1)
+        }
+        .font(monoSmall)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.10))
+    }
+
+    private func noteRow(_ key: LocalizedStringKey) -> some View {
+        Text(key)
+            .font(monoSmall)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+    }
+
+    /// One aligned row: original line on the left, new line on the right.
+    /// A paired removed+added line gets its changed character range
+    /// shaded darker — VSCode's intra-line highlight.
+    private func pairRow(left: GitDiffLine?, right: GitDiffLine?, columnWidth: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            diffCell(left, other: right, width: columnWidth)
+            Rectangle()
+                .fill(Color.secondary.opacity(0.25))
+                .frame(width: 1)
+            diffCell(right, other: left, width: columnWidth)
+        }
+    }
+
+    private func diffCell(_ line: GitDiffLine?, other: GitDiffLine?, width: CGFloat) -> some View {
         HStack(spacing: 0) {
             Text(verbatim: line.map { "\($0.number)" } ?? "")
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .trailing)
                 .padding(.trailing, 8)
-            Text(verbatim: line?.text ?? "")
-                .lineLimit(1)
+            if let line {
+                Text(highlighted(line, other: other))
+                    .lineLimit(1)
+            }
             Spacer(minLength: 0)
         }
         .font(mono)
         .padding(.vertical, 1)
         .frame(width: width, alignment: .leading)
         .background(diffCellBackground(line))
+    }
+
+    /// Line text with the changed character range shaded stronger —
+    /// `commonAffixes` trims the shared head/tail; the middle is what
+    /// actually changed. NSAttributedString because the range math rides
+    /// UTF-16, which `commonAffixes`' Character counts convert into here.
+    private func highlighted(_ line: GitDiffLine, other: GitDiffLine?) -> AttributedString {
+        let text = NSMutableAttributedString(string: line.text)
+        guard let other,
+              (line.kind == .removed && other.kind == .added)
+              || (line.kind == .added && other.kind == .removed)
+        else { return AttributedString(text) }
+        let (prefix, suffix) = GitSupport.commonAffixes(line.text, other.text)
+        let chars = Array(line.text)
+        guard chars.count - prefix - suffix > 0 else { return AttributedString(text) }
+        let headLen = String(chars[0 ..< prefix]).utf16.count
+        let midLen = String(chars[prefix ..< chars.count - suffix]).utf16.count
+        text.addAttribute(
+            .backgroundColor,
+            value: (line.kind == .removed
+                    ? NSColor.systemRed.withAlphaComponent(0.38)
+                    : NSColor.systemGreen.withAlphaComponent(0.34)),
+            range: NSRange(location: headLen, length: midLen))
+        return AttributedString(text)
     }
 
     private func diffCellBackground(_ line: GitDiffLine?) -> Color {
