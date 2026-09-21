@@ -229,12 +229,12 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var todoItems: [DocumentTodoItem] = []
     /// Git Integration panel — driven by `WorkspaceModel+Git.swift`; nil
     /// until the first refresh reports whether the project is a repository.
-    @Published private(set) var gitStatus: GitStatus?
-    @Published private(set) var gitCommits: [GitCommit] = []
-    @Published private(set) var gitBranches: [String] = []
+    @Published internal(set) var gitStatus: GitStatus?
+    @Published internal(set) var gitCommits: [GitCommit] = []
+    @Published internal(set) var gitBranches: [String] = []
     @Published var gitCommitMessage = ""
-    @Published private(set) var gitBusy = false
-    @Published private(set) var gitError: String?
+    @Published internal(set) var gitBusy = false
+    @Published internal(set) var gitError: String?
     /// Project-wide \label keys and .bib citation keys feeding the editor's
     /// native completion. Rebuilt on the structure-refresh cadence through
     /// mtime-keyed caches — never reparsed per keystroke.

@@ -226,16 +226,26 @@ struct GitIntegrationView: View {
         .onReceive(refreshTimer) { _ in
             if !workspace.gitBusy { workspace.refreshGit() }
         }
-        .confirmationDialog("git.discard", presenting: $discardTarget) { target in
-            Button("git.discard", role: .destructive) { workspace.discardGit(target) }
+        .confirmationDialog(
+            "git.discard",
+            isPresented: Binding(
+                get: { discardTarget != nil },
+                set: { if !$0 { discardTarget = nil } }
+            )
+        ) {
+            Button("git.discard", role: .destructive) {
+                if let target = discardTarget { workspace.discardGit(target) }
+            }
             Button("git.cancel", role: .cancel) {}
-        } message: { target in
-            Text(String(
-                format: String(localized: target.kind == .untracked
-                    ? "git.discard_confirm_untracked"
-                    : "git.discard_confirm"),
-                target.path
-            ))
+        } message: {
+            if let target = discardTarget {
+                Text(String(
+                    format: String(localized: target.kind == .untracked
+                        ? "git.discard_confirm_untracked"
+                        : "git.discard_confirm"),
+                    target.path
+                ))
+            }
         }
         .sheet(isPresented: $showNewBranch) { newBranchSheet }
     }
@@ -330,7 +340,7 @@ struct GitIntegrationView: View {
                 .font(.caption)
         }
         .buttonStyle(.borderless)
-        .help(String(localized: help))
+        .help(help)
         .disabled(workspace.gitBusy)
     }
 
@@ -417,7 +427,7 @@ struct GitIntegrationView: View {
                     .font(.caption)
             }
             .buttonStyle(.borderless)
-            .help(String(localized: help))
+            .help(help)
             .disabled(workspace.gitBusy)
         }
         .padding(.top, 2)
@@ -475,7 +485,7 @@ struct GitIntegrationView: View {
                 .font(.caption)
         }
         .buttonStyle(.borderless)
-        .help(String(localized: help))
+        .help(help)
         .disabled(workspace.gitBusy)
     }
 
@@ -496,7 +506,7 @@ struct GitIntegrationView: View {
                 TextEditor(text: $workspace.gitCommitMessage)
                     .font(.caption)
                     .frame(height: 42)
-                    .onKeyPress(.return) { press in
+                    .onKeyPress(keys: [.return]) { press in
                         guard press.modifiers == .command else { return .ignored }
                         workspace.commitGit()
                         return .handled
