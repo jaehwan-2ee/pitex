@@ -1,0 +1,21 @@
+Linux/crates/pitex-shell/src/agent.rs
+  s_eaf07a8e25b570::t_2b2136d573c81f 2285-2291,2297-2300,2304-2306,2315-2320,2322,2329,2334,2338-2345,2347-2348,2350,2352-2353,2355-2376,2379,2861-2896
+Mac/Sources/Features/PiAgentProcess.swift
+  s_eaf07a8e25b570::t_ca1edb5a024863 229-233,235-236,238-241,243-244,253-258,261-277,280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ae8f2b035bc721b6073f0c29cfee234755c218b",
+  "prompts": {},
+  "sessions": {
+    "s_eaf07a8e25b570": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_eaf07a8e25b570",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
