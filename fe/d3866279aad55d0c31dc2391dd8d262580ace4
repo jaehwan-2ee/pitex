@@ -1,0 +1,21 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_bf06bac36dfe8e::t_c8f4f3ce5dad7f 779
+Linux/crates/pitex-shell/src/compat.rs
+  s_bf06bac36dfe8e::t_c2a4a7b9028c7a 254-270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fed3866279aad55d0c31dc2391dd8d262580ace4",
+  "prompts": {},
+  "sessions": {
+    "s_bf06bac36dfe8e": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_bf06bac36dfe8e",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
