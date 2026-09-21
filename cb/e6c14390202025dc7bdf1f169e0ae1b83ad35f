@@ -1,0 +1,19 @@
+Mac/Sources/Features/PiAgentProcess.swift
+  s_e20b8e97a5716a::t_23a97c15630002 259,269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbe6c14390202025dc7bdf1f169e0ae1b83ad35f",
+  "prompts": {},
+  "sessions": {
+    "s_e20b8e97a5716a": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_e20b8e97a5716a",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
