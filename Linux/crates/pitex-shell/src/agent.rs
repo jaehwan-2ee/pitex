@@ -2282,18 +2282,28 @@ pub mod pi_installer {
         let runtime = pi_paths::runtime_directory();
         let spec = format!("{PACKAGE_NAME}@{DESIRED_VERSION}");
         let runtime_str = runtime.to_string_lossy().into_owned();
-        let (executable, arguments) = if let Some(bun) = &tools.bun {
-            (
+        // npm is a real fallback even when bun exists: `bun add` can exit 0
+        // while laying down nothing (stale tree it won't re-extract, corrupt
+        // cache, a `bun` that isn't bun, a registry mirror serving a stub).
+        let mut attempts: Vec<(&str, PathBuf, Vec<String>)> = Vec::new();
+        if let Some(bun) = &tools.bun {
+            attempts.push((
+                "bun",
                 bun.clone(),
                 vec![
                     "add".into(),
                     "--cwd".into(),
                     runtime_str.clone(),
+                    "--force".into(),
+                    "--linker".into(),
+                    "hoisted".into(),
+                    "--no-cache".into(),
                     "--exact".into(),
                     spec.clone(),
                 ],
-            )
-        } else if let Some(command) = tools.npm_command(&[
+            ));
+        }
+        if let Some((npm_exe, npm_args)) = tools.npm_command(&[
             "install".into(),
             "--prefix".into(),
             runtime_str.clone(),
@@ -2302,77 +2312,72 @@ pub mod pi_installer {
             "--no-fund".into(),
             spec.clone(),
         ]) {
-            command
-        } else {
+            attempts.push(("npm", npm_exe.clone(), npm_args.clone()));
+            let mut pinned = npm_args;
+            pinned.extend(["--registry".into(), "https://registry.npmjs.org".into()]);
+            attempts.push(("npm+npmjs", npm_exe, pinned));
+        }
+        if attempts.is_empty() {
             return Err(RUNTIME_MISSING.into());
-        };
+        }
         std::fs::create_dir_all(&runtime).map_err(|e| e.to_string())?;
-        let check_install = |result: &build_core::ProcessResult| -> Result<(), String> {
-            if result.stop_reason != build_core::ProcessStopReason::Completed
-                || result.termination != (build_core::ProcessTermination::Exited { code: 0 })
-            {
-                let text = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&result.standard_output),
-                    String::from_utf8_lossy(&result.standard_error)
-                );
-                return Err(format!("Pitex Agent install failed: {}", tail(&text, 2_000)));
-            }
-            Ok(())
-        };
         // Ok(()) when the installed CLI runs `--version` cleanly.
         let smoke_check = |entry: &Path| -> Result<(), String> {
             let (check_exe, check_args) = tools.launch(entry, &["--version".into()])?;
             let Some(check) = run_install(&check_exe, &check_args, &tools.environment, &runtime, 15)
             else {
-                return Err("The agent smoke check could not be started.".into());
+                return Err("the agent smoke check could not be started".into());
             };
             if check.termination != (build_core::ProcessTermination::Exited { code: 0 })
                 || check.stop_reason != build_core::ProcessStopReason::Completed
             {
-                return Err(format!(
-                    "Pitex Agent install failed: {}",
-                    tail(&String::from_utf8_lossy(&check.standard_error), 2_000)
-                ));
+                return Err(tail(&String::from_utf8_lossy(&check.standard_error), 2_000));
             }
             Ok(())
         };
-        let Some(result) = run_install(&executable, &arguments, &tools.environment, &runtime, 300) else {
-            return Err("The install command could not be started.".into());
-        };
-        check_install(&result)?;
-        // `bun add` exits 0 without re-extracting when a stale, incomplete
-        // package tree survives in node_modules — wipe and retry once when
-        // the installed CLI is missing or won't run.
-        let mut entry = installed_entry(&runtime);
-        let mut failure = match &entry {
-            Some(entry) => smoke_check(entry).err(),
-            None => Some("the installed agent package has no CLI entry point".to_string()),
-        };
-        if failure.is_some() {
-            let _ = std::fs::remove_dir_all(runtime.join("node_modules"));
-            for lock in ["bun.lock", "bun.lockb", "package-lock.json"] {
-                let _ = std::fs::remove_file(runtime.join(lock));
+        // Every attempt gets a clean slate — including package.json, whose
+        // leftover state (e.g. workspaces) can redirect where files land.
+        let mut entry: Option<PathBuf> = None;
+        let mut failures: Vec<String> = Vec::new();
+        for (name, executable, arguments) in &attempts {
+            if entry.is_some() {
+                break;
             }
-            let Some(retry) = run_install(&executable, &arguments, &tools.environment, &runtime, 300)
+            let _ = std::fs::remove_dir_all(runtime.join("node_modules"));
+            for file in ["bun.lock", "bun.lockb", "package-lock.json", "package.json"] {
+                let _ = std::fs::remove_file(runtime.join(file));
+            }
+            let Some(result) = run_install(executable, arguments, &tools.environment, &runtime, 300)
             else {
-                return Err("The install command could not be started.".into());
+                failures.push(format!("{name}: the install command could not be started"));
+                continue;
             };
-            check_install(&retry)?;
-            entry = installed_entry(&runtime);
-            failure = match &entry {
-                Some(entry) => smoke_check(entry).err(),
-                None => Some("the installed agent package has no CLI entry point".to_string()),
-            };
+            let output = format!(
+                "{}{}",
+                String::from_utf8_lossy(&result.standard_output),
+                String::from_utf8_lossy(&result.standard_error)
+            );
+            if result.stop_reason == build_core::ProcessStopReason::Completed
+                && result.termination == (build_core::ProcessTermination::Exited { code: 0 })
+            {
+                if let Some(found) = installed_entry(&runtime) {
+                    match smoke_check(&found) {
+                        Ok(()) => entry = Some(found),
+                        Err(e) => failures.push(format!("{name}: {e}")),
+                    }
+                } else {
+                    failures.push(format!(
+                        "{name}: no CLI entry point — output: {}",
+                        tail(&output, 1_000)
+                    ));
+                }
+            } else {
+                failures.push(format!("{name}: {}", tail(&output, 1_000)));
+            }
         }
         let Some(entry) = entry else {
-            return Err(
-                "Pitex Agent install failed: the installed package has no CLI entry point.".into(),
-            );
+            return Err(format!("Pitex Agent install failed: {}", failures.join("; ")));
         };
-        if let Some(failure) = failure {
-            return Err(failure);
-        }
         // Rename a new symlink over the old one atomically, leaving an
         // existing legacy package's CLI and running agent processes
         // untouched. On Windows `runtime_executable` IS the package entry
@@ -2850,6 +2855,42 @@ pub mod pi_installer {
             let launcher = pi_paths::runtime_executable();
             assert!(launcher.exists(), "launcher must be published");
             assert!(launcher.canonicalize().unwrap().ends_with("dist/cli.js"));
+            leave_sandbox(&dir);
+        }
+
+        #[test]
+        fn install_falls_back_to_npm_when_bun_lays_down_nothing() {
+            let _guard = env_lock();
+            let dir = sandbox("npm-fallback");
+            let tools_dir = dir.join("tools");
+            // bun exits 0 but creates no files — the observed failure mode.
+            executable(&tools_dir.join("bun"), "#!/bin/sh\n\
+                 if [ \"$1\" = \"add\" ]; then exit 0; fi\n\
+                 if [ \"$1\" = \"--bun\" ]; then shift; exec /bin/sh \"$@\"; fi\n\
+                 exit 1\n");
+            // npm materializes the package (`install --prefix <dir> ...`).
+            executable(&tools_dir.join("npm"), "#!/bin/sh\n\
+                 if [ \"$1\" = \"install\" ]; then\n\
+                   dir=\"$3\"\n\
+                   pkg=\"$dir/node_modules/@earendil-works/pi-coding-agent\"\n\
+                   mkdir -p \"$pkg/dist\"\n\
+                   printf '#!/bin/sh\\necho 0.85.1\\n' > \"$pkg/dist/cli.js\"\n\
+                   chmod +x \"$pkg/dist/cli.js\"\n\
+                   printf '{\"name\":\"@earendil-works/pi-coding-agent\",\"version\":\"0.85.1\"}' > \"$pkg/package.json\"\n\
+                   exit 0\n\
+                 fi\n\
+                 exit 1\n");
+            let tools = PiToolchain {
+                environment: HashMap::from([(
+                    "PATH".to_string(),
+                    format!("{}:/usr/bin:/bin", tools_dir.display()),
+                )]),
+                bun: Some(tools_dir.join("bun")),
+                node: Some(tools_dir.join("node")),
+                npm: Some(tools_dir.join("npm")),
+            };
+            install_with_tools(&tools).expect("npm fallback installs the runtime");
+            assert!(pi_paths::runtime_executable().exists());
             leave_sandbox(&dir);
         }
 

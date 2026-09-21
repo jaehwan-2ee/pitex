@@ -226,28 +226,22 @@ enum PiRuntimeInstaller {
     /// credentials are changed. Publish the launcher only after a smoke check.
     static func install(toolchain: PiToolchain? = nil) async throws {
         let tools = if let toolchain { toolchain } else { await PiToolchain.discover() }
-        let executable: URL
-        let arguments: [String]
+        let spec = "\(packageName)@\(desiredVersion)"
+        // npm is a real fallback even when bun exists: `bun add` can exit 0
+        // while laying down nothing (stale tree it won't re-extract, corrupt
+        // cache, a `bun` that isn't bun, a registry mirror serving a stub).
+        var attempts: [(name: String, executable: URL, arguments: [String])] = []
         if let bun = tools.bun {
-            executable = bun
-            arguments = ["add", "--cwd", PiPaths.runtimeDirectory.path, "--exact", "\(packageName)@\(desiredVersion)"]
-        } else if let npm = tools.npmCommand(arguments: ["install", "--prefix", PiPaths.runtimeDirectory.path,
-                    "--save-exact", "--no-audit", "--no-fund", "\(packageName)@\(desiredVersion)"]) {
-            executable = npm.executable
-            arguments = npm.arguments
-        } else {
-            throw InstallError.runtimeMissing
+            attempts.append(("bun", bun, ["add", "--cwd", PiPaths.runtimeDirectory.path,
+                "--force", "--linker", "hoisted", "--no-cache", "--exact", spec]))
         }
+        if let npm = tools.npmCommand(arguments: ["install", "--prefix", PiPaths.runtimeDirectory.path,
+                    "--save-exact", "--no-audit", "--no-fund", spec]) {
+            attempts.append(("npm", npm.executable, npm.arguments))
+            attempts.append(("npm+npmjs", npm.executable, npm.arguments + ["--registry", "https://registry.npmjs.org"]))
+        }
+        guard !attempts.isEmpty else { throw InstallError.runtimeMissing }
         try FileManager.default.createDirectory(at: PiPaths.runtimeDirectory, withIntermediateDirectories: true)
-        func runInstall() async throws -> ProcessResult {
-            try await ProcessRunner().run(DirectCommandPlan(executable: executable.path, arguments: arguments,
-                environment: .inherit(overrides: tools.environment)), projectRoot: PiPaths.runtimeDirectory, timeout: .seconds(300))
-        }
-        func ensureSucceeded(_ result: ProcessResult) throws {
-            guard result.stopReason == .completed, result.termination == .exited(code: 0) else {
-                throw InstallError.installFailed(String(String(decoding: result.standardOutput + result.standardError, as: UTF8.self).suffix(2_000)))
-            }
-        }
         /// nil when the installed CLI runs `--version` cleanly.
         func smokeCheck(_ entry: URL) async throws -> String? {
             let command = try tools.launch(entry, arguments: ["--version"])
@@ -256,24 +250,35 @@ enum PiRuntimeInstaller {
             return check.termination == .exited(code: 0) && check.stopReason == .completed
                 ? nil : String(String(decoding: check.standardError, as: UTF8.self).suffix(2_000))
         }
-        try ensureSucceeded(await runInstall())
-        // `bun add` exits 0 without re-extracting when a stale, incomplete
-        // package tree survives in node_modules — wipe and retry once when
-        // the installed CLI is missing or won't run.
-        var entry = installedEntry()
-        var failure = if let entry { try await smokeCheck(entry) } else { "The installed agent package has no CLI entry point." }
-        if failure != nil {
-            for name in ["node_modules", "bun.lock", "bun.lockb", "package-lock.json"] {
+        // Every attempt gets a clean slate — including package.json, whose
+        // leftover state (e.g. workspaces) can redirect where files land.
+        var entry: URL?
+        var failures: [String] = []
+        for attempt in attempts where entry == nil {
+            for name in ["node_modules", "bun.lock", "bun.lockb", "package-lock.json", "package.json"] {
                 try? FileManager.default.removeItem(at: PiPaths.runtimeDirectory.appendingPathComponent(name))
             }
-            try ensureSucceeded(await runInstall())
-            entry = installedEntry()
-            failure = if let entry { try await smokeCheck(entry) } else { "The installed agent package has no CLI entry point." }
+            let name = attempt.name
+            let result = try await ProcessRunner().run(DirectCommandPlan(executable: attempt.executable.path, arguments: attempt.arguments,
+                environment: .inherit(overrides: tools.environment)), projectRoot: PiPaths.runtimeDirectory, timeout: .seconds(300))
+            if result.stopReason == .completed, result.termination == .exited(code: 0) {
+                if let found = installedEntry() {
+                    if let smoke = try await smokeCheck(found) {
+                        failures.append("\(name): \(smoke)")
+                    } else {
+                        entry = found
+                    }
+                } else {
+                    failures.append("\(name): no CLI entry point — output: "
+                        + String(decoding: result.standardOutput + result.standardError, as: UTF8.self).suffix(1_000))
+                }
+            } else {
+                failures.append("\(name): " + String(String(decoding: result.standardOutput + result.standardError, as: UTF8.self).suffix(1_000)))
+            }
         }
         guard let entry else {
-            throw InstallError.installFailed("The installed agent package has no CLI entry point.")
+            throw InstallError.installFailed(failures.joined(separator: "; "))
         }
-        if let failure { throw InstallError.installFailed(failure) }
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: PiPaths.runtimeExecutable.deletingLastPathComponent(), withIntermediateDirectories: true)
         // Rename a new symlink over the old one atomically, leaving an existing
