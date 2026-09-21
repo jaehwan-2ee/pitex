@@ -1,0 +1,71 @@
+Fixtures/expected/accessibility-identifiers.json
+  s_ec4212d47e9de6::t_2c8e12c7470089 17-27,167-194
+Linux/Cargo.lock
+  s_ec4212d47e9de6::t_32ab537af3c7f9 366-369,770
+Linux/Cargo.toml
+  s_ec4212d47e9de6::t_b927a316f99a4b 8
+Linux/crates/git-core/Cargo.toml
+  s_ec4212d47e9de6::t_30a010294d1ab1 1-6
+Linux/crates/git-core/src/lib.rs
+  s_ec4212d47e9de6::t_dea7be74d0eb89 1-421
+Linux/crates/pitex-shell/Cargo.toml
+  s_ec4212d47e9de6::t_f0066071cd749f 17
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ec4212d47e9de6::t_3c67718dbd766e 33,35-36,40,145-156,250-255,310-311,494-496,782,1122,1130,1919,1929-1932,2362-2564,3054,3122-3124,3134-3173,4150-4167
+Linux/crates/pitex-shell/src/git.rs
+  s_ec4212d47e9de6::t_65ca2b02c5d89b 1-246
+Linux/crates/pitex-shell/src/lib.rs
+  s_ec4212d47e9de6::t_8d2daf8a49afc8 15
+Linux/crates/pitex-shell/src/model.rs
+  s_ec4212d47e9de6::t_0f16ff168601e2 28,68,200-215,229-230,727-734,837-842,1371-1376
+Linux/crates/pitex-shell/src/panes.rs
+  s_ec4212d47e9de6::t_a0e72e02e48bf2 25,29,48,61-63,143,233-740
+Linux/crates/pitex-shell/tests/accessibility_contract.rs
+  s_ec4212d47e9de6::t_54b9e28a307472 145
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_ec4212d47e9de6::t_0908bc14abc662 43,107,227,496-500
+Mac/Resources/en.lproj/Localizable.strings
+  s_ec4212d47e9de6::t_3c8f7e5ef115b1 337-364
+Mac/Resources/es.lproj/Localizable.strings
+  s_ec4212d47e9de6::t_b0d5177554124a 337-364
+Mac/Resources/ja.lproj/Localizable.strings
+  s_ec4212d47e9de6::t_76b250c005e9d8 338-365
+Mac/Resources/ko.lproj/Localizable.strings
+  s_ec4212d47e9de6::t_5ec0a526e701bf 338-365
+Mac/Resources/ru.lproj/Localizable.strings
+  s_ec4212d47e9de6::t_c025ace45c727e 337-364
+Mac/Resources/vi.lproj/Localizable.strings
+  s_ec4212d47e9de6::t_83cd6bf8abfa08 337-364
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_ec4212d47e9de6::t_30fa0f1faee578 337-364
+Mac/Sources/AppShell/PitexApp.swift
+  s_ec4212d47e9de6::t_897e0168e19a05 9,40-42,45,230-237,426,577,708-712,1036
+Mac/Sources/Features/BottomConsoleView.swift
+  s_ec4212d47e9de6::t_059fe895cffa45 9,82-83,134-139
+Mac/Sources/Features/GitIntegrationView.swift
+  s_ec4212d47e9de6::t_83a1f379bac746 1-618
+Packages/TexApp/Tests/TexAppTests/AccessibilityContractTests.swift
+  s_ec4212d47e9de6::t_7265f6e442435a 57
+Packages/TexCore/Package.swift
+  s_ec4212d47e9de6::t_0aa83a5ae83df2 18,41,53
+Packages/TexCore/Sources/GitCore/GitSupport.swift
+  s_ec4212d47e9de6::t_1869fa878fe9f3 1-277
+Packages/TexCore/Tests/TexCoreTests/GitSupportTests.swift
+  s_ec4212d47e9de6::t_e85cbd552f3b6d 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9161cb5015e17a3c99eb600a9d78304586a391f7",
+  "prompts": {},
+  "sessions": {
+    "s_ec4212d47e9de6": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_ec4212d47e9de6",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
