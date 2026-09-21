@@ -65,6 +65,10 @@
     "DocumentSessionCore"
    ]
   },
+  "GitCore": {
+   "package": "Packages/TexCore",
+   "dependencies": []
+  },
   "ParityKit": {
    "package": "Packages/TexCore",
    "dependencies": [

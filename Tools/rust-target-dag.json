@@ -27,6 +27,7 @@
   "build-core": "BuildCore",
   "synctex-core": "SyncTeXCore",
   "ai-core": "AICore",
+  "git-core": "GitCore",
   "parity-kit": "ParityKit",
   "app-ports": "AppPorts",
   "project-feature": "ProjectFeature",
@@ -76,6 +77,9 @@
     "tex-domain",
     "document-session-core"
    ]
+  },
+  "git-core": {
+   "dependencies": []
   },
   "parity-kit": {
    "dependencies": [
@@ -145,6 +149,7 @@
     "language-core",
     "build-core",
     "synctex-core",
+    "git-core",
     "app-ports",
     "project-feature",
     "editor-feature",
