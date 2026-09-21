@@ -1,0 +1,53 @@
+Linux/crates/git-core/src/lib.rs
+  s_179f40db66215f::t_158526a5bb4736 53-56,95,152-170,378-389,450-451,457-458,461
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_179f40db66215f::t_cc0c1ce7f2b0e2 340-348,2493,2573-2575,2577,2603,2607,2617-2654
+Linux/crates/pitex-shell/src/compat.rs
+  s_179f40db66215f::t_015a024c1fe660 156-199
+Linux/crates/pitex-shell/src/git.rs
+  s_179f40db66215f::t_ea3794831186ef 13,192-194,199
+Linux/crates/pitex-shell/src/panes.rs
+  s_179f40db66215f::t_9e00288997ce15 301,714,762,766-852,2195,2285,2308-2314,2316-2394
+Linux/crates/pitex-shell/src/settings.rs
+  s_179f40db66215f::t_1c99c897ad526c 76-130,294-302,705-725
+Mac/Resources/en.lproj/Localizable.strings
+  s_179f40db66215f::t_9b7ed5a5cd8e76 223-229,370-375
+Mac/Resources/es.lproj/Localizable.strings
+  s_179f40db66215f::t_a949e44e3a12cc 223-229,370-375
+Mac/Resources/ja.lproj/Localizable.strings
+  s_179f40db66215f::t_b4ed5a6ae59bc3 223-229,371-376
+Mac/Resources/ko.lproj/Localizable.strings
+  s_179f40db66215f::t_c249427e106c2d 223-229,371-376
+Mac/Resources/ru.lproj/Localizable.strings
+  s_179f40db66215f::t_00959b1092689b 223-229,370-375
+Mac/Resources/vi.lproj/Localizable.strings
+  s_179f40db66215f::t_683acffde0cf53 223-229,370-375
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_179f40db66215f::t_eff7a368af772e 223-229,370-375
+Mac/Sources/Features/AppearanceTheme.swift
+  s_179f40db66215f::t_4ce540949d5cfe 366-379
+Mac/Sources/Features/GitIntegrationView.swift
+  s_179f40db66215f::t_04f38e086e016e 1,57-59,62-63,175-177,180,232,246,252-257,263-308,415-417,574-578,867-881,941,944,957-961,966-969,971,987-1004,1029-1039,1048-1049,1054,1063-1065,1067-1078,1084,1086,1091-1100,1108-1159,1161-1182,1190-1198,1201-1205,1208-1229,1235-1238,1247-1270
+Mac/Sources/Features/SettingsView.swift
+  s_179f40db66215f::t_3898e3fe8a5e77 79-104,186,196,206,227-228,242,723-728,730-746,786-821,1239-1308
+Packages/TexCore/Sources/GitCore/GitSupport.swift
+  s_179f40db66215f::t_d4ba2084a64491 48-51,53,60-61,107-152,199,222-226,249-253,256-263,341-492,642-649
+Packages/TexCore/Tests/TexCoreTests/GitSupportTests.swift
+  s_179f40db66215f::t_b8b495774eb0b1 33-35,41-42,45,100-222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11317d841c7b52d398d7de4561f5ea3551a9240c",
+  "prompts": {},
+  "sessions": {
+    "s_179f40db66215f": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_179f40db66215f",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
