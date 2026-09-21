@@ -1,0 +1,19 @@
+Linux/crates/pitex-shell/src/compat.rs
+  s_b4a59165db4f5d::t_749bd9370be3df 59-63,94,107,134,151,177,186,216,228,232-236,238,243-244,248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2895981502e9e4adab3373283731f6f1822a2556",
+  "prompts": {},
+  "sessions": {
+    "s_b4a59165db4f5d": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_b4a59165db4f5d",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
