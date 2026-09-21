@@ -1,0 +1,25 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_7be0c56d25e490::t_031dbdfb16e7fd 544-546,3875-3885
+Linux/crates/pitex-shell/src/panes.rs
+  s_7be0c56d25e490::t_5a58110400f649 1190-1191
+Linux/crates/pitex-shell/src/settings.rs
+  s_7be0c56d25e490::t_52f83abd82f9b8 293-301,537-540,565-574,583,589,707-748
+Mac/Sources/Features/AppearanceTheme.swift
+  s_7be0c56d25e490::t_b5ecfe6decc12d 54-58,211-217,271-283,285,299-304,307-308,311-313,316
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ce04548eb39a389af796efe14faf2f7f3c5721c7",
+  "prompts": {},
+  "sessions": {
+    "s_7be0c56d25e490": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_7be0c56d25e490",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
