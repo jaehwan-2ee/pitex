@@ -1962,12 +1962,11 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
 
     /// LaunchServices caches the Dock/Finder icon keyed by the app bundle's
     /// modification date — a drag-copied update preserves it, so a new icon
-    /// can stay invisible. Bump the bundle's mtime once per app version and
-    /// force the running Dock tile to redraw from the bundled icon now.
+    /// can stay invisible. Bump the bundle's mtime once per app version.
+    /// Let macOS render the bundle icon so its Dock appearance stays consistent.
     private func refreshBundleIconCache() {
         let defaults = UserDefaults.standard
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        NSApp.applicationIconImage = NSImage(named: "AppIcon") ?? NSApp.applicationIconImage
         guard defaults.string(forKey: "iconRefreshVersion") != version else { return }
         let now = Date()
         for url in [Bundle.main.bundleURL, Bundle.main.bundleURL.appendingPathComponent("Contents")] {
