@@ -946,16 +946,26 @@ impl PiAgentProcess {
         let child_arc = Arc::new(Mutex::new(child));
         let exit_child = child_arc.clone();
         let exit_thread = std::thread::spawn(move || {
-            // Poll try_wait so the lock is only ever held for a call — never
-            // across a blocking wait(). send()/is_running()/terminate() all
-            // take this same mutex on the main thread; holding it while the
-            // child runs deadlocked the whole agent feature.
-            loop {
-                match exit_child.lock().unwrap().try_wait() {
-                    Ok(Some(_)) | Err(_) => break,
-                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            // Wait in the OS without holding the Child mutex used by send/kill.
+            // WNOWAIT leaves reaping to Child, which retains the exit status.
+            #[cfg(unix)]
+            {
+                let pid = exit_child.lock().unwrap().id();
+                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                loop {
+                    let result = unsafe { libc::waitid(libc::P_PID, pid, &mut info, libc::WEXITED | libc::WNOWAIT) };
+                    if result == 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted { break; }
                 }
             }
+            #[cfg(windows)]
+            {
+                use std::os::windows::io::AsRawHandle;
+                #[link(name = "kernel32")]
+                extern "system" { fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32; }
+                let handle = exit_child.lock().unwrap().as_raw_handle();
+                unsafe { WaitForSingleObject(handle, u32::MAX); }
+            }
+            let _ = exit_child.lock().unwrap().try_wait();
             let _ = exit_tx.send(());
             crate::app_ui::wake_agent();
         });
@@ -1095,7 +1105,7 @@ pub struct AgentCoordinator {
     #[doc(hidden)]
     pub model_settings_request_id: Option<String>,
     /// Bumped on every mutation of UI-visible state; the panel rebuilds
-    /// only when this changes instead of every 40ms poll tick.
+    /// only when this changes instead of on every agent event.
     pub ui_revision: u64,
     pdf_text_cache: std::cell::RefCell<Option<(Arc<[u8]>, Option<String>)>>,
 

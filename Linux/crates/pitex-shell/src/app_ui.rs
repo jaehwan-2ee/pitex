@@ -199,7 +199,7 @@ pub struct AppState {
     build_ui_pending: Cell<bool>,
     pub(crate) git_refresh_pending: Cell<bool>,
     pub(crate) git_refresh_root: RefCell<Option<PathBuf>>,
-    /// Last `agent_context_key` pushed into `context_cell` — the 40ms poll
+    /// Last `agent_context_key` pushed into `context_cell` — event dispatch
     /// skips the clone-heavy rebuild while the key is unchanged.
     pub last_context_key: Cell<u64>,
     /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
@@ -223,6 +223,8 @@ pub struct AppState {
     pub rendered_tabs_key: Cell<u64>,
     /// Last `render_pdf_page` key — the raster skips while doc/page/scale match.
     pub rendered_pdf_key: Cell<u64>,
+    displayed_pdf_key: Cell<u64>,
+    pending_pdf_highlight: Option<(i64, f64, f64, f64, f64)>,
     /// Debounce for external-change coalescing (0.35s).
     pub disk_pending: RefCell<HashMap<PathBuf, glib::SourceId>>,
     pub watchers: Vec<gio::FileMonitor>,
@@ -306,6 +308,8 @@ impl AppState {
             structure_pending: Cell::new(false),
             rendered_structure_revision: Cell::new(0),
             rendered_pdf_key: Cell::new(0),
+            displayed_pdf_key: Cell::new(0),
+            pending_pdf_highlight: None,
             rendered_files_revision: Cell::new(0),
             rendered_tabs_key: Cell::new(0),
             disk_pending: RefCell::new(HashMap::new()),
@@ -1555,6 +1559,7 @@ impl AppState {
 
     /// Click on the PDF → inverse SyncTeX (widget px → PDF points).
     pub fn pdf_click(&mut self, picture: &gtk4::Picture, x: f64, y: f64) {
+        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() { return; }
         let Some(doc) = &self.pdf else { return };
         let Some((w_pt, h_pt)) = doc.page_size(self.pdf_page) else { return };
         // The Picture uses ContentFit::Contain inside the scroller; compute
@@ -1620,6 +1625,7 @@ impl AppState {
     /// `clearSyncHighlight()` — hide the marker and bump the generation so a
     /// pending auto-hide for a previous marker cannot fire later.
     pub fn clear_synctex_highlight(&mut self) {
+        self.pending_pdf_highlight = None;
         self.highlight_generation.set(self.highlight_generation.get() + 1);
         UI.with(|ui| {
             if let Some(hl) = ui.pdf_highlight.borrow().as_ref() {
@@ -1640,6 +1646,10 @@ impl AppState {
             self.render_pdf_page();
         }
         self.clear_synctex_highlight();
+        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() {
+            self.pending_pdf_highlight = Some((page, x, y, w, h));
+            return;
+        }
         if !self.store.forward_sync_highlight() {
             return;
         }
@@ -3064,7 +3074,7 @@ impl AppState {
         self.refresh_assistant();
     }
 
-    /// The completion coordinator's 40ms half — toolchain await, event
+    /// The completion coordinator's event handler — toolchain await, event
     /// drain and exit detection, all interior-mutated so `&self` suffices.
     fn poll_completion(&self) {
         let completion = self.completion.clone();
@@ -3238,6 +3248,7 @@ impl AppState {
             }
             WorkspaceMessage::PdfRendered { key, raster } => {
                 if key == self.rendered_pdf_key.get() {
+                    self.displayed_pdf_key.set(key);
                     UI.with(|ui| {
                         if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
                             let texture = crate::pdf::texture_from_pixels(raster.pixels, raster.width, raster.height, raster.stride);
@@ -3245,6 +3256,16 @@ impl AppState {
                             picture.set_size_request(raster.width, raster.height);
                         }
                     });
+                    if let Some((page, x, y, w, h)) = self.pending_pdf_highlight.take() {
+                        glib::idle_add_local_once(move || STATE.with(|slot| {
+                            if let Some(state) = slot.borrow().as_ref() {
+                                let mut state = state.borrow_mut();
+                                if state.rendered_pdf_key.get() == key {
+                                    state.show_synctex_highlight(page, x, y, w, h);
+                                }
+                            }
+                        }));
+                    }
                 }
             }
             WorkspaceMessage::BuildEvent(event) => {
@@ -3898,8 +3919,8 @@ pub fn run(app_version: &str) -> i32 {
 
 fn build_window(app: &adw::Application, app_version: &str) {
     // Channel: worker threads → main context dispatch. The std mpsc receiver
-    // is drained by a 10ms tick on the GTK main loop (glib 0.19 removed
-    // `MainContext::channel`; a poll keeps `Rc<RefCell<AppState>>` main-only).
+    // blocks on its worker and dispatches only arriving messages onto GTK.
+    // The Rc<RefCell<AppState>> remains main-thread-only.
     let (model_tx, model_rx) = std::sync::mpsc::channel::<WorkspaceMessage>();
 
     let state = Rc::new(RefCell::new(AppState::new(

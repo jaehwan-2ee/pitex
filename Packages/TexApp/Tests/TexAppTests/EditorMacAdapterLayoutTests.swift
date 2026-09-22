@@ -7,6 +7,46 @@ import EditorMacAdapter
 
 final class EditorMacAdapterLayoutTests: XCTestCase {
     @MainActor
+    func testPartialUnicodeEditsKeepNativeUndoAndQueuedTyping() async throws {
+        _ = NSApplication.shared
+        let session = EditableDocumentSession()
+        let adapter = try await EditorMacAdapter.make(session: session)
+        let view = adapter.textView
+        adapter.nativeUndoManager.groupsByEvent = false
+        adapter.nativeUndoManager.beginUndoGrouping()
+        view.insertText("한", replacementRange: NSRange(location: 1, length: 2))
+        adapter.nativeUndoManager.endUndoGrouping()
+        for _ in 0..<100 {
+            if await session.snapshot().text == "a한b" { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let first = await session.mutations.first
+        XCTAssertEqual(first?.range, DocumentTextRange(location: 1, length: 2))
+        XCTAssertEqual(first?.replacement, "한")
+        XCTAssertEqual(view.string, "a한b")
+        adapter.nativeUndoManager.undo()
+        for _ in 0..<100 {
+            if await session.snapshot().text == "a👩b" { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let undone = await session.snapshot()
+        XCTAssertEqual(undone.text, "a👩b")
+        XCTAssertEqual(view.string, undone.text)
+        adapter.nativeUndoManager.redo()
+        adapter.nativeUndoManager.beginUndoGrouping()
+        view.insertText("글", replacementRange: NSRange(location: 2, length: 0))
+        view.insertText("!", replacementRange: NSRange(location: 3, length: 0))
+        adapter.nativeUndoManager.endUndoGrouping()
+        for _ in 0..<100 {
+            if await session.snapshot().text == "a한글!b" { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let final = await session.snapshot()
+        XCTAssertEqual(final.text, "a한글!b")
+        XCTAssertEqual(view.string, final.text)
+    }
+
+    @MainActor
     func testEditorTextLaysOutOnceHostedInAScrollView() async throws {
         let adapter = try await EditorMacAdapter.make(session: LayoutDocumentSession())
         let textView = adapter.textView
@@ -58,6 +98,21 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
             adapter.revealSelection(NSRange(location: source.utf16.count + 10, length: 20))
             XCTAssertEqual(adapter.selectedRange, NSRange(location: source.utf16.count, length: 0))
         }
+    }
+}
+
+private actor EditableDocumentSession: DocumentSessionPort {
+    private var current = DocumentSnapshot(revision: 0, text: "a👩b")
+    var mutations: [DocumentMutation] = []
+    func snapshot() async -> DocumentSnapshot { current }
+    func submit(_ mutation: DocumentMutation) async throws -> DocumentMutationResult {
+        guard mutation.baseRevision == current.revision else { return .rejected(current: current) }
+        mutations.append(mutation)
+        let text = (current.text as NSString).replacingCharacters(
+            in: NSRange(location: mutation.range.location, length: mutation.range.length),
+            with: mutation.replacement)
+        current = DocumentSnapshot(revision: current.revision + 1, text: text)
+        return .applied(current)
     }
 }
 

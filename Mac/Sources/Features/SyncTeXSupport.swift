@@ -303,7 +303,7 @@ actor SyncTeXRunner {
 
     private static func fileStamp(_ url: URL) throws -> [Int64] {
         var info = stat()
-        guard Darwin.stat(url.path, &info) == 0 else { throw SyncTeXSupportError.missingMetadata }
+        guard stat(url.path, &info) == 0 else { throw SyncTeXSupportError.missingMetadata }
         return [Int64(info.st_dev), Int64(truncatingIfNeeded: info.st_ino), info.st_size,
                 Int64(info.st_mtimespec.tv_sec), Int64(info.st_mtimespec.tv_nsec),
                 Int64(info.st_ctimespec.tv_sec), Int64(info.st_ctimespec.tv_nsec)]

@@ -77,9 +77,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-            libvte-2.91-gtk4-dev libpoppler-glib-dev
+            libvte-2.91-gtk4-dev libpoppler-glib-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
+        working-directory: Linux
+      - name: Native GTK editing and PDF worker checks
+        run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
         working-directory: Linux
       - name: Compare release optimization profiles
         run: python3 Tools/check-optimization-profiles.py
