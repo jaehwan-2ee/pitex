@@ -1,0 +1,21 @@
+Tools/ibus-legacy-sync-probe.c
+  s_ed44b01ef26714::t_1e891d4323a4c6 1-58
+.github/workflows/ibus-compat.yml
+  s_ed44b01ef26714::t_f7c396e945f114 1-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a35c9501618bcd690a8f0f7c840ec4b2ad65b426",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
