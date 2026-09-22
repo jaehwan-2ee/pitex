@@ -88,6 +88,9 @@ gboolean ibus_input_context_process_key_event(IBusInputContext *context,
     }
     process_async(context, keyval, keycode, state, -1, NULL, finished, &pending);
     while (!pending.done) g_main_context_iteration(NULL, TRUE);
+    /* GDBus can complete the method before dispatching preceding signals
+     * at lower main-loop priority. Keep their handlers active through both. */
+    while (g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
     if (source) {
         g_source_set_can_recurse(source, can_recurse);
         g_source_unref(source);
