@@ -1,0 +1,23 @@
+Mac/Sources/Features/GitIntegrationView.swift
+  s_ed44b01ef26714::t_5affea952dcec5 81-84,86
+Tools/check-highlighting-performance.py
+  s_ed44b01ef26714::t_5affea952dcec5 107
+Mac/Sources/Features/SyntaxHighlighting.swift
+  s_ed44b01ef26714::t_5affea952dcec5 26,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc2f185918776767546b6ca2db7ffa595d9d0d0c",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
