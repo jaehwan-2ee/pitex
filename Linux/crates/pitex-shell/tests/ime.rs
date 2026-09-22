@@ -58,19 +58,21 @@ fn hangul_backspace_keeps_working_after_commit_and_with_lock_modifiers() {
     assert!(Command::new("ibus").args(["engine", "hangul"]).status().unwrap().success());
     pump(Duration::from_millis(500));
     keys(&["key", "Hangul"]);
-    for caps_lock in [false, true] {
+    for (caps_lock, num_lock) in [(false, false), (true, false), (false, true), (true, true)] {
         keys(&["key", "g", "k", "s", "space"]);
         assert_eq!(adapter.text(), "한 ", "IBus must produce real Korean input for this check");
         if caps_lock { keys(&["key", "Caps_Lock"]); }
+        if num_lock { keys(&["key", "Num_Lock"]); }
         for _ in 0..8 {
             let before = adapter.text();
             if before.is_empty() { break; }
             keys(&["key", "BackSpace"]);
-            assert_ne!(adapter.text(), before, "Backspace was swallowed (Caps Lock={caps_lock}, preedit={})", adapter.has_marked_text());
+            assert_ne!(adapter.text(), before, "Backspace was swallowed (Caps Lock={caps_lock}, Num Lock={num_lock}, preedit={})", adapter.has_marked_text());
             assert_eq!(adapter.text(), state.borrow().text);
         }
         assert!(adapter.text().is_empty());
         if caps_lock { keys(&["key", "Caps_Lock"]); }
+        if num_lock { keys(&["key", "Num_Lock"]); }
     }
     keys(&["key", "g", "k"]);
     assert!(adapter.has_marked_text(), "Hangul composition must still be owned by IBus");

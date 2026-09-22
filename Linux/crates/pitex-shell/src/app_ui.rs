@@ -2329,7 +2329,6 @@ impl AppState {
                     tr(self.language, "editor.words_unit")
                 ));
             }
-
         });
     }
 
@@ -2678,7 +2677,6 @@ impl AppState {
                     "media-playback-start-symbolic"
                 });
                 b.set_sensitive(building || self.model.build_unavailable_reason().is_none());
-
             }
             if let Some(b) = ui.header_build_button.borrow().as_ref() {
                 b.set_icon_name(if building {
