@@ -5364,7 +5364,18 @@ for line in sys.stdin:
             while let Some(widget) = child { children += 1; child = widget.next_sibling(); }
             eprintln!("GIT_AUDIT scroll to end: {:?}, {children} live row widgets", started.elapsed());
             assert!(started.elapsed() < Duration::from_secs(1));
-            assert!(children < 512, "list allocated offscreen rows");
+            assert!(list.is_mapped() && list.height() > 0, "Git list must actually be visible");
+            assert!(children > 0 && children < 512, "list allocated offscreen rows");
+            fn has_name(widget: &gtk4::Widget, name: &str) -> bool {
+                if widget.widget_name() == name { return true; }
+                let mut child = widget.first_child();
+                while let Some(node) = child {
+                    if has_name(&node, name) { return true; }
+                    child = node.next_sibling();
+                }
+                false
+            }
+            assert!(has_name(list.upcast_ref(), &format!("gitc:u:files/{}.txt", count - 1)), "last file was not rendered after scrolling");
             let Some(crate::git_list::Row::Change(last)) = model.row(count as u32) else { panic!("last row missing") };
             assert_eq!(last.path, format!("files/{}.txt", count - 1));
             // Editor events still run after displaying and scrolling the full list.

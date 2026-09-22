@@ -26,7 +26,8 @@ where
         .output()
         .map_err(|e| e.to_string())?;
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(String::from_utf8(output.stdout)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -399,6 +400,30 @@ fn cleaned_commit_message(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchanged_refresh_reuses_snapshot_but_staging_updates_it() {
+        let root = std::env::temp_dir().join(format!("pitex-git-refresh-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        run_git(&root, ["init", "-q"]).unwrap();
+        let path = "한글 file.tex";
+        std::fs::write(root.join(path), "hello").unwrap();
+        let first = collect_git(&root, None).unwrap().unwrap().status;
+        let next = collect_git(&root, Some(first.clone())).unwrap().unwrap().status;
+        assert!(Arc::ptr_eq(&first, &next));
+        assert_eq!(next.unstaged[0].path, path);
+        run_git(&root, git_core::stage_args(path)).unwrap();
+        let staged = collect_git(&root, Some(next.clone())).unwrap().unwrap().status;
+        assert!(!Arc::ptr_eq(&staged, &next));
+        assert_eq!(staged.staged[0].path, path);
+        assert!(staged.unstaged.is_empty());
+        run_git(&root, git_core::unstage_no_head_args(path)).unwrap();
+        let unstaged = collect_git(&root, Some(staged)).unwrap().unwrap().status;
+        assert!(unstaged.staged.is_empty());
+        assert_eq!(unstaged.unstaged[0].path, path);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn commit_prompt_is_bounded_for_mass_changes_and_unicode_paths() {
