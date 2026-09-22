@@ -5332,6 +5332,23 @@ for line in sys.stdin:
             std::process::abort();
         }
         assert_eq!(tooltip_changes.get(), 0, "refreshing a mapped widget must not trigger X11 tooltip pointer queries");
+        if let Ok(count) = std::env::var("PITEX_AUDIT_GIT_ROWS") {
+            let count: usize = count.parse().unwrap();
+            let mut state = state.borrow_mut();
+            state.model.git_status = Some(git_core::GitStatus {
+                root: project.to_string_lossy().into_owned(), repo_name: "large-status".into(),
+                branch: "main".into(), upstream: None, ahead: 0, behind: 0, staged: Vec::new(),
+                unstaged: (0..count).map(|i| git_core::GitChange {
+                    path: format!("files/{i}.txt"), original_path: None,
+                    kind: git_core::GitChangeKind::Untracked, staged: false,
+                }).collect(),
+            });
+            eprintln!("GIT_AUDIT rendering {count} entries, selected pane={:?}", state.model.console_section);
+            let started = std::time::Instant::now();
+            state.refresh_git_panel();
+            eprintln!("GIT_AUDIT main thread blocked for {:?}", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(1), "hidden Git panel blocked the main thread");
+        }
         state.borrow_mut().shutdown_agent();
         UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
         finished.store(true, std::sync::atomic::Ordering::Release);

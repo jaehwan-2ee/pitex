@@ -4,6 +4,30 @@ on:
     branches: [codex/caps-lock-audit]
   workflow_dispatch:
 jobs:
+  git-render:
+    name: Hidden Git pane responsiveness
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libvte-2.91-gtk4-dev libpoppler-glib-dev xvfb gdb
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p pitex-shell --lib --no-run
+        working-directory: Linux
+      - name: Reproduce large Git status during startup
+        timeout-minutes: 2
+        working-directory: Linux
+        env:
+          PITEX_AUDIT_GIT_ROWS: '20000'
+        run: |
+          binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
+          xvfb-run -a gdb -batch -return-child-result -ex run -ex 'thread apply all bt 12' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1 > ../git-audit.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: git-render-audit
+          path: git-audit.log
   ibus:
     name: IBus Caps Lock (${{ matrix.ubuntu }})
     runs-on: ubuntu-24.04
