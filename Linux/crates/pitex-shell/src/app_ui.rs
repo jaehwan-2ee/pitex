@@ -5267,6 +5267,7 @@ mod startup_tests {
         std::fs::create_dir_all(&project).unwrap();
         // Keep preferences, agent files and installer work inside this test.
         std::env::set_var("XDG_CONFIG_HOME", root.join("config"));
+        std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
         std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
         let launcher = crate::agent::pi_paths::runtime_executable();
         std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();

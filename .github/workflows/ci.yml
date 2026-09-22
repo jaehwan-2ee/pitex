@@ -115,7 +115,7 @@ jobs:
         timeout-minutes: 3
         working-directory: Linux
         run: |
-          dbus-run-session -- xvfb-run -a bash -c '
+          xvfb-run -a dbus-run-session -- bash -c '
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode true
             ibus-daemon -drx --panel disable
             sleep 2

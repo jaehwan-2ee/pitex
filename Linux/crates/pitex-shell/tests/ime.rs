@@ -55,6 +55,8 @@ fn hangul_backspace_keeps_working_after_commit_and_with_lock_modifiers() {
     assert!(output.status.success());
     let id = String::from_utf8(output.stdout).unwrap();
     keys(&["windowfocus", "--sync", id.lines().next().unwrap()]);
+    assert!(Command::new("ibus").args(["engine", "hangul"]).status().unwrap().success());
+    pump(Duration::from_millis(500));
     for caps_lock in [false, true] {
         keys(&["key", "g", "k", "s", "space"]);
         assert_eq!(adapter.text(), "한 ", "IBus must produce real Korean input for this check");
