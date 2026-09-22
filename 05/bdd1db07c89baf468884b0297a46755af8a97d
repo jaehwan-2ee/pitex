@@ -1,0 +1,23 @@
+Tools/audit-ibus-capslock.py
+  s_ed44b01ef26714::t_0b8f5ae63dce54 33,50,56-59,62-64,73,80-97,115-135
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_0b8f5ae63dce54 7-13
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_ed44b01ef26714::t_545b86ffd85f11 6,10-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05bdd1db07c89baf468884b0297a46755af8a97d",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
