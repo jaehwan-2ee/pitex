@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates git libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev xvfb gdb
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates git libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev xvfb gdb dbus-x11
           if [ "${{ matrix.ubuntu }}" = "24.04" ]; then apt-get install -y libvte-2.91-gtk4-dev; fi
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test -p git-core && cargo test -p pitex-shell --lib ${{ matrix.features }}
@@ -45,7 +45,7 @@ jobs:
           GSK_RENDERER: cairo
         run: |
           binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
-          xvfb-run -a gdb -batch -return-child-result -ex run -ex 'thread apply all bt 12' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1 > ../git-audit.log 2>&1
+          xvfb-run -a dbus-run-session -- gdb -batch -return-child-result -ex run -ex 'thread apply all bt 12' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1 > ../git-audit.log 2>&1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -130,4 +130,3 @@ jobs:
         working-directory: Packages/TexCore
       - run: swift test
         working-directory: Packages/TexApp
-

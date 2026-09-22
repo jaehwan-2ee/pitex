@@ -62,6 +62,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
       - name: Native editor regression checks
         run: swift test --package-path Packages/TexApp --build-system native
+      - name: Git and subprocess regression checks
+        run: |
+          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests'
+          python3 Tools/check-git-performance.py
       - name: Native highlighting checks
         run: python3 Tools/check-highlighting-performance.py
       - name: Minimap and completion checks
@@ -122,6 +126,12 @@ jobs:
             ibus engine hangul
             GTK_IM_MODULE=ibus GSK_RENDERER=cairo cargo test -p pitex-shell --no-default-features --test ime -- --ignored --nocapture --test-threads=1
           '
+      - name: Million-file Git pane on GTK 4.6
+        timeout-minutes: 3
+        working-directory: Linux
+        env:
+          GSK_RENDERER: cairo
+        run: xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features startup_tests::small_project_opens_without_blocking_the_ui -- --ignored --nocapture --test-threads=1
 
 
   windows:
