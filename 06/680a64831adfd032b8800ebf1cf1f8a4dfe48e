@@ -1,0 +1,35 @@
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_ed44b01ef26714::t_a233c7d22bf412 314-315,321,400-432
+  s_ed44b01ef26714::t_6d3518b797f27d 433
+Mac/Config/Info.plist
+  s_ed44b01ef26714::t_df9dbfe3f7f462 20
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_a233c7d22bf412 2203,3407,3417
+Linux/crates/pitex/Cargo.toml
+  s_ed44b01ef26714::t_df9dbfe3f7f462 3
+Windows/crates/pitex-windows/Cargo.toml
+  s_ed44b01ef26714::t_df9dbfe3f7f462 3
+Tools/check-project-tree-ui.py
+  s_ed44b01ef26714::t_28b5d0910668f8 95-98
+  s_ed44b01ef26714::t_0ae5eb882d164f 1-94,99-118
+Linux/Cargo.lock
+  s_ed44b01ef26714::t_6f8de007a67c9d 754
+Windows/Cargo.lock
+  s_ed44b01ef26714::t_72b026eb9ef707 869
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06680a64831adfd032b8800ebf1cf1f8a4dfe48e",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
