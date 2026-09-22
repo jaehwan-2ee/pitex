@@ -1,0 +1,19 @@
+Linux/crates/pitex/src/ibus_compat.c
+  s_ed44b01ef26714::t_46bb90f087c684 1-6,17-18,23-26,29-36,39-44,46-57,70-104,106-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6bc573d2bf60342bf989e16697a5ad4ae3ed379b",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
