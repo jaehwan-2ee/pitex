@@ -1,0 +1,23 @@
+Linux/crates/pitex-shell/src/update.rs
+  s_ed44b01ef26714::t_df767fb1fc27a6 464
+Linux/crates/pitex-shell/src/lib.rs
+  s_ed44b01ef26714::t_df767fb1fc27a6 25-28
+Linux/crates/pitex-shell/src/git.rs
+  s_ed44b01ef26714::t_df767fb1fc27a6 406
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4fa9b68037cbb1d4bb0fc15b5d1bef1e45918e34",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
