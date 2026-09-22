@@ -1,0 +1,21 @@
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_342a7119cb36e8 1-41
+Tools/audit-ibus-capslock.py
+  s_ed44b01ef26714::t_342a7119cb36e8 1-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0608f484bb1ec12b94250db95973c0d69954bf38",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
