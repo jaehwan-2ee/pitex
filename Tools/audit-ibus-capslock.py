@@ -30,6 +30,7 @@ Gtk.init()
 window = Gtk.Window(title='Pitex Caps Lock toolkit audit', default_width=600, default_height=300)
 box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 view = Gtk.TextView(vexpand=True)
+view.get_buffer().set_enable_undo(True)
 entry = Gtk.Entry()
 box.append(view)
 box.append(entry)
@@ -46,15 +47,21 @@ for widget_name, widget in [('GtkTextView', view), ('GtkEntry', entry)]:
     widget.grab_focus()
     pump(0.3)
 
-    def reset(text=''):
+    def reset(text='', cursor=None, selection=None):
         widget.reset_im_context()
         if widget is view:
             buffer = view.get_buffer()
             buffer.set_text(text)
             buffer.place_cursor(buffer.get_end_iter())
+            if cursor is not None:
+                buffer.place_cursor(buffer.get_iter_at_offset(cursor))
+            if selection is not None:
+                buffer.select_range(buffer.get_iter_at_offset(selection[1]), buffer.get_iter_at_offset(selection[0]))
         else:
             entry.set_text(text)
-            entry.set_position(-1)
+            entry.set_position(-1 if cursor is None else cursor)
+            if selection is not None:
+                entry.select_region(*selection)
         pump(0.03)
 
     def text():
@@ -63,15 +70,30 @@ for widget_name, widget in [('GtkTextView', view), ('GtkEntry', entry)]:
             return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
         return entry.get_text()
 
-    def check(label, sequence, expected, seed=''):
-        reset(seed)
-        keys(*sequence)
-        actual = text()
+    def record(label, expected, actual):
         passed = actual == expected
         item = dict(widget=widget_name, phase=phase, case=label, expected=expected, actual=actual, passed=passed)
         print('INPUT_AUDIT ' + json.dumps(item, ensure_ascii=False), flush=True)
         if not passed:
             failures.append(item)
+
+    def check(label, sequence, expected, seed='', selection=None):
+        reset(seed, selection=selection)
+        keys(*sequence)
+        record(label, expected, text())
+
+    def check_cursor(label, sequence, expected, cursor=3):
+        reset('123', cursor=cursor)
+        keys(*sequence)
+        actual = view.get_buffer().get_iter_at_mark(view.get_buffer().get_insert()).get_offset() if widget is view else entry.get_position()
+        record(label, expected, actual)
+
+    def check_selection(label, sequence, expected):
+        reset('123')
+        keys(*sequence)
+        bounds = view.get_buffer().get_selection_bounds() if widget is view else entry.get_selection_bounds()
+        actual = [it.get_offset() for it in bounds] if widget is view else list(bounds)
+        record(label, expected, actual)
 
     # Fresh contexts start in Latin mode. Four toggles return both the engine
     # and the physical Caps Lock latch to their starting states for the next widget.
@@ -90,6 +112,27 @@ for widget_name, widget in [('GtkTextView', view), ('GtkEntry', entry)]:
         check('home-insert', ['Home', '4'], '4123', '123')
         check('selection-replace', ['shift+Left', '4'], '124', '123')
         check('select-all-replace', ['ctrl+a', '4'], '4', '123')
+        check_cursor('left-cursor', ['Left'], 2)
+        check_cursor('right-cursor', ['Right'], 1, cursor=0)
+        check_cursor('home-cursor', ['Home'], 0)
+        check_cursor('end-cursor', ['End'], 3, cursor=0)
+        check_selection('shift-left-selection', ['shift+Left'], [2, 3])
+        check_selection('ctrl-a-selection', ['ctrl+a'], [0, 3])
+        check('selection-backspace', ['BackSpace'], '1', '123', selection=(1, 3))
+        check('selection-delete', ['Delete'], '1', '123', selection=(1, 3))
+        check('cut', ['ctrl+x'], '', '123', selection=(0, 3))
+        reset('123', selection=(0, 3))
+        keys('ctrl+c')
+        reset()
+        keys('ctrl+v')
+        record('copy-paste', '123', text())
+        if widget is view:
+            check('undo', ['4', 'ctrl+z'], 'abc', 'abc')
+            check('redo', ['4', 'ctrl+z', 'ctrl+shift+z'], 'abc4', 'abc')
+        if korean:
+            check('compose-then-digit', ['g', 'k', 's', '1'], '한1')
+            check('compose-then-symbol', ['g', 'k', 's', 'shift+4'], '한$')
+            check('compose-jamo-backspace', ['g', 'k', 'BackSpace', 'k', 's', 'space'], '한 ')
         check('space', ['space'], ' ', '')
         if widget is view:
             check('return', ['Return'], '\n')

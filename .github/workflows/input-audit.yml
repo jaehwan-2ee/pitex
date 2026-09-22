@@ -4,6 +4,13 @@ on:
     branches: [codex/caps-lock-audit]
   workflow_dispatch:
 jobs:
+  macos:
+    name: Native macOS Caps Lock editing
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native key events through the real editor adapter
+        run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterLayoutTests.testNativeDigitsAndDeletionWithCapsLock
   git-render:
     name: Hidden Git pane responsiveness
     runs-on: ubuntu-24.04
