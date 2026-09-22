@@ -1,0 +1,19 @@
+Linux/crates/pitex-shell/tests/ime.rs
+  s_ed44b01ef26714::t_930eaaab6258e3 61,65,70,75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ecaa8781c486fc868a37ac8ddb4a5efed8ca2f8",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
