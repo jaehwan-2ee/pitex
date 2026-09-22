@@ -1,0 +1,31 @@
+Tools/check-ime-completion.py
+  s_ed44b01ef26714::t_451943d9497fb6 1-51
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_d4af2c649c2328 5271
+.github/workflows/ibus-compat.yml
+  s_ed44b01ef26714::t_d4af2c649c2328 21-27
+Mac/Sources/Features/EditorContainerView.swift
+  s_ed44b01ef26714::t_d4af2c649c2328 1042,1065
+Linux/crates/pitex-shell/src/ghost_completion.rs
+  s_ed44b01ef26714::t_a63d723bac6484 579-598
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_084773c16bee25 69
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_5ce207e46a1aca 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "58354363adca25cc716473a60fb36bafd39f24df",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
