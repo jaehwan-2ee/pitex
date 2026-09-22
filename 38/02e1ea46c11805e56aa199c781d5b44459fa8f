@@ -1,0 +1,23 @@
+Packages/TexCore/Sources/BuildCore/ProcessRunner.swift
+  s_ed44b01ef26714::t_6d7d4587461fa8 146-154,352-361,363,366
+Packages/TexCore/Tests/TexCoreTests/ProcessRunnerTests.swift
+  s_ed44b01ef26714::t_5a8e665d84f4ab 12-29
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_7e474b52b157a3 120-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3802e1ea46c11805e56aa199c781d5b44459fa8f",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
