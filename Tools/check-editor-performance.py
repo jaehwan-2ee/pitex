@@ -80,8 +80,15 @@ func check(_ value: Bool, _ message: String = "check failed", line: Int = #line)
         let after = median { check(render(new) == image) }
         check(new.rebuilds == 1, "unchanged/scroll redraw rebuilt the document")
         view.string = "\\section{새 문서}\n한글 👩🏽‍💻\n"
-        try await Task.sleep(for:.milliseconds(300))
-        check(render(new) != image, "edit did not invalidate the minimap")
+        // AppKit can deliver layout/frame notifications after the edit,
+        // restarting the debounce. Await the actual rebuild, not one fixed delay.
+        var editedImage = image
+        for _ in 0..<60 {
+            try await Task.sleep(for:.milliseconds(50))
+            editedImage = render(new)
+            if new.rebuilds > 1 { break }
+        }
+        check(editedImage != image, "edit did not invalidate the minimap")
         check(new.rebuilds == 2)
         print("{\"operation\":\"minimap redraw\",\"before_ms\":\(before),\"after_ms\":\(after),\"speedup\":\(before/after)}")
         print("PASS minimap cache/edit invalidation and Unicode completion parity")
