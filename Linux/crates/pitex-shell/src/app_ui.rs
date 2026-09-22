@@ -5022,7 +5022,8 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     search_bar.connect_search_mode_enabled_notify(move |bar| {
         if let Some(state) = STATE.with(|s| s.borrow().clone()) {
             if let Some(search) = &state.borrow().search {
-                search.set_query(if bar.is_search_mode() { &query_entry.text() } else { "" });
+                let query = query_entry.text();
+                search.set_query(if bar.is_search_mode() { &query } else { "" });
             }
         }
     });
