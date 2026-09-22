@@ -48,9 +48,9 @@ jobs:
       - name: Install native input stack
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
+          DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
       - name: Compare forwarded and native key handling
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           for scenario in true:1 false:1 false:0; do
             forwarding=${scenario%:*}

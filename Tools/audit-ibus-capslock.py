@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Real IBus/X11 keyboard audit; run in an isolated D-Bus + Xvfb session."""
 import json
+from pathlib import Path
+import re
 import subprocess
 import time
 import gi
 
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, GLib
+gi.require_version('GtkSource', '5')
+from gi.repository import Gtk, GtkSource, GLib, Gio
 
 
 def pump(seconds=0.12):
@@ -27,9 +30,23 @@ def keys(*sequence):
 
 
 Gtk.init()
-window = Gtk.Window(title='Pitex Caps Lock toolkit audit', default_width=600, default_height=300)
+app = Gtk.Application(application_id='app.pitex.InputAudit')
+app.register()
+window = Gtk.ApplicationWindow(application=app, title='Pitex Caps Lock toolkit audit', default_width=600, default_height=300)
+actions = {}
+source = (Path(__file__).resolve().parents[1] / 'Linux/crates/pitex-shell/src/app_ui.rs').read_text()
+accelerators = re.findall(r'app\.set_accels_for_action\("win\.([^\"]+)", &\["([^\"]+)"\]\);', source)
+assert len(accelerators) >= 18
+def activated(action, parameter):
+    actions[action.get_name()] += 1
+for name, accelerator in accelerators:
+    actions[name] = 0
+    action = Gio.SimpleAction.new(name, None)
+    action.connect('activate', activated)
+    window.add_action(action)
+    app.set_accels_for_action('win.' + name, [accelerator])
 box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-view = Gtk.TextView(vexpand=True)
+view = GtkSource.View(vexpand=True)
 view.get_buffer().set_enable_undo(True)
 entry = Gtk.Entry()
 box.append(view)
@@ -43,7 +60,7 @@ subprocess.run(['ibus', 'engine', 'hangul'], check=True)
 pump(0.5)
 failures = []
 
-for widget_name, widget in [('GtkTextView', view), ('GtkEntry', entry)]:
+for widget_name, widget in [('GtkSourceView', view), ('GtkEntry', entry)]:
     widget.grab_focus()
     pump(0.3)
 
@@ -118,6 +135,12 @@ for widget_name, widget in [('GtkTextView', view), ('GtkEntry', entry)]:
         check_cursor('end-cursor', ['End'], 3, cursor=0)
         check_selection('shift-left-selection', ['shift+Left'], [2, 3])
         check_selection('ctrl-a-selection', ['ctrl+a'], [0, 3])
+        for name, accelerator in accelerators:
+            sequence = accelerator.replace('<Control>', 'ctrl+').replace('<Shift>', 'shift+').replace('<Alt>', 'alt+')
+            before = actions[name]
+            reset()
+            keys(sequence)
+            record('accelerator-' + name, before + 1, actions[name])
         check('selection-backspace', ['BackSpace'], '1', '123', selection=(1, 3))
         check('selection-delete', ['Delete'], '1', '123', selection=(1, 3))
         check('cut', ['ctrl+x'], '', '123', selection=(0, 3))
