@@ -2125,6 +2125,10 @@ impl WorkspaceModel {
         let mut items = Vec::new();
         let bytes = text.as_bytes();
         let mut i = 0;
+        // Line numbers accrue as the scan advances — recounting
+        // `text[..i]` per match made label/section-dense files quadratic.
+        let mut counted = 0usize;
+        let mut line = 1usize;
         while i < bytes.len() {
             if bytes[i] == b'\\' {
                 let rest = &text[i + 1..];
@@ -2139,8 +2143,11 @@ impl WorkspaceModel {
                     let after_star = after_name.strip_prefix('*').unwrap_or(after_name);
                     if let Some(body) = after_star.strip_prefix('{') {
                         if let Some(close) = body.find('}') {
-                            let line =
-                                text[..i].bytes().filter(|b| *b == b'\n').count() + 1;
+                            line += text[counted..i]
+                                .bytes()
+                                .filter(|b| *b == b'\n')
+                                .count();
+                            counted = i;
                             items.push(DocumentOutlineItem {
                                 title: body[..close].to_string(),
                                 level: *level,
@@ -2159,11 +2166,19 @@ impl WorkspaceModel {
     pub fn parse_labels(text: &str) -> Vec<DocumentLabelItem> {
         let mut items = Vec::new();
         let mut search = 0usize;
+        // Matches arrive in order — carry the line count forward instead
+        // of rescanning `text[..start]` per match (quadratic otherwise).
+        let mut counted = 0usize;
+        let mut line = 1usize;
         while let Some(pos) = text[search..].find("\\label{") {
             let start = search + pos;
             let body = &text[start + 7..];
             if let Some(close) = body.find('}') {
-                let line = text[..start].bytes().filter(|b| *b == b'\n').count() + 1;
+                line += text[counted..start]
+                    .bytes()
+                    .filter(|b| *b == b'\n')
+                    .count();
+                counted = start;
                 items.push(DocumentLabelItem {
                     name: body[..close].to_string(),
                     line,

@@ -1060,33 +1060,14 @@ struct CommitDiffView: View {
         }
     }
 
-    /// Longest text across every section so columns widen past the
-    /// half-width split instead of truncating (horizontal scroll).
-    private func maxCellChars(_ sections: [GitDiffFileSection]) -> Int {
-        var longest = 0
-        for section in sections {
-            for item in GitSupport.displayItems(section.rows) {
-                switch item {
-                case let .pair(l, r):
-                    longest = max(longest, l?.text.count ?? 0, r?.text.count ?? 0)
-                case let .fold(_, pairs):
-                    for p in pairs {
-                        longest = max(longest, p.left?.text.count ?? 0, p.right?.text.count ?? 0)
-                    }
-                case .gap, .note:
-                    break
-                }
-            }
-        }
-        return longest
-    }
-
+    /// Columns are always half the viewport — like VSCode's diff editor,
+    /// where each side is a fixed-width pane and the row tint always
+    /// covers it. Lines wrap inside their cell instead of scrolling, so a
+    /// long paragraph can never push the new side off-screen.
     private func diffTable(_ sections: [GitDiffFileSection]) -> some View {
-        let charWidth = appearance.fontSize * 0.62
-        let contentWidth = CGFloat(maxCellChars(sections)) * charWidth + 64
-        return GeometryReader { geo in
-            let columnWidth = max(geo.size.width / 2 - 1, contentWidth)
-            ScrollView([.horizontal, .vertical]) {
+        GeometryReader { geo in
+            let columnWidth = geo.size.width / 2 - 1
+            ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
                         if session.file == nil {
@@ -1227,20 +1208,20 @@ struct CommitDiffView: View {
     }
 
     private func diffCell(_ line: GitDiffLine?, other: GitDiffLine?, width: CGFloat) -> some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             Text(verbatim: line.map { "\($0.number)" } ?? "")
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .trailing)
                 .padding(.trailing, 8)
             if let line {
                 Text(highlighted(line, other: other))
-                    .lineLimit(1)
             }
             Spacer(minLength: 0)
         }
         .font(mono)
         .padding(.vertical, 1)
         .frame(width: width, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(diffCellBackground(line))
     }
 
