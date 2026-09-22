@@ -1,0 +1,45 @@
+Linux/crates/pitex-shell/src/lib.rs
+  s_ed44b01ef26714::t_396f0f767e245f 16
+Linux/crates/pitex-shell/src/git_list.rs
+  s_ed44b01ef26714::t_7a79439bc56088 21,41-47,51-52,76
+  s_ed44b01ef26714::t_511aa2580219fa 113-120,125-129,139-141,147,152-157
+  s_ed44b01ef26714::t_e53feebc089e80 1-3,5-20,22-31,35-40,53-61,65-70,74-75,77-78,82-91,98,102,109-112
+  s_ed44b01ef26714::t_2391ffbeb3de76 4,32-34,48-50,62-64,71-73,79-81,92-97,99-101,103-108,121-124,130-138,142-146,148-151
+Linux/crates/pitex-shell/src/git.rs
+  s_ed44b01ef26714::t_396f0f767e245f 12,39,48-53,55,65-66,74,76
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_2391ffbeb3de76 5315-5317,5326-5328,5330-5372
+  s_ed44b01ef26714::t_396f0f767e245f 157-159,202,304,1989-1992,2420-2421,2448-2451,2466,2468-2470,2477-2478,3306-3307
+  s_ed44b01ef26714::t_6e87eeb8678b75 5373
+Linux/crates/pitex-shell/src/model.rs
+  s_ed44b01ef26714::t_396f0f767e245f 218,743
+Linux/crates/pitex-shell/src/panes.rs
+  s_ed44b01ef26714::t_396f0f767e245f 369-401,406-409,415,592,617,622,716
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_2391ffbeb3de76 12-14,18,20-27,32-34,36,42,49
+  s_ed44b01ef26714::t_8b3c6a9c8c2819 28
+Packages/TexCore/Tests/TexCoreTests/GitSupportTests.swift
+  s_ed44b01ef26714::t_2391ffbeb3de76 32-39
+Linux/crates/git-core/src/lib.rs
+  s_ed44b01ef26714::t_2e8bf011038699 76-77,256-257,262-263,266-269,433-442
+Mac/Sources/Features/GitIntegrationView.swift
+  s_ed44b01ef26714::t_1b0fc322ab3fc4 33-44,73,95-105
+Packages/TexCore/Sources/GitCore/GitSupport.swift
+  s_ed44b01ef26714::t_cca340d62d772a 190,523-529,532-537,539-540
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "091ab7e7ae5c10154266c0d6b9521b5e8bd83c95",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
