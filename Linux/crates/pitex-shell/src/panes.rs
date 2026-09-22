@@ -92,7 +92,12 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
     header.append(&build_entry);
 
     let run_build = gtk4::Button::from_icon_name("media-playback-start-symbolic");
-    run_build.set_tooltip_text(Some(&tr(lang, "console.build_run_help")));
+    let tooltip_state = Rc::downgrade(state);
+    compat::dynamic_tooltip(&run_build, move || {
+        let state = tooltip_state.upgrade()?;
+        let state = state.try_borrow().ok()?;
+        Some(state.model.build_unavailable_reason().unwrap_or_else(|| tr(state.language, "build.start")))
+    });
     a11y(&run_build, "pitex.console.build", "build.start");
     {
         let state = state.clone();

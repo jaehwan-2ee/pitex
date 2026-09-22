@@ -2329,22 +2329,6 @@ impl AppState {
                     tr(self.language, "editor.words_unit")
                 ));
             }
-            if let Some(disk) = ui.disk_status.borrow().as_ref() {
-                let conflicted = self
-                    .model
-                    .document_snapshot
-                    .as_ref()
-                    .map(|s| s.save_state == DocumentSaveState::Conflicted)
-                    .unwrap_or(false);
-                disk.set_tooltip_text(Some(&tr(
-                    self.language,
-                    if conflicted {
-                        "editor.disk_changed"
-                    } else {
-                        "editor.disk_unchanged"
-                    },
-                )));
-            }
         });
     }
 
@@ -2693,12 +2677,6 @@ impl AppState {
                     "media-playback-start-symbolic"
                 });
                 b.set_sensitive(building || self.model.build_unavailable_reason().is_none());
-                b.set_tooltip_text(Some(
-                    &self
-                        .model
-                        .build_unavailable_reason()
-                        .unwrap_or_else(|| tr(self.language, "build.start")),
-                ));
             }
             if let Some(b) = ui.header_build_button.borrow().as_ref() {
                 b.set_icon_name(if building {
@@ -4888,7 +4866,14 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     editor_header.append(&caption);
     let disk = gtk4::Button::from_icon_name("emblem-synchronizing-symbolic");
     disk.add_css_class("flat");
-    disk.set_tooltip_text(Some(&tr(lang, "editor.disk_unchanged")));
+    let tooltip_state = Rc::downgrade(state);
+    compat::dynamic_tooltip(&disk, move || {
+        let state = tooltip_state.upgrade()?;
+        let state = state.try_borrow().ok()?;
+        let conflicted = state.model.document_snapshot.as_ref()
+            .map(|s| s.save_state == DocumentSaveState::Conflicted).unwrap_or(false);
+        Some(tr(state.language, if conflicted { "editor.disk_changed" } else { "editor.disk_unchanged" }))
+    });
     a11y(&disk, "pitex.editor.diskStatus", "editor.disk_unchanged");
     {
         let state = state.clone();
@@ -5251,4 +5236,95 @@ fn search_replace_all(state: &Rc<RefCell<AppState>>, query: &str, replacement: &
     let Some(editor) = &s.editor else { return };
     let context = search_context(editor, query);
     let _ = context.replace_all(replacement);
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod startup_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Run alone under Xvfb: this exercises the real window and async open path.
+    #[test]
+    #[ignore = "requires a GTK display and isolated process"]
+    fn small_project_opens_without_blocking_the_ui() {
+        let root = std::env::temp_dir().join(format!("pitex-startup-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        // Keep preferences, agent files and installer work inside this test.
+        std::env::set_var("XDG_CONFIG_HOME", root.join("config"));
+        std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
+        std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
+        let launcher = crate::agent::pi_paths::runtime_executable();
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, r#"#!/usr/bin/python3
+import json, sys, time
+time.sleep(2)
+model = {"id": "fixture", "provider": "fixture", "name": "Fixture model"}
+for line in sys.stdin:
+    request = json.loads(line)
+    command = request["type"]
+    data = {"get_state": {"model": model, "thinkingLevel": "off"},
+            "get_available_models": {"models": [model]},
+            "get_available_thinking_levels": {"levels": ["off"]},
+            "get_commands": {"commands": []}}.get(command, {})
+    print(json.dumps({"type": "response", "command": command, "id": request.get("id"), "success": True, "data": data}), flush=True)
+"#).unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(crate::agent::pi_paths::runtime_directory().join("package.json"),
+            format!(r#"{{"name":"{}","version":"{}"}}"#,
+                crate::agent::pi_installer::PACKAGE_NAME, crate::agent::pi_installer::DESIRED_VERSION)).unwrap();
+        let source = "\\documentclass{article}\n\\begin{document}\n\\section{Hello}\n한글 $x$ test.\n\\label{sec:hello}\n\\end{document}\n";
+        let file = project.join("main.tex");
+        std::fs::write(&file, source).unwrap();
+        std::fs::write(project.join("main.pdf"), include_bytes!("../../../../Fixtures/projects/startup-preview/main.pdf")).unwrap();
+        // An independent watchdog catches a GTK callback that never returns.
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watchdog = finished.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(20));
+            if !watchdog.load(std::sync::atomic::Ordering::Acquire) {
+                eprintln!("FAIL: application startup/file-open stopped processing GTK events");
+                std::process::abort();
+            }
+        });
+        adw::init().unwrap();
+        let app = adw::Application::builder().application_id("app.pitex.StartupTest").build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        eprintln!("startup: building real window");
+        build_window(&app, "startup-test");
+        let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        let tooltip_changes = Rc::new(Cell::new(0));
+        UI.with(|ui| {
+            for button in [ui.disk_status.borrow().as_ref(), ui.build_button.borrow().as_ref()].into_iter().flatten() {
+                let changes = tooltip_changes.clone();
+                button.connect_tooltip_text_notify(move |_| changes.set(changes.get() + 1));
+            }
+        });
+        eprintln!("startup: opening small TeX file");
+        state.borrow_mut().open_selected(file);
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut ready_ticks = 0;
+        while std::time::Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            if matches!(state.borrow().model.phase, WorkspacePhase::Ready) {
+                assert_eq!(state.borrow().editor.as_ref().unwrap().text(), source);
+                ready_ticks += 1;
+                if ready_ticks >= 500 && state.borrow().agent.as_ref().map(|a| !a.models.is_empty()).unwrap_or(false)
+                    && state.borrow().displayed_pdf_key.get() != 0 { break; }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if ready_ticks < 500 || !state.borrow().agent.as_ref().map(|a| !a.models.is_empty()).unwrap_or(false)
+            || state.borrow().displayed_pdf_key.get() == 0 {
+            eprintln!("FAIL: startup phase={:?}, ticks={}, PDF={}, agent={:?}", state.borrow().model.phase,
+                ready_ticks, state.borrow().displayed_pdf_key.get(), state.borrow().agent.as_ref().map(|a| &a.connection));
+            std::process::abort();
+        }
+        assert_eq!(tooltip_changes.get(), 0, "refreshing a mapped widget must not trigger X11 tooltip pointer queries");
+        state.borrow_mut().shutdown_agent();
+        UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
+        finished.store(true, std::sync::atomic::Ordering::Release);
+        eprintln!("PASS: small project opened and GTK continued processing events");
+    }
 }

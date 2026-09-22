@@ -77,12 +77,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-            libvte-2.91-gtk4-dev libpoppler-glib-dev xvfb
+            libvte-2.91-gtk4-dev libpoppler-glib-dev xvfb gdb
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
         working-directory: Linux
       - name: Native GTK editing and PDF worker checks
         run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
+        working-directory: Linux
+      - name: Full window startup and small project check
+        run: |
+          binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
+          xvfb-run -a gdb -batch -return-child-result -ex run -ex 'thread apply all bt' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Compare release optimization profiles
         run: python3 Tools/check-optimization-profiles.py
@@ -102,10 +107,22 @@ jobs:
           apt-get install -y build-essential pkg-config libssl-dev curl \
             ca-certificates git \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-            libpoppler-glib-dev
+            libpoppler-glib-dev xvfb xdotool ibus-hangul dbus-x11
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build -p pitex --no-default-features
         working-directory: Linux
+      - name: Real Hangul Backspace on GTK 4.6
+        timeout-minutes: 3
+        working-directory: Linux
+        run: |
+          xvfb-run -a dbus-run-session -- bash -c '
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode true
+            ibus-daemon -drx --panel disable
+            sleep 2
+            ibus engine hangul
+            GTK_IM_MODULE=ibus GSK_RENDERER=cairo cargo test -p pitex-shell --no-default-features --test ime -- --ignored --nocapture --test-threads=1
+          '
+
 
   windows:
     name: Windows workspace (MSYS2 UCRT64)

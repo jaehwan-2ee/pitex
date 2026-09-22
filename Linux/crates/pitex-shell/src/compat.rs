@@ -56,6 +56,18 @@ pub fn spin_row(title: &str, min: f64, max: f64, step: f64) -> (adw::ActionRow, 
     (row, spin)
 }
 
+/// Install before mounting the widget. Updating tooltip-text on a mapped
+/// GTK/X11 widget synchronously calls XIQueryPointer; a stalled X server then
+/// blocks the UI. Resolve changing help text only when GTK requests a tooltip.
+pub fn dynamic_tooltip(widget: &impl IsA<gtk4::Widget>, text: impl Fn() -> Option<String> + 'static) {
+    widget.connect_query_tooltip(move |_, _, _, _, tooltip| {
+        let Some(text) = text() else { return false };
+        tooltip.set_text(Some(&text));
+        true
+    });
+    widget.set_has_tooltip(true);
+}
+
 // ─── File dialogs ────────────────────────────────────────────────────────
 // Newer GTK (24.04+) uses the portal-backed `FileDialog`, which doesn't exist
 // on Ubuntu 22.04 (GTK 4.6). The compat path uses `FileChooserDialog` rather
@@ -329,7 +341,10 @@ pub fn fix_ime_backspace(
     let keys = gtk4::EventControllerKey::new();
     keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
     keys.connect_key_pressed(move |_, key, _code, state| {
-        if key != gtk4::gdk::Key::BackSpace || !state.is_empty() {
+        // Caps Lock does not turn Backspace into a shortcut.
+        if key != gtk4::gdk::Key::BackSpace
+            || !state.difference(gtk4::gdk::ModifierType::LOCK_MASK).is_empty()
+        {
             return gtk4::glib::Propagation::Proceed;
         }
         let Some(adapter) = editor() else {
