@@ -1,0 +1,21 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_79913496442365 5335-5351
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_79913496442365 7-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c8874ba2386810d6796b78c2c5222a99df6c649",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
