@@ -1,0 +1,55 @@
+Mac/Resources/PitexIcon.icon/icon.json
+  s_ed44b01ef26714::t_25afc1178f6100 1-11
+Mac/Resources/es.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/ja.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 377-379
+Mac/Resources/ru.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/vi.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/ko.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 377-379
+Linux/crates/pitex-shell/src/search.rs
+  s_ed44b01ef26714::t_8c44b7e6b2db9f 1-116
+  s_ed44b01ef26714::t_e249a539305132 117
+Mac/Resources/en.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_25afc1178f6100 4307,5021-5028
+  s_ed44b01ef26714::t_8c44b7e6b2db9f 142,181,295,883-889,1452-1453,4950-4955,4957,4980-4988,5179,5183,5187
+Linux/crates/pitex-shell/src/lib.rs
+  s_ed44b01ef26714::t_8c44b7e6b2db9f 21
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_ed44b01ef26714::t_25afc1178f6100 50,87,194,292
+Mac/Config/Base.xcconfig
+  s_ed44b01ef26714::t_25afc1178f6100 27
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_325aa6a344211b 89-91,122-124,159-161
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_e34977f87214f4 4,26,48-52,134-136
+Packages/TexApp/Sources/EditorMacAdapter/EditorFindController.swift
+  s_ed44b01ef26714::t_c86df0138cef8d 1-73
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_ed44b01ef26714::t_ed24a947c38735 9-28,185,298
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_ed44b01ef26714::t_d581d35ee317c1 10-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d57439b89d20dd4cd7f283407971611bf74fff1",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
