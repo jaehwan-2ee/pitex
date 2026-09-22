@@ -2200,7 +2200,7 @@ impl AppState {
             if files_dirty {
             // Project file tree — always visible at the bottom. Built from
             // relative paths through the shared `project-feature` builder
-            // so directories nest like SwiftUI's OutlineGroup.
+            // so directories nest like the macOS project tree.
             if let Some(list) = ui.project_list.borrow().as_ref() {
                 clear_list(list);
                 let root = self.model.project_url.clone();
@@ -3404,7 +3404,7 @@ fn append_todo_row(list: &gtk4::ListBox, index: usize, item: &DocumentTodoItem, 
     list.append(&row);
 }
 
-/// Recursive renderer for the project tree — mirrors `OutlineGroup` in
+/// Recursive renderer for the project tree — mirrors `ProjectTreeRows` in
 /// `ProjectSidebarView.swift`. Directories toggle collapse state (tracked
 /// in `WorkspaceModel::collapsed_project_dirs`); files activate documents.
 fn append_project_node(
@@ -3414,7 +3414,7 @@ fn append_project_node(
     root: &Option<PathBuf>,
     model: &crate::model::WorkspaceModel,
 ) {
-    let indent = 8 + (depth as i32) * 14;
+    let indent = 8 + (depth as i32) * 24;
     let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
     row.set_margin_start(indent);
     row.set_margin_end(8);

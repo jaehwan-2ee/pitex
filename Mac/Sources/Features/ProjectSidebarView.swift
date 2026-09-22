@@ -311,27 +311,14 @@ struct ProjectSidebarView: View {
 
             // ScrollView+VStack instead of List: NSTableView marks clicked
             // rows selected (accent wash) even without a selection binding —
-            // we want only our own active-file highlight. OutlineGroup draws
-            // the directory disclosure triangles.
+            // we want only our own active-file highlight. Only directories
+            // collapse; the main document's dependencies stay visible.
             let mainStem = workspace.buildSourceURL()?
                 .deletingPathExtension().lastPathComponent ?? ""
             let project = extractOutputPDFs(workspace.projectTree, mainStem: mainStem)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    OutlineGroup(project.tree, children: \.children) { node in
-                        if node.isDirectory {
-                            HStack(spacing: 7) {
-                                Image(systemName: "folder")
-                                Text(verbatim: node.name)
-                                    .lineLimit(1)
-                                Spacer()
-                            }
-                            .padding(.vertical, 3)
-                            .accessibilityIdentifier("pitex.project.dir.\(node.path)")
-                        } else {
-                            fileRow(node)
-                        }
-                    }
+                    ProjectTreeRows(nodes: project.tree) { fileRow($0) }
                 }
                 .padding(.horizontal, 4)
             }
@@ -409,4 +396,38 @@ struct ProjectSidebarView: View {
         .accessibilityIdentifier("pitex.project.file.\(node.path)")
     }
 
+}
+
+/// Files keep their dependency rows visible; only real directories disclose.
+private struct ProjectTreeRows<FileRow: View>: View {
+    let nodes: [ProjectFileNode]
+    let fileRow: (ProjectFileNode) -> FileRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(nodes) { node in
+                if node.isDirectory {
+                    DisclosureGroup {
+                        ProjectTreeRows(nodes: node.children ?? [], fileRow: fileRow)
+                            .padding(.leading, 24)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "folder")
+                            Text(verbatim: node.name)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.vertical, 3)
+                        .accessibilityIdentifier("pitex.project.dir.\(node.path)")
+                    }
+                } else {
+                    fileRow(node)
+                    if let children = node.children {
+                        ProjectTreeRows(nodes: children, fileRow: fileRow)
+                            .padding(.leading, 24)
+                    }
+                }
+            }
+        }
+    }
 }
