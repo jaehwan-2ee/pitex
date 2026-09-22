@@ -59,6 +59,14 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
         view.performTextFinderAction(item)
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(count.stringValue, "3 / 3")
+        item.tag = NSTextFinder.Action.selectAll.rawValue
+        view.performTextFinderAction(item)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(view.selectedRanges.count, 3)
+        item.tag = NSTextFinder.Action.nextMatch.rawValue
+        view.performTextFinderAction(item)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(view.selectedRanges.count, 1)
         view.insertText(" cat", replacementRange: NSRange(location: view.string.utf16.count, length: 0))
         for _ in 0..<100 {
             if count.stringValue.hasSuffix("/ 4") { break }
