@@ -1,0 +1,21 @@
+Linux/crates/pitex-shell/src/model.rs
+  s_18b9cd9361bd71::t_dc96cd8032511b 2128-2131,2146-2150,2169-2172,2177-2181
+Mac/Sources/Features/GitIntegrationView.swift
+  s_18b9cd9361bd71::t_33736755b5ba43 1063-1066,1068-1070,1211,1224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d19414bb6d21f149de27b2468495d61525dbfa0e",
+  "prompts": {},
+  "sessions": {
+    "s_18b9cd9361bd71": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_18b9cd9361bd71",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
