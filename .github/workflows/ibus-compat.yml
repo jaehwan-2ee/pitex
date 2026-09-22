@@ -1,8 +1,10 @@
 name: IBus compatibility regression
 on:
   push:
-    branches: [codex/caps-lock-audit]
-    paths: ['Linux/crates/pitex/src/**', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
+    branches: [main, codex/caps-lock-audit]
+    paths: ['Linux/**', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
+  pull_request:
+    paths: ['Linux/**', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
   workflow_dispatch:
 jobs:
   caps:
@@ -25,6 +27,22 @@ jobs:
       - run: |
           cargo build --manifest-path Linux/Cargo.toml -p pitex --no-default-features
           nm -D Linux/target/debug/pitex | grep ' T ibus_input_context_process_key_event$'
+      - name: Real editor and document synchronization in every preedit mode
+        timeout-minutes: 3
+        run: |
+          cargo test --manifest-path Linux/Cargo.toml -p pitex-shell --no-default-features --test ime --no-run
+          for mode in syllable word none; do
+            xvfb-run -a dbus-run-session -- bash -eu -s -- "$mode" <<'SESSION' > "compat-native-$mode.log" 2>&1
+          gsettings reset org.freedesktop.ibus.engine.hangul initial-input-mode
+          gsettings set org.freedesktop.ibus.engine.hangul switch-keys Caps_Lock
+          gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding true
+          gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "$1"
+          ibus-daemon -drx --panel disable
+          sleep 2
+          ibus engine hangul
+          GTK_IM_MODULE=ibus IBUS_ENABLE_SYNC_MODE=1 GSK_RENDERER=cairo LD_PRELOAD=/tmp/pitex-ibus-probe.so cargo test --manifest-path Linux/Cargo.toml -p pitex-shell --no-default-features --test ime -- --ignored --nocapture --test-threads=1
+          SESSION
+          done
       - name: Audit unmodified system IBus with the app-local adapter
         timeout-minutes: 10
         run: |
@@ -33,6 +51,8 @@ jobs:
             sync=${scenario#*:}
             xvfb-run -a dbus-run-session -- bash -eu -s -- "$forwarding" "$sync" <<'SESSION' > "compat-$forwarding-$sync.log" 2>&1
           gsettings set org.freedesktop.ibus.engine.hangul switch-keys Caps_Lock
+          gsettings reset org.freedesktop.ibus.engine.hangul preedit-mode
+          gsettings reset org.freedesktop.ibus.engine.hangul initial-input-mode
           gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding "$1"
           ibus-daemon -drx --panel disable
           sleep 2

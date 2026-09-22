@@ -5009,16 +5009,6 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     scroller.set_vexpand(true);
     a11y(&scroller, "pitex.editor.scroll", "editor.title");
     ui.editor_scroller.replace(Some(scroller.clone()));
-    // ibus-hangul Backspace fix — capture on the scroller so it runs before
-    // the view's own IM filter; the resolver re-reads the current adapter.
-    compat::fix_ime_backspace(&scroller, || {
-        STATE.with(|s| {
-            s.borrow()
-                .as_ref()
-                .and_then(|state| state.try_borrow().ok())
-                .and_then(|s| s.editor.clone())
-        })
-    });
     // The fold chip layer overlays the scroller from outside — putting it
     // inside would break the view's scroll adjustments (minimap, jump-to).
     let editor_overlay = gtk4::Overlay::new();
