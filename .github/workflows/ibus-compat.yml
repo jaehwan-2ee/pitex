@@ -1,0 +1,32 @@
+name: Legacy IBus compatibility probe
+on:
+  push:
+    branches: [codex/caps-lock-audit]
+    paths: ['Tools/ibus-legacy-sync-probe.c', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
+  workflow_dispatch:
+jobs:
+  caps:
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc pkg-config libibus-1.0-dev python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
+          gcc -shared -fPIC -O2 Tools/ibus-legacy-sync-probe.c -o /tmp/pitex-ibus-probe.so $(pkg-config --cflags --libs ibus-1.0)
+      - name: Audit unmodified system IBus with the app-local adapter
+        timeout-minutes: 4
+        run: |
+          xvfb-run -a dbus-run-session -- bash -eu -s <<'SESSION' > compat.log 2>&1
+          gsettings set org.freedesktop.ibus.engine.hangul switch-keys Caps_Lock
+          gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding true
+          ibus-daemon -drx --panel disable
+          sleep 2
+          ibus engine hangul
+          GTK_IM_MODULE=ibus IBUS_ENABLE_SYNC_MODE=1 GSK_RENDERER=cairo LD_PRELOAD=/tmp/pitex-ibus-probe.so python3 Tools/audit-ibus-capslock.py
+          SESSION
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-ibus-compat
+          path: compat.log
