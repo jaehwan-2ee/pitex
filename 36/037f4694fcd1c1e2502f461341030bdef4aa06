@@ -1,0 +1,31 @@
+Linux/Cargo.lock
+  s_18b9cd9361bd71::t_aeed6b857f56e3 754
+Linux/crates/pitex-shell/src/model.rs
+  s_18b9cd9361bd71::t_dc96cd8032511b 2128-2131,2146-2150,2169-2172,2177-2181
+Linux/crates/pitex/Cargo.toml
+  s_18b9cd9361bd71::t_67fb06b851397e 3
+Mac/Config/Info.plist
+  s_18b9cd9361bd71::t_1bbedad2f40889 20
+Mac/Sources/Features/GitIntegrationView.swift
+  s_18b9cd9361bd71::t_33736755b5ba43 1063-1066,1068-1070,1211,1224
+Windows/Cargo.lock
+  s_18b9cd9361bd71::t_2646890953f7c7 869
+Windows/crates/pitex-windows/Cargo.toml
+  s_18b9cd9361bd71::t_29cb2b8d1c6e26 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36037f4694fcd1c1e2502f461341030bdef4aa06",
+  "prompts": {},
+  "sessions": {
+    "s_18b9cd9361bd71": {
+      "agent_id": {
+        "tool": "devin",
+        "id": "s_18b9cd9361bd71",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
