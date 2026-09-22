@@ -101,6 +101,8 @@ dirs = "5"
 ''')
         (root / 'src').mkdir()
         (root / 'src/lib.rs').write_text('''#![allow(dead_code)]
+#[cfg(test)]
+static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod compat {
     pub fn run_in_external_terminal(_: &str, _: Option<&std::path::Path>) -> bool { false }
 }
