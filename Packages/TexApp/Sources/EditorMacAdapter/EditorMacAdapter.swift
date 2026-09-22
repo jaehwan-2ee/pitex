@@ -88,6 +88,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     private var desiredText: String
     private var isApplyingSessionSnapshot = false
     private var isSubmitting = false
+    nonisolated(unsafe) private var undoObservers: [NSObjectProtocol] = []
 
     private init(session: any DocumentSessionPort, snapshot: DocumentSnapshot) {
         self.session = session
@@ -112,7 +113,22 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
             else { return nil }
             return completionSource(nativeView.string, nativeView.selectedRange().location)?.range
         }
+        // AppKit can change storage during Undo/Redo without notifying the
+        // text-view delegate. Synchronize after the entire native group ends.
+        for name in [Notification.Name.NSUndoManagerDidUndoChange, Notification.Name.NSUndoManagerDidRedoChange] {
+            undoObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nativeUndoManager, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.desiredText != self.textView.string else { return }
+                    self.pendingNativeMutation = nil
+                    self.textDidChange(Notification(name: NSText.didChangeNotification, object: self.textView))
+                }
+            })
+        }
     }
+
+    deinit { undoObservers.forEach(NotificationCenter.default.removeObserver) }
 
     public static func make(session: any DocumentSessionPort) async throws -> EditorMacAdapter {
         let snapshot = await session.snapshot()

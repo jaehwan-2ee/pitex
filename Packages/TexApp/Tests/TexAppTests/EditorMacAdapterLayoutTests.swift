@@ -12,6 +12,11 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
         let session = EditableDocumentSession()
         let adapter = try await EditorMacAdapter.make(session: session)
         let view = adapter.textView
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 240),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        window.makeFirstResponder(view)
+        defer { window.orderOut(nil) }
         adapter.nativeUndoManager.groupsByEvent = false
         adapter.nativeUndoManager.beginUndoGrouping()
         view.insertText("한", replacementRange: NSRange(location: 1, length: 2))
