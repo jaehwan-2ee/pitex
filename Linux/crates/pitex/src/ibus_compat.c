@@ -1,62 +1,60 @@
-/* App-local compatibility for pre-1.5.28 IBus GTK modules. The executable
- * exports this public ABI entry point; modern IBus uses its original function.
- * Legacy Hangul forwards unhandled keys while reporting them as consumed.
- * Dispatch commit/preedit signals before returning the original key to GTK.
- * No system IM settings are changed, and child processes do not inherit
- * the adapter. Only public GObject/GIO/IBus APIs are used. */
+/* App-local compatibility for pre-1.5.28 IBus GTK4 modules. Export the
+ * public synchronous entry point; modern IBus keeps its original behavior.
+ * Legacy engines send commit/preedit/forward signals before the key reply,
+ * but GTK sees them too late. Collect those messages during the synchronous
+ * call and deliver them on the UI thread before returning the native key.
+ * No nested GTK loop, private IBus layouts, or system IM setting changes. */
 #include <gio/gio.h>
 #include <dlfcn.h>
 
 typedef struct _IBusInputContext IBusInputContext;
 typedef gboolean (*SyncKey)(IBusInputContext *, guint, guint, guint);
-typedef void (*AsyncKey)(IBusInputContext *, guint, guint, guint, gint,
-                         GCancellable *, GAsyncReadyCallback, gpointer);
-typedef gboolean (*FinishKey)(IBusInputContext *, GAsyncResult *, GError **);
 static SyncKey original;
-static AsyncKey process_async;
-static FinishKey finish_async;
 static gboolean modern;
 static gsize initialized;
 
 void pitex_ibus_initialize(void) {
-    /* GTK4 cannot reinject arbitrary unhandled keys in IBus async mode.
-     * Keep the supported synchronous path even after an old workaround
-     * set IBUS_ENABLE_SYNC_MODE=0. This affects this app, not IBus settings. */
+    /* GTK4 cannot reinject arbitrary unhandled keys in async mode. Undo an
+     * old IBUS_ENABLE_SYNC_MODE=0 workaround for this process only. */
     g_setenv("IBUS_ENABLE_SYNC_MODE", "1", TRUE);
 }
 
-
 typedef struct {
-    gboolean done, handled, forwarded;
-    guint keyval, keycode, state;
-    IBusInputContext *context;
-    GArray *handlers;
-    gulong own_handler;
+    gatomicrefcount refs;
+    GMutex mutex;
+    gchar *path, *sender;
+    GPtrArray *messages;
 } Pending;
 
-static void forward_key(IBusInputContext *context, guint keyval, guint keycode,
-                        guint state, Pending *pending) {
-    if (keyval == pending->keyval && (keycode == pending->keycode || keycode == 0)) {
-        pending->forwarded = TRUE;
-        return;
-    }
-    /* Preserve synthetic keys from other engines using the original handlers. */
-    g_signal_handler_block(context, pending->own_handler);
-    for (guint i = 0; i < pending->handlers->len; i++)
-        g_signal_handler_unblock(context, g_array_index(pending->handlers, gulong, i));
-    g_signal_emit_by_name(context, "forward-key-event", keyval, keycode, state);
-    for (guint i = 0; i < pending->handlers->len; i++)
-        g_signal_handler_block(context, g_array_index(pending->handlers, gulong, i));
-    g_signal_handler_unblock(context, pending->own_handler);
+static void pending_unref(gpointer data) {
+    Pending *pending = data;
+    if (!g_atomic_ref_count_dec(&pending->refs)) return;
+    g_clear_pointer(&pending->messages, g_ptr_array_unref);
+    g_free(pending->path);
+    g_free(pending->sender);
+    g_mutex_clear(&pending->mutex);
+    g_free(pending);
 }
 
-static void finished(GObject *object, GAsyncResult *result, gpointer data) {
+/* GDBus runs filters on its worker thread, even during a synchronous call.
+ * Taking ownership here prevents the usual deferred UI-thread delivery. */
+static GDBusMessage *collect_signal(GDBusConnection *connection,
+                                    GDBusMessage *message, gboolean incoming,
+                                    gpointer data) {
+    (void)connection;
     Pending *pending = data;
-    GError *error = NULL;
-    pending->handled = finish_async(
-        (IBusInputContext *)object, result, &error);
-    g_clear_error(&error);
-    pending->done = TRUE;
+    if (!incoming || g_dbus_message_get_message_type(message) != G_DBUS_MESSAGE_TYPE_SIGNAL ||
+        g_strcmp0(g_dbus_message_get_path(message), pending->path) ||
+        g_strcmp0(g_dbus_message_get_interface(message), "org.freedesktop.IBus.InputContext") ||
+        (pending->sender && g_strcmp0(g_dbus_message_get_sender(message), pending->sender)))
+        return message;
+    g_mutex_lock(&pending->mutex);
+    if (pending->messages) {
+        g_ptr_array_add(pending->messages, message);
+        message = NULL;
+    }
+    g_mutex_unlock(&pending->mutex);
+    return message;
 }
 
 gboolean ibus_input_context_process_key_event(IBusInputContext *context,
@@ -65,48 +63,48 @@ gboolean ibus_input_context_process_key_event(IBusInputContext *context,
         void *library = dlopen("libibus-1.0.so.5", RTLD_LAZY | RTLD_LOCAL);
         if (library) {
             original = (SyncKey)dlsym(library, "ibus_input_context_process_key_event");
-            process_async = (AsyncKey)dlsym(library, "ibus_input_context_process_key_event_async");
-            finish_async = (FinishKey)dlsym(library, "ibus_input_context_process_key_event_async_finish");
             modern = dlsym(library, "ibus_input_context_post_process_key_event") != NULL;
         }
         g_once_init_leave(&initialized, 1);
     }
-    if (modern && original) return original(context, keyval, keycode, state);
-    if (!process_async || !finish_async) return FALSE;
-    g_object_ref(context);
-    Pending pending = { .keyval = keyval, .keycode = keycode, .state = state, .context = context,
-                        .handlers = g_array_new(FALSE, FALSE, sizeof(gulong)) };
-    guint signal = g_signal_lookup("forward-key-event", G_OBJECT_TYPE(context));
-    gulong handler;
-    while ((handler = g_signal_handler_find(context, G_SIGNAL_MATCH_ID | G_SIGNAL_MATCH_UNBLOCKED,
-                                             signal, 0, NULL, NULL, NULL))) {
-        g_signal_handler_block(context, handler);
-        g_array_append_val(pending.handlers, handler);
+    if (!original) return FALSE;
+    if (modern) return original(context, keyval, keycode, state);
+    GDBusProxy *proxy = G_DBUS_PROXY(g_object_ref(context));
+    GDBusConnection *connection = g_dbus_proxy_get_connection(proxy);
+    Pending *pending = g_new0(Pending, 1);
+    g_atomic_ref_count_init(&pending->refs);
+    g_mutex_init(&pending->mutex);
+    pending->path = g_strdup(g_dbus_proxy_get_object_path(proxy));
+    pending->sender = g_dbus_proxy_get_name_owner(proxy);
+    pending->messages = g_ptr_array_new_with_free_func(g_object_unref);
+    g_atomic_ref_count_inc(&pending->refs);
+    guint filter = g_dbus_connection_add_filter(connection, collect_signal, pending, pending_unref);
+    gboolean handled = original(context, keyval, keycode, state);
+    /* The reply is a barrier for preceding signals on this connection. */
+    g_mutex_lock(&pending->mutex);
+    GPtrArray *messages = pending->messages;
+    pending->messages = NULL;
+    g_mutex_unlock(&pending->mutex);
+    g_dbus_connection_remove_filter(connection, filter);
+    for (guint i = 0; i < messages->len; i++) {
+        GDBusMessage *message = g_ptr_array_index(messages, i);
+        const gchar *member = g_dbus_message_get_member(message);
+        GVariant *body = g_dbus_message_get_body(message);
+        if (g_strcmp0(member, "ForwardKeyEvent") == 0 &&
+            body && g_variant_is_of_type(body, G_VARIANT_TYPE("(uuu)"))) {
+            guint forwarded_key, forwarded_code, forwarded_state;
+            g_variant_get(body, "(uuu)", &forwarded_key, &forwarded_code, &forwarded_state);
+            if (forwarded_key == keyval && (forwarded_code == keycode || forwarded_code == 0)) {
+                handled = FALSE;
+                continue;
+            }
+        }
+        /* Reuse IBus's public GDBusProxy decoder for all other signals,
+         * including synthetic keys and surrounding-text edits. */
+        g_signal_emit_by_name(proxy, "g-signal", g_dbus_message_get_sender(message), member, body);
     }
-    pending.own_handler = g_signal_connect(context, "forward-key-event", G_CALLBACK(forward_key), &pending);
-    /* Pump IBus replies, but not a second keyboard event from the source
-     * currently dispatching this key. Nested key dispatch reverses native
-     * insertion order when several keys are already queued. */
-    GSource *source = g_main_current_source();
-    gboolean can_recurse = source && g_source_get_can_recurse(source);
-    if (source) {
-        g_source_ref(source);
-        g_source_set_can_recurse(source, FALSE);
-    }
-    process_async(context, keyval, keycode, state, -1, NULL, finished, &pending);
-    while (!pending.done) g_main_context_iteration(NULL, TRUE);
-    /* GDBus can complete the method before dispatching preceding signals
-     * at lower main-loop priority. Keep their handlers active through both. */
-    while (g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
-    if (source) {
-        g_source_set_can_recurse(source, can_recurse);
-        g_source_unref(source);
-    }
-    g_signal_handler_disconnect(context, pending.own_handler);
-    for (guint i = 0; i < pending.handlers->len; i++)
-        if (g_signal_handler_is_connected(context, g_array_index(pending.handlers, gulong, i)))
-            g_signal_handler_unblock(context, g_array_index(pending.handlers, gulong, i));
-    g_array_unref(pending.handlers);
-    g_object_unref(context);
-    return pending.handled && !pending.forwarded;
+    g_ptr_array_unref(messages);
+    pending_unref(pending);
+    g_object_unref(proxy);
+    return handled;
 }
