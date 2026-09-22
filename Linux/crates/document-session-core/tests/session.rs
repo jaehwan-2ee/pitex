@@ -239,3 +239,27 @@ fn wrong_baseline_never_overwrites_or_loses_either_version() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn partial_edits_preserve_unicode_revisions_and_conflicts() {
+    let session = make_session("한👩🏽‍💻 end");
+    let first = session.apply(DocumentMutation::ReplaceRange {
+        utf16_offset: 1, utf16_length: 7, text: "새".into(),
+    }, 0).unwrap();
+    assert_eq!(first.text, "한새 end");
+    assert_eq!(first.content_hash, DiskContentHash::hashing(&first.text));
+    assert_eq!(first.save_state, DocumentSaveState::Dirty);
+    assert!(matches!(session.apply(DocumentMutation::ReplaceRange {
+        utf16_offset: 0, utf16_length: 0, text: "stale".into(),
+    }, 0), Err(DocumentSessionError::StaleRevision { .. })));
+    let emoji = make_session("👩x");
+    assert!(matches!(emoji.apply(DocumentMutation::ReplaceRange {
+        utf16_offset: 1, utf16_length: 0, text: "bad".into(),
+    }, 0), Err(DocumentSessionError::InvalidRange)));
+    assert_eq!(emoji.snapshot().revision, 0);
+    assert_eq!(emoji.snapshot().text, "👩x");
+    let appended = emoji.apply(DocumentMutation::ReplaceRange {
+        utf16_offset: 3, utf16_length: 0, text: "!".into(),
+    }, 0).unwrap();
+    assert_eq!(appended.text, "👩x!");
+}

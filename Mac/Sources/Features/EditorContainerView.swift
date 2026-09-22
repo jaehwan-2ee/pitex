@@ -74,7 +74,7 @@ struct EditorContainerView: NSViewRepresentable {
         foldEngine.onChange = { [weak gutter, weak chips, weak minimap] in
             gutter?.needsDisplay = true
             chips?.needsDisplay = true
-            minimap?.needsDisplay = true
+            minimap?.invalidateContent()
         }
 
         // Bracket matching paints the translucent wash on caret movement.
@@ -154,7 +154,7 @@ struct EditorContainerView: NSViewRepresentable {
         context.coordinator.lastAppearanceKey = appearanceKey
         applyAppearance(to: scrollView)
         context.coordinator.gutter?.needsDisplay = true
-        context.coordinator.minimap?.needsDisplay = true
+        context.coordinator.minimap?.invalidateContent()
         context.coordinator.chips?.needsDisplay = true
     }
 
@@ -513,6 +513,19 @@ final class MinimapOverlayView: NSView {
     private weak var scrollView: NSScrollView?
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
     private let padding: CGFloat = 4
+    private var cachedImage: NSImage?
+    private var cachedScale: CGFloat = 0
+    private var refreshTask: Task<Void, Never>?
+
+    func invalidateContent() {
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, let self else { return }
+            cachedImage = nil
+            needsDisplay = true
+        }
+    }
 
     override var isFlipped: Bool { true }
 
@@ -528,12 +541,12 @@ final class MinimapOverlayView: NSView {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSTextStorage.didProcessEditingNotification,
             object: textView.textStorage, queue: .main
-        ) { [weak self] _ in self?.needsDisplay = true })
+        ) { [weak self] _ in self?.invalidateContent() })
         textView.postsFrameChangedNotifications = true
         observers.append(NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification,
             object: textView, queue: .main
-        ) { [weak self] _ in self?.needsDisplay = true })
+        ) { [weak self] _ in self?.invalidateContent() })
         scrollView.contentView.postsBoundsChangedNotifications = true
         observers.append(NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification,
@@ -557,7 +570,7 @@ final class MinimapOverlayView: NSView {
         let width = min(72, max(viewport.width, 0))
         frame = NSRect(x: viewport.maxX - width, y: viewport.minY,
                        width: width, height: max(viewport.height, 0))
-        needsDisplay = true
+        invalidateContent()
     }
 
     private func verticalScale() -> CGFloat {
@@ -568,20 +581,46 @@ final class MinimapOverlayView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Hidden minimaps still receive needsDisplay from text/scroll
-        // notifications; skip the O(document) row walk entirely.
-        guard !isHidden,
-              let textView, let layout = textView.layoutManager,
+        guard !isHidden, let textView, bounds.width > 0, bounds.height > 0 else { return }
+        if cachedImage == nil {
+            cachedScale = verticalScale()
+            let image = NSImage(size: bounds.size)
+            image.lockFocusFlipped(true)
+            drawDocument()
+            image.unlockFocus()
+            cachedImage = image
+            refreshTask?.cancel()
+            refreshTask = nil
+        }
+        cachedImage?.draw(in: bounds, from: .zero, operation: .sourceOver,
+                          fraction: 1, respectFlipped: true, hints: nil)
+        let scale = cachedScale
+        let visible = textView.visibleRect
+        let viewport = NSRect(x: 1, y: padding + visible.minY * scale,
+                              width: max(bounds.width - 2, 0), height: visible.height * scale)
+        NSColor.white.withAlphaComponent(0.14).setFill()
+        NSBezierPath(roundedRect: viewport, xRadius: 4, yRadius: 4).fill()
+    }
+
+    private func drawDocument() {
+        guard let textView, let layout = textView.layoutManager,
               let container = textView.textContainer, let storage = textView.textStorage else { return }
         NSColor(white: 0.5, alpha: 0.16).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-        let scale = verticalScale()
+        let scale = cachedScale
         guard scale > 0 else { return }
         let horizontalScale = max(bounds.width - 10, 0) / max(container.size.width, 1)
         let text = storage.string as NSString
         let glyphs = NSRange(location: 0, length: layout.numberOfGlyphs)
+        var lastPixel = -1
+        let pixelsPerPoint = window?.backingScaleFactor ?? 2
         layout.enumerateLineFragments(forGlyphRange: glyphs) { _, used, _, range, _ in
             guard used.height > 0 else { return } // collapsed rows
+            // Many document rows land on the same minimap pixel. Sample once
+            // per pixel instead of resolving glyph bounds thousands of times.
+            let pixel = Int((self.padding + (used.minY + textView.textContainerOrigin.y) * scale) * pixelsPerPoint)
+            guard pixel != lastPixel else { return }
+            lastPixel = pixel
             let characters = layout.characterRange(forGlyphRange: range, actualGlyphRange: nil)
             let first = text.rangeOfCharacter(from: .whitespacesAndNewlines.inverted, range: characters)
             guard first.location != NSNotFound else { return }
@@ -598,11 +637,6 @@ final class MinimapOverlayView: NSView {
                    height: max(rect.height * scale * 0.62, 0.5)).fill()
         }
 
-        let visible = textView.visibleRect
-        let viewport = NSRect(x: 1, y: padding + visible.minY * scale,
-                              width: max(bounds.width - 2, 0), height: visible.height * scale)
-        NSColor.white.withAlphaComponent(0.14).setFill()
-        NSBezierPath(roundedRect: viewport, xRadius: 4, yRadius: 4).fill()
     }
 
     override func mouseDown(with event: NSEvent) { scroll(to: event) }

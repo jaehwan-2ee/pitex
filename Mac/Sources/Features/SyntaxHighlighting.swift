@@ -2,6 +2,55 @@ import AppKit
 import EditorMacAdapter
 import LanguageCore
 
+/// A text storage owns one analysis; coloring and folding share its tokens
+/// and line offsets until the next character edit. Attribute edits keep it valid.
+@MainActor
+final class EditorAnalysis {
+    private static let entries = NSMapTable<NSTextStorage, EditorAnalysis>(keyOptions: [.weakMemory, .objectPointerPersonality],
+                                                                          valueOptions: .strongMemory)
+    static func shared(for storage: NSTextStorage) -> EditorAnalysis {
+        if let value = entries.object(forKey: storage) { return value }
+        let value = EditorAnalysis(storage)
+        entries.setObject(value, forKey: storage)
+        return value
+    }
+    private weak var storage: NSTextStorage?
+    private var cachedTokens: [LanguageToken]?
+    private var dialect: TeXDialect?
+    private var cachedStarts: [Int]?
+    nonisolated(unsafe) private var observer: NSObjectProtocol?
+
+    private init(_ storage: NSTextStorage) {
+        self.storage = storage
+        observer = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification,
+            object: storage, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated {
+                guard let storage = notification.object as? NSTextStorage,
+                      storage.editedMask.contains(.editedCharacters) else { return }
+                self?.cachedTokens = nil
+                self?.cachedStarts = nil
+            }
+        }
+    }
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    func tokens(for dialect: TeXDialect) -> [LanguageToken] {
+        if cachedTokens == nil || self.dialect != dialect {
+            cachedTokens = DeterministicTeXLexer.tokenize(storage?.string ?? "", dialect: dialect)
+            self.dialect = dialect
+        }
+        return cachedTokens ?? []
+    }
+    var lineStarts: [Int] {
+        if let cachedStarts { return cachedStarts }
+        let text = (storage?.string ?? "") as NSString
+        var starts = [0]
+        for index in 0..<text.length where text.character(at: index) == 10 { starts.append(index + 1) }
+        cachedStarts = starts
+        return starts
+    }
+}
+
 /// Applies deterministic LaTeX/BibTeX token coloring to the editor's text
 /// storage. Attribute-only mutations never produce textDidChange callbacks, so
 /// rehighlighting cannot recurse or desynchronize the canonical session text.
@@ -41,7 +90,7 @@ final class SyntaxHighlighter {
         // the beginning for every token, making even small documents quadratic.
         var text = textView.string
         text.makeContiguousUTF8()
-        let tokens = DeterministicTeXLexer.tokenize(text, dialect: dialect)
+        let tokens = EditorAnalysis.shared(for: storage).tokens(for: dialect)
         let fullRange = NSRange(location: 0, length: (text as NSString).length)
 
         // Lexer ranges are ordered. Advance one scalar cursor for their

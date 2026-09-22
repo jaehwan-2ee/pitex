@@ -60,6 +60,8 @@ impl AppState {
             let _ = tx.send(WorkspaceMessage::GitRefreshed(Ok(None)));
             return;
         };
+        if self.git_refresh_pending.replace(true) { return; }
+        *self.git_refresh_root.borrow_mut() = Some(root.clone());
         std::thread::spawn(move || {
             let _ = tx.send(WorkspaceMessage::GitRefreshed(collect_git(&root)));
         });

@@ -50,7 +50,7 @@ pub enum WorkspacePhase {
 pub enum WorkspaceBuildState {
     Unavailable(String),
     Building,
-    Succeeded { pdf: Vec<u8>, log: String, hash: u64 },
+    Succeeded { pdf: Arc<[u8]>, log: String, hash: u64 },
     Failed(String),
 }
 
@@ -78,20 +78,20 @@ pub enum SidebarSection {
     BibTeX,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DocumentOutlineItem {
     pub title: String,
     pub level: usize,
     pub line: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DocumentLabelItem {
     pub name: String,
     pub line: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BibliographyItem {
     pub key: String,
     pub kind: String,
@@ -100,7 +100,7 @@ pub struct BibliographyItem {
 
 /// `DocumentTodoItem` — one `% TODO:`/`% DONE:` comment collected from the
 /// project's .tex files.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DocumentTodoItem {
     /// Project-relative path (like `BibliographyItem.file`).
     pub file: String,
@@ -184,6 +184,8 @@ impl std::fmt::Display for WorkspaceBuildError {
 /// Messages produced on background threads; the GTK layer drains them on the
 /// main loop and calls the matching `apply_*` method.
 pub enum WorkspaceMessage {
+    PdfLoaded { hash: u64, info: Option<crate::pdf::PdfInfo> },
+    PdfRendered { key: u64, raster: crate::pdf::RenderedPage },
     BuildEvent(BuildEvent),
     BuildFinished {
         outcome: Result<BuildOutcome, String>,
@@ -220,6 +222,8 @@ pub struct GitRefresh {
 impl std::fmt::Debug for WorkspaceMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::PdfLoaded { .. } => write!(f, "PdfLoaded"),
+            Self::PdfRendered { .. } => write!(f, "PdfRendered"),
             Self::BuildEvent(_) => write!(f, "BuildEvent"),
             Self::BuildFinished { .. } => write!(f, "BuildFinished"),
             Self::ForwardResult(_) => write!(f, "ForwardResult"),
@@ -760,6 +764,7 @@ pub struct WorkspaceModel {
     /// Bumped by `refresh_structure_with` — the sidebar rebuilds its lists
     /// only when this changes instead of on every refresh_sidebar call.
     pub structure_revision: u64,
+    cached_word_count: usize,
     /// Bumped when `project_files`/`project_children`/the build target
     /// change — the sidebar's file tree rebuilds only on a bump.
     pub files_revision: u64,
@@ -861,6 +866,7 @@ impl WorkspaceModel {
             label_scan_cache: HashMap::new(),
             bibliography_cache_key: None,
             structure_revision: 0,
+            cached_word_count: 0,
             files_revision: 0,
             read_write: true,
             files: PlatformFileCapabilityBroker::new(),
@@ -1654,14 +1660,16 @@ impl WorkspaceModel {
     fn refresh_structure_with(&mut self, bib: Option<Vec<BibliographyItem>>) {
         // Parse from a borrow — cloning the whole document per refresh was
         // an O(doc) alloc on every structure update.
-        let (outline, labels) = {
+        let (outline, labels, count) = {
             let text = self
                 .document_snapshot
                 .as_ref()
                 .map(|s| s.text.as_str())
                 .unwrap_or_default();
-            (Self::parse_outline(text), Self::parse_labels(text))
+            (Self::parse_outline(text), Self::parse_labels(text),
+             text.split(|c| c == ' ' || c == '\n' || c == '\t').filter(|w| !w.is_empty()).count())
         };
+        self.cached_word_count = count;
         self.outline_items = outline;
         self.label_items = labels;
         if let Some(items) = bib {
@@ -2404,7 +2412,7 @@ impl WorkspaceModel {
                         data.hash(&mut h);
                         h.finish()
                     },
-                    pdf: data,
+                    pdf: data.into(),
                     log: self.build_log_text.clone(),
                 };
                 self.refresh_synctex_binding(pdf);
@@ -2914,7 +2922,7 @@ impl WorkspaceModel {
                                 pdf.hash(&mut h);
                                 h.finish()
                             },
-                            pdf,
+                            pdf: pdf.into(),
                             log: self.build_log_text.clone(),
                         };
                         self.latest_built_pdf_name = Some(output_pdf.to_string());
@@ -3074,7 +3082,7 @@ impl WorkspaceModel {
             .as_ref()
             .map(|s| s.path.raw_value().to_string());
         context.active_text = self.document_snapshot.as_ref().map(|s| s.text.clone());
-        if let Some(text) = self.document_snapshot.as_ref().map(|s| s.text.clone()) {
+        if let Some(text) = self.document_snapshot.as_ref().map(|s| &s.text) {
             let (loc, len) = self.editor_selection;
             if len > 0 && loc + len <= utf16_len(&text) {
                 let (b0, b1) = utf16_range_to_bytes(&text, loc, len);
@@ -3111,8 +3119,11 @@ impl WorkspaceModel {
             .map(|s| (s.revision, s.path.raw_value()))
             .hash(&mut h);
         self.editor_selection.hash(&mut h);
-        self.project_files.hash(&mut h);
+        self.files_revision.hash(&mut h);
         self.latest_built_pdf_name.hash(&mut h);
+        if let WorkspaceBuildState::Succeeded { hash, .. } = &self.build_state {
+            hash.hash(&mut h);
+        }
         h.finish()
     }
 
@@ -3161,15 +3172,7 @@ impl WorkspaceModel {
 
     // ── Word count / footer ──
     pub fn word_count(&self) -> usize {
-        self.document_snapshot
-            .as_ref()
-            .map(|s| {
-                s.text
-                    .split(|c| c == ' ' || c == '\n' || c == '\t')
-                    .filter(|w| !w.is_empty())
-                    .count()
-            })
-            .unwrap_or(0)
+        if self.document_snapshot.is_some() { self.cached_word_count } else { 0 }
     }
     pub fn active_document_relative_path(&self) -> Option<String> {
         let url = self.active_document_url.as_ref()?;
@@ -3205,6 +3208,7 @@ impl WorkspaceModel {
     ) -> Result<Vec<PathBuf>, WorkspaceOpenError> {
         let scan_root = root.to_path_buf();
         let mut files = Vec::new();
+        let mut seen = HashSet::new();
         let mut stack = vec![scan_root];
         while let Some(dir) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -3235,7 +3239,7 @@ impl WorkspaceModel {
                         // dedupe canonical paths already listed.
                         let resolved = standardize(path);
                         if Self::relative_path(&resolved, root).is_ok()
-                            && !files.contains(&resolved)
+                            && seen.insert(resolved.clone())
                         {
                             files.push(resolved);
                         }

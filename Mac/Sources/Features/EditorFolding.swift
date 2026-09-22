@@ -53,9 +53,8 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
         }
     }
     nonisolated(unsafe) private var observer: NSObjectProtocol?
-    /// Coalesces didChange bursts: one recompute per runloop turn instead of
-    /// one Task per notification.
-    private var recomputePending = false
+    /// Recompute after a typing pause, sharing the highlighter cadence.
+    private var recomputeTask: Task<Void, Never>?
 
     func attach(to textView: NSTextView) {
         self.textView = textView
@@ -66,12 +65,12 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.recomputePending else { return }
-                self.recomputePending = true
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.recomputePending = false
-                    self.recompute()
+                guard let self, self.isEnabled else { return }
+                self.recomputeTask?.cancel()
+                self.recomputeTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(120))
+                    guard !Task.isCancelled else { return }
+                    self?.recompute()
                 }
             }
         }
@@ -79,6 +78,8 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
     }
 
     func detach() {
+        recomputeTask?.cancel()
+        recomputeTask = nil
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
         // Unhide everything before relinquishing the delegate so no stale
@@ -97,11 +98,12 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
     /// Re-scans the document for foldable regions. Folded state is carried
     /// over by signature so unrelated edits do not reopen folded regions.
     func recompute() {
-        guard let textView else { return }
+        guard isEnabled, let textView else { return }
         let text = textView.string as NSString
-        lineStarts = Self.computeLineStarts(text)
+        let analysis = textView.textStorage.map { EditorAnalysis.shared(for: $0) }
+        lineStarts = analysis?.lineStarts ?? Self.computeLineStarts(text)
         let previous = Set(regions.filter(\.folded).map(\.signature))
-        regions = Self.findRegions(text: text, lineStarts: lineStarts)
+        regions = Self.findRegions(text: text, lineStarts: lineStarts, tokens: analysis?.tokens(for: .latex))
         for index in regions.indices {
             if previous.contains(regions[index].signature) {
                 regions[index].folded = true
@@ -121,7 +123,7 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
 
     /// Token-level scan: pairs \begin{X}/\end{X} by name and folds section
     /// commands through the line before the next same-level-or-higher one.
-    static func findRegions(text: NSString, lineStarts: [Int]) -> [FoldRegion] {
+    static func findRegions(text: NSString, lineStarts: [Int], tokens suppliedTokens: [LanguageToken]? = nil) -> [FoldRegion] {
         func lineIndex(forChar location: Int) -> Int {
             var lo = 0, hi = lineStarts.count - 1
             while lo < hi {
@@ -133,7 +135,7 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
 
         var source = text as String
         source.makeContiguousUTF8()
-        let tokens = DeterministicTeXLexer.tokenize(source, dialect: .latex)
+        let tokens = suppliedTokens ?? DeterministicTeXLexer.tokenize(source, dialect: .latex)
 
         let sectionLevels: [String: Int] = [
             "part": 0, "chapter": 1, "section": 2,

@@ -115,6 +115,7 @@ final class AgentCoordinator: ObservableObject {
     /// A manually dismissed attachment — the same range must not re-attach
     /// until the user makes a different selection.
     private var suppressedAttachment: AgentSelectionAttachment?
+    private var pdfTextCache: (data: Data, text: String?)?
 
     /// Called by the workspace whenever the editor selection changes.
     /// A new non-empty range attaches automatically; a collapsed caret or a
@@ -364,7 +365,7 @@ final class AgentCoordinator: ObservableObject {
             }
             // Slash commands go raw so pi expands /skill:name and extension
             // commands itself; the editor-context envelope is for prose.
-            let message = trimmed.hasPrefix("/") ? trimmed : envelope(for: trimmed)
+            let message = trimmed.hasPrefix("/") ? trimmed : await envelope(for: trimmed)
             do {
                 let behavior = isRunning ? "followUp" : nil
                 try process.send(.prompt(message: message, streamingBehavior: behavior))
@@ -745,7 +746,7 @@ final class AgentCoordinator: ObservableObject {
 
     /// Every prompt carries the live editor context so the agent can act on
     /// the current document without the user having to restate it.
-    private func envelope(for prompt: String) -> String {
+    private func envelope(for prompt: String) async -> String {
         let context = contextProvider()
         var parts: [String] = [
             "<editor-context>",
@@ -768,7 +769,7 @@ final class AgentCoordinator: ObservableObject {
             parts.append("Project source files: \(context.projectFiles.joined(separator: ", "))")
         }
         if let pdfData = context.pdfData,
-           let pdfText = Self.extractPDFText(pdfData),
+           let pdfText = await cachedPDFText(pdfData),
            !pdfText.isEmpty {
             let label = context.pdfPath ?? "the built PDF preview"
             parts.append("Text extracted from \(label):\n```\n\(bounded(pdfText, limit: 48_000))\n```")
@@ -779,7 +780,16 @@ final class AgentCoordinator: ObservableObject {
         return parts.joined(separator: "\n")
     }
 
-    private static func extractPDFText(_ data: Data) -> String? {
+    private func cachedPDFText(_ data: Data) async -> String? {
+        if let cache = pdfTextCache, cache.data == data { return cache.text }
+        let text = await Task.detached(priority: .userInitiated) {
+            Self.extractPDFText(data)
+        }.value
+        pdfTextCache = (data, text)
+        return text
+    }
+
+    nonisolated private static func extractPDFText(_ data: Data) -> String? {
         guard let document = PDFDocument(data: data) else { return nil }
         return document.string
     }

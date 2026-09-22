@@ -143,6 +143,20 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         sessionTextView.sessionUndoManager
     }
 
+    private var pendingNativeMutation: DocumentMutation?
+
+    public func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange,
+                         replacementString: String?) -> Bool {
+        if !isApplyingSessionSnapshot, !isSubmitting, let replacementString {
+            pendingNativeMutation = DocumentMutation(baseRevision: committed.revision,
+                range: DocumentTextRange(location: range.location, length: range.length),
+                replacement: replacementString)
+        } else {
+            pendingNativeMutation = nil
+        }
+        return true
+    }
+
     public func textDidChange(_ notification: Notification) {
         guard !isApplyingSessionSnapshot else { return }
         desiredText = textView.string
@@ -203,11 +217,12 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         guard !isSubmitting, desiredText != committed.text else { return }
         isSubmitting = true
         let submittedText = desiredText
-        let mutation = DocumentMutation(
+        let mutation = pendingNativeMutation ?? DocumentMutation(
             baseRevision: committed.revision,
             range: DocumentTextRange(location: 0, length: committed.text.utf16.count),
             replacement: submittedText
         )
+        pendingNativeMutation = nil
         let session = self.session
 
         Task { @MainActor [weak self, session] in
@@ -233,6 +248,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     }
 
     private func apply(_ snapshot: DocumentSnapshot) {
+        pendingNativeMutation = nil
         committed = snapshot
         desiredText = snapshot.text
         guard textView.string != snapshot.text else { return }

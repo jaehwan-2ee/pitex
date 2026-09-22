@@ -63,10 +63,22 @@ pub struct SyncTeXBinding {
     pub source_paths: HashMap<String, PathBuf>,
 }
 
+#[cfg(unix)]
+type FileStamp = (u64, u64, u64, i64, i64, i64, i64);
+
+#[cfg(unix)]
+fn file_stamp(path: &Path) -> Result<FileStamp, SyncTeXSupportError> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(path).map_err(|_| SyncTeXSupportError::MissingMetadata)?;
+    Ok((m.dev(), m.ino(), m.len(), m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec()))
+}
+
 /// `SyncTeXRunner` — resolves the tool once, runs queries, normalizes output.
 pub struct SyncTeXRunner {
     runner: ProcessRunner,
     tool_path: Mutex<Option<String>>,
+    #[cfg(unix)]
+    digest_cache: Mutex<HashMap<PathBuf, (FileStamp, String)>>,
 }
 impl SyncTeXRunner {
     const ALLOWED_FIELDS: [&'static str; 11] = [
@@ -77,6 +89,8 @@ impl SyncTeXRunner {
         Self {
             runner: ProcessRunner::default(),
             tool_path: Mutex::new(None),
+            #[cfg(unix)]
+            digest_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -91,10 +105,10 @@ impl SyncTeXRunner {
         self.resolved_tool()?;
         let root = standardize(project_root.to_path_buf());
         let pdf = standardize(pdf_url.to_path_buf());
-        let pdf_data =
-            std::fs::read(&pdf).map_err(|_| SyncTeXSupportError::MissingMetadata)?;
-        let output_hash = sha256_hex(&pdf_data);
-        let fingerprint = Self::synctex_fingerprint(&pdf)?;
+        #[cfg(unix)]
+        self.digest_cache.lock().unwrap().clear();
+        let output_hash = self.file_digest(&pdf)?;
+        let fingerprint = self.synctex_fingerprint(&pdf)?;
         let plain = pdf.with_extension("synctex");
         let gz = pdf.with_extension("synctex.gz");
         let metadata: Vec<u8> = if gz.exists() {
@@ -177,7 +191,7 @@ impl SyncTeXRunner {
     ) -> Result<SyncTeXQueryCandidate, SyncTeXSupportError> {
         let synctex = self.resolved_tool()?;
         let resolved_source = standardize(source_url.to_path_buf());
-        Self::validate(binding)?;
+        self.validate(binding)?;
         let input_path = binding
             .source_paths
             .iter()
@@ -215,7 +229,7 @@ impl SyncTeXRunner {
                 None,
             )
             .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
-        Self::validate(binding)?;
+        self.validate(binding)?;
         let normalized = Self::normalize(
             &String::from_utf8_lossy(&result.standard_output),
             &[
@@ -270,7 +284,7 @@ impl SyncTeXRunner {
         point: &PDFPoint,
     ) -> Result<SyncTeXQueryCandidate, SyncTeXSupportError> {
         let synctex = self.resolved_tool()?;
-        Self::validate(binding)?;
+        self.validate(binding)?;
         let pdf_dir = binding
             .pdf_url
             .parent()
@@ -305,7 +319,7 @@ impl SyncTeXRunner {
                 None,
             )
             .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
-        Self::validate(binding)?;
+        self.validate(binding)?;
         let normalized = Self::normalize(
             &String::from_utf8_lossy(&result.standard_output),
             &[
@@ -352,12 +366,11 @@ impl SyncTeXRunner {
 
     /// `validate` — the fingerprint and the PDF bytes must still match the
     /// bound artifacts or every query result is stale.
-    fn validate(binding: &SyncTeXBinding) -> Result<(), SyncTeXSupportError> {
-        let fingerprint = Self::synctex_fingerprint(&binding.pdf_url)
+    fn validate(&self, binding: &SyncTeXBinding) -> Result<(), SyncTeXSupportError> {
+        let fingerprint = self.synctex_fingerprint(&binding.pdf_url)
             .map_err(|_| SyncTeXSupportError::StaleResult)?;
-        let data =
-            std::fs::read(&binding.pdf_url).map_err(|_| SyncTeXSupportError::StaleResult)?;
-        if fingerprint != binding.revision.fingerprint || sha256_hex(&data) != binding.output_hash
+        let digest = self.file_digest(&binding.pdf_url).map_err(|_| SyncTeXSupportError::StaleResult)?;
+        if fingerprint != binding.revision.fingerprint || digest != binding.output_hash
         {
             return Err(SyncTeXSupportError::StaleResult);
         }
@@ -471,19 +484,29 @@ impl SyncTeXRunner {
     }
 
     /// First 8 SHA-256 bytes of the `.synctex(.gz)` file next to the PDF.
-    fn synctex_fingerprint(pdf_url: &Path) -> Result<u64, SyncTeXSupportError> {
+    fn synctex_fingerprint(&self, pdf_url: &Path) -> Result<u64, SyncTeXSupportError> {
         let gz = pdf_url.with_extension("synctex.gz");
         let plain = pdf_url.with_extension("synctex");
         let metadata = if gz.exists() { gz } else { plain };
-        let data =
-            std::fs::read(&metadata).map_err(|_| SyncTeXSupportError::MissingMetadata)?;
-        if data.is_empty() {
-            return Err(SyncTeXSupportError::MissingMetadata);
+        let digest = self.file_digest(&metadata)?;
+        u64::from_str_radix(&digest[..16], 16).map_err(|_| SyncTeXSupportError::MissingMetadata)
+    }
+
+    fn file_digest(&self, path: &Path) -> Result<String, SyncTeXSupportError> {
+        #[cfg(unix)]
+        let before = file_stamp(path)?;
+        #[cfg(unix)]
+        if let Some((stamp, digest)) = self.digest_cache.lock().unwrap().get(path) {
+            if *stamp == before { return Ok(digest.clone()); }
         }
-        let digest = tex_domain::sha256(&data);
-        Ok(digest[..8]
-            .iter()
-            .fold(0u64, |acc, b| (acc << 8) | u64::from(*b)))
+        let data = std::fs::read(path).map_err(|_| SyncTeXSupportError::MissingMetadata)?;
+        if data.is_empty() { return Err(SyncTeXSupportError::MissingMetadata); }
+        let digest = sha256_hex(&data);
+        #[cfg(unix)] {
+            if file_stamp(path)? != before { return Err(SyncTeXSupportError::StaleResult); }
+            self.digest_cache.lock().unwrap().insert(path.to_path_buf(), (before, digest.clone()));
+        }
+        Ok(digest)
     }
 
     /// Tool resolution: fixed candidates, then `env synctex --version` probe.
@@ -585,4 +608,24 @@ fn sha256_hex(data: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+#[cfg(all(test, unix))]
+mod digest_cache_tests {
+    use super::*;
+    #[test]
+    fn digest_cache_detects_same_size_edits_with_restored_mtime() {
+        let path = std::env::temp_dir().join(format!("pitex-digest-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::write(&path, b"first").unwrap();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let runner = SyncTeXRunner::new();
+        let original = runner.file_digest(&path).unwrap();
+        assert_eq!(original, runner.file_digest(&path).unwrap());
+        std::fs::write(&path, b"other").unwrap();
+        std::fs::File::open(&path).unwrap().set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();
+        assert_ne!(original, runner.file_digest(&path).unwrap());
+        std::fs::remove_file(&path).unwrap();
+        assert!(runner.file_digest(&path).is_err());
+    }
 }

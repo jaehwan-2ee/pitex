@@ -5,6 +5,7 @@
 use gtk4::prelude::*;
 use std::ffi::{c_char, c_double, c_int, c_void};
 use std::path::Path;
+use std::sync::{Arc, mpsc::{self, Sender}};
 
 // ─── poppler-glib / cairo FFI ───────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ pub struct PdfDocument {
 }
 // `raw`/`bytes` are raw pointers, so the type is `!Send`/`!Sync` by default —
 // correct, since poppler document objects are not thread-safe and this is only
-// ever touched on the GTK main thread (rendering + UI).
+// touched only on the thread that creates it. The renderer owns a worker-local copy.
 
 impl PdfDocument {
     /// Load from bytes in memory (the build stores PDF data directly).
@@ -206,12 +207,12 @@ pub fn extract_text(data: &[u8]) -> Option<String> {
 /// Wrap rendered pixels in a `gdk::Texture` (CAIRO_FORMAT_ARGB32 on
 /// little-endian = B8g8r8a8 premultiplied).
 pub fn texture_from_pixels(
-    pixels: Vec<u8>,
+    pixels: Arc<[u8]>,
     width: i32,
     height: i32,
     stride: i32,
 ) -> gtk4::gdk::Texture {
-    let bytes = gtk4::glib::Bytes::from(&pixels);
+    let bytes = gtk4::glib::Bytes::from_owned(pixels);
     gtk4::gdk::MemoryTexture::new(
         width,
         height,
@@ -220,4 +221,74 @@ pub fn texture_from_pixels(
         stride as usize,
     )
     .upcast()
+}
+
+/// Only plain metadata/pixels cross threads; each worker owns its Poppler document.
+#[derive(Clone, Debug)]
+pub struct PdfInfo { sizes: Vec<(f64, f64)> }
+impl PdfInfo {
+    pub fn page_count(&self) -> usize { self.sizes.len() }
+    pub fn page_size(&self, index: usize) -> Option<(f64, f64)> { self.sizes.get(index).copied() }
+}
+#[derive(Clone)]
+pub struct RenderedPage {
+    pub pixels: Arc<[u8]>, pub width: i32, pub height: i32, pub stride: i32,
+}
+enum RenderRequest {
+    Load(u64, Arc<[u8]>),
+    Render { hash: u64, key: u64, page: usize, scale: f64 },
+}
+pub struct PdfRenderer { sender: Sender<RenderRequest> }
+impl PdfRenderer {
+    pub fn new(sink: Sender<crate::model::WorkspaceMessage>) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut document: Option<(u64, PdfDocument)> = None;
+            let mut cache: std::collections::VecDeque<(u64, RenderedPage)> = std::collections::VecDeque::new();
+            let mut pending = None;
+            loop {
+                let mut request = match pending.take().or_else(|| receiver.recv().ok()) {
+                    Some(request) => request, None => break,
+                };
+                // Collapse consecutive zoom/page requests, preserving load boundaries.
+                if matches!(request, RenderRequest::Render { .. }) {
+                    while let Ok(next) = receiver.try_recv() {
+                        if matches!(next, RenderRequest::Load(..)) { pending = Some(next); break; }
+                        request = next;
+                    }
+                }
+                match request {
+                    RenderRequest::Load(hash, data) => {
+                        cache.clear();
+                        document = PdfDocument::from_data(&data).map(|pdf| (hash, pdf));
+                        let info = document.as_ref().map(|(_, pdf)| PdfInfo {
+                            sizes: (0..pdf.page_count()).map(|i| pdf.page_size(i).unwrap_or((612.0, 792.0))).collect(),
+                        });
+                        let _ = sink.send(crate::model::WorkspaceMessage::PdfLoaded { hash, info });
+                    }
+                    RenderRequest::Render { hash, key, page, scale } => {
+                        let Some((current, pdf)) = &document else { continue };
+                        if hash != *current { continue; }
+                        let raster = cache.iter().find(|(k, _)| *k == key).map(|(_, p)| p.clone())
+                            .or_else(|| pdf.render_page(page, scale).map(|(pixels, width, height, stride)|
+                                RenderedPage { pixels: pixels.into(), width, height, stride }));
+                        if let Some(raster) = raster {
+                            if !cache.iter().any(|(k, _)| *k == key) && raster.pixels.len() <= 32 * 1024 * 1024 {
+                                cache.push_back((key, raster.clone()));
+                                while cache.len() > 3 || cache.iter().map(|(_, p)| p.pixels.len()).sum::<usize>() > 32 * 1024 * 1024 {
+                                    cache.pop_front();
+                                }
+                            }
+                            let _ = sink.send(crate::model::WorkspaceMessage::PdfRendered { key, raster });
+                        }
+                    }
+                }
+            }
+        });
+        Self { sender }
+    }
+    pub fn load(&self, hash: u64, data: Arc<[u8]>) { let _ = self.sender.send(RenderRequest::Load(hash, data)); }
+    pub fn render(&self, hash: u64, key: u64, page: usize, scale: f64) {
+        let _ = self.sender.send(RenderRequest::Render { hash, key, page, scale });
+    }
 }

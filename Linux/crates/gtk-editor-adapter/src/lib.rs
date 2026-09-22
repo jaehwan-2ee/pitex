@@ -7,7 +7,7 @@
 //! All AppPorts/editor ranges are UTF-16 code units, like `NSRange`; GTK iters
 //! are unichar offsets, so every crossing is converted here.
 
-use app_ports::{DocumentMutation, DocumentMutationResult, DocumentSnapshot, DocumentTextRange};
+use app_ports::{DocumentMutation, DocumentMutationResult, DocumentSnapshot};
 use editor_feature::{EditorDecorationSnapshot, EditorTextRange};
 use gtk4::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -38,6 +38,7 @@ pub fn utf16_offset_to_char_offset(text: &str, utf16_offset: usize) -> usize {
 
 struct Shared {
     committed: RefCell<DocumentSnapshot>,
+    decorations: RefCell<Option<(usize, EditorDecorationSnapshot)>>,
     desired_text: RefCell<String>,
     is_submitting: Cell<bool>,
     /// Suppresses the next buffer-changed callback during programmatic apply.
@@ -108,6 +109,7 @@ impl GtkEditorAdapter {
         let snapshot = session.snapshot();
         let shared = Rc::new(Shared {
             committed: RefCell::new(snapshot.clone()),
+            decorations: RefCell::new(None),
             desired_text: RefCell::new(snapshot.text.clone()),
             is_submitting: Cell::new(false),
             suppress_change: Cell::new(false),
@@ -277,23 +279,18 @@ impl GtkEditorAdapter {
             return;
         }
         shared.is_submitting.set(true);
-        let mutation = DocumentMutation {
-            base_revision: shared.committed.borrow().revision,
-            range: DocumentTextRange {
-                location: 0,
-                length: shared.committed.borrow().text.encode_utf16().count(),
-            },
-            replacement: shared.desired_text.borrow().clone(),
-        };
+        let submitted_text = shared.desired_text.borrow().clone();
+        let mutation = DocumentMutation::between(
+            &shared.committed.borrow().text, &submitted_text, shared.committed.borrow().revision,
+        );
         let result = session.submit(&mutation);
         match result {
             DocumentMutationResult::Applied(snapshot) => {
-                // `submit` borrows the mutation — `replacement` is still the
-                // submitted text; no second clone needed.
-                let was_same = *shared.desired_text.borrow() == mutation.replacement;
-                shared.committed.replace(snapshot.clone());
-                if was_same && snapshot.text != mutation.replacement {
+                let was_same = *shared.desired_text.borrow() == submitted_text;
+                if was_same && snapshot.text != submitted_text {
                     Self::apply_snapshot(shared.clone(), buffer, snapshot);
+                } else {
+                    shared.committed.replace(snapshot);
                 }
             }
             DocumentMutationResult::Rejected { current } => {
@@ -316,6 +313,7 @@ impl GtkEditorAdapter {
         *shared.desired_text.borrow_mut() = snapshot.text.clone();
         if current != snapshot.text {
             shared.suppress_change.set(true);
+            shared.decorations.borrow_mut().take();
             buffer.begin_irreversible_action();
             buffer.set_text(&snapshot.text);
             buffer.end_irreversible_action();
@@ -337,6 +335,7 @@ impl GtkEditorAdapter {
         }
         let previous = self.selected_range();
         self.shared.suppress_change.set(true);
+        self.shared.decorations.borrow_mut().take();
         self.buffer.begin_irreversible_action();
         self.buffer.set_text(&snapshot.text);
         self.buffer.end_irreversible_action();
@@ -391,60 +390,51 @@ impl GtkEditorAdapter {
         if snapshot.document_revision != self.shared.committed.borrow().revision {
             return; // stale decoration revision — dropped, matching checked()
         }
-        let table = self.buffer.tag_table();
         let text = self.text();
-        // Clear previously applied decoration tags so stale ranges don't
-        // keep their color after edits shift the token boundaries.
-        let mut stale = Vec::new();
-        table.foreach(|tag| {
-            if let Some(name) = tag.name() {
-                if name.starts_with("pitex.decoration.") {
-                    stale.push(tag.clone());
+        let changed = self.shared.decorations.borrow().as_ref()
+            .map(|(len, old)| snapshot.changed_tokens(old, text.len() as i64 - *len as i64))
+            .unwrap_or(0..snapshot.decorations.len());
+        if !changed.is_empty() {
+            let decorations = &snapshot.decorations[changed];
+            let first = decorations.first().unwrap().range.utf8_offset.max(0) as usize;
+            let last = decorations.last().unwrap().range;
+            let end = (last.utf8_offset + last.utf8_length).max(0) as usize;
+            if first <= end && end <= text.len() && text.is_char_boundary(first) && text.is_char_boundary(end) {
+                let start_char = text[..first].chars().count() as i32;
+                let end_char = start_char + text[first..end].chars().count() as i32;
+                let begin = self.buffer.iter_at_offset(start_char);
+                let finish = self.buffer.iter_at_offset(end_char);
+                let table = self.buffer.tag_table();
+                table.foreach(|tag| {
+                    if tag.name().map(|n| n.starts_with("pitex.decoration.")).unwrap_or(false) {
+                        self.buffer.remove_tag(tag, &begin, &finish);
+                    }
+                });
+                let mut tags = std::collections::HashMap::new();
+                let mut chars = text[first..end].chars();
+                let (mut byte, mut offset) = (first, start_char);
+                let mut position = |target: usize| {
+                    while byte < target {
+                        let ch = chars.next()?;
+                        byte += ch.len_utf8(); offset += 1;
+                    }
+                    (byte == target).then_some(offset)
+                };
+                for decoration in decorations {
+                    let start = decoration.range.utf8_offset.max(0) as usize;
+                    let end = (decoration.range.utf8_offset + decoration.range.utf8_length).max(0) as usize;
+                    if start >= end || end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end) { continue; }
+                    let (Some(start), Some(end)) = (position(start), position(end)) else { continue; };
+                    let name = editor_feature::decoration_tag_name(&decoration.token_kind);
+                    let tag = tags.entry(name).or_insert_with(|| table.lookup(name).unwrap_or_else(|| {
+                        let tag = gtk4::TextTag::new(Some(name));
+                        table.add(&tag);
+                        tag
+                    }));
+                    self.buffer.apply_tag(&*tag, &self.buffer.iter_at_offset(start), &self.buffer.iter_at_offset(end));
                 }
             }
-        });
-        let (buf_start, buf_end) = self.buffer.bounds();
-        for tag in stale {
-            self.buffer.remove_tag(&tag, &buf_start, &buf_end);
         }
-        // char_indices() once → O(log n) lookup per token; counting chars
-        // from byte 0 per token was O(tokens × doc).
-        let byte_of_char: Vec<usize> = text.char_indices().map(|(b, _)| b)
-            .chain(std::iter::once(text.len()))
-            .collect();
-        let char_of_byte = |byte: usize| -> i32 {
-            match byte_of_char.binary_search(&byte) {
-                Ok(c) => c as i32,
-                Err(_) => -1,
-            }
-        };
-        for decoration in &snapshot.decorations {
-            let name = editor_feature::decoration_tag_name(&decoration.token_kind);
-            if table.lookup(&name).is_none() {
-                let tag = gtk4::TextTag::new(Some(&name));
-                table.add(&tag);
-            }
-            let tag = table.lookup(&name).unwrap();
-            let start_byte = decoration.range.utf8_offset.max(0) as usize;
-            let end_byte = ((decoration.range.utf8_offset + decoration.range.utf8_length)
-                .max(0) as usize)
-                .min(text.len());
-            if start_byte >= end_byte {
-                continue;
-            }
-            // `String.Index(_, within:)` parity: a range that doesn't land on
-            // scalar boundaries is dropped, never sliced mid-character.
-            if !text.is_char_boundary(start_byte) || !text.is_char_boundary(end_byte) {
-                continue;
-            }
-            let start_char = char_of_byte(start_byte);
-            let end_char = char_of_byte(end_byte);
-            if start_char < 0 || end_char < 0 {
-                continue;
-            }
-            let start = self.buffer.iter_at_offset(start_char);
-            let end = self.buffer.iter_at_offset(end_char);
-            self.buffer.apply_tag(&tag, &start, &end);
-        }
+        *self.shared.decorations.borrow_mut() = Some((text.len(), snapshot.clone()));
     }
 }

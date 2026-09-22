@@ -75,7 +75,10 @@ extension WorkspaceModel {
             clearGitHistoryState()
             return
         }
+        guard !gitRefreshInFlight else { return }
+        gitRefreshInFlight = true
         Task {
+            defer { gitRefreshInFlight = false }
             let top = await GitRunner.run(GitSupport.topLevelArgs, in: projectRoot)
             guard top.code == 0 else {
                 gitStatus = nil
@@ -89,6 +92,7 @@ extension WorkspaceModel {
             async let branchResult = GitRunner.run(GitSupport.branchArgs, in: root)
             async let logResult = GitRunner.run(GitSupport.logArgs(), in: root)
             let (status, branches, log) = await (statusResult, branchResult, logResult)
+            guard projectURL == projectRoot else { return }
             gitStatus = status.code == 0
                 ? GitSupport.parseStatus(status.stdout, root: root.path)
                 : nil

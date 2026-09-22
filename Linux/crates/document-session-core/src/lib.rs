@@ -86,6 +86,7 @@ pub struct DocumentSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DocumentMutation {
     ReplaceText(String),
+    ReplaceRange { utf16_offset: usize, utf16_length: usize, text: String },
     RecordExternalChange { observed_disk_hash: DiskContentHash },
     RecordSaveConflict { observed_disk_hash: DiskContentHash },
     CommitSave { written_disk_hash: DiskContentHash },
@@ -97,6 +98,7 @@ pub enum DocumentMutation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentSessionError {
+    InvalidRange,
     StaleRevision { expected: u64, actual: u64 },
     SavedContentHashMismatch {
         expected: DiskContentHash,
@@ -108,6 +110,7 @@ pub enum DocumentSessionError {
 impl fmt::Display for DocumentSessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRange => write!(f, "invalid UTF-16 edit range"),
             Self::StaleRevision { expected, actual } => {
                 write!(f, "stale revision (expected {expected}, actual {actual})")
             }
@@ -198,6 +201,25 @@ impl DocumentSession {
             DocumentMutation::ReplaceText(replacement) => {
                 inner.content_hash = DiskContentHash::hashing(&replacement);
                 inner.text = replacement;
+            }
+            DocumentMutation::ReplaceRange { utf16_offset, utf16_length, text } => {
+                let end = utf16_offset.checked_add(utf16_length)
+                    .ok_or(DocumentSessionError::InvalidRange)?;
+                let mut offset = 0;
+                let (mut start_byte, mut end_byte) = (None, None);
+                for (byte, ch) in inner.text.char_indices() {
+                    if offset == utf16_offset { start_byte = Some(byte); }
+                    if offset == end { end_byte = Some(byte); break; }
+                    offset += ch.len_utf16();
+                }
+                if offset == utf16_offset && start_byte.is_none() { start_byte = Some(inner.text.len()); }
+                if offset == end && end_byte.is_none() { end_byte = Some(inner.text.len()); }
+                let (Some(start), Some(end)) = (start_byte, end_byte) else {
+                    return Err(DocumentSessionError::InvalidRange);
+                };
+                if start > end { return Err(DocumentSessionError::InvalidRange); }
+                inner.text.replace_range(start..end, &text);
+                inner.content_hash = DiskContentHash::hashing(&inner.text);
             }
             DocumentMutation::RecordExternalChange { observed_disk_hash } => {
                 if observed_disk_hash != inner.disk_baseline_hash && inner.conflict.is_none() {

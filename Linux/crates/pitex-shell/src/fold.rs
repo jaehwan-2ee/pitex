@@ -10,16 +10,16 @@
 
 use gtk4::prelude::*;
 use gtk4::glib;
-use language_core::TeXDialect;
+use language_core::{DeterministicTeXLexer, LanguageToken, TeXDialect};
 use sourceview5::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 
-use editor_feature::fold::{compute_line_starts, find_regions, FoldRegion};
+use editor_feature::fold::{compute_line_starts, find_regions_with_tokens, FoldRegion};
 
 const FOLD_TAG: &str = "pitex.fold.hidden";
-const RECOMPUTE_DEBOUNCE_MS: u64 = 120;
+const RECOMPUTE_DEBOUNCE_MS: u64 = 160;
 
 /// The fold engine bound to one `sourceview5::View`/`Buffer` pair —
 /// `FoldEngine` + `FoldChipOverlayView` in one GTK-native unit. Recomputes
@@ -200,7 +200,7 @@ impl FoldEngine {
     }
 
     fn schedule_recompute(&self) {
-        if self.recompute_pending.replace(true) {
+        if !self.enabled.get() || self.recompute_pending.replace(true) {
             return;
         }
         let weak = self.self_weak.borrow().clone();
@@ -208,8 +208,7 @@ impl FoldEngine {
             std::time::Duration::from_millis(RECOMPUTE_DEBOUNCE_MS),
             move || {
                 if let Some(engine) = weak.upgrade() {
-                    engine.recompute_pending.set(false);
-                    engine.recompute();
+                    if engine.recompute_pending.replace(false) { engine.recompute(); }
                 }
             },
         );
@@ -217,7 +216,15 @@ impl FoldEngine {
 
     /// `recompute()` — rescan regions, restore folded state by signature.
     pub fn recompute(&self) {
+        if !self.enabled.get() { return; }
         let text = self.buffer_text();
+        let tokens = DeterministicTeXLexer::tokenize(&text, self.dialect);
+        self.recompute_with_tokens(&text, &tokens);
+    }
+
+    pub fn recompute_with_tokens(&self, text: &str, tokens: &[LanguageToken]) {
+        self.recompute_pending.set(false);
+        if !self.enabled.get() { return; }
         let starts = compute_line_starts(&text);
         let previous: Vec<String> = self
             .regions
@@ -226,7 +233,7 @@ impl FoldEngine {
             .filter(|r| r.folded)
             .map(|r| r.signature.clone())
             .collect();
-        let mut regions = find_regions(&text, &starts, self.dialect);
+        let mut regions = find_regions_with_tokens(text, &starts, tokens);
         for region in regions.iter_mut() {
             if previous.iter().any(|s| *s == region.signature) {
                 region.folded = true;

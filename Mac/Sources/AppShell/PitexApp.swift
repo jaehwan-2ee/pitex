@@ -58,31 +58,31 @@ enum SidebarSection: String, CaseIterable, Identifiable {
 }
 
 /// One row in the document outline (a sectioning command in the active file).
-struct DocumentOutlineItem: Identifiable, Hashable {
-    let id = UUID()
+struct DocumentOutlineItem: Identifiable, Hashable, Sendable {
+    let id: Int
     let title: String
     let level: Int
     let line: Int
 }
 
 /// One \label{…} entry in the active document.
-struct DocumentLabelItem: Identifiable, Hashable {
-    let id = UUID()
+struct DocumentLabelItem: Identifiable, Hashable, Sendable {
+    let id: Int
     let name: String
     let line: Int
 }
 
 /// One @entry{key,…} row collected from the project's .bib files.
-struct BibliographyItem: Identifiable, Hashable {
-    let id = UUID()
+struct BibliographyItem: Identifiable, Hashable, Sendable {
+    let id: String
     let key: String
     let type: String
     let file: String
 }
 
 /// One `% TODO:`/`% DONE:` comment collected from the project's .tex files.
-struct DocumentTodoItem: Identifiable, Hashable {
-    let id = UUID()
+struct DocumentTodoItem: Identifiable, Hashable, Sendable {
+    var id: String { "\(url.path)#\(line)" }
     /// Project-relative path (like `BibliographyItem.file`).
     let file: String
     let url: URL
@@ -173,6 +173,9 @@ final class WorkspaceModel: ObservableObject {
     )
     @Published var showingSettings = false
 
+    private var documentLoadGeneration = UUID()
+    var gitRefreshInFlight = false
+    @Published private(set) var wordCount = 0
     let registry = DocumentSessionRegistry()
     let settings = SettingsStore()
     let buildOrchestrator = BuildOrchestrator(executor: StreamingBuildExecutor())
@@ -401,7 +404,9 @@ final class WorkspaceModel: ObservableObject {
     func open(_ selectedURL: URL) async {
         await close()
         phase = .loading(selectedURL)
+        let generation = documentLoadGeneration
         do {
+            let (root, files, initialURL, initialText) = try await Task.detached(priority: .userInitiated) {
             let values = try selectedURL.resourceValues(forKeys: [.isDirectoryKey])
             let isDirectory = values.isDirectory == true
             // Standardize so symlinked roots (/tmp → /private/tmp) canonicalize
@@ -419,6 +424,9 @@ final class WorkspaceModel: ObservableObject {
 
             // NSOpenPanel grants immediate access. AppShell's broker then owns the durable lease.
             let initialText = try Self.readExactUTF8(initialURL)
+            return (root, files, initialURL, initialText)
+            }.value
+            guard documentLoadGeneration == generation else { return }
             let relativePath = try Self.relativePath(for: initialURL, root: root)
             let file = ProjectFile(
                 documentID: try StableDocumentID(rawValue: Self.documentID(for: relativePath.rawValue)),
@@ -515,7 +523,12 @@ final class WorkspaceModel: ObservableObject {
         // Keep the workspace mounted when switching sources: a loading phase
         // destroys the split view and PDF view, losing their size and position.
         do {
-            let text = try Self.readExactUTF8(url)
+            let generation = UUID()
+            documentLoadGeneration = generation
+            let text = try await Task.detached(priority: .userInitiated) {
+                try Self.readExactUTF8(url)
+            }.value
+            guard documentLoadGeneration == generation, projectURL == root else { return }
             let relativePath = try Self.relativePath(for: url, root: root)
             let file = ProjectFile(
                 documentID: try StableDocumentID(rawValue: Self.documentID(for: relativePath.rawValue)),
@@ -535,6 +548,7 @@ final class WorkspaceModel: ObservableObject {
             }
             let appEnvironment = try await AppShell.make(documentSession: port)
             let snapshot = await session.snapshot()
+            guard documentLoadGeneration == generation, projectURL == root else { return }
             environment = appEnvironment
             activeDocumentURL = url
             if !openDocuments.contains(url) { openDocuments.append(url) }
@@ -679,6 +693,8 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func close() async {
+        documentLoadGeneration = UUID()
+        wordCount = 0
         for url in fileWatchers.keys { stopWatcher(for: url) }
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
@@ -1191,12 +1207,26 @@ final class WorkspaceModel: ObservableObject {
     /// Rebuilds the Outline / Labels / BibTeX / TODOs sidebar data from the
     /// active document text, the project's .bib files, and its .tex files.
     private func refreshStructure() {
-        let text = documentSnapshot?.text ?? ""
-        outlineItems = Self.parseOutline(text)
-        labelItems = Self.parseLabels(text)
-        refreshBibliography()
-        refreshTodos()
-        refreshCompletionKeys(text: text)
+        let snapshot = documentSnapshot
+        let root = projectURL
+        let text = snapshot?.text ?? ""
+        Task { @MainActor [weak self] in
+            let (outline, labels, count) = await Task.detached(priority: .userInitiated) {
+                let starts = Self.lineStartOffsets(text as NSString)
+                return (Self.parseOutline(text, lineStarts: starts),
+                        Self.parseLabels(text, lineStarts: starts),
+                        text.split { $0 == " " || $0 == "\n" || $0 == "\t" }.count)
+            }.value
+            guard let self, projectURL == root,
+                  documentSnapshot?.documentID == snapshot?.documentID,
+                  documentSnapshot?.revision == snapshot?.revision else { return }
+            if outlineItems != outline { outlineItems = outline }
+            if labelItems != labels { labelItems = labels }
+            if wordCount != count { wordCount = count }
+            refreshBibliography()
+            refreshTodos()
+            refreshCompletionKeys(text: text)
+        }
     }
 
     /// Completion key sets: labels merge every project .tex file
@@ -1209,13 +1239,13 @@ final class WorkspaceModel: ObservableObject {
         if activeIsTex {
             labels.formUnion(labelItems.map(\.name))
         }
-        projectLabels = labels
+        if projectLabels != labels { projectLabels = labels }
 
         var citations = Set(bibliographyItems.map(\.key))
         if activeDocumentURL?.pathExtension.lowercased() == "bib" {
             citations.formUnion(Self.parseBibliographyKeys(text))
         }
-        citationKeys = citations
+        if citationKeys != citations { citationKeys = citations }
     }
 
     /// mtime-keyed cache on the same contract as `bibliographyCache` —
@@ -1296,12 +1326,12 @@ final class WorkspaceModel: ObservableObject {
             return "\(file.path)#\(modified)"
         }
         if let cache = bibliographyCache, cache.key == key {
-            bibliographyItems = cache.items
+            if bibliographyItems != cache.items { bibliographyItems = cache.items }
             return
         }
         let items = Self.parseBibliography(files: files, root: projectURL)
         bibliographyCache = (key, items)
-        bibliographyItems = items
+        if bibliographyItems != items { bibliographyItems = items }
     }
 
     /// The active file's todos parse from the live snapshot (keyed by
@@ -1337,7 +1367,7 @@ final class WorkspaceModel: ObservableObject {
         }
         let alive = Set(texFiles)
         todoCache = todoCache.filter { alive.contains($0.key) }
-        todoItems = items
+        if todoItems != items { todoItems = items }
     }
 
     // MARK: - TODO sidebar
@@ -1529,25 +1559,29 @@ final class WorkspaceModel: ObservableObject {
 
     /// Re-enumerates the project tree (sidebar rescan button).
     func rescanProject() {
-        guard let root = projectURL,
-              let discovered = try? Self.discoverTexFiles(root: root, selected: root, isDirectory: true)
-        else { return }
-        projectFiles = discovered
-        refreshBuildTarget()
-        refreshStructure()
+        guard let root = projectURL else { return }
+        Task { @MainActor [weak self] in
+            let discovered = try? await Task.detached(priority: .utility) {
+                try Self.discoverTexFiles(root: root, selected: root, isDirectory: true)
+            }.value
+            guard let self, projectURL == root, let discovered else { return }
+            projectFiles = discovered
+            refreshBuildTarget()
+            refreshStructure()
+        }
     }
 
-    private static let outlineRegex = try? NSRegularExpression(
+    nonisolated private static let outlineRegex = try? NSRegularExpression(
         pattern: #"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}"#
     )
-    private static let labelRegex = try? NSRegularExpression(pattern: #"\\label\{([^}]*)\}"#)
+    nonisolated private static let labelRegex = try? NSRegularExpression(pattern: #"\\label\{([^}]*)\}"#)
     private static let bibliographyRegex = try? NSRegularExpression(
         pattern: #"@([A-Za-z]+)\s*\{\s*([^,\s]+)"#
     )
 
     /// UTF-16 offsets of every line start, built in one pass. Line numbers
     /// are then a binary search instead of a rescan from offset 0 per match.
-    private static func lineStartOffsets(_ text: NSString) -> [Int] {
+    nonisolated private static func lineStartOffsets(_ text: NSString) -> [Int] {
         var starts = [0]
         for index in 0..<text.length where text.character(at: index) == 0x0A {
             starts.append(index + 1)
@@ -1557,7 +1591,7 @@ final class WorkspaceModel: ObservableObject {
 
     /// 1-based line containing `location` — the count of '\n' strictly
     /// before it, plus one.
-    private static func lineNumber(at location: Int, lineStarts: [Int]) -> Int {
+    nonisolated private static func lineNumber(at location: Int, lineStarts: [Int]) -> Int {
         var lo = 0, hi = lineStarts.count - 1
         while lo < hi {
             let mid = (lo + hi + 1) / 2
@@ -1566,29 +1600,29 @@ final class WorkspaceModel: ObservableObject {
         return lo + 1
     }
 
-    static func parseOutline(_ text: String) -> [DocumentOutlineItem] {
+    nonisolated static func parseOutline(_ text: String, lineStarts suppliedStarts: [Int]? = nil) -> [DocumentOutlineItem] {
         guard let regex = outlineRegex else { return [] }
         let nsText = text as NSString
-        let lineStarts = lineStartOffsets(nsText)
+        let lineStarts = suppliedStarts ?? lineStartOffsets(nsText)
         let levels = ["part": 0, "chapter": 1, "section": 2, "subsection": 3, "subsubsection": 4, "paragraph": 5]
         return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map { match in
             let name = nsText.substring(with: match.range(at: 1)).lowercased()
             let title = nsText.substring(with: match.range(at: 2))
             return DocumentOutlineItem(
-                title: title,
+                id: match.range.location, title: title,
                 level: levels[name] ?? 2,
                 line: lineNumber(at: match.range.location, lineStarts: lineStarts)
             )
         }
     }
 
-    static func parseLabels(_ text: String) -> [DocumentLabelItem] {
+    nonisolated static func parseLabels(_ text: String, lineStarts suppliedStarts: [Int]? = nil) -> [DocumentLabelItem] {
         guard let regex = labelRegex else { return [] }
         let nsText = text as NSString
-        let lineStarts = lineStartOffsets(nsText)
+        let lineStarts = suppliedStarts ?? lineStartOffsets(nsText)
         return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map { match in
             DocumentLabelItem(
-                name: nsText.substring(with: match.range(at: 1)),
+                id: match.range.location, name: nsText.substring(with: match.range(at: 1)),
                 line: lineNumber(at: match.range.location, lineStarts: lineStarts)
             )
         }
@@ -1630,7 +1664,7 @@ final class WorkspaceModel: ObservableObject {
             let name = (try? relativePath(for: file, root: root ?? file.deletingLastPathComponent()).rawValue) ?? file.lastPathComponent
             for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
                 items.append(BibliographyItem(
-                    key: nsText.substring(with: match.range(at: 2)),
+                    id: "\(file.path)#\(match.range.location)", key: nsText.substring(with: match.range(at: 2)),
                     type: nsText.substring(with: match.range(at: 1)).lowercased(),
                     file: name
                 ))
@@ -1756,12 +1790,6 @@ final class WorkspaceModel: ObservableObject {
         return try? Self.relativePath(for: url, root: root).rawValue
     }
 
-    /// Word count for the editor footer (whitespace-separated tokens).
-    var wordCount: Int {
-        guard let text = documentSnapshot?.text else { return 0 }
-        return text.split { $0 == " " || $0 == "\n" || $0 == "\t" }.count
-    }
-
     /// Build → Clean: removes generated artifacts for the current target.
     func cleanBuildArtifacts() {
         guard let root = projectURL, let relative = buildSourceRelativePath() else { return }
@@ -1780,7 +1808,7 @@ final class WorkspaceModel: ObservableObject {
     /// `discoverTexFiles`' whitelist — sources plus the figure formats the
     /// project tree lists. Build artifacts (aux/log/out/…/synctex.gz) stay
     /// hidden by omission; .pdf stays in because papers use PDF figures.
-    static let projectFileExtensions: Set<String> = [
+    nonisolated static let projectFileExtensions: Set<String> = [
         "tex", "bib",
         "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff", "bmp", "webp",
     ]
@@ -1790,7 +1818,7 @@ final class WorkspaceModel: ObservableObject {
         ["tex", "bib"].contains(url.pathExtension.lowercased())
     }
 
-    static func discoverTexFiles(
+    nonisolated static func discoverTexFiles(
         root: URL,
         selected: URL,
         isDirectory: Bool
@@ -1822,7 +1850,7 @@ final class WorkspaceModel: ObservableObject {
         return try NormalizedRelativePath(rawValue: String(filePath.dropFirst(prefix.count)))
     }
 
-    static func readExactUTF8(_ url: URL) throws -> String {
+    nonisolated static func readExactUTF8(_ url: URL) throws -> String {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         guard let text = String(data: data, encoding: .utf8) else {
             throw WorkspaceOpenError.invalidUTF8

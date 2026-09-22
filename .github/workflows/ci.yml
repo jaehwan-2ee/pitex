@@ -47,6 +47,26 @@ jobs:
       - run: swift test
         working-directory: Packages/TexApp
 
+  macos:
+    name: macOS app and native editor checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build release app
+        run: |
+          xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
+            -configuration Release -derivedDataPath build \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - name: Native editor regression checks
+        run: swift test --package-path Packages/TexApp --build-system native
+      - name: Native highlighting checks
+        run: python3 Tools/check-highlighting-performance.py
+      - name: Minimap and completion checks
+        run: python3 Tools/check-editor-performance.py
+
   rust:
     name: Rust workspace
     runs-on: ubuntu-24.04
@@ -61,6 +81,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
         working-directory: Linux
+      - name: Compare release optimization profiles
+        run: python3 Tools/check-optimization-profiles.py
 
   rust-ubuntu2204:
     name: Rust workspace (Ubuntu 22.04 compat)

@@ -7,12 +7,12 @@ use std::collections::BTreeSet;
 
 use crate::{CompletionKind, LanguageCompletion, LanguageIndex};
 
-const BACKSLASH: u16 = b'\\' as u16;
-const LBRACE: u16 = b'{' as u16;
-const LBRACKET: u16 = b'[' as u16;
-const RBRACKET: u16 = b']' as u16;
-const COMMA: u16 = b',' as u16;
-const STAR: u16 = b'*' as u16;
+const BACKSLASH: u8 = b'\\' as u8;
+const LBRACE: u8 = b'{' as u8;
+const LBRACKET: u8 = b'[' as u8;
+const RBRACKET: u8 = b']' as u8;
+const COMMA: u8 = b',' as u8;
+const STAR: u8 = b'*' as u8;
 
 /// What the caret is completing — drives which candidate list the editor
 /// shows. Mirrors `CompletionContextKind` in the Swift `LanguageCore`.
@@ -95,8 +95,14 @@ impl CompletionContextDetector {
     /// after an escaped `\\`. Only looks backwards from the caret, so an
     /// unclosed `\cite{` group still completes.
     pub fn context(source: &str, caret_utf16_offset: usize) -> Option<CompletionContext> {
-        let units: Vec<u16> = source.encode_utf16().collect();
-        let caret = caret_utf16_offset.min(units.len());
+        let units = source.as_bytes();
+        let (mut caret, mut caret_units) = (source.len(), 0);
+        for (byte, ch) in source.char_indices() {
+            if caret_units == caret_utf16_offset { caret = byte; break; }
+            if caret_units > caret_utf16_offset { return None; }
+            caret_units += ch.len_utf16();
+        }
+        if caret_units > caret_utf16_offset { return None; }
 
         // ── group contexts: `\cite{a,pre|` / `\ref{pre|` ──
         // The current key fragment is a run of key characters ending at the
@@ -130,8 +136,8 @@ impl CompletionContextDetector {
                 if let Some(kind) = kind {
                     return Some(CompletionContext {
                         kind,
-                        prefix: String::from_utf16_lossy(&units[prefix_start..caret]),
-                        prefix_utf16_offset: prefix_start,
+                        prefix: String::from_utf8_lossy(&units[prefix_start..caret]).into_owned(),
+                        prefix_utf16_offset: caret_units - (caret - prefix_start),
                     });
                 }
             }
@@ -148,8 +154,8 @@ impl CompletionContextDetector {
         {
             return Some(CompletionContext {
                 kind: CompletionContextKind::Command,
-                prefix: String::from_utf16_lossy(&units[index - 1..caret]),
-                prefix_utf16_offset: index - 1,
+                prefix: String::from_utf8_lossy(&units[index - 1..caret]).into_owned(),
+                prefix_utf16_offset: caret_units - (caret - index + 1),
             });
         }
         None
@@ -158,7 +164,7 @@ impl CompletionContextDetector {
     /// Command name ending just before `brace` (the `{` index), skipping
     /// trailing whitespace, `*`, and `[…]` optional args. Returns None when
     /// the text before the brace is not a `\name` sequence.
-    fn command_name(units: &[u16], brace: usize) -> Option<String> {
+    fn command_name(units: &[u8], brace: usize) -> Option<String> {
         let mut index = brace;
         while index > 0 && is_whitespace(units[index - 1]) {
             index -= 1;
@@ -208,27 +214,27 @@ impl CompletionContextDetector {
         {
             return None;
         }
-        Some(String::from_utf16_lossy(&units[index..name_end]))
+        Some(String::from_utf8_lossy(&units[index..name_end]).into_owned())
     }
 }
 
 /// Letters, digits and the punctuation a BibTeX/label key may contain.
-fn is_key_char(unit: u16) -> bool {
+fn is_key_char(unit: u8) -> bool {
     is_letter(unit)
         || (48..=57).contains(&unit)
-        || unit == b':' as u16
-        || unit == b'_' as u16
-        || unit == b'-' as u16
-        || unit == b'.' as u16
-        || unit == b'/' as u16
+        || unit == b':' as u8
+        || unit == b'_' as u8
+        || unit == b'-' as u8
+        || unit == b'.' as u8
+        || unit == b'/' as u8
 }
 
-fn is_letter(unit: u16) -> bool {
+fn is_letter(unit: u8) -> bool {
     (65..=90).contains(&unit) || (97..=122).contains(&unit)
 }
 
-fn is_whitespace(unit: u16) -> bool {
-    unit == b' ' as u16 || unit == b'\t' as u16 || unit == b'\n' as u16 || unit == b'\r' as u16
+fn is_whitespace(unit: u8) -> bool {
+    unit == b' ' as u8 || unit == b'\t' as u8 || unit == b'\n' as u8 || unit == b'\r' as u8
 }
 
 impl LanguageIndex {

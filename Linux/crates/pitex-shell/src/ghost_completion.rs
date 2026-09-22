@@ -325,6 +325,7 @@ impl GhostCompletionCoordinator {
             );
             let executable = locate_pi_executable_in(&tools.environment);
             let _ = tx.send((tools, executable));
+            crate::app_ui::wake_agent();
         });
     }
 
@@ -654,8 +655,10 @@ impl GhostCompletionCoordinator {
         }
         // Hard cap: a giant line still leaves the window ~6000/~2000
         // chars wide rather than exceeding the line-granular bound.
-        let window_start = window_start.max(caret_byte.saturating_sub(MAX_BEFORE));
-        let end = end.min(caret_byte + MAX_AFTER);
+        let mut window_start = window_start.max(caret_byte.saturating_sub(MAX_BEFORE));
+        let mut end = end.min(caret_byte.saturating_add(MAX_AFTER));
+        while !text.is_char_boundary(window_start) { window_start += 1; }
+        while !text.is_char_boundary(end) { end -= 1; }
         let before = &text[window_start..caret_byte];
         let after = &text[caret_byte..end];
         format!(
@@ -672,6 +675,18 @@ impl GhostCompletionCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_caps_preserve_unicode_boundaries() {
+        for text in ["한".repeat(3000), "👩🏽‍💻".repeat(1500), "e\u{301}".repeat(4000)] {
+            let prompt = GhostCompletionCoordinator::prompt("main.tex", &text, 1500);
+            let body = prompt.split("---\n").nth(1).unwrap();
+            let (before, after) = body.split_once("<CURSOR>").unwrap();
+            assert!(before.len() <= MAX_BEFORE);
+            assert!(after.len() <= MAX_AFTER);
+            assert!(!body.contains('\u{fffd}'));
+        }
+    }
 
     #[test]
     fn prompt_windows_around_cursor_marker() {

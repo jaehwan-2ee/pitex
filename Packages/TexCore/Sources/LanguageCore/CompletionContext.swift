@@ -1,3 +1,5 @@
+import Foundation
+
 /// What the caret is completing — drives which candidate list the editor
 /// shows. Mirrors `completion::CompletionContextKind` in the Rust
 /// `language-core` port.
@@ -53,28 +55,28 @@ public enum CompletionContextDetector {
     /// after an escaped `\\`. Only looks backwards from the caret, so an
     /// unclosed `\cite{` group still completes.
     public static func context(in source: String, caretUTF16Offset: Int) -> CompletionContext? {
-        let units = Array(source.utf16)
-        let caret = min(max(caretUTF16Offset, 0), units.count)
+        let units = source as NSString
+        let caret = min(max(caretUTF16Offset, 0), units.length)
 
         // ── group contexts: `\cite{a,pre|` / `\ref{pre|` ──
         // The current key fragment is a run of key characters ending at the
         // caret; the group opener is the nearest `{` reachable over earlier
         // key characters, commas and whitespace.
         var index = caret
-        while index > 0, isKeyChar(units[index - 1]) { index -= 1 }
+        while index > 0, isKeyChar(units.character(at: index - 1)) { index -= 1 }
         let prefixStart = index
         var scan = index
         while scan > 0,
-              isKeyChar(units[scan - 1]) || units[scan - 1] == 44 || isWhitespace(units[scan - 1]) {
+              isKeyChar(units.character(at: scan - 1)) || units.character(at: scan - 1) == 44 || isWhitespace(units.character(at: scan - 1)) {
             scan -= 1
         }
-        if scan > 0, units[scan - 1] == 123, scan < 2 || units[scan - 2] != 92 {
+        if scan > 0, units.character(at: scan - 1) == 123, scan < 2 || units.character(at: scan - 2) != 92 {
             if let command = commandName(before: scan - 1, units: units) {
                 let kind: CompletionContextKind? =
                     citationCommands.contains(command) ? .citation :
                     referenceCommands.contains(command) ? .reference : nil
                 if let kind {
-                    let prefix = String(decoding: units[prefixStart..<caret], as: UTF16.self)
+                    let prefix = units.substring(with: NSRange(location: prefixStart, length: caret - prefixStart))
                     return CompletionContext(kind: kind, prefix: prefix, prefixUTF16Offset: prefixStart)
                 }
             }
@@ -82,9 +84,9 @@ public enum CompletionContextDetector {
 
         // ── command context: `\pre|` ──
         index = caret
-        while index > 0, isLetter(units[index - 1]) { index -= 1 }
-        if index > 0, units[index - 1] == 92, !(index > 1 && units[index - 2] == 92) {
-            let prefix = String(decoding: units[(index - 1)..<caret], as: UTF16.self)
+        while index > 0, isLetter(units.character(at: index - 1)) { index -= 1 }
+        if index > 0, units.character(at: index - 1) == 92, !(index > 1 && units.character(at: index - 2) == 92) {
+            let prefix = units.substring(with: NSRange(location: index - 1, length: caret - index + 1))
             return CompletionContext(kind: .command, prefix: prefix, prefixUTF16Offset: index - 1)
         }
         return nil
@@ -93,38 +95,38 @@ public enum CompletionContextDetector {
     /// Command name ending just before `brace` (the `{` index), skipping
     /// trailing whitespace, `*`, and `[…]` optional args. Returns nil when
     /// the text before the brace is not a `\name` sequence.
-    private static func commandName(before brace: Int, units: [UInt16]) -> String? {
+    private static func commandName(before brace: Int, units: NSString) -> String? {
         var index = brace
-        while index > 0, isWhitespace(units[index - 1]) { index -= 1 }
+        while index > 0, isWhitespace(units.character(at: index - 1)) { index -= 1 }
         while index > 0 {
-            if units[index - 1] == 93 {
+            if units.character(at: index - 1) == 93 {
                 // `]` — walk back over the balanced `[…]` optional arg.
                 var depth = 1
                 var cursor = index - 1
                 while cursor > 0 {
                     cursor -= 1
-                    if units[cursor] == 93 { depth += 1 } else if units[cursor] == 91 {
+                    if units.character(at: cursor) == 93 { depth += 1 } else if units.character(at: cursor) == 91 {
                         depth -= 1
                         if depth == 0 { break }
                     }
                 }
                 guard depth == 0 else { break }
                 index = cursor
-                while index > 0, isWhitespace(units[index - 1]) { index -= 1 }
+                while index > 0, isWhitespace(units.character(at: index - 1)) { index -= 1 }
                 continue
             }
-            if units[index - 1] == 42 {
+            if units.character(at: index - 1) == 42 {
                 index -= 1
-                while index > 0, isWhitespace(units[index - 1]) { index -= 1 }
+                while index > 0, isWhitespace(units.character(at: index - 1)) { index -= 1 }
                 continue
             }
             break
         }
         let nameEnd = index
-        while index > 0, isLetter(units[index - 1]) { index -= 1 }
-        guard index < nameEnd, index > 0, units[index - 1] == 92,
-              !(index > 1 && units[index - 2] == 92) else { return nil }
-        return String(decoding: units[index..<nameEnd], as: UTF16.self)
+        while index > 0, isLetter(units.character(at: index - 1)) { index -= 1 }
+        guard index < nameEnd, index > 0, units.character(at: index - 1) == 92,
+              !(index > 1 && units.character(at: index - 2) == 92) else { return nil }
+        return units.substring(with: NSRange(location: index, length: nameEnd - index))
     }
 
     /// Letters, digits and the punctuation a BibTeX/label key may contain.

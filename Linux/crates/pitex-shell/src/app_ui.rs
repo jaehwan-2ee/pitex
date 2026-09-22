@@ -35,7 +35,7 @@ use crate::model::{
     ConsoleSection, DocumentTodoItem, GitRefresh, SidebarSection, TodoLineEdit,
     WorkspaceBuildState, WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
 };
-use crate::pdf::PdfDocument;
+use crate::pdf::{PdfInfo, PdfRenderer};
 use crate::settings::{AppearanceColorRole, AppearanceSettings, Preferences, SettingsStore, Theme};
 use git_core::GitChange;
 
@@ -191,6 +191,14 @@ pub struct AppState {
     /// Last AI font size applied to the transcript CSS — changes force a
     /// rebuild even when `ui_revision` is unchanged.
     pub rendered_ai_font_size: Cell<f64>,
+    rendered_transcript_keys: RefCell<Vec<u64>>,
+    rendered_picker_key: Cell<u64>,
+    rendered_sidebar_keys: Cell<[u64; 4]>,
+    rendered_log: RefCell<String>,
+    rendered_issues_key: Cell<u64>,
+    build_ui_pending: Cell<bool>,
+    pub(crate) git_refresh_pending: Cell<bool>,
+    pub(crate) git_refresh_root: RefCell<Option<PathBuf>>,
     /// Last `agent_context_key` pushed into `context_cell` — the 40ms poll
     /// skips the clone-heavy rebuild while the key is unchanged.
     pub last_context_key: Cell<u64>,
@@ -218,7 +226,8 @@ pub struct AppState {
     /// Debounce for external-change coalescing (0.35s).
     pub disk_pending: RefCell<HashMap<PathBuf, glib::SourceId>>,
     pub watchers: Vec<gio::FileMonitor>,
-    pub pdf: Option<PdfDocument>,
+    pub pdf: Option<PdfInfo>,
+    pdf_renderer: PdfRenderer,
     pub pdf_page: usize,
     pub pdf_scale: f64,
     /// `pi` config dir monitor — restarts the agent when auth/models/
@@ -281,6 +290,14 @@ impl AppState {
             fold_chip: RefCell::new(None),
             rendered_agent_revision: Cell::new(0),
             rendered_ai_font_size: Cell::new(0.0),
+            rendered_transcript_keys: RefCell::new(Vec::new()),
+            rendered_picker_key: Cell::new(0),
+            rendered_sidebar_keys: Cell::new([0; 4]),
+            rendered_log: RefCell::new(String::new()),
+            rendered_issues_key: Cell::new(0),
+            build_ui_pending: Cell::new(false),
+            git_refresh_pending: Cell::new(false),
+            git_refresh_root: RefCell::new(None),
             last_context_key: Cell::new(0),
             env: PlatformEnvironment::make("dev.pitex.app"),
             app_version,
@@ -294,6 +311,7 @@ impl AppState {
             disk_pending: RefCell::new(HashMap::new()),
             watchers: Vec::new(),
             pdf: None,
+            pdf_renderer: PdfRenderer::new(tx.clone()),
             pdf_page: 0,
             pdf_scale: 1.5,
             agent_config_monitor: None,
@@ -681,6 +699,7 @@ impl AppState {
         let Some(snapshot) = &self.model.document_snapshot else { return };
         let dialect = dialect_for(self.model.active_document_url.as_deref());
         let tokens = DeterministicTeXLexer::tokenize(&snapshot.text, dialect);
+        if let Some(fold) = &self.fold { fold.recompute_with_tokens(&snapshot.text, &tokens); }
         let decorations = tokens
             .into_iter()
             .map(|t| editor_feature::EditorDecoration {
@@ -721,7 +740,11 @@ impl AppState {
             },
             move |mutation| {
                 let result = submit_session.apply(
-                    DocumentMutation::ReplaceText(mutation.replacement.clone()),
+                    DocumentMutation::ReplaceRange {
+                        utf16_offset: mutation.range.location,
+                        utf16_length: mutation.range.length,
+                        text: mutation.replacement.clone(),
+                    },
                     mutation.base_revision,
                 );
                 match result {
@@ -1011,6 +1034,7 @@ impl AppState {
                         st.structure_pending.set(false);
                         st.model.refresh_structure();
                         st.refresh_sidebar();
+                        st.refresh_footer();
                     }
                 }
             });
@@ -1575,14 +1599,8 @@ impl AppState {
             return;
         }
         self.rendered_pdf_key.set(key);
+        self.pdf_renderer.render(self.pdf_hash, key, self.pdf_page, scale);
         UI.with(|ui| {
-            if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
-                if let Some((pixels, w, h, stride)) = doc.render_page(self.pdf_page, scale) {
-                    let texture = crate::pdf::texture_from_pixels(pixels, w, h, stride);
-                    picture.set_paintable(Some(&texture));
-                    picture.set_size_request(w, h);
-                }
-            }
             if let Some(label) = ui.pdf_page_label.borrow().as_ref() {
                 label.set_text(&format!(
                     "{} / {}",
@@ -1670,8 +1688,12 @@ impl AppState {
     pub fn ensure_agent(&mut self) {
         // Refresh cached context before any agent call — the coordinator's
         // provider reads this cell, so it must be current before `prepare()`.
-        *self.context_cell.borrow_mut() = self.model.agent_context();
-        self.model.sync_selection_attachment();
+        let key = self.model.agent_context_key();
+        if self.agent.is_none() || self.last_context_key.get() != key {
+            *self.context_cell.borrow_mut() = self.model.agent_context();
+            self.last_context_key.set(key);
+            self.model.sync_selection_attachment();
+        }
         if self.agent.is_none() {
             let mut coordinator = AgentCoordinator::new(&self.store);
             let cell = self.context_cell.clone();
@@ -2072,6 +2094,17 @@ impl AppState {
             if structure_dirty {
                 self.rendered_structure_revision.set(self.model.structure_revision);
             }
+            let mut changed = [false; 4];
+            if structure_dirty {
+                let keys = [
+                    view_key(&(lang, &self.model.outline_items)),
+                    view_key(&(lang, &self.model.label_items)),
+                    view_key(&(lang, &self.model.bibliography_items)),
+                    view_key(&(lang, &self.model.todo_items)),
+                ];
+                let previous = self.rendered_sidebar_keys.replace(keys);
+                for i in 0..4 { changed[i] = keys[i] != previous[i]; }
+            }
             if files_dirty {
                 self.rendered_files_revision.set(self.model.files_revision);
             }
@@ -2093,7 +2126,7 @@ impl AppState {
                     dd.set_selected(idx);
                 }
             }
-            if structure_dirty {
+            if changed[0] {
             if let Some(list) = ui.outline_list.borrow().as_ref() {
                 clear_list(list);
                 for (i, item) in self.model.outline_items.iter().enumerate() {
@@ -2114,7 +2147,7 @@ impl AppState {
                 }
             }
             }
-            if structure_dirty {
+            if changed[1] {
             if let Some(list) = ui.labels_list.borrow().as_ref() {
                 clear_list(list);
                 for (i, item) in self.model.label_items.iter().enumerate() {
@@ -2141,7 +2174,7 @@ impl AppState {
                 }
             }
             }
-            if structure_dirty {
+            if changed[2] {
             if let Some(list) = ui.bib_list.borrow().as_ref() {
                 clear_list(list);
                 for item in &self.model.bibliography_items {
@@ -2166,7 +2199,7 @@ impl AppState {
                 }
             }
             }
-            if structure_dirty {
+            if changed[3] {
             if let Some(list) = ui.todo_list.borrow().as_ref() {
                 clear_list(list);
                 for (i, item) in self.model.todo_items.iter().enumerate() {
@@ -2337,6 +2370,8 @@ impl AppState {
     // ── refresh: issues / log / build ──────────────────────────────────────
 
     pub fn refresh_issues(&mut self) {
+        let key = view_key(&(self.language, &self.model.build_issues));
+        if self.rendered_issues_key.replace(key) == key { return; }
         let issues = self.filtered_issues();
         let lang = self.language;
         UI.with(|ui| {
@@ -2678,9 +2713,17 @@ impl AppState {
                     self.model.build_log_text.clone()
                 };
                 let buffer = view.buffer();
-                buffer.set_text(&text);
-                let mut end = buffer.end_iter();
-                view.scroll_to_iter(&mut end, 0.0, false, 0.0, 1.0);
+                let mut previous = self.rendered_log.borrow_mut();
+                if *previous != text {
+                    if let Some(added) = text.strip_prefix(previous.as_str()) {
+                        buffer.insert(&mut buffer.end_iter(), added);
+                    } else {
+                        buffer.set_text(&text);
+                    }
+                    *previous = text;
+                    let mut end = buffer.end_iter();
+                    view.scroll_to_iter(&mut end, 0.0, false, 0.0, 1.0);
+                }
             }
         });
         self.refresh_issues();
@@ -2702,9 +2745,16 @@ impl AppState {
                 else {
                     return;
                 };
-                if self.pdf.is_none() || self.pdf_hash != hash {
-                    self.pdf = PdfDocument::from_data(&data);
+                if self.pdf_hash != hash {
+                    self.pdf = None;
                     self.pdf_hash = hash;
+                    self.rendered_pdf_key.set(0);
+                    self.pdf_renderer.load(hash, data.clone());
+                    UI.with(|ui| {
+                        if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
+                            picture.set_paintable(None::<&gtk4::gdk::Paintable>);
+                        }
+                    });
                     self.pdf_page = 0;
                     self.pdf_auto_fit = true;
                     // `clearSyncHighlight()` on document replacement — the old
@@ -2743,6 +2793,12 @@ impl AppState {
                 self.render_pdf_page();
             }
             (None, _) => {
+                if self.pdf_hash != 0 {
+                    self.pdf = None;
+                    self.pdf_hash = 0;
+                    self.rendered_pdf_key.set(0);
+                    self.pdf_renderer.load(0, std::sync::Arc::from([]));
+                }
                 UI.with(|ui| {
                     if let Some(p) = ui.pdf_empty.borrow().as_ref() {
                         p.set_visible(true);
@@ -2795,18 +2851,17 @@ impl AppState {
             // font size changed — the 40ms poll used to rebuild the whole
             // widget tree every tick.
             let font_size = self.store.ai_font_size();
-            let dirty = agent.ui_revision != self.rendered_agent_revision.get()
-                || font_size != self.rendered_ai_font_size.get();
+            let font_changed = font_size != self.rendered_ai_font_size.get();
+            let dirty = agent.ui_revision != self.rendered_agent_revision.get() || font_changed;
             if dirty {
                 self.rendered_agent_revision.set(agent.ui_revision);
                 self.rendered_ai_font_size.set(font_size);
             }
             if dirty {
             if let Some(box_) = ui.transcript_box.borrow().as_ref() {
-                while let Some(child) = box_.first_child() {
-                    box_.remove(&child);
-                }
                 if agent.transcript.is_empty() {
+                    while let Some(child) = box_.first_child() { box_.remove(&child); }
+                    self.rendered_transcript_keys.borrow_mut().clear();
                     let empty = adw::StatusPage::new();
                     empty.set_title(&tr(lang, "assistant.empty_headline"));
                     empty.set_icon_name(Some("starred-symbolic"));
@@ -2824,9 +2879,32 @@ impl AppState {
                     }
                     box_.append(&empty);
                 } else {
-                    for entry in &agent.transcript {
-                        box_.append(&transcript_row(entry, font_size));
+                    let keys: Vec<u64> = agent.transcript.iter()
+                        .map(|entry| view_key(&(entry, font_size.to_bits())))
+                        .collect();
+                    let mut previous = self.rendered_transcript_keys.borrow_mut();
+                    if previous.is_empty() {
+                        while let Some(child) = box_.first_child() { box_.remove(&child); }
                     }
+                    let mut child = box_.first_child();
+                    for (i, entry) in agent.transcript.iter().enumerate() {
+                        let next = child.as_ref().and_then(|row| row.next_sibling());
+                        if previous.get(i) != keys.get(i) {
+                            let row = transcript_row(entry, font_size);
+                            if let Some(old) = child.as_ref() {
+                                box_.insert_child_after(&row, old.prev_sibling().as_ref());
+                                box_.remove(old);
+                            } else {
+                                box_.append(&row);
+                            }
+                        }
+                        child = next;
+                    }
+                    while let Some(row) = child {
+                        child = row.next_sibling();
+                        box_.remove(&row);
+                    }
+                    *previous = keys;
                 }
                 if let Some(scroll) = ui.transcript_scroll.borrow().as_ref() {
                     let adj = scroll.vadjustment();
@@ -2837,6 +2915,10 @@ impl AppState {
                 label.set_text(agent.status_message.as_deref().unwrap_or(""));
                 label.set_visible(agent.status_message.is_some());
             }
+            let picker_key = view_key(&(&agent.models, &agent.current_model,
+                &agent.thinking_levels, &agent.thinking_level,
+                agent.is_updating_model_settings, agent.connection == crate::agent::Connection::Ready, lang));
+            if self.rendered_picker_key.replace(picker_key) != picker_key {
             // Model picker — when models span multiple providers the
             // provider name disambiguates same-named entries.
             if let Some(picker) = ui.agent_model_picker.borrow().as_ref() {
@@ -2884,7 +2966,8 @@ impl AppState {
                     picker.set_selected(idx as u32);
                 }
             }
-            {
+            }
+            if font_changed {
                 let mut slot = ui.agent_composer_font.borrow_mut();
                 if slot.is_none() {
                     let p = gtk4::CssProvider::new();
@@ -2962,11 +3045,6 @@ impl AppState {
     /// Drain the agent's event receiver + check for unexpected exit.
     fn poll_agent(&mut self) {
         self.ensure_agent();
-        let key = self.model.agent_context_key();
-        if key != self.last_context_key.get() {
-            self.last_context_key.set(key);
-            *self.context_cell.borrow_mut() = self.model.agent_context();
-        }
         let agent = self.agent.as_mut().unwrap();
         agent.poll_toolchain();
         while let Some(event) = agent.poll_event() {
@@ -3151,9 +3229,37 @@ impl AppState {
                     self.refresh_phase();
                 }
             },
+            WorkspaceMessage::PdfLoaded { hash, info } => {
+                if self.pdf_hash == hash {
+                    self.pdf = info;
+                    self.rendered_pdf_key.set(0);
+                    self.render_pdf_page();
+                }
+            }
+            WorkspaceMessage::PdfRendered { key, raster } => {
+                if key == self.rendered_pdf_key.get() {
+                    UI.with(|ui| {
+                        if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
+                            let texture = crate::pdf::texture_from_pixels(raster.pixels, raster.width, raster.height, raster.stride);
+                            picture.set_paintable(Some(&texture));
+                            picture.set_size_request(raster.width, raster.height);
+                        }
+                    });
+                }
+            }
             WorkspaceMessage::BuildEvent(event) => {
                 self.model.apply_build_event(event);
-                self.refresh_build_ui();
+                if !self.build_ui_pending.replace(true) {
+                    glib::timeout_add_local_once(Duration::from_millis(50), || {
+                        STATE.with(|slot| {
+                            if let Some(state) = slot.borrow().as_ref() {
+                                let mut s = state.borrow_mut();
+                                s.build_ui_pending.set(false);
+                                s.refresh_build_ui();
+                            }
+                        });
+                    });
+                }
             }
             WorkspaceMessage::BuildFinished { outcome, output_pdf } => {
                 self.model.apply_build_finished(
@@ -3208,6 +3314,11 @@ impl AppState {
                 self.refresh_after_document_change();
             }
             WorkspaceMessage::GitRefreshed(result) => {
+                self.git_refresh_pending.set(false);
+                if self.git_refresh_root.borrow_mut().take() != self.model.project_url {
+                    self.refresh_git();
+                    return;
+                }
                 match result {
                     Ok(Some(GitRefresh {
                         status,
@@ -3278,6 +3389,30 @@ thread_local! {
     static AUTOSAVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
     /// Resolved UI language for `a11y` — readable without borrowing state.
     static LANG: Cell<&'static str> = const { Cell::new("en") };
+}
+
+pub(crate) fn wake_agent() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static PENDING: AtomicBool = AtomicBool::new(false);
+    if PENDING.swap(true, Ordering::AcqRel) { return; }
+    glib::idle_add_once(|| {
+        PENDING.store(false, Ordering::Release);
+        STATE.with(|slot| {
+            if let Some(state) = slot.borrow().as_ref() {
+                let mut s = state.borrow_mut();
+                if s.agent.is_some() { s.poll_agent(); }
+                s.poll_completion();
+                s.drain_side_effects();
+            }
+        });
+    });
+}
+
+fn view_key(value: &impl std::hash::Hash) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hash);
+    hash.finish()
 }
 
 fn clear_list(list: &gtk4::ListBox) {
@@ -4211,33 +4346,18 @@ fn build_chrome(
     }
     window.add_action(&clearrecents_action);
 
-    // ── dispatch loop ──
-    {
-        let state = state.clone();
-        glib::timeout_add_local(Duration::from_millis(10), move || {
-            while let Ok(msg) = model_rx.try_recv() {
-                if let Ok(mut s) = state.try_borrow_mut() { s.dispatch(msg); }
-            }
-            glib::ControlFlow::Continue
-        });
-    }
-
-    // Agent event polling — the Swift `AsyncStream` drain becomes a 40ms idle
-    // tick plus an on-demand poll after each send. The completion
-    // coordinator drains on the same tick.
-    {
-        let state = state.clone();
-        glib::timeout_add_local(Duration::from_millis(40), move || {
-            let Ok(mut s) = state.try_borrow_mut() else {
-                return glib::ControlFlow::Continue;
-            };
-            if s.agent.is_some() {
-                s.poll_agent();
-            }
-            s.poll_completion();
-            glib::ControlFlow::Continue
-        });
-    }
+    // Wait off-thread; idle applications no longer poll empty channels.
+    std::thread::spawn(move || {
+        while let Ok(message) = model_rx.recv() {
+            glib::idle_add_once(move || {
+                STATE.with(|slot| {
+                    if let Some(state) = slot.borrow().as_ref() {
+                        state.borrow_mut().dispatch(message);
+                    }
+                });
+            });
+        }
+    });
 
     // Git Integration — refresh while the pane is visible. VSCode watches
     // the worktree; a light 4s poll covers external `git` CLI changes too.

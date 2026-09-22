@@ -110,9 +110,6 @@ old_schedule = function(old(ui_path), 'fn schedule_rehighlight_static()')
 new_schedule = function(current_ui, 'fn schedule_rehighlight(&self)')
 tag_path = 'Linux/crates/editor-feature/src/lib.rs'
 tag_function = function((repo / tag_path).read_text(), 'pub fn decoration_tag_name(')
-adapter = (repo / 'Linux/crates/gtk-editor-adapter/src/lib.rs').read_text()
-map_expression = adapter[adapter.index('let byte_of_char:'):]
-map_expression = map_expression[:map_expression.index(';') + 1]
 hot_paths = r"""
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -152,15 +149,11 @@ fn check_ui_hot_paths() {
         }
         assert_eq!(state.borrow().calls.get(), if legacy { 50 } else { 2 });
     }
-    for (text, expected) in [("", vec![0]), ("abc", vec![0,1,2,3]), ("한👩é", vec![0,3,7,9])] {
-        MAP_EXPRESSION
-        assert_eq!(byte_of_char, expected, "UTF-8 to GTK character mapping shifted");
-    }
     assert_eq!(decoration_tag_name(&LanguageTokenKind::Text("a".into())), "pitex.decoration.text");
     assert_eq!(decoration_tag_name(&LanguageTokenKind::ControlSequence("한".into())), "pitex.decoration.controlsequence");
-    println!("PASS GTK hot paths: 25 submitted edits coalesce to one pass; rescheduling, Unicode offsets and stable tags verified");
+    println!("PASS GTK hot paths: 25 submitted edits coalesce to one pass; rescheduling and stable tags verified");
 }
-""".replace('OLD_SCHEDULE', old_schedule).replace('NEW_SCHEDULE', new_schedule).replace('TAG_FUNCTION', tag_function).replace('MAP_EXPRESSION', map_expression)
+""".replace('OLD_SCHEDULE', old_schedule).replace('NEW_SCHEDULE', new_schedule).replace('TAG_FUNCTION', tag_function)
 rust_driver = rust_driver.replace('fn main() {', 'fn main() {\n    check_ui_hot_paths();')
 
 with tempfile.TemporaryDirectory(prefix='pitex-lexer-') as temporary:

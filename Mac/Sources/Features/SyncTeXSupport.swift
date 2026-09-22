@@ -1,3 +1,4 @@
+import Darwin
 import BuildCore
 import CryptoKit
 import Foundation
@@ -43,6 +44,7 @@ struct SyncTeXBinding: Sendable {
 actor SyncTeXRunner {
     private let runner = ProcessRunner()
     private var toolPath: String?
+    private var digestCache: [URL: (stamp: [Int64], digest: String)] = [:]
 
     /// Fields the normalized record format admits. Everything else in raw
     /// synctex output (Offset, Context, before/offset/kern/glue lines, Post x/y)
@@ -59,9 +61,9 @@ actor SyncTeXRunner {
         // every query path is formed against the resolved root.
         let root = projectRoot.resolvingSymlinksInPath().standardizedFileURL
         let pdf = pdfURL.resolvingSymlinksInPath().standardizedFileURL
-        let pdfData = try Data(contentsOf: pdf)
-        let outputHash = SHA256.hash(data: pdfData).map { String(format: "%02x", $0) }.joined()
-        let fingerprint = try Self.syncTeXFingerprint(pdfURL: pdf)
+        digestCache.removeAll(keepingCapacity: true)
+        let outputHash = try fileDigest(pdf)
+        let fingerprint = try syncTeXFingerprint(pdfURL: pdf)
         let plain = pdf.deletingPathExtension().appendingPathExtension("synctex")
         let gz = plain.appendingPathExtension("gz")
         let metadata: Data
@@ -109,7 +111,7 @@ actor SyncTeXRunner {
     ) async throws -> SyncTeXQueryCandidate {
         let synctex = try await resolvedTool()
         let resolvedSource = sourceURL.resolvingSymlinksInPath().standardizedFileURL
-        try Self.validate(binding)
+        try validate(binding)
         let inputPath = binding.sourcePaths.first { $0.value == resolvedSource }?.key ?? resolvedSource.path
         let result = try await runner.run(
             try DirectCommandPlan(
@@ -124,7 +126,7 @@ actor SyncTeXRunner {
             projectRoot: binding.projectRoot,
             timeout: .seconds(15)
         )
-        try Self.validate(binding)
+        try validate(binding)
         let normalized = Self.normalize(
             String(decoding: result.standardOutput, as: UTF8.self),
             queryFields: [
@@ -166,7 +168,7 @@ actor SyncTeXRunner {
         point: SyncTeXCore.PDFPoint
     ) async throws -> SyncTeXQueryCandidate {
         let synctex = try await resolvedTool()
-        try Self.validate(binding)
+        try validate(binding)
         let result = try await runner.run(
             try DirectCommandPlan(
                 executable: synctex,
@@ -179,7 +181,7 @@ actor SyncTeXRunner {
             projectRoot: binding.projectRoot,
             timeout: .seconds(15)
         )
-        try Self.validate(binding)
+        try validate(binding)
         let normalized = Self.normalize(
             String(decoding: result.standardOutput, as: UTF8.self),
             queryFields: [
@@ -280,23 +282,40 @@ actor SyncTeXRunner {
         return normalized
     }
 
-    private static func validate(_ binding: SyncTeXBinding) throws {
+    private func validate(_ binding: SyncTeXBinding) throws {
         guard try syncTeXFingerprint(pdfURL: binding.pdfURL) == binding.revision.fingerprint,
-              SHA256.hash(data: try Data(contentsOf: binding.pdfURL)).map({ String(format: "%02x", $0) }).joined() == binding.outputHash
+              try fileDigest(binding.pdfURL) == binding.outputHash
         else { throw SyncTeXQueryError.staleResult }
     }
 
     /// Fingerprint derived from the .synctex file sitting next to the PDF so
     /// every rebuild invalidates previous bindings deterministically.
-    private static func syncTeXFingerprint(pdfURL: URL) throws -> UInt64 {
+    private func fileDigest(_ url: URL) throws -> String {
+        let before = try Self.fileStamp(url)
+        if let cached = digestCache[url], cached.stamp == before { return cached.digest }
+        let data = try Data(contentsOf: url)
+        guard !data.isEmpty else { throw SyncTeXSupportError.missingMetadata }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard try Self.fileStamp(url) == before else { throw SyncTeXQueryError.staleResult }
+        digestCache[url] = (before, digest)
+        return digest
+    }
+
+    private static func fileStamp(_ url: URL) throws -> [Int64] {
+        var info = stat()
+        guard Darwin.stat(url.path, &info) == 0 else { throw SyncTeXSupportError.missingMetadata }
+        return [Int64(info.st_dev), Int64(truncatingIfNeeded: info.st_ino), info.st_size,
+                Int64(info.st_mtimespec.tv_sec), Int64(info.st_mtimespec.tv_nsec),
+                Int64(info.st_ctimespec.tv_sec), Int64(info.st_ctimespec.tv_nsec)]
+    }
+
+    private func syncTeXFingerprint(pdfURL: URL) throws -> UInt64 {
         let gz = pdfURL.deletingPathExtension().appendingPathExtension("synctex.gz")
         let plain = pdfURL.deletingPathExtension().appendingPathExtension("synctex")
         let metadataURL = FileManager.default.fileExists(atPath: gz.path) ? gz : plain
-        guard let data = try? Data(contentsOf: metadataURL), !data.isEmpty else {
-            throw SyncTeXSupportError.missingMetadata
-        }
-        let digest = SHA256.hash(data: data)
-        return digest.prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        guard let digest = try? fileDigest(metadataURL), let value = UInt64(digest.prefix(16), radix: 16)
+        else { throw SyncTeXSupportError.missingMetadata }
+        return value
     }
 
     private func resolvedTool() async throws -> String {

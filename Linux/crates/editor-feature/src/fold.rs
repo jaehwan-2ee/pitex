@@ -3,7 +3,7 @@
 //! to a GtkSourceView; everything here is text-in/regions-out so the scan is
 //! verifiable without a display.
 
-use language_core::{DeterministicTeXLexer, LanguageTokenKind, TeXDialect};
+use language_core::{DeterministicTeXLexer, LanguageToken, LanguageTokenKind, TeXDialect};
 
 /// One foldable region (verbatim `FoldRegion`): `hidden_line_range` is the
 /// closed line range collapsed while folded — everything after the header
@@ -74,6 +74,10 @@ pub fn find_regions(
     dialect: TeXDialect,
 ) -> Vec<FoldRegion> {
     let tokens = DeterministicTeXLexer::tokenize(text, dialect);
+    find_regions_with_tokens(text, line_starts, &tokens)
+}
+
+pub fn find_regions_with_tokens(text: &str, line_starts: &[(usize, usize)], tokens: &[LanguageToken]) -> Vec<FoldRegion> {
     let mut regions: Vec<FoldRegion> = Vec::new();
     let mut env_stack: Vec<(String, usize, String)> = Vec::new();
     let mut open_sections: Vec<(i32, usize, String)> = Vec::new();

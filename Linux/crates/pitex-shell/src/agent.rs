@@ -919,6 +919,7 @@ impl PiAgentProcess {
                             if event_tx.send(event).is_err() {
                                 break;
                             }
+                            crate::app_ui::wake_agent();
                         }
                     }
                 }
@@ -956,6 +957,7 @@ impl PiAgentProcess {
                 }
             }
             let _ = exit_tx.send(());
+            crate::app_ui::wake_agent();
         });
 
         Ok(Self {
@@ -1019,7 +1021,7 @@ pub enum Connection {
     Failed(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TranscriptRole {
     User,
     Assistant,
@@ -1027,14 +1029,14 @@ pub enum TranscriptRole {
     Tool,
     Notice,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TranscriptStatus {
     Streaming,
     Running,
     Done,
     Failed,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentTranscriptEntry {
     pub role: TranscriptRole,
     pub title: String,
@@ -1051,7 +1053,7 @@ pub struct AgentContextSnapshot {
     pub selection_text: Option<String>,
     pub project_files: Vec<String>,
     pub pdf_path: Option<String>,
-    pub pdf_data: Option<Vec<u8>>,
+    pub pdf_data: Option<Arc<[u8]>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1095,6 +1097,7 @@ pub struct AgentCoordinator {
     /// Bumped on every mutation of UI-visible state; the panel rebuilds
     /// only when this changes instead of every 40ms poll tick.
     pub ui_revision: u64,
+    pdf_text_cache: std::cell::RefCell<Option<(Arc<[u8]>, Option<String>)>>,
 
     /// Workspace hooks.
     pub context_provider: Option<Box<dyn Fn() -> AgentContextSnapshot>>,
@@ -1142,6 +1145,7 @@ impl AgentCoordinator {
             suppressed_attachment: None,
             model_settings_request_id: None,
             ui_revision: 0,
+            pdf_text_cache: std::cell::RefCell::new(None),
             session_stats: None,
             commands: Vec::new(),
             context_provider: None,
@@ -1220,6 +1224,7 @@ impl AgentCoordinator {
             );
             let executable = locate_pi_executable_in(&tools.environment);
             let _ = tx.send((tools, executable));
+            crate::app_ui::wake_agent();
         });
     }
 
@@ -2056,7 +2061,11 @@ impl AgentCoordinator {
             parts.push(format!("Project source files: {}", context.project_files.join(", ")));
         }
         if let Some(pdf_data) = &context.pdf_data {
-            if let Some(pdf_text) = crate::pdf::extract_text(pdf_data) {
+            let mut cache = self.pdf_text_cache.borrow_mut();
+            if !cache.as_ref().map(|(data, _)| Arc::ptr_eq(data, pdf_data)).unwrap_or(false) {
+                *cache = Some((pdf_data.clone(), crate::pdf::extract_text(pdf_data)));
+            }
+            if let Some(pdf_text) = cache.as_ref().and_then(|(_, text)| text.as_ref()) {
                 if !pdf_text.is_empty() {
                     let label = context
                         .pdf_path

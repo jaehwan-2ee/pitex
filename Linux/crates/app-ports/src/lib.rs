@@ -189,6 +189,27 @@ pub struct DocumentMutation {
     pub replacement: String,
 }
 
+impl DocumentMutation {
+    pub fn between(before: &str, after: &str, base_revision: u64) -> Self {
+        let mut start = before.bytes().zip(after.bytes()).take_while(|(a, b)| a == b).count();
+        while !before.is_char_boundary(start) { start -= 1; }
+        let suffix = before.as_bytes()[start..].iter().rev()
+            .zip(after.as_bytes()[start..].iter().rev())
+            .take_while(|(a, b)| a == b).count();
+        let mut old_end = before.len() - suffix;
+        let mut new_end = after.len() - suffix;
+        while !before.is_char_boundary(old_end) { old_end += 1; new_end += 1; }
+        Self {
+            base_revision,
+            range: DocumentTextRange {
+                location: before[..start].encode_utf16().count(),
+                length: before[start..old_end].encode_utf16().count(),
+            },
+            replacement: after[start..new_end].to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentMutationResult {
     Applied(DocumentSnapshot),
@@ -202,4 +223,27 @@ pub trait DocumentSessionPort: Send + Sync {
         &self,
         mutation: &DocumentMutation,
     ) -> Result<DocumentMutationResult, PlatformPortError>;
+}
+
+#[cfg(test)]
+mod partial_edit_tests {
+    use super::DocumentMutation;
+    #[test]
+    fn diff_round_trips_unicode_insert_delete_and_replace() {
+        let samples = ["", "abc", "한👩🏽‍💻 e\u{301}", "a한bc", "a漢bc", "line\nnext"];
+        for before in samples {
+            for after in samples {
+                let edit = DocumentMutation::between(before, after, 7);
+                let mut units: Vec<u16> = before.encode_utf16().collect();
+                units.splice(edit.range.location..edit.range.location + edit.range.length,
+                             edit.replacement.encode_utf16());
+                assert_eq!(String::from_utf16(&units).unwrap(), after);
+                assert_eq!(edit.base_revision, 7);
+            }
+        }
+        let text = "unchanged ".repeat(10000);
+        let edit = DocumentMutation::between(&text, &(text.clone() + "한"), 0);
+        assert_eq!(edit.replacement, "한");
+        assert_eq!(edit.range.length, 0);
+    }
 }

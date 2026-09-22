@@ -140,6 +140,28 @@ impl EditorDecorationSnapshot {
         });
         Self { document_revision, decorations }
     }
+    /// The changed token interval, including neighbours whose inherited tags
+    /// can span an insertion/deletion. GTK shifts unchanged trailing tags.
+    pub fn changed_tokens(&self, previous: &Self, byte_delta: i64) -> std::ops::Range<usize> {
+        let current = &self.decorations;
+        let old = &previous.decorations;
+        let mut first = 0;
+        while first < current.len().min(old.len()) && current[first] == old[first] { first += 1; }
+        if first == current.len() && first == old.len() {
+            // A delete/reinsert or undo can restore identical text but alter
+            // inherited tags. A new revision still needs a refresh then.
+            return if self.document_revision == previous.document_revision { 0..0 } else { 0..current.len() };
+        }
+        let (mut end, mut old_end) = (current.len(), old.len());
+        while end > first && old_end > first {
+            let (a, b) = (&current[end - 1], &old[old_end - 1]);
+            if a.token_kind != b.token_kind || a.range.utf8_length != b.range.utf8_length
+                || a.range.utf8_offset - b.range.utf8_offset != byte_delta { break; }
+            end -= 1; old_end -= 1;
+        }
+        first.saturating_sub(1)..(end + 1).min(current.len())
+    }
+
     pub fn checked(
         &self,
         presentation: &EditorPresentationSnapshot,
@@ -256,4 +278,29 @@ pub enum EditorUserIntent {
     SetMarkedText(Option<MarkedTextPresentation>),
     Undo,
     Redo,
+}
+
+#[cfg(test)]
+mod decoration_delta_tests {
+    use super::*;
+    fn snapshot(text: &str, revision: u64) -> EditorDecorationSnapshot {
+        EditorDecorationSnapshot::new(revision,
+            language_core::DeterministicTeXLexer::tokenize(text, language_core::TeXDialect::Latex)
+                .into_iter().map(|t| EditorDecoration { range: t.range, token_kind: t.kind }).collect())
+    }
+    #[test]
+    fn dirty_tokens_include_changed_math_and_unicode_but_preserve_the_tail() {
+        let old = snapshot("\\section{한} $x$ tail \\label{one}", 0);
+        let new = snapshot("\\section{한글} $x$ tail \\label{one}", 1);
+        let changed = new.changed_tokens(&old, 3);
+        assert!(changed.end < new.decorations.len());
+        assert!(new.decorations[changed].iter().any(|d| matches!(&d.token_kind,
+            language_core::LanguageTokenKind::Text(t) if t == "한글")));
+        let identical = snapshot("\\section{한} $x$ tail \\label{one}", 1);
+        assert_eq!(identical.changed_tokens(&old, 0), 0..identical.decorations.len());
+        assert!(old.changed_tokens(&old, 0).is_empty());
+        let unclosed = snapshot("\\section{한} $x tail \\label{one}", 1);
+        let changed = unclosed.changed_tokens(&old, -1);
+        assert!(changed.start < changed.end);
+    }
 }
