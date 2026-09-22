@@ -402,29 +402,29 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func open(_ selectedURL: URL) async {
-        await close()
+        let generation = await close()
+        guard documentLoadGeneration == generation else { return }
         phase = .loading(selectedURL)
-        let generation = documentLoadGeneration
         do {
             let (root, files, initialURL, initialText) = try await Task.detached(priority: .userInitiated) {
-            let values = try selectedURL.resourceValues(forKeys: [.isDirectoryKey])
-            let isDirectory = values.isDirectory == true
-            // Standardize so symlinked roots (/tmp → /private/tmp) canonicalize
-            // identically to document paths in SyncTeX/path containment checks.
-            var resolver = TeXProjectResolver()
-            let root = (isDirectory ? selectedURL : resolver.projectRoot(for: selectedURL)).standardizedFileURL
-            let files = try Self.discoverTexFiles(root: root, selected: selectedURL, isDirectory: isDirectory)
-            let initialURL: URL
-            if isDirectory {
-                guard let first = resolver.initialDocument(in: files) else { throw WorkspaceOpenError.noTexSources }
-                initialURL = first
-            } else {
-                initialURL = selectedURL.standardizedFileURL
-            }
+                let values = try selectedURL.resourceValues(forKeys: [.isDirectoryKey])
+                let isDirectory = values.isDirectory == true
+                // Standardize so symlinked roots (/tmp → /private/tmp) canonicalize
+                // identically to document paths in SyncTeX/path containment checks.
+                var resolver = TeXProjectResolver()
+                let root = (isDirectory ? selectedURL : resolver.projectRoot(for: selectedURL)).standardizedFileURL
+                let files = try Self.discoverTexFiles(root: root, selected: selectedURL, isDirectory: isDirectory)
+                let initialURL: URL
+                if isDirectory {
+                    guard let first = resolver.initialDocument(in: files) else { throw WorkspaceOpenError.noTexSources }
+                    initialURL = first
+                } else {
+                    initialURL = selectedURL.standardizedFileURL
+                }
 
-            // NSOpenPanel grants immediate access. AppShell's broker then owns the durable lease.
-            let initialText = try Self.readExactUTF8(initialURL)
-            return (root, files, initialURL, initialText)
+                // NSOpenPanel grants immediate access. AppShell's broker then owns the durable lease.
+                let initialText = try Self.readExactUTF8(initialURL)
+                return (root, files, initialURL, initialText)
             }.value
             guard documentLoadGeneration == generation else { return }
             let relativePath = try Self.relativePath(for: initialURL, root: root)
@@ -438,15 +438,18 @@ final class WorkspaceModel: ObservableObject {
                 initialText: initialText,
                 diskBaselineHash: .hashing(initialText)
             )
+            guard documentLoadGeneration == generation else { return }
             projectURL = root
             projectFiles = files
             registeredSessions = [session]
             loadProjectCommands(root: root)
             refreshGit()
             let port = NativeDocumentSessionPort(session: session) { [weak self] snapshot in
-                self?.documentSnapshot = snapshot
+                guard let self, activeDocumentURL == initialURL else { return }
+                documentSnapshot = snapshot
             }
             let appEnvironment = try await AppShell.make(documentSession: port)
+            guard documentLoadGeneration == generation else { return }
             let capability: FileCapability
             do {
                 capability = try await appEnvironment.files.issueCapability(
@@ -460,9 +463,17 @@ final class WorkspaceModel: ObservableObject {
                 )
             }
             let lease = try await appEnvironment.files.beginAccess(to: capability)
+            guard documentLoadGeneration == generation else {
+                try? await appEnvironment.files.endAccess(lease)
+                return
+            }
             capabilityBroker = appEnvironment.files
             capabilityLease = lease
-            let verifiedText = try Self.readExactUTF8(initialURL)
+            let verifiedText = try await Task.detached(priority: .userInitiated) {
+                try Self.readExactUTF8(initialURL)
+            }.value
+            let snapshot = await session.snapshot()
+            guard documentLoadGeneration == generation else { return }
             guard verifiedText == initialText else {
                 throw WorkspaceOpenError.changedWhileOpening
             }
@@ -480,7 +491,7 @@ final class WorkspaceModel: ObservableObject {
             environment = appEnvironment
             activeDocumentURL = initialURL
             openDocuments = [initialURL]
-            documentSnapshot = await session.snapshot()
+            documentSnapshot = snapshot
             refreshBuildTarget()
             buildState = .unavailable("No build has run yet for this project.")
             syncTeXState = .unavailable(
@@ -508,7 +519,9 @@ final class WorkspaceModel: ObservableObject {
             await restoreBuiltPreview()
             recordRecent(selectedURL)
         } catch {
-            await close()
+            guard documentLoadGeneration == generation else { return }
+            let closedGeneration = await close()
+            guard documentLoadGeneration == closedGeneration else { return }
             phase = .failed(error.localizedDescription)
         }
     }
@@ -522,9 +535,9 @@ final class WorkspaceModel: ObservableObject {
         gitDiff = nil
         // Keep the workspace mounted when switching sources: a loading phase
         // destroys the split view and PDF view, losing their size and position.
+        let generation = UUID()
+        documentLoadGeneration = generation
         do {
-            let generation = UUID()
-            documentLoadGeneration = generation
             let text = try await Task.detached(priority: .userInitiated) {
                 try Self.readExactUTF8(url)
             }.value
@@ -540,11 +553,13 @@ final class WorkspaceModel: ObservableObject {
                 initialText: text,
                 diskBaselineHash: .hashing(text)
             )
+            guard documentLoadGeneration == generation, projectURL == root else { return }
             if !registeredSessions.contains(where: { $0 === session }) {
                 registeredSessions.append(session)
             }
             let port = NativeDocumentSessionPort(session: session) { [weak self] snapshot in
-                self?.documentSnapshot = snapshot
+                guard let self, activeDocumentURL == url else { return }
+                documentSnapshot = snapshot
             }
             let appEnvironment = try await AppShell.make(documentSession: port)
             let snapshot = await session.snapshot()
@@ -561,6 +576,7 @@ final class WorkspaceModel: ObservableObject {
             phase = .ready
             await restoreBuiltPreview()
         } catch {
+            guard documentLoadGeneration == generation, projectURL == root else { return }
             phase = .failed(error.localizedDescription)
         }
     }
@@ -692,8 +708,10 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    func close() async {
-        documentLoadGeneration = UUID()
+    @discardableResult
+    func close() async -> UUID {
+        let generation = UUID()
+        documentLoadGeneration = generation
         wordCount = 0
         for url in fileWatchers.keys { stopWatcher(for: url) }
         for task in pendingDiskChecks.values { task.cancel() }
@@ -709,14 +727,6 @@ final class WorkspaceModel: ObservableObject {
         capabilityBroker = nil
         capabilityLease = nil
         registeredSessions.removeAll()
-        if let root {
-            for session in sessions {
-                _ = try? await registry.close(projectRoot: root, session: session)
-            }
-        }
-        if let brokerToClose, let leaseToClose {
-            try? await brokerToClose.endAccess(leaseToClose)
-        }
         projectURL = nil
         projectFiles = []
         openDocuments = []
@@ -753,6 +763,15 @@ final class WorkspaceModel: ObservableObject {
         structureTask?.cancel()
         structureTask = nil
         phase = .noProject
+        if let root {
+            for session in sessions {
+                _ = try? await registry.close(projectRoot: root, session: session)
+            }
+        }
+        if let brokerToClose, let leaseToClose {
+            try? await brokerToClose.endAccess(leaseToClose)
+        }
+        return generation
     }
 
     /// Reveals the assistant tab in the bottom console; used by the toolbar

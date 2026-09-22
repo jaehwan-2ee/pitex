@@ -1118,7 +1118,7 @@ pub struct AgentCoordinator {
     process: Option<PiAgentProcess>,
     intentional_stop: bool,
     /// `prepareTask` equivalent — the in-flight toolchain discovery; the
-    /// result arrives on the UI poll tick through `poll_toolchain`.
+    /// result arrives through event dispatch via `poll_toolchain`.
     toolchain_rx: Option<std::sync::mpsc::Receiver<(PiToolchain, Option<PathBuf>)>>,
     pending_root: Option<PathBuf>,
     assistant_entry_index: Option<usize>,
@@ -1238,7 +1238,7 @@ impl AgentCoordinator {
         });
     }
 
-    /// Delivered on the UI poll tick — the awaited half of `prepareAgent`.
+    /// Delivered on the UI thread when discovery completes — the awaited half of `prepareAgent`.
     /// `guard !Task.isCancelled` maps to the intentional-stop check.
     pub fn poll_toolchain(&mut self) {
         let Some(rx) = &self.toolchain_rx else { return };

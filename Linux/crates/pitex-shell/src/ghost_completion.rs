@@ -329,7 +329,7 @@ impl GhostCompletionCoordinator {
         });
     }
 
-    /// `poll_toolchain` — the 40ms tick's awaited half of `start_process`.
+    /// `poll_toolchain` — the event-driven completion of `start_process`.
     pub fn poll_toolchain(&self) {
         let rx = self.toolchain_rx.borrow_mut().take();
         let Some(rx) = rx else { return };
