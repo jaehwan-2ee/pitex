@@ -9,6 +9,24 @@ import Glibc
 #endif
 
 final class ProcessRunnerTests: XCTestCase {
+    func testConcurrentSilentProcessesDoNotStarveTimeouts() async throws {
+        try await withTemporaryDirectory { directory in
+            let started = ContinuousClock.now
+            try await withThrowingTaskGroup(of: ProcessResult.self) { group in
+                for _ in 0..<6 {
+                    group.addTask {
+                        try await ProcessRunner().run(
+                            DirectCommandPlan(executable: "/bin/sleep", arguments: ["5"]),
+                            projectRoot: directory, timeout: .milliseconds(100)
+                        )
+                    }
+                }
+                for try await result in group { XCTAssertEqual(result.stopReason, .timedOut) }
+            }
+            XCTAssertLessThan(started.duration(to: .now), .seconds(2))
+        }
+    }
+
     func testLargeStderrDoesNotBlockStdoutDrain() async throws {
         try await withTemporaryDirectory { directory in
             // Git hooks can fill stderr while stdout is still open.

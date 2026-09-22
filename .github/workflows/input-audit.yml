@@ -117,3 +117,17 @@ jobs:
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
       - run: cargo build -p pitex-windows
         working-directory: Windows
+
+  swift:
+    name: Swift packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.3.3'
+      - run: swift test
+        working-directory: Packages/TexCore
+      - run: swift test
+        working-directory: Packages/TexApp
+
