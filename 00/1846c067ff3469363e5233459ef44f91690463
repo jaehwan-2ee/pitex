@@ -1,0 +1,76 @@
+Mac/Resources/PitexIcon.icon/icon.json
+  s_ed44b01ef26714::t_25afc1178f6100 1-11
+Mac/Resources/es.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/ja.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 377-379
+Mac/Resources/ru.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/vi.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Mac/Resources/ko.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 377-379
+Linux/crates/pitex-shell/src/search.rs
+  s_ed44b01ef26714::t_8c44b7e6b2db9f 1-110,118-122
+  s_ed44b01ef26714::t_e249a539305132 123
+  s_ed44b01ef26714::t_df920a27bfd7b4 111-117
+Mac/Resources/en.lproj/Localizable.strings
+  s_ed44b01ef26714::t_25afc1178f6100 376-378
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_25afc1178f6100 4307,5023-5026,5029-5031
+  s_ed44b01ef26714::t_8c44b7e6b2db9f 142,181,295,883-889,1452-1453,4950-4951,4953-4955,4959,4982-4990,5182,5186,5190
+  s_ed44b01ef26714::t_a80cb3e6124ed9 5027-5028
+  s_ed44b01ef26714::t_71433a5cd1a80f 4952,4956-4957
+Linux/crates/pitex-shell/src/lib.rs
+  s_ed44b01ef26714::t_8c44b7e6b2db9f 21
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_ed44b01ef26714::t_25afc1178f6100 50,87,194,292
+Mac/Config/Base.xcconfig
+  s_ed44b01ef26714::t_25afc1178f6100 27
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_325aa6a344211b 89-91,122-124,159-161
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_e34977f87214f4 4,26,48-52,134-136
+Packages/TexApp/Sources/EditorMacAdapter/EditorFindController.swift
+  s_ed44b01ef26714::t_c86df0138cef8d 1-3,6,8-12,21-22,24-32,34-43,45-50,62,153-155,159,170-171,179-183,207-208
+  s_ed44b01ef26714::t_5ede32ca98fb19 4-5,7,13-20,23,33,44
+  s_ed44b01ef26714::t_f997b620816718 51-61,63-152,156-158,160-169,172-178,184-206
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_ed44b01ef26714::t_ed24a947c38735 10-16,18-28,185,299
+  s_ed44b01ef26714::t_5ede32ca98fb19 199,307
+  s_ed44b01ef26714::t_ed6c6011aad96b 9,17
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_ed44b01ef26714::t_d581d35ee317c1 10-12,26,27-39,41,43,47,49-54,56-59,61,102-103
+  s_ed44b01ef26714::t_4859722f748505 13-25,40,42,44-46,48,55,60,70-101,249-250
+  s_ed44b01ef26714::t_fb538e472a1d3f 62-69
+Linux/Cargo.lock
+  s_ed44b01ef26714::t_b8f10c5f012afa 754
+Linux/crates/pitex/Cargo.toml
+  s_ed44b01ef26714::t_df8191cb62c046 3
+Mac/Config/Info.plist
+  s_ed44b01ef26714::t_6128bf6799d684 20,22
+Windows/Cargo.lock
+  s_ed44b01ef26714::t_4779a9d0933d65 869
+Windows/crates/pitex-windows/Cargo.toml
+  s_ed44b01ef26714::t_6ec382c759488a 3
+Linux/crates/pitex-shell/src/agent.rs
+  s_ed44b01ef26714::t_75e17abf5bf343 2967
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "001846c067ff3469363e5233459ef44f91690463",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
