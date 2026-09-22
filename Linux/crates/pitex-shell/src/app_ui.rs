@@ -2329,22 +2329,7 @@ impl AppState {
                     tr(self.language, "editor.words_unit")
                 ));
             }
-            if let Some(disk) = ui.disk_status.borrow().as_ref() {
-                let conflicted = self
-                    .model
-                    .document_snapshot
-                    .as_ref()
-                    .map(|s| s.save_state == DocumentSaveState::Conflicted)
-                    .unwrap_or(false);
-                disk.set_tooltip_text(Some(&tr(
-                    self.language,
-                    if conflicted {
-                        "editor.disk_changed"
-                    } else {
-                        "editor.disk_unchanged"
-                    },
-                )));
-            }
+
         });
     }
 
@@ -2693,12 +2678,7 @@ impl AppState {
                     "media-playback-start-symbolic"
                 });
                 b.set_sensitive(building || self.model.build_unavailable_reason().is_none());
-                b.set_tooltip_text(Some(
-                    &self
-                        .model
-                        .build_unavailable_reason()
-                        .unwrap_or_else(|| tr(self.language, "build.start")),
-                ));
+
             }
             if let Some(b) = ui.header_build_button.borrow().as_ref() {
                 b.set_icon_name(if building {
@@ -4888,7 +4868,14 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     editor_header.append(&caption);
     let disk = gtk4::Button::from_icon_name("emblem-synchronizing-symbolic");
     disk.add_css_class("flat");
-    disk.set_tooltip_text(Some(&tr(lang, "editor.disk_unchanged")));
+    let tooltip_state = Rc::downgrade(state);
+    compat::dynamic_tooltip(&disk, move || {
+        let state = tooltip_state.upgrade()?;
+        let state = state.try_borrow().ok()?;
+        let conflicted = state.model.document_snapshot.as_ref()
+            .map(|s| s.save_state == DocumentSaveState::Conflicted).unwrap_or(false);
+        Some(tr(state.language, if conflicted { "editor.disk_changed" } else { "editor.disk_unchanged" }))
+    });
     a11y(&disk, "pitex.editor.diskStatus", "editor.disk_unchanged");
     {
         let state = state.clone();
@@ -5308,6 +5295,13 @@ for line in sys.stdin:
         eprintln!("startup: building real window");
         build_window(&app, "1.6.0");
         let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        let tooltip_changes = Rc::new(Cell::new(0));
+        UI.with(|ui| {
+            for button in [ui.disk_status.borrow().as_ref(), ui.build_button.borrow().as_ref()].into_iter().flatten() {
+                let changes = tooltip_changes.clone();
+                button.connect_tooltip_text_notify(move |_| changes.set(changes.get() + 1));
+            }
+        });
         eprintln!("startup: opening small TeX file");
         state.borrow_mut().open_selected(file);
         let context = glib::MainContext::default();
@@ -5329,6 +5323,7 @@ for line in sys.stdin:
                 ready_ticks, state.borrow().displayed_pdf_key.get(), state.borrow().agent.as_ref().map(|a| &a.connection));
             std::process::abort();
         }
+        assert_eq!(tooltip_changes.get(), 0, "refreshing a mapped widget must not trigger X11 tooltip pointer queries");
         state.borrow_mut().shutdown_agent();
         UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
         finished.store(true, std::sync::atomic::Ordering::Release);
