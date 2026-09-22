@@ -1,0 +1,23 @@
+Linux/crates/pitex-shell/src/agent.rs
+  s_ed44b01ef26714::t_3f7ba06184e6b2 1121,1241
+Mac/Sources/AppShell/PitexApp.swift
+  s_ed44b01ef26714::t_3f7ba06184e6b2 405-406,410-423,425-427,441,448-449,452,466-469,472-476,494,522-524,538-539,556,561-562,579,711-714,766-774
+Linux/crates/pitex-shell/src/ghost_completion.rs
+  s_ed44b01ef26714::t_3f7ba06184e6b2 332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ff9f304e25dd148ba49ceabe3343b7afa292856",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
