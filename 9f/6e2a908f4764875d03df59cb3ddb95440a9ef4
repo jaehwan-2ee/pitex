@@ -1,0 +1,31 @@
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_a11fcf2d5f3220 65-68,129-134
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_e01274be1a1c23 34,48
+Mac/Config/Info.plist
+  s_ed44b01ef26714::t_a11fcf2d5f3220 20,22
+Linux/Cargo.lock
+  s_ed44b01ef26714::t_cb0d6e10e361c2 754
+Linux/crates/pitex/Cargo.toml
+  s_ed44b01ef26714::t_0ae8bf5515820d 3
+Windows/Cargo.lock
+  s_ed44b01ef26714::t_4835f3cd908a5c 869
+Windows/crates/pitex-windows/Cargo.toml
+  s_ed44b01ef26714::t_8c63592c17d3c8 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f6e2a908f4764875d03df59cb3ddb95440a9ef4",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
