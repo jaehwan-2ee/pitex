@@ -1039,7 +1039,7 @@ final class GhostCompletionCoordinator {
     /// code-fence wrapper is dropped, one trailing newline is stripped, and
     /// blank replies show nothing.
     private func applySuggestion(_ raw: String) {
-        guard let textView, textView.isEditable, !textView.hasMarkedText() else { return }
+        guard let textView, textView.isEditable, !textView.hasMarkedText() else { dismiss(); return }
         var suggestion = raw
         if suggestion.hasPrefix("```") {
             var lines = suggestion.components(separatedBy: "\n")
@@ -1062,7 +1062,7 @@ final class GhostCompletionCoordinator {
     /// text-change notification reschedules the next completion.
     @discardableResult
     func accept() -> Bool {
-        guard let suggestion, let textView, textView.isEditable, !textView.hasMarkedText() else { return false }
+        guard let suggestion, let textView, textView.isEditable, !textView.hasMarkedText() else { dismiss(); return false }
         dismiss()
         textView.insertText(suggestion, replacementRange: textView.selectedRange())
         return true

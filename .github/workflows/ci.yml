@@ -66,6 +66,7 @@ jobs:
         run: |
           swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests'
           python3 Tools/check-git-performance.py
+          python3 Tools/check-ime-completion.py
       - name: Native highlighting checks
         run: python3 Tools/check-highlighting-performance.py
       - name: Minimap and completion checks

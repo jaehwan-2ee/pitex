@@ -576,6 +576,26 @@ impl GhostCompletionCoordinator {
         true
     }
 
+    #[cfg(test)]
+    pub(crate) fn check_ime_guards() {
+        let buffer = sourceview5::Buffer::new(None);
+        let view = sourceview5::View::with_buffer(&buffer);
+        let label = gtk4::Label::new(None);
+        let completion = Self::new();
+        completion.attach(&view, &buffer, &label);
+        completion.apply_suggestion("before composition");
+        view.emit_by_name::<()>("preedit-changed", &[&"한"]);
+        assert!(completion.suggestion.borrow().is_none());
+        completion.apply_suggestion("late response");
+        assert!(!completion.accept());
+        assert_eq!(buffer.char_count(), 0);
+        view.emit_by_name::<()>("preedit-changed", &[&""]);
+        completion.apply_suggestion("accepted");
+        assert!(completion.accept());
+        assert_eq!(buffer.text(&buffer.start_iter(), &buffer.end_iter(), false), "accepted");
+        completion.shutdown();
+    }
+
     /// Esc/typing/caret move/setting-off — hide the ghost only; superseding
     /// the in-flight request is `editor_activity`'s job.
     pub fn dismiss(&self) {

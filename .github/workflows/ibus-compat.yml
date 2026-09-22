@@ -18,6 +18,13 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y gcc pkg-config libibus-1.0-dev python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
           gcc -shared -fPIC -O2 Linux/crates/pitex/src/ibus_compat.c -o /tmp/pitex-ibus-probe.so $(pkg-config --cflags --libs gio-2.0) -ldl
+      - name: Build the actual app and verify the linked adapter
+        run: |
+          apt-get install -y build-essential curl ca-certificates libssl-dev libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          cargo build --manifest-path Linux/Cargo.toml -p pitex --no-default-features
+          nm -D Linux/target/debug/pitex | grep ' T ibus_input_context_process_key_event$'
       - name: Audit unmodified system IBus with the app-local adapter
         timeout-minutes: 4
         run: |

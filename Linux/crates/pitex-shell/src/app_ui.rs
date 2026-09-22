@@ -5268,6 +5268,7 @@ for line in sys.stdin:
             }
         });
         adw::init().unwrap();
+        GhostCompletionCoordinator::check_ime_guards();
         // GTK queries X11 from the tooltip setter even before a widget is
         // parented, unless it is hidden. Check the real property notification.
         for visible in [true, false] {
