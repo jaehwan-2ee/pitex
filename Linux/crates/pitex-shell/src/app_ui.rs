@@ -2076,7 +2076,7 @@ impl AppState {
                 chip.add_controller(gesture);
                 let close = gtk4::Button::from_icon_name("window-close-symbolic");
                 close.add_css_class("flat");
-                close.set_tooltip_text(Some(&tr(self.language, "editor.close")));
+                compat::initial_tooltip(&close, &tr(self.language, "editor.close"));
                 a11y(&close, "pitex.editor.tabClose", "editor.close");
                 let url3 = url.clone();
                 close.connect_clicked(move |_| {
@@ -3433,7 +3433,7 @@ fn append_todo_row(list: &gtk4::ListBox, index: usize, item: &DocumentTodoItem, 
 
     let check = gtk4::CheckButton::new();
     check.set_active(item.done);
-    check.set_tooltip_text(Some(&tr(lang, "todos.toggle_help")));
+    compat::initial_tooltip(&check, &tr(lang, "todos.toggle_help"));
     check.connect_toggled(move |_| {
         STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
@@ -3470,7 +3470,7 @@ fn append_todo_row(list: &gtk4::ListBox, index: usize, item: &DocumentTodoItem, 
     // Inline rename: swap the labels for an Entry; Return applies.
     let rename = gtk4::Button::from_icon_name("document-edit-symbolic");
     rename.add_css_class("flat");
-    rename.set_tooltip_text(Some(&tr(lang, "todos.rename")));
+    compat::initial_tooltip(&rename, &tr(lang, "todos.rename"));
     {
         let body = body.clone();
         rename.connect_clicked(move |_| {
@@ -3508,7 +3508,7 @@ fn append_todo_row(list: &gtk4::ListBox, index: usize, item: &DocumentTodoItem, 
 
     let delete = gtk4::Button::from_icon_name("user-trash-symbolic");
     delete.add_css_class("flat");
-    delete.set_tooltip_text(Some(&tr(lang, "todos.delete")));
+    compat::initial_tooltip(&delete, &tr(lang, "todos.delete"));
     delete.connect_clicked(move |_| {
         STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
@@ -3984,7 +3984,7 @@ fn build_chrome(
 
     // Navigation side: sidebar toggle.
     let sidebar_toggle = gtk4::Button::from_icon_name("sidebar-show-symbolic");
-    sidebar_toggle.set_tooltip_text(Some(&tr(lang, "editor.show_sidebar")));
+    compat::initial_tooltip(&sidebar_toggle, &tr(lang, "editor.show_sidebar"));
     a11y(&sidebar_toggle, "pitex.toolbar.sidebar", "editor.show_sidebar");
     {
         let state = state.clone();
@@ -3998,7 +3998,7 @@ fn build_chrome(
 
     // Trailing controls: open, PDF toggle, assistant, settings, find.
     let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
-    open_btn.set_tooltip_text(Some(&tr(lang, "workspace.open")));
+    compat::initial_tooltip(&open_btn, &tr(lang, "workspace.open"));
     a11y(&open_btn, "pitex.toolbar.open", "workspace.open");
     ui.open_button.replace(Some(open_btn.clone()));
     {
@@ -4010,7 +4010,7 @@ fn build_chrome(
     header.pack_end(&open_btn);
 
     let pdf_toggle = gtk4::Button::from_icon_name("x-office-document-symbolic");
-    pdf_toggle.set_tooltip_text(Some(&tr(lang, "preview.title")));
+    compat::initial_tooltip(&pdf_toggle, &tr(lang, "preview.title"));
     a11y(&pdf_toggle, "pitex.toolbar.pdf", "preview.title");
     {
         let state = state.clone();
@@ -4023,7 +4023,7 @@ fn build_chrome(
     header.pack_end(&pdf_toggle);
 
     let assistant_toggle = gtk4::Button::from_icon_name("starred-symbolic");
-    assistant_toggle.set_tooltip_text(Some(&tr(lang, "assistant.title")));
+    compat::initial_tooltip(&assistant_toggle, &tr(lang, "assistant.title"));
     a11y(&assistant_toggle, "pitex.toolbar.assistant", "assistant.title");
     {
         let state = state.clone();
@@ -4037,7 +4037,7 @@ fn build_chrome(
     header.pack_end(&assistant_toggle);
 
     let settings_btn = gtk4::Button::from_icon_name("emblem-system-symbolic");
-    settings_btn.set_tooltip_text(Some(&tr(lang, "command.settings")));
+    compat::initial_tooltip(&settings_btn, &tr(lang, "command.settings"));
     a11y(&settings_btn, "pitex.settings", "command.settings");
     {
         let state = state.clone();
@@ -4103,12 +4103,12 @@ fn build_chrome(
     let primary_btn = gtk4::MenuButton::new();
     primary_btn.set_icon_name("open-menu-symbolic");
     primary_btn.set_menu_model(Some(&primary));
-    primary_btn.set_tooltip_text(Some(&tr(lang, "command.view")));
+    compat::initial_tooltip(&primary_btn, &tr(lang, "command.view"));
     a11y(&primary_btn, "pitex.menu.primary", "command.view");
     header.pack_end(&primary_btn);
 
     let find_btn = gtk4::Button::from_icon_name("edit-find-symbolic");
-    find_btn.set_tooltip_text(Some(&tr(lang, "editor.find")));
+    compat::initial_tooltip(&find_btn, &tr(lang, "editor.find"));
     a11y(&find_btn, "pitex.toolbar.find", "editor.find");
     {
         find_btn.connect_clicked(move |_| {
@@ -4516,7 +4516,7 @@ fn build_symbols_popover() -> gtk4::Popover {
             };
             for symbol in language_core::symbols_in(category) {
                 let button = gtk4::Button::with_label(symbol.glyph);
-                button.set_tooltip_text(Some(symbol.command));
+                compat::initial_tooltip(&button, symbol.command);
                 let command = symbol.command;
                 let popover = popover.clone();
                 button.connect_clicked(move |_| {
@@ -4646,7 +4646,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     todos_header.append(&todos_title);
     let todo_add = gtk4::Button::from_icon_name("list-add-symbolic");
     todo_add.add_css_class("flat");
-    todo_add.set_tooltip_text(Some(&tr(lang, "todos.add_help")));
+    compat::initial_tooltip(&todo_add, &tr(lang, "todos.add_help"));
     a11y(&todo_add, "pitex.sidebar.todos.add", "todos.add_help");
     {
         let state = state.clone();
@@ -4705,7 +4705,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     header.append(&title);
     let rescan = gtk4::Button::from_icon_name("view-refresh-symbolic");
     rescan.add_css_class("flat");
-    rescan.set_tooltip_text(Some(&tr(lang, "sidebar.rescan_help")));
+    compat::initial_tooltip(&rescan, &tr(lang, "sidebar.rescan_help"));
     {
         let state = state.clone();
         rescan.connect_clicked(move |_| {
@@ -4718,7 +4718,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     header.append(&rescan);
     let pin = gtk4::Button::from_icon_name("emblem-important-symbolic");
     pin.add_css_class("flat");
-    pin.set_tooltip_text(Some(&tr(lang, "sidebar.pin_help")));
+    compat::initial_tooltip(&pin, &tr(lang, "sidebar.pin_help"));
     a11y(&pin, "pitex.sidebar.pin", "sidebar.pin_help");
     {
         let state = state.clone();
@@ -4814,7 +4814,7 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     // the macOS tab strip.
     let symbols_btn = gtk4::MenuButton::new();
     symbols_btn.set_icon_name("accessories-character-map-symbolic");
-    symbols_btn.set_tooltip_text(Some(&tr(lang, "editor.symbols")));
+    compat::initial_tooltip(&symbols_btn, &tr(lang, "editor.symbols"));
     a11y(&symbols_btn, "pitex.toolbar.symbols", "editor.symbols");
     symbols_btn.set_popover(Some(&build_symbols_popover()));
     strip.append(&symbols_btn);
@@ -4843,7 +4843,7 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     strip.append(&save);
 
     let build_btn = gtk4::Button::from_icon_name("media-playback-start-symbolic");
-    build_btn.set_tooltip_text(Some(&tr(lang, "build.start")));
+    compat::initial_tooltip(&build_btn, &tr(lang, "build.start"));
     a11y(&build_btn, "pitex.build", "build.start");
     {
         let state = state.clone();
@@ -4883,7 +4883,7 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     editor_header.append(&disk);
     let reload = gtk4::Button::from_icon_name("view-refresh-symbolic");
     reload.add_css_class("flat");
-    reload.set_tooltip_text(Some(&tr(lang, "editor.reload")));
+    compat::initial_tooltip(&reload, &tr(lang, "editor.reload"));
     a11y(&reload, "pitex.editor.reload", "editor.reload");
     {
         let state = state.clone();
@@ -5098,7 +5098,7 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     footer.append(&bottom_btn);
     let flip_btn = gtk4::Button::from_icon_name("object-flip-horizontal-symbolic");
     flip_btn.add_css_class("flat");
-    flip_btn.set_tooltip_text(Some(&tr(lang, "editor.flip_panels")));
+    compat::initial_tooltip(&flip_btn, &tr(lang, "editor.flip_panels"));
     {
         let state = state.clone();
         flip_btn.connect_clicked(move |_| {
@@ -5288,6 +5288,16 @@ for line in sys.stdin:
             }
         });
         adw::init().unwrap();
+        // GTK queries X11 from the tooltip setter even before a widget is
+        // parented, unless it is hidden. Check the real property notification.
+        for visible in [true, false] {
+            let button = gtk4::Button::new();
+            button.set_visible(visible);
+            button.connect_tooltip_text_notify(|button| assert!(!button.is_visible()));
+            compat::initial_tooltip(&button, "help");
+            assert_eq!(button.tooltip_text().as_deref(), Some("help"));
+            assert_eq!(button.is_visible(), visible);
+        }
         let app = adw::Application::builder().application_id("app.pitex.StartupTest").build();
         app.register(None::<&gio::Cancellable>).unwrap();
         eprintln!("startup: building real window");

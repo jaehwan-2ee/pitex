@@ -56,9 +56,19 @@ pub fn spin_row(title: &str, min: f64, max: f64, step: f64) -> (adw::ActionRow, 
     (row, spin)
 }
 
-/// Install before mounting the widget. Updating tooltip-text on a mapped
-/// GTK/X11 widget synchronously calls XIQueryPointer; a stalled X server then
-/// blocks the UI. Resolve changing help text only when GTK requests a tooltip.
+/// Set fixed help text before mounting. GTK 4.14 queries the X11 pointer for
+/// any visible widget, even an unparented one. Keep it hidden during the setter
+/// so the native tooltip/accessibility properties are stored without that query.
+pub fn initial_tooltip(widget: &impl IsA<gtk4::Widget>, text: &str) {
+    debug_assert!(widget.root().is_none());
+    let visible = widget.is_visible();
+    widget.set_visible(false);
+    widget.set_tooltip_text(Some(text));
+    widget.set_visible(visible);
+}
+
+/// Resolve changing help text only when GTK requests a tooltip, avoiding the
+/// synchronous X11 pointer query triggered by updating tooltip-text.
 pub fn dynamic_tooltip(widget: &impl IsA<gtk4::Widget>, text: impl Fn() -> Option<String> + 'static) {
     widget.connect_query_tooltip(move |_, _, _, _, tooltip| {
         let Some(text) = text() else { return false };

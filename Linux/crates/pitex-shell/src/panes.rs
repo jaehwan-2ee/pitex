@@ -52,7 +52,7 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
     ];
     let section_strs: Vec<&str> = section_items.iter().map(String::as_str).collect();
     let section = gtk4::DropDown::from_strings(&section_strs);
-    section.set_tooltip_text(Some(&tr(lang, "console.terminal")));
+    compat::initial_tooltip(&section, &tr(lang, "console.terminal"));
     {
         let state = state.clone();
         section.connect_selected_notify(move |dd| {
@@ -74,7 +74,7 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
     // Build command entry — `{file}` placeholder, persisted per project.
     let build_entry = gtk4::Entry::new();
     build_entry.set_hexpand(true);
-    build_entry.set_tooltip_text(Some(&tr(lang, "console.build_command_help")));
+    compat::initial_tooltip(&build_entry, &tr(lang, "console.build_command_help"));
     a11y(&build_entry, "pitex.console.buildCommand", "console.build_command_help");
     {
         let state2 = state.clone();
@@ -117,7 +117,7 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
     let custom_entry = gtk4::Entry::new();
     custom_entry.set_width_chars(18);
     custom_entry.set_placeholder_text(Some(&tr(lang, "console.custom_command_help")));
-    custom_entry.set_tooltip_text(Some(&tr(lang, "console.custom_command_help")));
+    compat::initial_tooltip(&custom_entry, &tr(lang, "console.custom_command_help"));
     a11y(&custom_entry, "pitex.console.customCommand", "console.custom_command_help");
     {
         let state = state.clone();
@@ -131,7 +131,7 @@ pub fn build_console(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Wid
     header.append(&custom_entry);
 
     let run_custom = gtk4::Button::from_icon_name("utilities-terminal-symbolic");
-    run_custom.set_tooltip_text(Some(&tr(lang, "console.custom_run_help")));
+    compat::initial_tooltip(&run_custom, &tr(lang, "console.custom_run_help"));
     a11y(&run_custom, "pitex.console.customRun", "command.run_custom");
     {
         let state = state.clone();
@@ -262,7 +262,7 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     let branch_model = gtk4::StringList::new(&[]);
     let branch_dd = gtk4::DropDown::new(Some(branch_model.clone()), gtk4::Expression::NONE);
     a11y(&branch_dd, "pitex.git.branch", "git.branch");
-    branch_dd.set_tooltip_text(Some(&tr(lang, "git.branch")));
+    compat::initial_tooltip(&branch_dd, &tr(lang, "git.branch"));
     {
         let state = state.clone();
         branch_dd.connect_selected_notify(move |dd| {
@@ -295,7 +295,7 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     header.append(&branch_dd);
 
     let new_branch = gtk4::Button::from_icon_name("list-add-symbolic");
-    new_branch.set_tooltip_text(Some(&tr(lang, "git.branch_new")));
+    compat::initial_tooltip(&new_branch, &tr(lang, "git.branch_new"));
     a11y(&new_branch, "pitex.git.branchNew", "git.branch_new");
     {
         let state = state.clone();
@@ -478,7 +478,7 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     commit_row.append(&commit_button);
     let suggest_button = gtk4::Button::with_label(&tr(lang, "git.suggest"));
     suggest_button.set_hexpand(true);
-    suggest_button.set_tooltip_text(Some(&tr(lang, "git.suggest_help")));
+    compat::initial_tooltip(&suggest_button, &tr(lang, "git.suggest_help"));
     a11y(&suggest_button, "pitex.git.suggest", "git.suggest");
     {
         let state = state.clone();
@@ -562,7 +562,7 @@ fn git_tool_button(
     action: fn(&mut AppState),
 ) -> gtk4::Button {
     let button = gtk4::Button::from_icon_name(icon);
-    button.set_tooltip_text(Some(&tr(lang, tip)));
+    compat::initial_tooltip(&button, &tr(lang, tip));
     let state = state.clone();
     button.connect_clicked(move |_| {
         let Ok(mut s) = state.try_borrow_mut() else {
@@ -597,7 +597,7 @@ pub(crate) fn git_section_row(
     label.set_hexpand(true);
     hbox.append(&label);
     let button = gtk4::Button::from_icon_name(icon);
-    button.set_tooltip_text(Some(tip));
+    compat::initial_tooltip(&button, tip);
     button.add_css_class("flat");
     button.connect_clicked(move |_| {
         STATE.with(|s| {
@@ -666,7 +666,7 @@ pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::ListBoxRow
     {
         let change = change.clone();
         let discard = gtk4::Button::from_icon_name("user-trash-symbolic");
-        discard.set_tooltip_text(Some(&tr(lang, "git.discard")));
+        compat::initial_tooltip(&discard, &tr(lang, "git.discard"));
         discard.add_css_class("flat");
         discard.connect_clicked(move |_| {
             STATE.with(|s| {
@@ -686,14 +686,14 @@ pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::ListBoxRow
         } else {
             "list-add-symbolic"
         });
-        toggle.set_tooltip_text(Some(&tr(
+        compat::initial_tooltip(&toggle, &tr(
             lang,
             if change.staged {
                 "git.unstage"
             } else {
                 "git.stage"
             },
-        )));
+        ));
         toggle.add_css_class("flat");
         toggle.connect_clicked(move |_| {
             STATE.with(|s| {
@@ -902,7 +902,7 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     controls.append(&model_picker);
 
     let reasoning = gtk4::DropDown::from_strings(&["off"]);
-    reasoning.set_tooltip_text(Some(&tr(lang, "assistant.reasoning_help")));
+    compat::initial_tooltip(&reasoning, &tr(lang, "assistant.reasoning_help"));
     a11y(&reasoning, "pitex.assistantReasoning", "assistant.reasoning_help");
     {
         let state = state.clone();
@@ -943,7 +943,7 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     controls.append(&attach_toggle);
 
     let clear = gtk4::Button::from_icon_name("user-trash-symbolic");
-    clear.set_tooltip_text(Some(&tr(lang, "assistant.clear")));
+    compat::initial_tooltip(&clear, &tr(lang, "assistant.clear"));
     a11y(&clear, "pitex.agent.newSession", "assistant.clear");
     {
         let state = state.clone();
@@ -1025,7 +1025,7 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     composer.set_margin_top(6);
     composer.set_margin_bottom(10);
     let attach = gtk4::Button::from_icon_name("mail-attachment-symbolic");
-    attach.set_tooltip_text(Some(&tr(lang, "assistant.attach_files_help")));
+    compat::initial_tooltip(&attach, &tr(lang, "assistant.attach_files_help"));
     a11y(&attach, "pitex.assistant.attach", "assistant.attach_files_help");
     {
         let state = state.clone();
@@ -1131,7 +1131,7 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     }
 
     let send = gtk4::Button::from_icon_name("go-up-symbolic");
-    send.set_tooltip_text(Some(&tr(lang, "assistant.send_help")));
+    compat::initial_tooltip(&send, &tr(lang, "assistant.send_help"));
     a11y(&send, "pitex.assistantSend", "assistant.send");
     {
         let state = state.clone();
@@ -1143,7 +1143,7 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     composer.append(&send);
 
     let stop = gtk4::Button::from_icon_name("media-playback-stop-symbolic");
-    stop.set_tooltip_text(Some(&tr(lang, "assistant.stop_help")));
+    compat::initial_tooltip(&stop, &tr(lang, "assistant.stop_help"));
     stop.set_visible(false);
     a11y(&stop, "pitex.assistantCancel", "assistant.stop");
     {
@@ -1222,7 +1222,7 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     ui.pdf_name_label.replace(Some(name.clone()));
     toolbar.append(&name);
     let external = gtk4::Button::from_icon_name("document-send-symbolic");
-    external.set_tooltip_text(Some(&tr(lang, "preview.open_external")));
+    compat::initial_tooltip(&external, &tr(lang, "preview.open_external"));
     a11y(&external, "pitex.pdf.openExternal", "preview.open_external");
     {
         let state = state.clone();
@@ -1240,7 +1240,7 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     }
     toolbar.append(&external);
     let download = gtk4::Button::from_icon_name("document-save-symbolic");
-    download.set_tooltip_text(Some(&tr(lang, "preview.download")));
+    compat::initial_tooltip(&download, &tr(lang, "preview.download"));
     a11y(&download, "pitex.pdf.download", "preview.download");
     {
         let state = state.clone();
@@ -1275,14 +1275,14 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     nav.set_margin_top(4);
     nav.set_margin_bottom(4);
     let prev = gtk4::Button::from_icon_name("go-previous-symbolic");
-    prev.set_tooltip_text(Some(&tr(lang, "preview.previous_page")));
+    compat::initial_tooltip(&prev, &tr(lang, "preview.previous_page"));
     let next = gtk4::Button::from_icon_name("go-next-symbolic");
-    next.set_tooltip_text(Some(&tr(lang, "preview.next_page")));
+    compat::initial_tooltip(&next, &tr(lang, "preview.next_page"));
     let page_label = gtk4::Label::new(Some("—"));
     let zoom_out = gtk4::Button::from_icon_name("zoom-out-symbolic");
-    zoom_out.set_tooltip_text(Some(&tr(lang, "preview.zoom_out")));
+    compat::initial_tooltip(&zoom_out, &tr(lang, "preview.zoom_out"));
     let zoom_in = gtk4::Button::from_icon_name("zoom-in-symbolic");
-    zoom_in.set_tooltip_text(Some(&tr(lang, "preview.zoom_in")));
+    compat::initial_tooltip(&zoom_in, &tr(lang, "preview.zoom_in"));
     {
         let s = state.clone();
         prev.connect_clicked(move |_| s.borrow_mut().pdf_prev_page());
