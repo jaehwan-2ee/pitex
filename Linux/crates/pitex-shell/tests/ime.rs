@@ -25,7 +25,7 @@ fn keys(arguments: &[&str]) {
 
 #[test]
 #[ignore = "requires a real ibus-hangul session and GTK display"]
-fn hangul_backspace_keeps_working_after_commit_and_with_lock_modifiers() {
+fn caps_switch_preserves_native_input_and_document_sync() {
     gtk4::init().unwrap();
     let state = Rc::new(RefCell::new(DocumentSnapshot { revision: 0, text: String::new() }));
     let (read, write) = (state.clone(), state.clone());
@@ -45,8 +45,6 @@ fn hangul_backspace_keeps_working_after_commit_and_with_lock_modifiers() {
     let window = gtk4::Window::builder().title("PitexIMERegression").default_width(480).default_height(240).build();
     let scroller = gtk4::ScrolledWindow::new();
     scroller.set_child(Some(adapter.view()));
-    let current = adapter.clone();
-    pitex_shell::compat::fix_ime_backspace(&scroller, move || Some(current.clone()));
     window.set_child(Some(&scroller));
     window.present();
     adapter.view().grab_focus();
@@ -57,26 +55,32 @@ fn hangul_backspace_keeps_working_after_commit_and_with_lock_modifiers() {
     keys(&["windowfocus", "--sync", id.lines().next().unwrap()]);
     assert!(Command::new("ibus").args(["engine", "hangul"]).status().unwrap().success());
     pump(Duration::from_millis(500));
-    keys(&["key", "Hangul"]);
-    for (caps_lock, num_lock) in [(false, false), (true, false), (false, true), (true, true)] {
-        keys(&["key", "g", "k", "s", "space"]);
-        assert_eq!(adapter.text(), "한 ", "IBus must produce real Korean input for this check");
-        if caps_lock { keys(&["key", "Caps_Lock"]); }
-        if num_lock { keys(&["key", "Num_Lock"]); }
-        for _ in 0..8 {
-            let before = adapter.text();
-            if before.is_empty() { break; }
-            keys(&["key", "BackSpace"]);
-            assert_ne!(adapter.text(), before, "Backspace was swallowed (Caps Lock={caps_lock}, Num Lock={num_lock}, preedit={})", adapter.has_marked_text());
+    // The surrounding session configures Caps Lock as the actual IBus
+    // language switch. Check the adapter and canonical document together.
+    for phase in 0..4 {
+        if phase != 0 { keys(&["key", "Caps_Lock"]); }
+        let korean = phase % 2 == 1;
+        keys(&["key", "--delay", "0", "g", "k", "s", "1", "space"]);
+        assert_eq!(adapter.text(), if korean { "한1 " } else { "gks1 " });
+        assert_eq!(adapter.text(), state.borrow().text);
+        keys(&["key", "ctrl+a", "BackSpace"]);
+        assert_eq!(adapter.text(), "");
+        keys(&["key", "--delay", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]);
+        assert_eq!(adapter.text(), "1234567890");
+        keys(&["key", "--delay", "0", "BackSpace", "BackSpace", "Home", "Delete"]);
+        assert_eq!(adapter.text(), "2345678");
+        keys(&["key", "ctrl+a", "BackSpace", "Num_Lock", "KP_1", "KP_2", "KP_3"]);
+        assert_eq!(adapter.text(), "123");
+        keys(&["key", "BackSpace", "Home", "Delete"]);
+        assert_eq!(adapter.text(), "2");
+        assert_eq!(adapter.text(), state.borrow().text);
+        keys(&["key", "ctrl+a", "BackSpace", "Num_Lock"]);
+        if korean {
+            keys(&["key", "g", "k", "BackSpace", "k", "s", "Caps_Lock", "Caps_Lock"]);
+            assert_eq!(adapter.text(), "한", "IBus must own jamo deletion in every preedit mode");
             assert_eq!(adapter.text(), state.borrow().text);
+            keys(&["key", "ctrl+a", "BackSpace"]);
         }
-        assert!(adapter.text().is_empty());
-        if caps_lock { keys(&["key", "Caps_Lock"]); }
-        if num_lock { keys(&["key", "Num_Lock"]); }
     }
-    keys(&["key", "g", "k"]);
-    assert!(adapter.has_marked_text(), "Hangul composition must still be owned by IBus");
-    keys(&["key", "BackSpace"]);
-    assert!(adapter.has_marked_text(), "Backspace inside a syllable must keep the remaining jamo in composition");
     window.close();
 }

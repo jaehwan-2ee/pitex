@@ -143,7 +143,15 @@ public struct ProcessRunner: Sendable {
         let sequencer = OutputSequencer(handler: outputHandler)
         let standardOutputTask = makeReader(fd: spawned.standardOutput, channel: .standardOutput, sequencer: sequencer)
         let standardErrorTask = makeReader(fd: spawned.standardError, channel: .standardError, sequencer: sequencer)
-        let waitTask = Task.detached(priority: nil) { try waitForProcess(spawned.pid) }
+        // Blocking POSIX I/O must not occupy Swift's cooperative executor:
+        // otherwise the readers/waiter can starve cancellation and timers.
+        let waitTask = Task.detached(priority: nil) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
+                DispatchQueue.global(qos: .utility).async {
+                    continuation.resume(with: Result { try waitForProcess(spawned.pid) })
+                }
+            }
+        }
         let timeoutTask: Task<Void, Never>? = timeout.map { duration in
             Task.detached {
                 do {
@@ -340,18 +348,22 @@ private func makeReader(
     Task.detached(priority: nil) {
         defer { close(fd) }
         var collected = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
-            let count = buffer.withUnsafeMutableBytes { rawBuffer in
-                systemRead(fd, rawBuffer.baseAddress!, rawBuffer.count)
+            let (bytes, error): (Data, Int32) = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    var buffer = [UInt8](repeating: 0, count: 65_536)
+                    let count = buffer.withUnsafeMutableBytes { rawBuffer in
+                        systemRead(fd, rawBuffer.baseAddress!, rawBuffer.count)
+                    }
+                    continuation.resume(returning: (
+                        count > 0 ? Data(buffer.prefix(count)) : Data(), count < 0 ? errno : 0
+                    ))
+                }
             }
-            if count > 0 {
-                let bytes = Data(buffer.prefix(count))
+            if !bytes.isEmpty {
                 collected.append(bytes)
                 await sequencer.emit(channel: channel, bytes: bytes)
-            } else if count == 0 {
-                return collected
-            } else if errno != EINTR {
+            } else if error != EINTR {
                 return collected
             }
         }

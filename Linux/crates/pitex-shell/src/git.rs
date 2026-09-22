@@ -9,6 +9,7 @@ use git_core::{self, GitChange, GitChangeKind};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 pub(crate) fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
 where
@@ -25,7 +26,8 @@ where
         .output()
         .map_err(|e| e.to_string())?;
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(String::from_utf8(output.stdout)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -35,7 +37,7 @@ where
 
 /// `refreshGit()`'s off-thread half — detect the repo, then read status,
 /// branches, and the commit log.
-fn collect_git(project_root: &Path) -> Result<Option<GitRefresh>, String> {
+fn collect_git(project_root: &Path, previous: Option<Arc<git_core::GitStatus>>) -> Result<Option<GitRefresh>, String> {
     let Ok(top) = run_git(project_root, git_core::top_level_args()) else {
         return Ok(None);
     };
@@ -44,8 +46,14 @@ fn collect_git(project_root: &Path) -> Result<Option<GitRefresh>, String> {
     let branches_raw = run_git(&root, git_core::branch_args()).unwrap_or_default();
     // Empty on a repository with no commits — not an error for the panel.
     let log_raw = run_git(&root, git_core::log_args(80)).unwrap_or_default();
+    let status = git_core::parse_status(&status_raw, &root.to_string_lossy());
+    // Compare on the worker; an unchanged poll keeps the model and scroll position.
+    let status = match previous {
+        Some(old) if *old == status => old,
+        _ => Arc::new(status),
+    };
     Ok(Some(GitRefresh {
-        status: git_core::parse_status(&status_raw, &root.to_string_lossy()),
+        status,
         commits: git_core::parse_log(&log_raw),
         branches: git_core::parse_branches(&branches_raw),
     }))
@@ -55,6 +63,8 @@ impl AppState {
     /// `refreshGit()` — repo detection, status, branches, and log on a
     /// worker; the `GitRefreshed` message applies the result.
     pub fn refresh_git(&self) {
+        if self.model.console_section != crate::model::ConsoleSection::Git
+            || !self.model.bottom_panel_visible { return; }
         let Some(tx) = self.tx.clone() else { return };
         let Some(root) = self.model.project_url.clone() else {
             let _ = tx.send(WorkspaceMessage::GitRefreshed(Ok(None)));
@@ -62,8 +72,9 @@ impl AppState {
         };
         if self.git_refresh_pending.replace(true) { return; }
         *self.git_refresh_root.borrow_mut() = Some(root.clone());
+        let previous = self.model.git_status.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(WorkspaceMessage::GitRefreshed(collect_git(&root)));
+            let _ = tx.send(WorkspaceMessage::GitRefreshed(collect_git(&root, previous)));
         });
     }
 
@@ -289,9 +300,11 @@ fn suggest_commit_message(status: &git_core::GitStatus) -> Result<String, String
     };
     let files: Vec<String> = (if staged { &status.staged } else { &status.unstaged })
         .iter()
+        .take(100)
         .map(|c| format!("{} {}", c.kind.badge(), c.path))
         .collect();
-    let prompt = commit_message_prompt(&status.branch, &files, &diff);
+    let total = if staged { status.staged.len() } else { status.unstaged.len() };
+    let prompt = commit_message_prompt(&status.branch, &files, &diff, total);
     let arguments = vec![
         "--no-session".to_string(),
         "--no-tools".to_string(),
@@ -341,7 +354,7 @@ fn suggest_commit_message(status: &git_core::GitStatus) -> Result<String, String
 /// Conventional-commit ask: branch + change list + the diff itself. The
 /// diff is capped so a generated/mass-rename changeset cannot blow past the
 /// model's context on a one-shot prompt.
-fn commit_message_prompt(branch: &str, files: &[String], diff: &str) -> String {
+fn commit_message_prompt(branch: &str, files: &[String], diff: &str, total_files: usize) -> String {
     const LIMIT: usize = 20_000;
     let body = if diff.len() > LIMIT {
         let mut end = LIMIT;
@@ -352,13 +365,18 @@ fn commit_message_prompt(branch: &str, files: &[String], diff: &str) -> String {
     } else {
         diff.to_string()
     };
+    let names = files.join("\n");
+    let mut file_list: String = names.chars().take(5_000).collect();
+    if total_files > files.len() || file_list.len() < names.len() {
+        file_list.push_str(&format!("\n… [file list truncated; {total_files} files total]"));
+    }
     format!(
         "Write the git commit message for this change set on branch '{branch}'.\n\
          Changed files:\n{}\n\nDiff:\n{body}\n\n\
          Reply with ONLY the commit message: one imperative subject line of at \
          most 72 characters, then optionally a blank line and a short body. No \
          quotes, no code fences, no commentary.",
-        files.join("\n")
+        file_list
     )
 }
 
@@ -377,4 +395,43 @@ fn cleaned_commit_message(raw: &str) -> String {
         text = text[1..text.len() - 1].to_string();
     }
     text.chars().take(500).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_refresh_reuses_snapshot_but_staging_updates_it() {
+        let _environment = crate::TEST_ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("pitex-git-refresh-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        run_git(&root, ["init", "-q"]).unwrap();
+        let path = "한글 file.tex";
+        std::fs::write(root.join(path), "hello").unwrap();
+        let first = collect_git(&root, None).unwrap().unwrap().status;
+        let next = collect_git(&root, Some(first.clone())).unwrap().unwrap().status;
+        assert!(Arc::ptr_eq(&first, &next));
+        assert_eq!(next.unstaged[0].path, path);
+        run_git(&root, git_core::stage_args(path)).unwrap();
+        let staged = collect_git(&root, Some(next.clone())).unwrap().unwrap().status;
+        assert!(!Arc::ptr_eq(&staged, &next));
+        assert_eq!(staged.staged[0].path, path);
+        assert!(staged.unstaged.is_empty());
+        run_git(&root, git_core::unstage_no_head_args(path)).unwrap();
+        let unstaged = collect_git(&root, Some(staged)).unwrap().unwrap().status;
+        assert!(unstaged.staged.is_empty());
+        assert_eq!(unstaged.unstaged[0].path, path);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn commit_prompt_is_bounded_for_mass_changes_and_unicode_paths() {
+        let files = vec!["한".repeat(4_096); 100];
+        let prompt = commit_message_prompt("main", &files, &"한".repeat(100_000), 1_012_101);
+        assert!(prompt.len() < 50_000);
+        assert!(prompt.contains("1012101 files total"));
+        assert!(prompt.contains("[diff truncated]"));
+    }
 }

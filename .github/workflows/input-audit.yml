@@ -1,0 +1,141 @@
+name: Input method audit
+on:
+  push:
+    branches: [codex/caps-lock-audit]
+    paths:
+      - 'Mac/**'
+      - 'Packages/**'
+      - 'Linux/crates/pitex-shell/**'
+      - 'Linux/crates/gtk-editor-adapter/**'
+      - 'Linux/crates/git-core/**'
+      - 'Tools/check-*.py'
+      - '.github/workflows/input-audit.yml'
+  workflow_dispatch:
+jobs:
+  macos:
+    name: Native macOS Caps Lock editing
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS app
+        run: xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex -configuration Release -derivedDataPath build -skipPackagePluginValidation -skipMacroValidation CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - run: swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests'
+      - run: python3 Tools/check-git-performance.py
+      - run: python3 Tools/check-ime-completion.py
+      - name: Native key events through the real editor adapter
+        run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterLayoutTests.testNativeDigitsAndDeletionWithCapsLock
+  git-render:
+    name: Million-file Git responsiveness (${{ matrix.ubuntu }})
+    runs-on: ubuntu-24.04
+    container: ubuntu:${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu: '22.04'
+            features: --no-default-features
+          - ubuntu: '24.04'
+            features: ''
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates git libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev xvfb gdb dbus-x11
+          if [ "${{ matrix.ubuntu }}" = "24.04" ]; then apt-get install -y libvte-2.91-gtk4-dev; fi
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p git-core && cargo test -p pitex-shell --lib ${{ matrix.features }}
+        working-directory: Linux
+      - name: Reproduce large Git status during startup
+        timeout-minutes: 2
+        working-directory: Linux
+        env:
+          PITEX_AUDIT_GIT_ROWS: '1012101'
+          # Headless Mesa on 22.04 can stall before the Git fixture is installed.
+          GSK_RENDERER: cairo
+        run: |
+          binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
+          xvfb-run -a dbus-run-session -- gdb -batch -return-child-result -ex run -ex 'thread apply all bt 12' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1 > ../git-audit.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: git-render-audit-${{ matrix.ubuntu }}
+          path: git-audit.log
+  ibus:
+    if: github.event_name == 'workflow_dispatch'
+    name: IBus Caps Lock (${{ matrix.ubuntu }})
+    runs-on: ubuntu-24.04
+    container: ubuntu:${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['22.04', '24.04']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native input stack
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
+      - name: Compare forwarded and native key handling
+        timeout-minutes: 8
+        run: |
+          for scenario in true:1 false:1 false:0; do
+            forwarding=${scenario%:*}
+            sync=${scenario#*:}
+            xvfb-run -a dbus-run-session -- bash -eu -s -- "$forwarding" "$sync" <<'SESSION' > "input-$forwarding-sync-$sync.log" 2>&1 || true
+          gsettings set org.freedesktop.ibus.engine.hangul switch-keys Caps_Lock
+          gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding "$1"
+          gsettings list-recursively org.freedesktop.ibus.engine.hangul
+          dpkg-query -W ibus ibus-hangul libgtk-4-1 libgtk-4-1t64 2>/dev/null || true
+          ibus-daemon -drx --panel disable
+          sleep 2
+          ibus engine hangul
+          GTK_IM_MODULE=ibus IBUS_ENABLE_SYNC_MODE="$2" GSK_RENDERER=cairo python3 Tools/audit-ibus-capslock.py
+          SESSION
+            cat "input-$forwarding-sync-$sync.log"
+            grep -q '^INPUT_AUDIT_SUMMARY ' "input-$forwarding-sync-$sync.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: input-audit-${{ matrix.ubuntu }}
+          path: input-*.log
+
+  windows:
+    name: Windows workspace (MSYS2 UCRT64)
+    # The Windows app links the MSYS2 GTK stack, so the authoritative compile
+    # gate is a real UCRT64 toolchain — no cross-compile from Linux.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-gtksourceview5
+            mingw-w64-ucrt-x86_64-poppler
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme
+            mingw-w64-ucrt-x86_64-hicolor-icon-theme
+      - run: cargo build -p pitex-windows
+        working-directory: Windows
+
+  swift:
+    name: Swift packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.3.3'
+      - run: swift test
+        working-directory: Packages/TexCore
+      - run: swift test
+        working-directory: Packages/TexApp

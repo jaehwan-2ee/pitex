@@ -3,9 +3,54 @@ import XCTest
 
 #if os(macOS)
 import AppKit
+import Carbon
 import EditorMacAdapter
 
 final class EditorMacAdapterLayoutTests: XCTestCase {
+    @MainActor
+    func testNativeDigitsAndDeletionWithCapsLock() async throws {
+        _ = NSApplication.shared
+        let rows = [kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4,
+                    kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+        let keypad = [kVK_ANSI_Keypad0, kVK_ANSI_Keypad1, kVK_ANSI_Keypad2, kVK_ANSI_Keypad3, kVK_ANSI_Keypad4,
+                      kVK_ANSI_Keypad5, kVK_ANSI_Keypad6, kVK_ANSI_Keypad7, kVK_ANSI_Keypad8, kVK_ANSI_Keypad9]
+        for caps in [false, true] {
+            for pad in [false, true] {
+                let session = EditableDocumentSession()
+                let adapter = try await EditorMacAdapter.make(session: session)
+                let view = adapter.textView
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 240),
+                                      styleMask: [.titled], backing: .buffered, defer: false)
+                window.contentView = view
+                window.makeFirstResponder(view)
+                defer { window.orderOut(nil) }
+                var flags: NSEvent.ModifierFlags = caps ? [.capsLock] : []
+                if pad { flags.insert(.numericPad) }
+                func key(_ code: Int, _ characters: String) {
+                    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                        timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                        characters: characters, charactersIgnoringModifiers: characters,
+                        isARepeat: false, keyCode: UInt16(code))!
+                    view.keyDown(with: event)
+                }
+                adapter.nativeUndoManager.groupsByEvent = false
+                adapter.nativeUndoManager.beginUndoGrouping()
+                view.setSelectedRange(NSRange(location: 0, length: view.string.utf16.count))
+                for (digit, code) in (pad ? keypad : rows).enumerated() { key(code, String(digit)) }
+                XCTAssertEqual(view.string, "0123456789", "Caps Lock=\(caps), keypad=\(pad)")
+                for _ in 0..<10 { key(kVK_Delete, "\u{7f}") }
+                XCTAssertEqual(view.string, "", "Caps Lock=\(caps), keypad=\(pad)")
+                adapter.nativeUndoManager.endUndoGrouping()
+                for _ in 0..<100 {
+                    if await session.snapshot().text == view.string { break }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                let snapshot = await session.snapshot()
+                XCTAssertEqual(snapshot.text, view.string)
+            }
+        }
+    }
+
     @MainActor
     func testPartialUnicodeEditsKeepNativeUndoAndQueuedTyping() async throws {
         _ = NSApplication.shared

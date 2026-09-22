@@ -366,45 +366,52 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     left.set_margin_bottom(8);
     let changes_scroll = gtk4::ScrolledWindow::new();
     changes_scroll.set_vexpand(true);
-    let changes_list = gtk4::ListBox::new();
-    changes_list.set_selection_mode(gtk4::SelectionMode::None);
+    let changes_model = crate::git_list::GitList::new();
+    let selection = gtk4::NoSelection::new(Some(changes_model.clone()));
+    let factory = gtk4::SignalListItemFactory::new();
+    factory.connect_bind(move |_, object| {
+        use crate::git_list::Row;
+        let item = object.downcast_ref::<gtk4::ListItem>().unwrap();
+        let row = item.item().unwrap().downcast::<gtk4::glib::BoxedAnyObject>().unwrap();
+        let row = row.borrow::<Row>();
+        item.set_selectable(false);
+        item.set_activatable(matches!(*row, Row::Change(_)));
+        let child: gtk4::Widget = match &*row {
+            Row::Empty => {
+                let label = gtk4::Label::new(Some(&tr(lang, "git.no_changes")));
+                label.add_css_class("dim-label");
+                label.set_margin_top(12);
+                label.upcast()
+            }
+            Row::Section { staged, count } => git_section_row(
+                &tr(lang, if *staged { "git.staged" } else { "git.changes" }), *count,
+                if *staged { "list-remove-symbolic" } else { "list-add-symbolic" },
+                &tr(lang, if *staged { "git.unstage_all" } else { "git.stage_all" }),
+                if *staged { AppState::git_unstage_all } else { AppState::git_stage_all },
+            ).upcast(),
+            Row::Change(change) => git_change_row(change, lang).upcast(),
+        };
+        item.set_child(Some(&child));
+    });
+    factory.connect_unbind(|_, object| {
+        object.downcast_ref::<gtk4::ListItem>().unwrap().set_child(None::<&gtk4::Widget>);
+    });
+    let changes_list = gtk4::ListView::new(Some(selection), Some(factory));
+    changes_list.set_single_click_activate(true);
     changes_list.add_css_class("boxed-list");
     a11y(&changes_list, "pitex.git.changes", "git.changes");
     {
         let state = state.clone();
-        changes_list.connect_row_activated(move |_, row| {
-            let Ok(mut s) = state.try_borrow_mut() else {
-                return;
-            };
-            let name = row
-                .child()
-                .map(|c| c.widget_name().to_string())
-                .unwrap_or_default();
-            if let Some(path) = name
-                .strip_prefix("gitc:s:")
-                .or_else(|| name.strip_prefix("gitc:u:"))
-            {
-                let staged = name.starts_with("gitc:s:");
-                let path = path.to_string();
-                let change = s
-                    .model
-                    .git_status
-                    .as_ref()
-                    .and_then(|g| {
-                        g.staged
-                            .iter()
-                            .chain(g.unstaged.iter())
-                            .find(|c| c.path == path && c.staged == staged)
-                    })
-                    .cloned();
-                if let Some(change) = change {
-                    s.git_open_change(&change);
-                }
+        let model = changes_model.clone();
+        changes_list.connect_activate(move |_, position| {
+            if let Some(crate::git_list::Row::Change(change)) = model.row(position) {
+                if let Ok(mut s) = state.try_borrow_mut() { s.git_open_change(&change); }
             }
         });
     }
     changes_scroll.set_child(Some(&changes_list));
     ui.git_changes_list.replace(Some(changes_list.clone()));
+    ui.git_changes_model.replace(Some(changes_model));
     left.append(&changes_scroll);
 
     // Commit box — TextView (⌃Enter commits) + suggested-action button.
@@ -581,10 +588,7 @@ pub(crate) fn git_section_row(
     icon: &str,
     tip: &str,
     action: fn(&mut AppState),
-) -> gtk4::ListBoxRow {
-    let row = gtk4::ListBoxRow::new();
-    row.set_activatable(false);
-    row.set_selectable(false);
+) -> gtk4::Box {
     let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     hbox.set_margin_start(8);
     hbox.set_margin_end(8);
@@ -609,14 +613,12 @@ pub(crate) fn git_section_row(
         });
     });
     hbox.append(&button);
-    row.set_child(Some(&hbox));
-    row
+    hbox
 }
 
 /// One `GitChange` row — badge letter, file name, path, and the
 /// stage/unstage + discard actions (row activation opens the file).
-pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::ListBoxRow {
-    let row = gtk4::ListBoxRow::new();
+pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::Box {
     let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     hbox.set_margin_start(8);
     hbox.set_margin_end(8);
@@ -710,8 +712,7 @@ pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::ListBoxRow
         });
         hbox.append(&toggle);
     }
-    row.set_child(Some(&hbox));
-    row
+    hbox
 }
 
 /// One `GitCommit` row — lane dot + connector, subject, ref chips, and the

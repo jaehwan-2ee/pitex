@@ -13,6 +13,7 @@ pub mod completion;
 pub mod fold;
 pub mod ghost_completion;
 pub mod git;
+mod git_list;
 pub mod l10n;
 pub mod model;
 pub mod panes;
@@ -20,6 +21,10 @@ pub mod pdf;
 pub mod settings;
 pub mod synctex;
 pub mod update;
+
+// Unit tests that mutate/read the process PATH must not overlap.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Launch the native application (GTK4 main loop). `app_version` is the
 /// semantic version the updater compares against release tags.

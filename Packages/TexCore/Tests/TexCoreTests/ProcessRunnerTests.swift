@@ -9,6 +9,38 @@ import Glibc
 #endif
 
 final class ProcessRunnerTests: XCTestCase {
+    func testConcurrentSilentProcessesDoNotStarveTimeouts() async throws {
+        try await withTemporaryDirectory { directory in
+            let started = ContinuousClock.now
+            try await withThrowingTaskGroup(of: ProcessResult.self) { group in
+                for _ in 0..<6 {
+                    group.addTask {
+                        try await ProcessRunner().run(
+                            DirectCommandPlan(executable: "/bin/sleep", arguments: ["5"]),
+                            projectRoot: directory, timeout: .milliseconds(100)
+                        )
+                    }
+                }
+                for try await result in group { XCTAssertEqual(result.stopReason, .timedOut) }
+            }
+            XCTAssertLessThan(started.duration(to: .now), .seconds(2))
+        }
+    }
+
+    func testLargeStderrDoesNotBlockStdoutDrain() async throws {
+        try await withTemporaryDirectory { directory in
+            // Git hooks can fill stderr while stdout is still open.
+            let plan = try DirectCommandPlan(executable: "/bin/sh", arguments: [
+                "-c", "head -c 1048576 /dev/zero >&2; printf done"
+            ])
+            let result = try await ProcessRunner().run(plan, projectRoot: directory, timeout: .seconds(5))
+            XCTAssertEqual(result.stopReason, .completed)
+            XCTAssertEqual(result.termination, .exited(code: 0))
+            XCTAssertEqual(result.standardError.count, 1_048_576)
+            XCTAssertEqual(String(decoding: result.standardOutput, as: UTF8.self), "done")
+        }
+    }
+
     func testExecutableSearchUsesChildPATHAndWorkingDirectory() async throws {
         try await withTemporaryDirectory { directory in
             let bin = directory.appendingPathComponent("tools with spaces", isDirectory: true)

@@ -461,6 +461,7 @@ mod tests {
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn linux_checks_installed_version_after_successful_apt() {
+        let _environment = crate::TEST_ENV_LOCK.lock().unwrap();
         use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir().join(format!("pitex-install-check-{}", crate::model::uuid_v4()));
         std::fs::create_dir(&root).unwrap();
