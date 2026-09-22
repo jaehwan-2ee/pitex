@@ -1,0 +1,49 @@
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_c2e27313c42497 87,91
+  s_ed44b01ef26714::t_667ad8dfddf6bd 80,88-90
+  s_ed44b01ef26714::t_81364f7f8d9542 110,114,116-117,119-125
+  s_ed44b01ef26714::t_ffe95977727ab6 115
+  s_ed44b01ef26714::t_aa4522dbfa26f0 118
+  s_ed44b01ef26714::t_3c3dbad7acb22f 89
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_c1f12d2f65b369 5240-5254,5256-5258,5272-5278,5280-5293,5295,5303-5308,5310-5312,5315-5317,5325-5330
+  s_ed44b01ef26714::t_baf0e6461181d7 5309,5322-5323
+  s_ed44b01ef26714::t_cbf934304e78a7 5259-5271,5279,5313-5314,5318-5321
+  s_ed44b01ef26714::t_8fb54c332321d7 5255
+  s_ed44b01ef26714::t_ebafda4ca72b51 4869-4876,5296-5302,5324
+  s_ed44b01ef26714::t_e2dbafebbbefe0 5294
+Linux/crates/pitex-shell/tests/ime.rs
+  s_ed44b01ef26714::t_843fa87b31196c 1-57,62-64,66-69,71-74,76-82
+  s_ed44b01ef26714::t_383c54a65e8731 58-59
+  s_ed44b01ef26714::t_fc7559450009cc 60
+  s_ed44b01ef26714::t_930eaaab6258e3 61,65,70,75
+Fixtures/projects/startup-preview/main.pdf
+  s_ed44b01ef26714::t_8449dc5ac07d39 1-28
+Linux/crates/pitex-shell/src/compat.rs
+  s_ed44b01ef26714::t_fb4616a9ae050a 59-70
+  s_ed44b01ef26714::t_3c3dbad7acb22f 344-347
+Linux/crates/pitex-shell/src/panes.rs
+  s_ed44b01ef26714::t_25532f56028343 95-100
+Linux/crates/pitex/Cargo.toml
+  s_ed44b01ef26714::t_e2dbafebbbefe0 3
+Windows/crates/pitex-windows/Cargo.toml
+  s_ed44b01ef26714::t_e2dbafebbbefe0 3
+Mac/Config/Info.plist
+  s_ed44b01ef26714::t_e2dbafebbbefe0 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "581bbfa5853a9b2bc9a489f0c11c92264a63de9f",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
