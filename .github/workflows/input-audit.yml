@@ -17,7 +17,7 @@ jobs:
       - name: Install native input stack
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
+          DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
       - name: Compare forwarded and native key handling
         timeout-minutes: 5
         run: |
@@ -33,6 +33,7 @@ jobs:
           GTK_IM_MODULE=ibus GSK_RENDERER=cairo python3 Tools/audit-ibus-capslock.py
           SESSION
             cat "input-$forwarding.log"
+            grep -q '^INPUT_AUDIT_SUMMARY ' "input-$forwarding.log"
           done
       - uses: actions/upload-artifact@v4
         if: always()
