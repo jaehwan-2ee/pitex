@@ -2,6 +2,14 @@ name: Input method audit
 on:
   push:
     branches: [codex/caps-lock-audit]
+    paths:
+      - 'Mac/**'
+      - 'Packages/**'
+      - 'Linux/crates/pitex-shell/**'
+      - 'Linux/crates/gtk-editor-adapter/**'
+      - 'Linux/crates/git-core/**'
+      - 'Tools/check-*.py'
+      - '.github/workflows/input-audit.yml'
   workflow_dispatch:
 jobs:
   macos:

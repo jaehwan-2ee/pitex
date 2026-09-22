@@ -2,7 +2,7 @@ name: IBus compatibility regression
 on:
   push:
     branches: [codex/caps-lock-audit]
-    paths: ['Linux/crates/pitex/src/ibus_compat.c', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
+    paths: ['Linux/crates/pitex/src/**', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
   workflow_dispatch:
 jobs:
   caps:
@@ -26,18 +26,22 @@ jobs:
           cargo build --manifest-path Linux/Cargo.toml -p pitex --no-default-features
           nm -D Linux/target/debug/pitex | grep ' T ibus_input_context_process_key_event$'
       - name: Audit unmodified system IBus with the app-local adapter
-        timeout-minutes: 4
+        timeout-minutes: 10
         run: |
-          xvfb-run -a dbus-run-session -- bash -eu -s <<'SESSION' > compat.log 2>&1
+          for scenario in true:1 false:1 true:0 false:0; do
+            forwarding=${scenario%:*}
+            sync=${scenario#*:}
+            xvfb-run -a dbus-run-session -- bash -eu -s -- "$forwarding" "$sync" <<'SESSION' > "compat-$forwarding-$sync.log" 2>&1
           gsettings set org.freedesktop.ibus.engine.hangul switch-keys Caps_Lock
-          gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding true
+          gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding "$1"
           ibus-daemon -drx --panel disable
           sleep 2
           ibus engine hangul
-          GTK_IM_MODULE=ibus IBUS_ENABLE_SYNC_MODE=1 GSK_RENDERER=cairo LD_PRELOAD=/tmp/pitex-ibus-probe.so python3 Tools/audit-ibus-capslock.py
+          GTK_IM_MODULE=ibus IBUS_ENABLE_SYNC_MODE="$2" GSK_RENDERER=cairo LD_PRELOAD=/tmp/pitex-ibus-probe.so python3 -c 'import ctypes, runpy; ctypes.CDLL("/tmp/pitex-ibus-probe.so").pitex_ibus_initialize(); runpy.run_path("Tools/audit-ibus-capslock.py", run_name="__main__")'
           SESSION
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ibus-compat-${{ matrix.ubuntu }}
-          path: compat.log
+          path: compat-*.log

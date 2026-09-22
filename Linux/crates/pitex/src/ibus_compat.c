@@ -2,8 +2,8 @@
  * exports this public ABI entry point; modern IBus uses its original function.
  * Legacy Hangul forwards unhandled keys while reporting them as consumed.
  * Dispatch commit/preedit signals before returning the original key to GTK.
- * No IM settings or environment variables are changed, and child processes
- * do not inherit the adapter. Only public GObject/GIO/IBus APIs are used. */
+ * No system IM settings are changed, and child processes do not inherit
+ * the adapter. Only public GObject/GIO/IBus APIs are used. */
 #include <gio/gio.h>
 #include <dlfcn.h>
 
@@ -17,6 +17,13 @@ static AsyncKey process_async;
 static FinishKey finish_async;
 static gboolean modern;
 static gsize initialized;
+
+void pitex_ibus_initialize(void) {
+    /* GTK4 cannot reinject arbitrary unhandled keys in IBus async mode.
+     * Keep the supported synchronous path even after an old workaround
+     * set IBUS_ENABLE_SYNC_MODE=0. This affects this app, not IBus settings. */
+    g_setenv("IBUS_ENABLE_SYNC_MODE", "1", TRUE);
+}
 
 
 typedef struct {
