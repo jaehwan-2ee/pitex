@@ -403,6 +403,7 @@ mod tests {
 
     #[test]
     fn unchanged_refresh_reuses_snapshot_but_staging_updates_it() {
+        let _environment = crate::TEST_ENV_LOCK.lock().unwrap();
         let root = std::env::temp_dir().join(format!("pitex-git-refresh-{}-{}", std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir(&root).unwrap();
