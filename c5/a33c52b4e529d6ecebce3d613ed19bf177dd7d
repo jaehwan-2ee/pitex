@@ -1,0 +1,28 @@
+Mac/Sources/Features/GitIntegrationView.swift
+  s_ed44b01ef26714::t_aa5926b275e21f 242,244-246,259-264,268,289-292,294-300,345-349,379,381-383,387
+Packages/TexCore/Tests/TexCoreTests/ProcessRunnerTests.swift
+  s_ed44b01ef26714::t_d007696b917fe5 12-25
+Linux/crates/pitex-shell/src/git.rs
+  s_ed44b01ef26714::t_aa5926b275e21f 302,305-306,356,367-371,378,398-410
+  s_ed44b01ef26714::t_1e6468b6a38c0d 411
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_470522057c7b7d 14,36,89-115
+Linux/crates/pitex-shell/src/panes.rs
+  s_ed44b01ef26714::t_5de71839b160e4 372
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5a33c52b4e529d6ecebce3d613ed19bf177dd7d",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
