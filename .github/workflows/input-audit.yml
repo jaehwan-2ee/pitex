@@ -41,6 +41,8 @@ jobs:
         working-directory: Linux
         env:
           PITEX_AUDIT_GIT_ROWS: '1012101'
+          # Headless Mesa on 22.04 can stall before the Git fixture is installed.
+          GSK_RENDERER: cairo
         run: |
           binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
           xvfb-run -a gdb -batch -return-child-result -ex run -ex 'thread apply all bt 12' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1 > ../git-audit.log 2>&1
