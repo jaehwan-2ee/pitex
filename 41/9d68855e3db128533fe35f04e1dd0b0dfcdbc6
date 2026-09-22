@@ -1,0 +1,24 @@
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_ed44b01ef26714::t_0046d1794b6851 118
+  s_ed44b01ef26714::t_136a36e8909ac4 123-125
+  s_ed44b01ef26714::t_767a64d5ab7a44 91,116-117,119-122,126-128,131
+  s_ed44b01ef26714::t_9cc192dfef9851 132
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_ed44b01ef26714::t_767a64d5ab7a44 15-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "419d68855e3db128533fe35f04e1dd0b0dfcdbc6",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
