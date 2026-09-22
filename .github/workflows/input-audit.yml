@@ -1,7 +1,7 @@
 name: Input method audit
 on:
   push:
-    branches: [codex/caps-lock-audit]
+    branches: [codex/caps-lock-audit, codex/v1.6.3-find-icon]
     paths:
       - 'Mac/**'
       - 'Packages/**'
@@ -23,7 +23,7 @@ jobs:
       - run: python3 Tools/check-git-performance.py
       - run: python3 Tools/check-ime-completion.py
       - name: Native key events through the real editor adapter
-        run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterLayoutTests.testNativeDigitsAndDeletionWithCapsLock
+        run: swift test --package-path Packages/TexApp --build-system native --filter 'EditorMacAdapterLayoutTests.testNativeDigitsAndDeletionWithCapsLock|EditorMacAdapterLayoutTests.testNativeFindCounterAndNavigation'
   git-render:
     name: Million-file Git responsiveness (${{ matrix.ubuntu }})
     runs-on: ubuntu-24.04
@@ -45,6 +45,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test -p git-core && cargo test -p pitex-shell --lib ${{ matrix.features }}
         working-directory: Linux
+      - name: Search navigation and match counter
+        working-directory: Linux
+        env:
+          GSK_RENDERER: cairo
+        run: xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib ${{ matrix.features }} search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
       - name: Reproduce large Git status during startup
         timeout-minutes: 2
         working-directory: Linux
@@ -125,6 +130,9 @@ jobs:
             mingw-w64-ucrt-x86_64-adwaita-icon-theme
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
       - run: cargo build -p pitex-windows
+        working-directory: Windows
+      - name: Native Windows search navigation and counter
+        run: cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
         working-directory: Windows
 
   swift:

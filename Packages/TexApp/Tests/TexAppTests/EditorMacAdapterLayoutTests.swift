@@ -8,6 +8,46 @@ import EditorMacAdapter
 
 final class EditorMacAdapterLayoutTests: XCTestCase {
     @MainActor
+    func testNativeFindCounterAndNavigation() async throws {
+        _ = NSApplication.shared
+        let adapter = try await EditorMacAdapter.make(session: EditableDocumentSession())
+        let view = adapter.textView
+        view.string = "한 😀 cat CAT cat"
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 300))
+        scroll.documentView = view
+        let window = NSWindow(contentRect: scroll.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = scroll
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        func fields(_ root: NSView) -> [NSTextField] {
+            (root as? NSTextField).map { [$0] } ?? root.subviews.flatMap { fields($0) }
+        }
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        view.performFindPanelAction(item)
+        let bar = try XCTUnwrap(scroll.findBarView)
+        let query = try XCTUnwrap(fields(bar).first { $0.isEditable })
+        let count = try XCTUnwrap(fields(bar).first { $0.accessibilityIdentifier() == "pitex.search.count" })
+        window.makeFirstResponder(query)
+        let fieldEditor = try XCTUnwrap(window.fieldEditor(true, for: query) as? NSTextView)
+        fieldEditor.insertText("cat", replacementRange: NSRange(location: 0, length: 0))
+        for _ in 0..<100 {
+            if count.stringValue.hasSuffix("/ 3") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(count.stringValue, "1 / 3")
+        for expected in ["2 / 3", "3 / 3", "1 / 3"] {
+            item.tag = NSTextFinder.Action.nextMatch.rawValue
+            view.performTextFinderAction(item)
+            XCTAssertEqual(count.stringValue, expected)
+        }
+        item.tag = NSTextFinder.Action.previousMatch.rawValue
+        view.performTextFinderAction(item)
+        XCTAssertEqual(count.stringValue, "3 / 3")
+    }
+
+    @MainActor
     func testNativeDigitsAndDeletionWithCapsLock() async throws {
         _ = NSApplication.shared
         let rows = [kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4,

@@ -373,3 +373,6 @@
 "git.folded_lines" = "%@ d\U00F2ng kh\U00F4ng \U0111\U1ED5i";
 "git.diff.files" = "%@ t\U1EC7p";
 "git.diff.binary" = "T\U1EC7p nh\U1ECB ph\U00E2n";
+
+"editor.find_previous" = "Kết quả trước";
+"editor.find_next" = "Kết quả tiếp theo";

@@ -374,3 +374,6 @@
 "git.folded_lines" = "\U5909\U66F4\U306A\U3057 %@ \U884C";
 "git.diff.files" = "%@ \U30D5\U30A1\U30A4\U30EB";
 "git.diff.binary" = "\U30D0\U30A4\U30CA\U30EA\U30D5\U30A1\U30A4\U30EB";
+
+"editor.find_previous" = "前の検索結果";
+"editor.find_next" = "次の検索結果";
