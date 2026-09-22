@@ -239,8 +239,11 @@ extension WorkspaceModel {
         gitCommitFilesBusy.insert(commit.hash)
         Task {
             let result = await GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root)
-            gitCommitFiles[commit.hash] =
+            let files = await Task.detached(priority: .utility) {
                 result.code == 0 ? GitSupport.parseCommitFiles(result.stdout) : []
+            }.value
+            guard gitStatus?.root == root.path else { return }
+            gitCommitFiles[commit.hash] = files
             gitCommitFilesBusy.remove(commit.hash)
         }
     }
@@ -253,17 +256,16 @@ extension WorkspaceModel {
         gitDiff = GitDiffSession(commit: commit, file: file)
         Task {
             let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.fullHash, path: file.path), in: root)
-            // A second file click may have replaced the session meanwhile.
-            guard gitDiff?.commit.hash == commit.hash, gitDiff?.file == file else { return }
+            let sections: [GitDiffFileSection]? = await Task.detached(priority: .utility) {
+                result.code == 0 ? [GitDiffFileSection(file: file, binary: result.stdout.contains("Binary files"),
+                                                     rows: GitSupport.parseFileDiff(result.stdout))] : nil
+            }.value
+            // A second file click or project switch may have replaced the session.
+            guard gitStatus?.root == root.path, gitDiff?.commit.hash == commit.hash, gitDiff?.file == file else { return }
             gitDiff = GitDiffSession(
                 commit: commit,
                 file: file,
-                sections: result.code == 0
-                    ? [GitDiffFileSection(
-                        file: file,
-                        binary: result.stdout.contains("Binary files"),
-                        rows: GitSupport.parseFileDiff(result.stdout))]
-                    : nil,
+                sections: sections,
                 error: result.code == 0 ? nil : result.errorText
             )
         }
@@ -284,22 +286,18 @@ extension WorkspaceModel {
                 gitDiff = GitDiffSession(commit: commit, file: nil, error: diff.errorText)
                 return
             }
-            var kinds: [String: GitChangeKind] = [:]
-            if files.code == 0 {
-                for f in GitSupport.parseCommitFiles(files.stdout) { kinds[f.path] = f.kind }
-            }
-            gitDiff = GitDiffSession(
-                commit: commit,
-                file: nil,
-                sections: GitSupport.parseCommitDiff(diff.stdout).map { section in
-                    GitDiffFileSection(
-                        file: GitCommitFile(
-                            path: section.path,
-                            kind: kinds[section.path] ?? .modified),
-                        binary: section.binary,
-                        rows: section.rows)
+            let sections = await Task.detached(priority: .utility) {
+                var kinds: [String: GitChangeKind] = [:]
+                if files.code == 0 {
+                    for f in GitSupport.parseCommitFiles(files.stdout) { kinds[f.path] = f.kind }
                 }
-            )
+                return GitSupport.parseCommitDiff(diff.stdout).map { section in
+                    GitDiffFileSection(file: GitCommitFile(path: section.path, kind: kinds[section.path] ?? .modified),
+                                       binary: section.binary, rows: section.rows)
+                }
+            }.value
+            guard gitStatus?.root == root.path, gitDiff?.commit.hash == commit.hash, gitDiff?.file == nil else { return }
+            gitDiff = GitDiffSession(commit: commit, file: nil, sections: sections)
         }
     }
 
@@ -344,9 +342,11 @@ extension WorkspaceModel {
                 gitError = "Pitex Agent is not installed yet — see Settings → AI."
                 return
             }
-            let files = (staged ? status.staged : status.unstaged)
-                .map { "\($0.kind.badge) \($0.path)" }
-            let prompt = Self.commitMessagePrompt(branch: status.branch, files: files, diff: diff.stdout)
+            let prompt = await Task.detached(priority: .utility) {
+                let changes = staged ? status.staged : status.unstaged
+                let files = changes.prefix(100).map { "\($0.kind.badge) \($0.path)" }
+                return Self.commitMessagePrompt(branch: status.branch, files: files, diff: diff.stdout, totalFiles: changes.count)
+            }.value
             do {
                 let launch = try tools.launch(
                     executable, arguments: ["--no-session", "--no-tools", "--print", prompt])
@@ -376,15 +376,15 @@ extension WorkspaceModel {
     /// Conventional-commit ask: branch + change list + the diff itself.
     /// The diff is capped so a generated/mass-rename changeset cannot blow
     /// past the model's context on a one-shot prompt.
-    private static func commitMessagePrompt(branch: String, files: [String], diff: String) -> String {
+    nonisolated private static func commitMessagePrompt(branch: String, files: [String], diff: String, totalFiles: Int) -> String {
         let limit = 20_000
-        let body = diff.count > limit
-            ? String(diff.prefix(limit)) + "\n… [diff truncated]"
-            : diff
+        let body = String(decoding: diff.utf8.prefix(limit), as: UTF8.self) + (diff.utf8.count > limit ? "\n… [diff truncated]" : "")
+        let names = files.joined(separator: "\n")
+        let fileList = String(decoding: names.utf8.prefix(limit), as: UTF8.self) + (totalFiles > files.count || names.utf8.count > limit ? "\n… [file list truncated; \(totalFiles) files total]" : "")
         return """
             Write the git commit message for this change set on branch '\(branch)'.
             Changed files:
-            \(files.joined(separator: "\n"))
+            \(fileList)
 
             Diff:
             \(body)

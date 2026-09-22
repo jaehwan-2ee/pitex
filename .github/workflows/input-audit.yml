@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build macOS app
         run: xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex -configuration Release -derivedDataPath build -skipPackagePluginValidation -skipMacroValidation CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
-      - run: swift test --package-path Packages/TexCore --build-system native --filter GitSupportTests
+      - run: swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests'
       - name: Native key events through the real editor adapter
         run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterLayoutTests.testNativeDigitsAndDeletionWithCapsLock
   git-render:
@@ -33,7 +33,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates git libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev xvfb gdb
           if [ "${{ matrix.ubuntu }}" = "24.04" ]; then apt-get install -y libvte-2.91-gtk4-dev; fi
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p git-core && cargo test -p pitex-shell --lib ${{ matrix.features }} git_list::tests
+      - run: cargo test -p git-core && cargo test -p pitex-shell --lib ${{ matrix.features }}
         working-directory: Linux
       - name: Reproduce large Git status during startup
         timeout-minutes: 2
@@ -86,3 +86,30 @@ jobs:
         with:
           name: input-audit-${{ matrix.ubuntu }}
           path: input-*.log
+
+  windows:
+    name: Windows workspace (MSYS2 UCRT64)
+    # The Windows app links the MSYS2 GTK stack, so the authoritative compile
+    # gate is a real UCRT64 toolchain — no cross-compile from Linux.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-gtksourceview5
+            mingw-w64-ucrt-x86_64-poppler
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme
+            mingw-w64-ucrt-x86_64-hicolor-icon-theme
+      - run: cargo build -p pitex-windows
+        working-directory: Windows

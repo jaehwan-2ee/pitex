@@ -369,12 +369,11 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     let changes_model = crate::git_list::GitList::new();
     let selection = gtk4::NoSelection::new(Some(changes_model.clone()));
     let factory = gtk4::SignalListItemFactory::new();
-    factory.connect_bind(|_, object| {
+    factory.connect_bind(move |_, object| {
         use crate::git_list::Row;
         let item = object.downcast_ref::<gtk4::ListItem>().unwrap();
         let row = item.item().unwrap().downcast::<gtk4::glib::BoxedAnyObject>().unwrap();
         let row = row.borrow::<Row>();
-        let lang = LANG.get();
         item.set_selectable(false);
         item.set_activatable(matches!(*row, Row::Change(_)));
         let child: gtk4::Widget = match &*row {

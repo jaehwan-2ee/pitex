@@ -9,6 +9,20 @@ import Glibc
 #endif
 
 final class ProcessRunnerTests: XCTestCase {
+    func testLargeStderrDoesNotBlockStdoutDrain() async throws {
+        try await withTemporaryDirectory { directory in
+            // Git hooks can fill stderr while stdout is still open.
+            let plan = try DirectCommandPlan(executable: "/bin/sh", arguments: [
+                "-c", "head -c 1048576 /dev/zero >&2; printf done"
+            ])
+            let result = try await ProcessRunner().run(plan, projectRoot: directory, timeout: .seconds(5))
+            XCTAssertEqual(result.stopReason, .completed)
+            XCTAssertEqual(result.termination, .exited(code: 0))
+            XCTAssertEqual(result.standardError.count, 1_048_576)
+            XCTAssertEqual(String(decoding: result.standardOutput, as: UTF8.self), "done")
+        }
+    }
+
     func testExecutableSearchUsesChildPATHAndWorkingDirectory() async throws {
         try await withTemporaryDirectory { directory in
             let bin = directory.appendingPathComponent("tools with spaces", isDirectory: true)

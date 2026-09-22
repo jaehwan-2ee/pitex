@@ -299,9 +299,11 @@ fn suggest_commit_message(status: &git_core::GitStatus) -> Result<String, String
     };
     let files: Vec<String> = (if staged { &status.staged } else { &status.unstaged })
         .iter()
+        .take(100)
         .map(|c| format!("{} {}", c.kind.badge(), c.path))
         .collect();
-    let prompt = commit_message_prompt(&status.branch, &files, &diff);
+    let total = if staged { status.staged.len() } else { status.unstaged.len() };
+    let prompt = commit_message_prompt(&status.branch, &files, &diff, total);
     let arguments = vec![
         "--no-session".to_string(),
         "--no-tools".to_string(),
@@ -351,7 +353,7 @@ fn suggest_commit_message(status: &git_core::GitStatus) -> Result<String, String
 /// Conventional-commit ask: branch + change list + the diff itself. The
 /// diff is capped so a generated/mass-rename changeset cannot blow past the
 /// model's context on a one-shot prompt.
-fn commit_message_prompt(branch: &str, files: &[String], diff: &str) -> String {
+fn commit_message_prompt(branch: &str, files: &[String], diff: &str, total_files: usize) -> String {
     const LIMIT: usize = 20_000;
     let body = if diff.len() > LIMIT {
         let mut end = LIMIT;
@@ -362,13 +364,18 @@ fn commit_message_prompt(branch: &str, files: &[String], diff: &str) -> String {
     } else {
         diff.to_string()
     };
+    let names = files.join("\n");
+    let mut file_list: String = names.chars().take(5_000).collect();
+    if total_files > files.len() || file_list.len() < names.len() {
+        file_list.push_str(&format!("\n… [file list truncated; {total_files} files total]"));
+    }
     format!(
         "Write the git commit message for this change set on branch '{branch}'.\n\
          Changed files:\n{}\n\nDiff:\n{body}\n\n\
          Reply with ONLY the commit message: one imperative subject line of at \
          most 72 characters, then optionally a blank line and a short body. No \
          quotes, no code fences, no commentary.",
-        files.join("\n")
+        file_list
     )
 }
 
@@ -387,4 +394,18 @@ fn cleaned_commit_message(raw: &str) -> String {
         text = text[1..text.len() - 1].to_string();
     }
     text.chars().take(500).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_prompt_is_bounded_for_mass_changes_and_unicode_paths() {
+        let files = vec!["한".repeat(4_096); 100];
+        let prompt = commit_message_prompt("main", &files, &"한".repeat(100_000), 1_012_101);
+        assert!(prompt.len() < 50_000);
+        assert!(prompt.contains("1012101 files total"));
+        assert!(prompt.contains("[diff truncated]"));
+    }
 }
