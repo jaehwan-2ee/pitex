@@ -1,0 +1,23 @@
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_7582fd65874dc2 143
+  s_ed44b01ef26714::t_c073a80af87da2 144
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_c073a80af87da2 43
+  s_ed44b01ef26714::t_7582fd65874dc2 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65597f2e101cab96c6458b5e5f7f6b37b5bd724f",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
