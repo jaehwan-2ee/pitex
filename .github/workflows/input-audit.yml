@@ -52,8 +52,10 @@ jobs:
       - name: Compare forwarded and native key handling
         timeout-minutes: 5
         run: |
-          for forwarding in true false; do
-            xvfb-run -a dbus-run-session -- bash -eu -s -- "$forwarding" <<'SESSION' > "input-$forwarding.log" 2>&1 || true
+          for scenario in true:1 false:1 false:0; do
+            forwarding=${scenario%:*}
+            sync=${scenario#*:}
+            xvfb-run -a dbus-run-session -- bash -eu -s -- "$forwarding" "$sync" <<'SESSION' > "input-$forwarding-sync-$sync.log" 2>&1 || true
           gsettings set org.freedesktop.ibus.engine.hangul switch-keys Caps_Lock
           gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding "$1"
           gsettings list-recursively org.freedesktop.ibus.engine.hangul
@@ -61,10 +63,10 @@ jobs:
           ibus-daemon -drx --panel disable
           sleep 2
           ibus engine hangul
-          GTK_IM_MODULE=ibus GSK_RENDERER=cairo python3 Tools/audit-ibus-capslock.py
+          GTK_IM_MODULE=ibus IBUS_ENABLE_SYNC_MODE="$2" GSK_RENDERER=cairo python3 Tools/audit-ibus-capslock.py
           SESSION
-            cat "input-$forwarding.log"
-            grep -q '^INPUT_AUDIT_SUMMARY ' "input-$forwarding.log"
+            cat "input-$forwarding-sync-$sync.log"
+            grep -q '^INPUT_AUDIT_SUMMARY ' "input-$forwarding-sync-$sync.log"
           done
       - uses: actions/upload-artifact@v4
         if: always()

@@ -31,7 +31,7 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
                         timestamp: 0, windowNumber: window.windowNumber, context: nil,
                         characters: characters, charactersIgnoringModifiers: characters,
                         isARepeat: false, keyCode: UInt16(code))!
-                    view.keyDown(event)
+                    view.keyDown(with: event)
                 }
                 adapter.nativeUndoManager.groupsByEvent = false
                 adapter.nativeUndoManager.beginUndoGrouping()
