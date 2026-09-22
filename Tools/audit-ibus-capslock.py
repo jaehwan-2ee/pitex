@@ -21,8 +21,8 @@ def pump(seconds=0.12):
         time.sleep(0.003)
 
 
-def keys(*sequence):
-    child = subprocess.Popen(['xdotool', 'key', '--delay', '20', *sequence])
+def keys(*sequence, delay_ms=20):
+    child = subprocess.Popen(['xdotool', 'key', '--delay', str(delay_ms), *sequence])
     while child.poll() is None:
         pump(0.01)
     assert child.returncode == 0
@@ -167,6 +167,15 @@ for widget_name, widget in [('GtkSourceView', view), ('GtkEntry', entry)]:
             # Commit through two mode toggles, not Space (which is itself
             # broken on the affected stack), and restore the original mode.
             check('compose-jamo-backspace', ['g', 'k', 'BackSpace', 'k', 's', 'Caps_Lock', 'Caps_Lock'], '한')
+        reset()
+        keys(*list('1234567890' * 4), delay_ms=0)
+        record('rapid-digits', '1234567890' * 4, text())
+        keys(*(['BackSpace'] * 40), delay_ms=0)
+        record('rapid-backspace', '', text())
+        reset()
+        sequence = ['g', 'k', 's', '1', 'space', 'g', 'k', 's', '2', 'space'] * 4
+        keys(*sequence, delay_ms=0)
+        record('rapid-mixed-composition', ('한1 한2 ' if korean else 'gks1 gks2 ') * 4, text())
         check('space', ['space'], ' ', '')
         if widget is view:
             check('return', ['Return'], '\n')

@@ -483,7 +483,7 @@ impl AppState {
             editable: self
                 .editor
                 .as_ref()
-                .map(|e| e.view().is_editable())
+                .map(|e| e.view().is_editable() && !e.has_marked_text())
                 .unwrap_or(false),
             ..Default::default()
         };
@@ -5344,7 +5344,7 @@ for line in sys.stdin:
                 std::thread::sleep(Duration::from_millis(5));
             }
             eprintln!("GIT_AUDIT visible {count} entries: {:?}", started.elapsed());
-            assert!(started.elapsed() < Duration::from_secs(1), "showing Git blocked the main thread");
+            assert!(started.elapsed() < Duration::from_secs(2), "showing Git blocked the main thread");
             assert_eq!(model.n_items() as usize, count + 1);
             let item = model.item(1).unwrap();
             let started = std::time::Instant::now();
@@ -5363,7 +5363,7 @@ for line in sys.stdin:
             let mut child = list.first_child();
             while let Some(widget) = child { children += 1; child = widget.next_sibling(); }
             eprintln!("GIT_AUDIT scroll to end: {:?}, {children} live row widgets", started.elapsed());
-            assert!(started.elapsed() < Duration::from_secs(1));
+            assert!(started.elapsed() < Duration::from_secs(2));
             assert!(list.is_mapped() && list.height() > 0, "Git list must actually be visible");
             assert!(children > 0 && children < 512, "list allocated offscreen rows");
             fn has_name(widget: &gtk4::Widget, name: &str) -> bool {

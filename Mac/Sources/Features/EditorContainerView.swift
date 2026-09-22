@@ -198,7 +198,7 @@ struct EditorContainerView: NSViewRepresentable {
         /// through to the find bar while a suggestion is up.
         func handleGhostKey(_ event: NSEvent) -> Bool {
             guard let completion, completion.suggestion != nil,
-                  let textView,
+                  let textView, !textView.hasMarkedText(),
                   event.window === textView.window,
                   textView.window?.firstResponder === textView
             else { return false }
@@ -223,7 +223,7 @@ struct EditorContainerView: NSViewRepresentable {
         /// double/triple-click word and line selection intact.
         func handleSyncClick(_ event: NSEvent) -> Bool {
             guard event.modifierFlags.contains(.command),
-                  let textView,
+                  let textView, !textView.hasMarkedText(),
                   event.window === textView.window,
                   let onSyncRequest
             else { return false }
@@ -1039,6 +1039,7 @@ final class GhostCompletionCoordinator {
     /// code-fence wrapper is dropped, one trailing newline is stripped, and
     /// blank replies show nothing.
     private func applySuggestion(_ raw: String) {
+        guard let textView, textView.isEditable, !textView.hasMarkedText() else { return }
         var suggestion = raw
         if suggestion.hasPrefix("```") {
             var lines = suggestion.components(separatedBy: "\n")
@@ -1052,7 +1053,7 @@ final class GhostCompletionCoordinator {
         guard !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return }
         self.suggestion = suggestion
-        suggestionAnchor = textView?.selectedRange().location ?? 0
+        suggestionAnchor = textView.selectedRange().location
         overlay?.show(suggestion, anchor: suggestionAnchor)
     }
 
@@ -1061,7 +1062,7 @@ final class GhostCompletionCoordinator {
     /// text-change notification reschedules the next completion.
     @discardableResult
     func accept() -> Bool {
-        guard let suggestion, let textView else { return false }
+        guard let suggestion, let textView, textView.isEditable, !textView.hasMarkedText() else { return false }
         dismiss()
         textView.insertText(suggestion, replacementRange: textView.selectedRange())
         return true

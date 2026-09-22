@@ -1,19 +1,23 @@
-name: Legacy IBus compatibility probe
+name: IBus compatibility regression
 on:
   push:
     branches: [codex/caps-lock-audit]
-    paths: ['Tools/ibus-legacy-sync-probe.c', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
+    paths: ['Linux/crates/pitex/src/ibus_compat.c', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
   workflow_dispatch:
 jobs:
   caps:
     runs-on: ubuntu-24.04
-    container: ubuntu:22.04
+    container: ubuntu:${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['22.04', '24.04']
     steps:
       - uses: actions/checkout@v4
       - run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y gcc pkg-config libibus-1.0-dev python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
-          gcc -shared -fPIC -O2 Tools/ibus-legacy-sync-probe.c -o /tmp/pitex-ibus-probe.so $(pkg-config --cflags --libs ibus-1.0)
+          gcc -shared -fPIC -O2 Linux/crates/pitex/src/ibus_compat.c -o /tmp/pitex-ibus-probe.so $(pkg-config --cflags --libs gio-2.0) -ldl
       - name: Audit unmodified system IBus with the app-local adapter
         timeout-minutes: 4
         run: |
@@ -28,5 +32,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: legacy-ibus-compat
+          name: ibus-compat-${{ matrix.ubuntu }}
           path: compat.log

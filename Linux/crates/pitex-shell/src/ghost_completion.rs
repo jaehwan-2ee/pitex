@@ -94,6 +94,7 @@ pub struct GhostCompletionCoordinator {
     /// `reposition` anchors here so a scroll never drifts to a moved caret.
     suggestion: RefCell<Option<String>>,
     anchor: Cell<i32>,
+    has_preedit: Cell<bool>,
 }
 
 impl GhostCompletionCoordinator {
@@ -115,6 +116,7 @@ impl GhostCompletionCoordinator {
             generation: Cell::new(0),
             suggestion: RefCell::new(None),
             anchor: Cell::new(0),
+            has_preedit: Cell::new(false),
         });
         *engine.self_weak.borrow_mut() = Rc::downgrade(&engine);
         engine
@@ -134,6 +136,7 @@ impl GhostCompletionCoordinator {
         buffer: &sourceview5::Buffer,
         label: &gtk4::Label,
     ) {
+        self.has_preedit.set(false);
         *self.view.borrow_mut() = Some(view.clone());
         *self.buffer.borrow_mut() = Some(buffer.clone());
         *self.label.borrow_mut() = Some(label.clone());
@@ -163,6 +166,15 @@ impl GhostCompletionCoordinator {
             return;
         };
 
+        let weak = Rc::downgrade(self);
+        view.connect_preedit_changed(move |_, text| {
+            if let Some(engine) = weak.upgrade() {
+                engine.has_preedit.set(!text.is_empty());
+                engine.dismiss();
+                engine.supersede();
+            }
+        });
+
         // NSText.didChangeNotification — every edit supersedes the ghost.
         let weak = Rc::downgrade(self);
         buffer.connect_changed(move |_| {
@@ -191,7 +203,7 @@ impl GhostCompletionCoordinator {
             let Some(engine) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            if engine.suggestion.borrow().is_none() {
+            if engine.has_preedit.get() || engine.suggestion.borrow().is_none() {
                 return glib::Propagation::Proceed;
             }
             let mods = state
@@ -199,7 +211,8 @@ impl GhostCompletionCoordinator {
                     | gdk::ModifierType::CONTROL_MASK
                     | gdk::ModifierType::ALT_MASK
                     | gdk::ModifierType::SUPER_MASK
-                    | gdk::ModifierType::HYPER_MASK);
+                    | gdk::ModifierType::HYPER_MASK
+                    | gdk::ModifierType::META_MASK);
             if !mods.is_empty() {
                 return glib::Propagation::Proceed;
             }
@@ -480,6 +493,7 @@ impl GhostCompletionCoordinator {
     /// code-fence wrapper is dropped, one trailing newline is stripped, and
     /// blank replies show nothing.
     fn apply_suggestion(&self, raw: &str) {
+        if self.has_preedit.get() { return; }
         let mut suggestion = raw.to_string();
         if suggestion.starts_with("```") {
             let mut lines: Vec<&str> = suggestion.lines().collect();
@@ -548,6 +562,7 @@ impl GhostCompletionCoordinator {
     /// changed hook submits the session mutation, so the insert stays
     /// undo-safe and reschedules the next completion.
     pub fn accept(&self) -> bool {
+        if self.has_preedit.get() { self.dismiss(); return false; }
         let Some(suggestion) = self.suggestion.borrow_mut().take() else {
             return false;
         };
