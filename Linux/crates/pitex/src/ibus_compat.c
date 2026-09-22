@@ -77,8 +77,21 @@ gboolean ibus_input_context_process_key_event(IBusInputContext *context,
         g_array_append_val(pending.handlers, handler);
     }
     pending.own_handler = g_signal_connect(context, "forward-key-event", G_CALLBACK(forward_key), &pending);
+    /* Pump IBus replies, but not a second keyboard event from the source
+     * currently dispatching this key. Nested key dispatch reverses native
+     * insertion order when several keys are already queued. */
+    GSource *source = g_main_current_source();
+    gboolean can_recurse = source && g_source_get_can_recurse(source);
+    if (source) {
+        g_source_ref(source);
+        g_source_set_can_recurse(source, FALSE);
+    }
     process_async(context, keyval, keycode, state, -1, NULL, finished, &pending);
     while (!pending.done) g_main_context_iteration(NULL, TRUE);
+    if (source) {
+        g_source_set_can_recurse(source, can_recurse);
+        g_source_unref(source);
+    }
     g_signal_handler_disconnect(context, pending.own_handler);
     for (guint i = 0; i < pending.handlers->len; i++)
         if (g_signal_handler_is_connected(context, g_array_index(pending.handlers, gulong, i)))
