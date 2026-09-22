@@ -94,8 +94,8 @@ for widget_name, widget in [('GtkSourceView', view), ('GtkEntry', entry)]:
         if not passed:
             failures.append(item)
 
-    def check(label, sequence, expected, seed='', selection=None):
-        reset(seed, selection=selection)
+    def check(label, sequence, expected, seed='', selection=None, cursor=None):
+        reset(seed, selection=selection, cursor=cursor)
         keys(*sequence)
         record(label, expected, text())
 
@@ -124,7 +124,7 @@ for widget_name, widget in [('GtkSourceView', view), ('GtkEntry', entry)]:
         check('shift-number-symbols', [f'shift+{key}' for key in '1234567890'], '!@#$%^&*()')
         check('tex-punctuation', ['backslash', 'braceleft', 'braceright', 'underscore', 'dollar', 'percent', 'asciicircum', 'ampersand', 'numbersign'], '\\{}_\u0024%^&#')
         check('backspace', ['BackSpace'], '12', '123')
-        check('delete', ['Home', 'Delete'], '23', '123')
+        check('delete', ['Delete'], '23', '123', cursor=0)
         check('left-arrow-insert', ['Left', '4'], '1243', '123')
         check('home-insert', ['Home', '4'], '4123', '123')
         check('selection-replace', ['shift+Left', '4'], '124', '123')
@@ -150,12 +150,23 @@ for widget_name, widget in [('GtkSourceView', view), ('GtkEntry', entry)]:
         keys('ctrl+v')
         record('copy-paste', '123', text())
         if widget is view:
-            check('undo', ['4', 'ctrl+z'], 'abc', 'abc')
-            check('redo', ['4', 'ctrl+z', 'ctrl+shift+z'], 'abc4', 'abc')
+            # Seed an undoable native edit so a broken number key cannot
+            # masquerade as an undo/redo failure (or a false undo pass).
+            reset('abc')
+            buffer = view.get_buffer()
+            buffer.begin_user_action()
+            buffer.insert_at_cursor('4')
+            buffer.end_user_action()
+            keys('ctrl+z')
+            record('undo', 'abc', text())
+            keys('ctrl+shift+z')
+            record('redo', 'abc4', text())
         if korean:
             check('compose-then-digit', ['g', 'k', 's', '1'], '한1')
             check('compose-then-symbol', ['g', 'k', 's', 'shift+4'], '한$')
-            check('compose-jamo-backspace', ['g', 'k', 'BackSpace', 'k', 's', 'space'], '한 ')
+            # Commit through two mode toggles, not Space (which is itself
+            # broken on the affected stack), and restore the original mode.
+            check('compose-jamo-backspace', ['g', 'k', 'BackSpace', 'k', 's', 'Caps_Lock', 'Caps_Lock'], '한')
         check('space', ['space'], ' ', '')
         if widget is view:
             check('return', ['Return'], '\n')
