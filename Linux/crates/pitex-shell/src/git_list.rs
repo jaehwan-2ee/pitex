@@ -55,7 +55,7 @@ mod imp {
 }
 
 glib::wrapper! {
-    pub(crate) struct GitList(ObjectSubclass<imp::GitList>) @implements gio::ListModel;
+    pub struct GitList(ObjectSubclass<imp::GitList>) @implements gio::ListModel;
 }
 
 impl GitList {

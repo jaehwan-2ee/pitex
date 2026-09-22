@@ -12,6 +12,7 @@ jobs:
       - name: Build macOS app
         run: xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex -configuration Release -derivedDataPath build -skipPackagePluginValidation -skipMacroValidation CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
       - run: swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests'
+      - run: python3 Tools/check-git-performance.py
       - name: Native key events through the real editor adapter
         run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterLayoutTests.testNativeDigitsAndDeletionWithCapsLock
   git-render:
@@ -49,6 +50,7 @@ jobs:
           name: git-render-audit-${{ matrix.ubuntu }}
           path: git-audit.log
   ibus:
+    if: github.event_name == 'workflow_dispatch'
     name: IBus Caps Lock (${{ matrix.ubuntu }})
     runs-on: ubuntu-24.04
     container: ubuntu:${{ matrix.ubuntu }}
