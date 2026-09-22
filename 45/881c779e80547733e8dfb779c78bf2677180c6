@@ -1,0 +1,95 @@
+Linux/crates/pitex-shell/src/ghost_completion.rs
+  s_ed44b01ef26714::t_ded7a901c16d64 328
+  s_ed44b01ef26714::t_81a1b696dc0de6 658-661,679-689
+  s_ed44b01ef26714::t_354920d9fba19e 690
+Linux/crates/pitex-shell/src/synctex.rs
+  s_ed44b01ef26714::t_05d6b1d92fff48 66-75,80-81,92-93,108-111,194,232,287,322,369-370,372-373,487,491-500,502-509,630-631
+  s_ed44b01ef26714::t_1a3bfaa330f662 612-629
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_e39cc4d036fd5b 67-68
+  s_ed44b01ef26714::t_8609832eada395 50-66,69,84-85
+Linux/crates/pitex-shell/src/fold.rs
+  s_ed44b01ef26714::t_fc7b6de4d7b51c 13,19,22,203,211,219,221-227,236
+Linux/crates/pitex-shell/src/git.rs
+  s_ed44b01ef26714::t_fc7b6de4d7b51c 63-64
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_c6ce509db93460 198,297,2373-2374
+  s_ed44b01ef26714::t_ded7a901c16d64 194-197,199-200,293-296,298-299,1691-1696,2097-2107,2129,2150,2177,2202,2716-2726,2748-2749,2751-2757,2796-2801,2854-2855,2863-2864,2882-2905,2907,2918-2921,2969-2970,3232-3249,3252-3262,3394-3417,4349-4360
+  s_ed44b01ef26714::t_fc7b6de4d7b51c 201,300,314,702,3317-3321
+  s_ed44b01ef26714::t_6779a3ec8ab3fd 743-747
+  s_ed44b01ef26714::t_4caf230d54204c 38,229-230,1037,1602
+Mac/Sources/Features/GitIntegrationView.swift
+  s_ed44b01ef26714::t_c3731f19f33276 78-79,81,95
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  s_ed44b01ef26714::t_6779a3ec8ab3fd 282-285,289-290,292-293
+  s_ed44b01ef26714::t_d2f6db8271aa0f 10,41,112,316,338,394-434,438
+Mac/Sources/Features/EditorContainerView.swift
+  s_ed44b01ef26714::t_81a1b696dc0de6 77,157,516-528,544,549,573,584-606,610
+  s_ed44b01ef26714::t_cd43a7a35e0c73 615-616,619-623
+Linux/crates/document-session-core/src/lib.rs
+  s_ed44b01ef26714::t_6779a3ec8ab3fd 89,101,113,205-222
+  s_ed44b01ef26714::t_831f163981554b 223
+Linux/crates/pitex-shell/src/model.rs
+  s_ed44b01ef26714::t_ded7a901c16d64 53,81,88,94,103,187-188,225-226,767,869,1663,1669-1670,1672,2415,2925,3085,3122,3124-3126,3175,3211,3242
+Linux/crates/app-ports/src/lib.rs
+  s_ed44b01ef26714::t_6779a3ec8ab3fd 192-212,243,248-249
+  s_ed44b01ef26714::t_a7783f9d980a0b 227-242,244-247
+Mac/Sources/AppShell/PitexApp.swift
+  s_ed44b01ef26714::t_c3731f19f33276 61-62,69-70,76-77,84-85,176-178,407,409,427-429,526-531,551,696-697,1210-1229,1242,1248,1329,1334,1370,1562-1571,1574,1577,1584,1594,1603,1606,1612,1619,1622,1625,1667,1811,1821,1853
+Linux/crates/editor-feature/src/fold.rs
+  s_ed44b01ef26714::t_fc7b6de4d7b51c 6,77-80
+Mac/Sources/Features/AgentCoordinator.swift
+  s_ed44b01ef26714::t_05d6b1d92fff48 118,368,749,772,783-792
+Mac/Sources/Features/SyntaxHighlighting.swift
+  s_ed44b01ef26714::t_fc7b6de4d7b51c 5-8,10-53,93
+  s_ed44b01ef26714::t_0c41cc62480d57 9
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_ed44b01ef26714::t_6779a3ec8ab3fd 146-159,220,225,251
+Linux/crates/pitex-shell/src/agent.rs
+  s_ed44b01ef26714::t_ded7a901c16d64 922,960,1024,1032,1039,1056,1227
+  s_ed44b01ef26714::t_05d6b1d92fff48 1100,1148,2064-2068
+Mac/Sources/Features/EditorFolding.swift
+  s_ed44b01ef26714::t_fc7b6de4d7b51c 103-104,106,126,138
+  s_ed44b01ef26714::t_81a1b696dc0de6 56-57,68-73,81-82,101
+Mac/Sources/Features/SyncTeXSupport.swift
+  s_ed44b01ef26714::t_05d6b1d92fff48 1,47,64-66,114,129,171,184,285,293-312,316-318
+  s_ed44b01ef26714::t_e0c2b56feb607f 287
+Linux/Cargo.toml
+  s_ed44b01ef26714::t_3dea2a9f195bf4 47
+Linux/crates/document-session-core/tests/session.rs
+  s_ed44b01ef26714::t_872afd8bbaecb3 242-265
+Linux/crates/editor-feature/src/lib.rs
+  s_ed44b01ef26714::t_b03ec004c14dbd 143-164,282-306
+Linux/crates/language-core/src/completion.rs
+  s_ed44b01ef26714::t_84d1a69f590607 10-15,98-105,139-140,157-158,167,217,222,225-229,232,236-237
+Linux/crates/pitex-shell/src/completion.rs
+  s_ed44b01ef26714::t_f44ebfb419f68e 104,208
+Linux/crates/pitex-shell/src/pdf.rs
+  s_ed44b01ef26714::t_ea278fc3e27b4f 8,74,210,215,225-294
+Packages/TexCore/Sources/LanguageCore/CompletionContext.swift
+  s_ed44b01ef26714::t_876b1c80150f4b 1-2,58-59,66,70,73,79,87-89,98,100,102,108,115,118,120,126-129
+Tools/check-editor-performance.py
+  s_ed44b01ef26714::t_16bb409a6b24d3 1-96
+Tools/check-lexer-performance.py
+  s_ed44b01ef26714::t_03ef7ac7735194 154,156
+Tools/check-optimization-profiles.py
+  s_ed44b01ef26714::t_5ef8da8fb9e57c 1-49
+Windows/Cargo.toml
+  s_ed44b01ef26714::t_2f2f77beb17a0b 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45881c779e80547733e8dfb779c78bf2677180c6",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
