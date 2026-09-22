@@ -1,0 +1,39 @@
+Linux/crates/pitex-shell/src/search.rs
+  s_ed44b01ef26714::t_df920a27bfd7b4 111-117
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_ed44b01ef26714::t_5ede32ca98fb19 199,307
+  s_ed44b01ef26714::t_ed6c6011aad96b 9,17
+Packages/TexApp/Sources/EditorMacAdapter/EditorFindController.swift
+  s_ed44b01ef26714::t_5ede32ca98fb19 4-5,7,13-20,23,33,44
+  s_ed44b01ef26714::t_f997b620816718 51-61,63-152,156-158,160-169,172-178,184-206
+Linux/Cargo.lock
+  s_ed44b01ef26714::t_b8f10c5f012afa 754
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_71433a5cd1a80f 4952,4956-4957
+Linux/crates/pitex/Cargo.toml
+  s_ed44b01ef26714::t_df8191cb62c046 3
+Mac/Config/Info.plist
+  s_ed44b01ef26714::t_6128bf6799d684 20,22
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_ed44b01ef26714::t_4859722f748505 13-25,40,42,44-46,48,55,60,62-93,241-242
+Windows/Cargo.lock
+  s_ed44b01ef26714::t_4779a9d0933d65 869
+Windows/crates/pitex-windows/Cargo.toml
+  s_ed44b01ef26714::t_6ec382c759488a 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "83e6b7cd9221fb7544541e2cabb8c9a693e3e11b",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
