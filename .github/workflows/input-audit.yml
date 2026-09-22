@@ -1,0 +1,41 @@
+name: Input method audit
+on:
+  push:
+    branches: [codex/caps-lock-audit]
+  workflow_dispatch:
+jobs:
+  ibus:
+    name: IBus Caps Lock (${{ matrix.ubuntu }})
+    runs-on: ubuntu-24.04
+    container: ubuntu:${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['22.04', '24.04']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native input stack
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
+      - name: Compare forwarded and native key handling
+        timeout-minutes: 5
+        run: |
+          for forwarding in true false; do
+            xvfb-run -a dbus-run-session -- bash -eu -s -- "$forwarding" <<'SESSION' > "input-$forwarding.log" 2>&1 || true
+          gsettings set org.freedesktop.ibus.engine.hangul switch-keys Caps_Lock
+          gsettings set org.freedesktop.ibus.engine.hangul use-event-forwarding "$1"
+          gsettings list-recursively org.freedesktop.ibus.engine.hangul
+          dpkg-query -W ibus ibus-hangul libgtk-4-1 libgtk-4-1t64 2>/dev/null || true
+          ibus-daemon -drx --panel disable
+          sleep 2
+          ibus engine hangul
+          GTK_IM_MODULE=ibus GSK_RENDERER=cairo python3 Tools/audit-ibus-capslock.py
+          SESSION
+            cat "input-$forwarding.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: input-audit-${{ matrix.ubuntu }}
+          path: input-*.log
