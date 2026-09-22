@@ -5252,3 +5252,66 @@ fn search_replace_all(state: &Rc<RefCell<AppState>>, query: &str, replacement: &
     let context = search_context(editor, query);
     let _ = context.replace_all(replacement);
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod startup_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Run alone under Xvfb: this exercises the real window and async open path.
+    #[test]
+    #[ignore = "requires a GTK display and isolated process"]
+    fn small_project_opens_without_blocking_the_ui() {
+        let root = std::env::temp_dir().join(format!("pitex-startup-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        // Keep preferences, agent files and installer work inside this test.
+        std::env::set_var("XDG_CONFIG_HOME", root.join("config"));
+        std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
+        let launcher = crate::agent::pi_paths::runtime_executable();
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, "#!/bin/sh\nwhile read -r line; do :; done\n").unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(crate::agent::pi_paths::runtime_directory().join("package.json"),
+            format!(r#"{{"name":"{}","version":"{}"}}"#,
+                crate::agent::pi_installer::PACKAGE_NAME, crate::agent::pi_installer::DESIRED_VERSION)).unwrap();
+        let source = "\\documentclass{article}\n\\begin{document}\n\\section{Hello}\n한글 $x$ test.\n\\label{sec:hello}\n\\end{document}\n";
+        let file = project.join("main.tex");
+        std::fs::write(&file, source).unwrap();
+        // An independent watchdog catches a GTK callback that never returns.
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watchdog = finished.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(20));
+            if !watchdog.load(std::sync::atomic::Ordering::Acquire) {
+                eprintln!("FAIL: application startup/file-open stopped processing GTK events");
+                std::process::abort();
+            }
+        });
+        adw::init().unwrap();
+        let app = adw::Application::builder().application_id("app.pitex.StartupTest").build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        eprintln!("startup: building real window");
+        build_window(&app, "1.6.0");
+        let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        eprintln!("startup: opening small TeX file");
+        state.borrow_mut().open_selected(file);
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut ready_ticks = 0;
+        while std::time::Instant::now() < deadline {
+            context.iteration(false);
+            if matches!(state.borrow().model.phase, WorkspacePhase::Ready) {
+                assert_eq!(state.borrow().editor.as_ref().unwrap().text(), source);
+                ready_ticks += 1;
+                if ready_ticks >= 100 { break; }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(ready_ticks, 100, "small project never became responsive");
+        state.borrow_mut().shutdown_agent();
+        UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
+        finished.store(true, std::sync::atomic::Ordering::Release);
+        eprintln!("PASS: small project opened and GTK continued processing events");
+    }
+}
