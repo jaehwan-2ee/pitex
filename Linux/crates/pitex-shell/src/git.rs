@@ -9,6 +9,7 @@ use git_core::{self, GitChange, GitChangeKind};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 pub(crate) fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
 where
@@ -35,7 +36,7 @@ where
 
 /// `refreshGit()`'s off-thread half — detect the repo, then read status,
 /// branches, and the commit log.
-fn collect_git(project_root: &Path) -> Result<Option<GitRefresh>, String> {
+fn collect_git(project_root: &Path, previous: Option<Arc<git_core::GitStatus>>) -> Result<Option<GitRefresh>, String> {
     let Ok(top) = run_git(project_root, git_core::top_level_args()) else {
         return Ok(None);
     };
@@ -44,8 +45,14 @@ fn collect_git(project_root: &Path) -> Result<Option<GitRefresh>, String> {
     let branches_raw = run_git(&root, git_core::branch_args()).unwrap_or_default();
     // Empty on a repository with no commits — not an error for the panel.
     let log_raw = run_git(&root, git_core::log_args(80)).unwrap_or_default();
+    let status = git_core::parse_status(&status_raw, &root.to_string_lossy());
+    // Compare on the worker; an unchanged poll keeps the model and scroll position.
+    let status = match previous {
+        Some(old) if *old == status => old,
+        _ => Arc::new(status),
+    };
     Ok(Some(GitRefresh {
-        status: git_core::parse_status(&status_raw, &root.to_string_lossy()),
+        status,
         commits: git_core::parse_log(&log_raw),
         branches: git_core::parse_branches(&branches_raw),
     }))
@@ -55,6 +62,8 @@ impl AppState {
     /// `refreshGit()` — repo detection, status, branches, and log on a
     /// worker; the `GitRefreshed` message applies the result.
     pub fn refresh_git(&self) {
+        if self.model.console_section != crate::model::ConsoleSection::Git
+            || !self.model.bottom_panel_visible { return; }
         let Some(tx) = self.tx.clone() else { return };
         let Some(root) = self.model.project_url.clone() else {
             let _ = tx.send(WorkspaceMessage::GitRefreshed(Ok(None)));
@@ -62,8 +71,9 @@ impl AppState {
         };
         if self.git_refresh_pending.replace(true) { return; }
         *self.git_refresh_root.borrow_mut() = Some(root.clone());
+        let previous = self.model.git_status.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(WorkspaceMessage::GitRefreshed(collect_git(&root)));
+            let _ = tx.send(WorkspaceMessage::GitRefreshed(collect_git(&root, previous)));
         });
     }
 

@@ -29,27 +29,22 @@ enum GitRunner {
             guard let binary = binaryURL() else {
                 return Result(code: -1, stdout: "", stderr: "git is not installed")
             }
-            let process = Process()
-            process.executableURL = binary
-            process.arguments = arguments
-            process.currentDirectoryURL = directory
-            let out = Pipe()
-            let err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
             do {
-                try process.run()
+                // Drain both pipes concurrently with the shared runner; a verbose
+                // Git hook must not deadlock while stdout is being read first.
+                let result = try await ProcessRunner().run(
+                    DirectCommandPlan(executable: binary.path, arguments: arguments), projectRoot: directory
+                )
+                let code: Int32
+                switch result.termination {
+                case .exited(let value): code = value
+                case .signaled(let signal): code = -signal
+                }
+                return Result(code: code, stdout: String(decoding: result.standardOutput, as: UTF8.self),
+                              stderr: String(decoding: result.standardError, as: UTF8.self))
             } catch {
                 return Result(code: -1, stdout: "", stderr: error.localizedDescription)
             }
-            let outData = out.fileHandleForReading.readDataToEndOfFile()
-            let errData = err.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return Result(
-                code: process.terminationStatus,
-                stdout: String(decoding: outData, as: UTF8.self),
-                stderr: String(decoding: errData, as: UTF8.self)
-            )
         }.value
     }
 }
@@ -75,7 +70,7 @@ extension WorkspaceModel {
             clearGitHistoryState()
             return
         }
-        guard !gitRefreshInFlight else { return }
+        guard bottomPanelVisible, consoleSection == .git, !gitRefreshInFlight else { return }
         gitRefreshInFlight = true
         Task {
             defer {
@@ -97,11 +92,17 @@ extension WorkspaceModel {
             async let logResult = GitRunner.run(GitSupport.logArgs(), in: root)
             let (status, branches, log) = await (statusResult, branchResult, logResult)
             guard projectURL == projectRoot else { return }
-            gitStatus = status.code == 0
-                ? GitSupport.parseStatus(status.stdout, root: root.path)
-                : nil
-            gitBranches = branches.code == 0 ? GitSupport.parseBranches(branches.stdout) : []
-            gitCommits = log.code == 0 ? GitSupport.parseLog(log.stdout) : []
+            let previous = gitStatus
+            let parsed = await Task.detached(priority: .utility) {
+                let snapshot = status.code == 0 ? GitSupport.parseStatus(status.stdout, root: root.path) : nil
+                return (snapshot, snapshot != previous,
+                        branches.code == 0 ? GitSupport.parseBranches(branches.stdout) : [],
+                        log.code == 0 ? GitSupport.parseLog(log.stdout) : [])
+            }.value
+            guard projectURL == projectRoot else { return }
+            if parsed.1 { gitStatus = parsed.0 }
+            if gitBranches != parsed.2 { gitBranches = parsed.2 }
+            if gitCommits != parsed.3 { gitCommits = parsed.3 }
         }
     }
 

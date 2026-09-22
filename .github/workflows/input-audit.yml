@@ -9,31 +9,44 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build macOS app
+        run: xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex -configuration Release -derivedDataPath build -skipPackagePluginValidation -skipMacroValidation CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - run: swift test --package-path Packages/TexCore --build-system native --filter GitSupportTests
       - name: Native key events through the real editor adapter
         run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterLayoutTests.testNativeDigitsAndDeletionWithCapsLock
   git-render:
-    name: Hidden Git pane responsiveness
+    name: Million-file Git responsiveness (${{ matrix.ubuntu }})
     runs-on: ubuntu-24.04
+    container: ubuntu:${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu: '22.04'
+            features: --no-default-features
+          - ubuntu: '24.04'
+            features: ''
     steps:
       - uses: actions/checkout@v4
       - run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libvte-2.91-gtk4-dev libpoppler-glib-dev xvfb gdb
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates git libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev xvfb gdb
+          if [ "${{ matrix.ubuntu }}" = "24.04" ]; then apt-get install -y libvte-2.91-gtk4-dev; fi
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p pitex-shell --lib --no-run
+      - run: cargo test -p git-core && cargo test -p pitex-shell --lib ${{ matrix.features }} git_list::tests
         working-directory: Linux
       - name: Reproduce large Git status during startup
         timeout-minutes: 2
         working-directory: Linux
         env:
-          PITEX_AUDIT_GIT_ROWS: '20000'
+          PITEX_AUDIT_GIT_ROWS: '1012101'
         run: |
           binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
           xvfb-run -a gdb -batch -return-child-result -ex run -ex 'thread apply all bt 12' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1 > ../git-audit.log 2>&1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: git-render-audit
+          name: git-render-audit-${{ matrix.ubuntu }}
           path: git-audit.log
   ibus:
     name: IBus Caps Lock (${{ matrix.ubuntu }})

@@ -187,7 +187,7 @@ public struct GitStatus: Sendable, Equatable {
 /// file verbatim; platform shells only run the produced argv.
 public enum GitSupport {
     public static let topLevelArgs = ["rev-parse", "--show-toplevel"]
-    public static let statusArgs = ["status", "--porcelain=v1", "-z", "--branch", "-uall"]
+    public static let statusArgs = ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--branch", "-uall"]
     public static let branchArgs = ["branch", "--format=%(refname:short)"]
     /// `hash | author | relative | decorations | subject`, records separated
     /// by \u{1e} — parsing survives spaces/newlines inside subjects.
@@ -520,32 +520,30 @@ public enum GitSupport {
         var staged: [GitChange] = []
         var unstaged: [GitChange] = []
 
-        let fields = raw.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
-        var index = 0
-        while index < fields.count {
-            let field = fields[index]
-            index += 1
-            if field.hasPrefix("## ") {
-                (branch, upstream, ahead, behind) = parseBranchHeader(String(field.dropFirst(3)))
+        // Porcelain's prefix is three ASCII bytes. Read it without building
+        // an Array<Character> (or counting graphemes) for every file path.
+        var fields = raw.utf8.split(separator: 0).makeIterator()
+        let conflictCodes: Set<String> = ["DD", "AU", "UD", "UA", "DU", "AA", "UU"]
+        while let field = fields.next() {
+            if field.starts(with: [35, 35, 32]) {
+                (branch, upstream, ahead, behind) = parseBranchHeader(String(decoding: field.dropFirst(3), as: UTF8.self))
                 continue
             }
-            guard field.count >= 4 else { continue }
-            let chars = Array(field)
-            let x = chars[0]
-            let y = chars[1]
-            guard chars[2] == " " else { continue }
-            let path = String(chars[3...])
+            var prefix = field.makeIterator()
+            guard let xByte = prefix.next(), let yByte = prefix.next(), prefix.next() == 32,
+                  xByte < 128, yByte < 128, prefix.next() != nil else { continue }
+            let x = Character(UnicodeScalar(xByte))
+            let y = Character(UnicodeScalar(yByte))
+            let path = String(decoding: field.dropFirst(3), as: UTF8.self)
             var originalPath: String?
-            if "RC".contains(x), index < fields.count {
-                originalPath = fields[index]
-                index += 1
+            if x == "R" || x == "C", let original = fields.next() {
+                originalPath = String(decoding: original, as: UTF8.self)
             }
             if x == "?" && y == "?" {
                 unstaged.append(GitChange(path: path, originalPath: nil, kind: .untracked, staged: false))
                 continue
             }
             if x == "!" { continue }
-            let conflictCodes: Set<String> = ["DD", "AU", "UD", "UA", "DU", "AA", "UU"]
             if conflictCodes.contains(String([x, y])) {
                 unstaged.append(GitChange(path: path, originalPath: nil, kind: .conflicted, staged: false))
                 continue

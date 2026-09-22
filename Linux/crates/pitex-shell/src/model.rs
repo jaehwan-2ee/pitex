@@ -215,7 +215,7 @@ pub enum WorkspaceMessage {
 
 /// One `refreshGit()` payload — status + branches + log collected off-thread.
 pub struct GitRefresh {
-    pub status: GitStatus,
+    pub status: Arc<GitStatus>,
     pub commits: Vec<GitCommit>,
     pub branches: Vec<String>,
 }
@@ -740,7 +740,7 @@ pub struct WorkspaceModel {
     pub todo_items: Vec<DocumentTodoItem>,
     /// Git Integration panel state (`gitStatus`/`gitCommits`/`gitBranches`
     /// on the Swift model) — `None` until the first refresh reports.
-    pub git_status: Option<GitStatus>,
+    pub git_status: Option<Arc<GitStatus>>,
     pub git_commits: Vec<GitCommit>,
     pub git_branches: Vec<String>,
     pub git_commit_message: String,

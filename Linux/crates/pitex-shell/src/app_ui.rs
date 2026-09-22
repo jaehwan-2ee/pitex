@@ -154,7 +154,9 @@ pub struct UiHandles {
     pub git_ahead_behind: RefCell<Option<gtk4::Label>>,
     pub git_busy_spinner: RefCell<Option<gtk4::Spinner>>,
     pub git_error_label: RefCell<Option<gtk4::Label>>,
-    pub git_changes_list: RefCell<Option<gtk4::ListBox>>,
+    pub git_changes_list: RefCell<Option<gtk4::ListView>>,
+    pub(crate) git_changes_model: RefCell<Option<crate::git_list::GitList>>,
+    pub(crate) git_rendered_commits: RefCell<Vec<git_core::GitCommit>>,
     pub git_graph_list: RefCell<Option<gtk4::ListBox>>,
     pub git_commit_view: RefCell<Option<gtk4::TextView>>,
     pub git_commit_button: RefCell<Option<gtk4::Button>>,
@@ -197,6 +199,7 @@ pub struct AppState {
     rendered_log: RefCell<String>,
     rendered_issues_key: Cell<u64>,
     build_ui_pending: Cell<bool>,
+    git_panel_was_visible: Cell<bool>,
     pub(crate) git_refresh_pending: Cell<bool>,
     pub(crate) git_refresh_root: RefCell<Option<PathBuf>>,
     /// Last `agent_context_key` pushed into `context_cell` — event dispatch
@@ -298,6 +301,7 @@ impl AppState {
             rendered_log: RefCell::new(String::new()),
             rendered_issues_key: Cell::new(0),
             build_ui_pending: Cell::new(false),
+            git_panel_was_visible: Cell::new(false),
             git_refresh_pending: Cell::new(false),
             git_refresh_root: RefCell::new(None),
             last_context_key: Cell::new(0),
@@ -529,9 +533,6 @@ impl AppState {
 
     pub fn set_console_section(&mut self, section: ConsoleSection) {
         self.model.console_section = section;
-        if section == ConsoleSection::Git {
-            self.refresh_git();
-        }
         self.refresh_console_visibility();
     }
 
@@ -1985,6 +1986,10 @@ impl AppState {
                 }
             }
         });
+        let visible = self.model.console_section == ConsoleSection::Git && self.model.bottom_panel_visible;
+        if visible && !self.git_panel_was_visible.replace(visible) { self.refresh_git(); }
+        if !visible { self.git_panel_was_visible.set(false); }
+        self.refresh_git_panel();
     }
 
     fn refresh_save_sensitivity(&self) {
@@ -2412,7 +2417,8 @@ impl AppState {
     }
 
     /// `GitIntegrationView` body — repopulates the pane from `model.git_*`.
-    pub fn refresh_git_panel(&mut self) {
+    pub fn refresh_git_panel(&self) {
+        if self.model.console_section != ConsoleSection::Git || !self.model.bottom_panel_visible { return; }
         let lang = self.language;
         let busy = self.model.git_busy;
         UI.with(|ui| {
@@ -2439,9 +2445,10 @@ impl AppState {
                     label.set_visible(false);
                 }
             }
-            let Some(status) = self.model.git_status.clone() else {
-                return;
-            };
+            if let Some(model) = ui.git_changes_model.borrow().as_ref() {
+                model.set_status(self.model.git_status.clone());
+            }
+            let Some(status) = self.model.git_status.as_ref() else { return; };
             if let Some(label) = ui.git_repo_name.borrow().as_ref() {
                 label.set_label(&status.repo_name);
             }
@@ -2456,47 +2463,19 @@ impl AppState {
                 ui.git_branch_model.borrow().as_ref().cloned(),
             ) {
                 self.git_branch_updating.set(true);
-                let items = self.model.git_branches.clone();
+                let items = &self.model.git_branches;
                 let strings: Vec<&str> = items.iter().map(String::as_str).collect();
-                model.splice(0, model.n_items(), &strings);
+                if model.n_items() as usize != items.len() || items.iter().enumerate().any(|(i, branch)| model.string(i as u32).as_deref() != Some(branch.as_str())) {
+                    model.splice(0, model.n_items(), &strings);
+                }
                 if let Some(idx) = items.iter().position(|b| *b == status.branch) {
                     dd.set_selected(idx as u32);
                 }
                 self.git_branch_updating.set(false);
             }
-            if let Some(list) = ui.git_changes_list.borrow().as_ref() {
-                clear_list(list);
-                if status.staged.is_empty() && status.unstaged.is_empty() {
-                    let row = gtk4::Label::new(Some(&tr(lang, "git.no_changes")));
-                    row.add_css_class("dim-label");
-                    row.set_margin_top(12);
-                    list.append(&row);
-                } else {
-                    if !status.staged.is_empty() {
-                        list.append(&crate::panes::git_section_row(
-                            &tr(lang, "git.staged"),
-                            status.staged.len(),
-                            "list-remove-symbolic",
-                            &tr(lang, "git.unstage_all"),
-                            |s| s.git_unstage_all(),
-                        ));
-                        for change in &status.staged {
-                            list.append(&crate::panes::git_change_row(change, lang));
-                        }
-                    }
-                    list.append(&crate::panes::git_section_row(
-                        &tr(lang, "git.changes"),
-                        status.unstaged.len(),
-                        "list-add-symbolic",
-                        &tr(lang, "git.stage_all"),
-                        |s| s.git_stage_all(),
-                    ));
-                    for change in &status.unstaged {
-                        list.append(&crate::panes::git_change_row(change, lang));
-                    }
-                }
-            }
             if let Some(list) = ui.git_graph_list.borrow().as_ref() {
+                if *ui.git_rendered_commits.borrow() == self.model.git_commits && list.first_child().is_some() { return; }
+                *ui.git_rendered_commits.borrow_mut() = self.model.git_commits.clone();
                 clear_list(list);
                 if self.model.git_commits.is_empty() {
                     let row = gtk4::Label::new(Some(&tr(lang, "git.no_commits")));
@@ -3324,7 +3303,8 @@ impl AppState {
                         commits,
                         branches,
                     })) => {
-                        self.model.git_status = Some(status);
+                        let old = self.model.git_status.replace(status);
+                        if old.is_some() { std::thread::spawn(move || drop(old)); }
                         self.model.git_commits = commits;
                         self.model.git_branches = branches;
                     }
@@ -5332,10 +5312,9 @@ for line in sys.stdin:
             std::process::abort();
         }
         assert_eq!(tooltip_changes.get(), 0, "refreshing a mapped widget must not trigger X11 tooltip pointer queries");
-        if let Ok(count) = std::env::var("PITEX_AUDIT_GIT_ROWS") {
-            let count: usize = count.parse().unwrap();
-            let mut state = state.borrow_mut();
-            state.model.git_status = Some(git_core::GitStatus {
+        {
+            let count: usize = std::env::var("PITEX_AUDIT_GIT_ROWS").unwrap_or_else(|_| "1012101".into()).parse().unwrap();
+            let status = std::sync::Arc::new(git_core::GitStatus {
                 root: project.to_string_lossy().into_owned(), repo_name: "large-status".into(),
                 branch: "main".into(), upstream: None, ahead: 0, behind: 0, staged: Vec::new(),
                 unstaged: (0..count).map(|i| git_core::GitChange {
@@ -5343,11 +5322,55 @@ for line in sys.stdin:
                     kind: git_core::GitChangeKind::Untracked, staged: false,
                 }).collect(),
             });
-            eprintln!("GIT_AUDIT rendering {count} entries, selected pane={:?}", state.model.console_section);
             let started = std::time::Instant::now();
-            state.refresh_git_panel();
-            eprintln!("GIT_AUDIT main thread blocked for {:?}", started.elapsed());
+            state.borrow_mut().model.git_status = Some(status);
+            state.borrow().refresh_git_panel();
+            eprintln!("GIT_AUDIT hidden {count} entries: {:?}", started.elapsed());
             assert!(started.elapsed() < Duration::from_secs(1), "hidden Git panel blocked the main thread");
+            let list = UI.with(|ui| ui.git_changes_list.borrow().as_ref().unwrap().clone());
+            let model = UI.with(|ui| ui.git_changes_model.borrow().as_ref().unwrap().clone());
+            assert_eq!(model.n_items(), 0, "hidden panel must not create rows");
+            // Keep the synthetic snapshot stable while exercising the real view.
+            state.borrow().git_refresh_pending.set(true);
+            let started = std::time::Instant::now();
+            {
+                let mut s = state.borrow_mut();
+                s.model.console_section = ConsoleSection::Git;
+                s.model.bottom_panel_visible = true;
+                s.refresh_console_visibility();
+            }
+            for _ in 0..20 {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            eprintln!("GIT_AUDIT visible {count} entries: {:?}", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(1), "showing Git blocked the main thread");
+            assert_eq!(model.n_items() as usize, count + 1);
+            let item = model.item(1).unwrap();
+            let started = std::time::Instant::now();
+            for _ in 0..100 { state.borrow().refresh_git_panel(); }
+            assert_eq!(model.item(1).unwrap(), item, "unchanged refresh rebuilt the list");
+            eprintln!("GIT_AUDIT 100 unchanged refreshes: {:?}", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(1));
+            let adjustment = list.vadjustment().unwrap();
+            let started = std::time::Instant::now();
+            adjustment.set_value(adjustment.upper() - adjustment.page_size());
+            for _ in 0..20 {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let mut children = 0;
+            let mut child = list.first_child();
+            while let Some(widget) = child { children += 1; child = widget.next_sibling(); }
+            eprintln!("GIT_AUDIT scroll to end: {:?}, {children} live row widgets", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(1));
+            assert!(children < 512, "list allocated offscreen rows");
+            let Some(crate::git_list::Row::Change(last)) = model.row(count as u32) else { panic!("last row missing") };
+            assert_eq!(last.path, format!("files/{}.txt", count - 1));
+            // Editor events still run after displaying and scrolling the full list.
+            state.borrow().editor.as_ref().unwrap().view().grab_focus();
+            while context.pending() { context.iteration(false); }
+            assert_eq!(state.borrow().editor.as_ref().unwrap().text(), source);
         }
         state.borrow_mut().shutdown_agent();
         UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());

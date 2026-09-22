@@ -29,6 +29,14 @@ final class GitSupportTests: XCTestCase {
         XCTAssertEqual(GitSupport.parseStatus("## HEAD (no branch)\0", root: "/r").branch, "HEAD")
     }
 
+    func testStatusPreservesUnicodeAndControlCharactersInPaths() {
+        let renamed = "한글/새 👩🏽‍💻\tname\n.tex"
+        let original = "옛 이름/e\u{301}.tex"
+        let status = GitSupport.parseStatus("## main\0RM \(renamed)\0\(original)\0?? 123.tex\0!! ignored\0X\0", root: "/repo")
+        XCTAssertEqual(status.staged, [GitChange(path: renamed, originalPath: original, kind: .renamed, staged: true)])
+        XCTAssertEqual(status.unstaged.map(\.path), [renamed, "123.tex"])
+    }
+
     func testLogParsesRefsAndHead() {
         // %h %an %ar %D %s %H %B — the subject is repeated inside %B, so the
         // full message starts with it when there is a body.

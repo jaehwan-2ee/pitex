@@ -73,8 +73,8 @@ pub struct GitStatus {
 pub fn top_level_args() -> [&'static str; 2] {
     ["rev-parse", "--show-toplevel"]
 }
-pub fn status_args() -> [&'static str; 5] {
-    ["status", "--porcelain=v1", "-z", "--branch", "-uall"]
+pub fn status_args() -> [&'static str; 6] {
+    ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--branch", "-uall"]
 }
 pub fn branch_args() -> [&'static str; 2] {
     ["branch", "--format=%(refname:short)"]
@@ -253,27 +253,20 @@ pub fn parse_status(raw: &str, root: &str) -> GitStatus {
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
 
-    let fields: Vec<&str> = raw.split('\0').filter(|f| !f.is_empty()).collect();
-    let mut index = 0;
-    while index < fields.len() {
-        let field = fields[index];
-        index += 1;
+    let mut fields = raw.split('\0').filter(|f| !f.is_empty());
+    while let Some(field) = fields.next() {
         if let Some(header) = field.strip_prefix("## ") {
             (branch, upstream, ahead, behind) = parse_branch_header(header);
             continue;
         }
-        let chars: Vec<char> = field.chars().collect();
-        if chars.len() < 4 || chars[2] != ' ' {
+        let bytes = field.as_bytes();
+        if bytes.len() < 4 || bytes[2] != b' ' || !bytes[0].is_ascii() || !bytes[1].is_ascii() {
             continue;
         }
-        let x = chars[0];
-        let y = chars[1];
-        let path: String = chars[3..].iter().collect();
-        let mut original_path = None;
-        if "RC".contains(x) && index < fields.len() {
-            original_path = Some(fields[index].to_string());
-            index += 1;
-        }
+        let x = bytes[0] as char;
+        let y = bytes[1] as char;
+        let path = field[3..].to_string();
+        let original_path = if matches!(x, 'R' | 'C') { fields.next().map(str::to_string) } else { None };
         if x == '?' && y == '?' {
             unstaged.push(GitChange {
                 path,
@@ -435,6 +428,16 @@ mod tests {
         assert_eq!(s.staged[0].kind, GitChangeKind::Renamed);
         assert_eq!(s.staged[0].original_path.as_deref(), Some("old.tex"));
         assert_eq!(s.unstaged[0].kind, GitChangeKind::Conflicted);
+    }
+
+    #[test]
+    fn status_preserves_unicode_and_control_characters_in_paths() {
+        let renamed = "한글/새 👩🏽‍💻\tname\n.tex";
+        let original = "옛 이름/e\u{301}.tex";
+        let s = parse_status(&format!("## main\0RM {renamed}\0{original}\0?? 123.tex\0!! ignored\0X\0"), "/repo");
+        assert_eq!(s.staged[0].path, renamed);
+        assert_eq!(s.staged[0].original_path.as_deref(), Some(original));
+        assert_eq!(s.unstaged.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(), vec![renamed, "123.tex"]);
     }
 
     #[test]
