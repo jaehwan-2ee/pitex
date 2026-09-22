@@ -1,0 +1,23 @@
+Linux/crates/pitex-shell/tests/ime.rs
+  s_ed44b01ef26714::t_c0bcca8b840c57 28,58-80,82
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_0bb454b54d7701 85,95
+.github/workflows/ibus-compat.yml
+  s_ed44b01ef26714::t_d225341a5f6f4b 4-7,30-45,54-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc4c9f281a7f4d0e72b41f9386315e21ea2570bc",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
