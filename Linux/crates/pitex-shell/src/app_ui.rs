@@ -5270,7 +5270,19 @@ mod startup_tests {
         std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
         let launcher = crate::agent::pi_paths::runtime_executable();
         std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-        std::fs::write(&launcher, "#!/bin/sh\nwhile read -r line; do :; done\n").unwrap();
+        std::fs::write(&launcher, r#"#!/usr/bin/python3
+import json, sys, time
+time.sleep(2)
+model = {"id": "fixture", "provider": "fixture", "name": "Fixture model"}
+for line in sys.stdin:
+    request = json.loads(line)
+    command = request["type"]
+    data = {"get_state": {"model": model, "thinkingLevel": "off"},
+            "get_available_models": {"models": [model]},
+            "get_available_thinking_levels": {"levels": ["off"]},
+            "get_commands": {"commands": []}}.get(command, {})
+    print(json.dumps({"type": "response", "command": command, "id": request.get("id"), "success": True, "data": data}), flush=True)
+"#).unwrap();
         std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::fs::write(crate::agent::pi_paths::runtime_directory().join("package.json"),
             format!(r#"{{"name":"{}","version":"{}"}}"#,
@@ -5278,6 +5290,7 @@ mod startup_tests {
         let source = "\\documentclass{article}\n\\begin{document}\n\\section{Hello}\n한글 $x$ test.\n\\label{sec:hello}\n\\end{document}\n";
         let file = project.join("main.tex");
         std::fs::write(&file, source).unwrap();
+        std::fs::write(project.join("main.pdf"), include_bytes!("../../../../Fixtures/projects/startup-preview/main.pdf")).unwrap();
         // An independent watchdog catches a GTK callback that never returns.
         let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let watchdog = finished.clone();
@@ -5304,12 +5317,15 @@ mod startup_tests {
             if matches!(state.borrow().model.phase, WorkspacePhase::Ready) {
                 assert_eq!(state.borrow().editor.as_ref().unwrap().text(), source);
                 ready_ticks += 1;
-                if ready_ticks >= 100 { break; }
+                if ready_ticks >= 500 && state.borrow().agent.as_ref().map(|a| !a.models.is_empty()).unwrap_or(false)
+                    && state.borrow().displayed_pdf_key.get() != 0 { break; }
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        if ready_ticks != 100 {
-            eprintln!("FAIL: small project never became responsive; phase: {:?}", state.borrow().model.phase);
+        if ready_ticks < 500 || !state.borrow().agent.as_ref().map(|a| !a.models.is_empty()).unwrap_or(false)
+            || state.borrow().displayed_pdf_key.get() == 0 {
+            eprintln!("FAIL: startup phase={:?}, ticks={}, PDF={}, agent={:?}", state.borrow().model.phase,
+                ready_ticks, state.borrow().displayed_pdf_key.get(), state.borrow().agent.as_ref().map(|a| &a.connection));
             std::process::abort();
         }
         state.borrow_mut().shutdown_agent();

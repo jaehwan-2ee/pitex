@@ -112,6 +112,7 @@ jobs:
       - run: cargo build -p pitex --no-default-features
         working-directory: Linux
       - name: Real Hangul Backspace on GTK 4.6
+        timeout-minutes: 3
         working-directory: Linux
         run: |
           dbus-run-session -- xvfb-run -a bash -c '
