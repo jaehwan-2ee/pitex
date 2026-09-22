@@ -1,0 +1,23 @@
+Tools/check-git-performance.py
+  s_ed44b01ef26714::t_69485154e0e208 1-46
+.github/workflows/input-audit.yml
+  s_ed44b01ef26714::t_7a0e0e0ab8f6ce 15,53
+Linux/crates/pitex-shell/src/git_list.rs
+  s_ed44b01ef26714::t_0ce623d6b604a3 58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6dbc7e078c22b0bf0065671fe1222cf666726c9d",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
