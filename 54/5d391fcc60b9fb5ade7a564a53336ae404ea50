@@ -1,0 +1,24 @@
+Linux/crates/pitex-shell/src/panes.rs
+  s_ed44b01ef26714::t_1f1d4e0cb107ab 55,77,120,134,265,298,481,565,600,669,689,696,905,946,1028,1134,1146,1225,1243,1278,1280,1283,1285
+Linux/crates/pitex-shell/src/compat.rs
+  s_ed44b01ef26714::t_887b09f7027c9f 59-71
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_1f1d4e0cb107ab 2079,3436,3473,3511,3987,4001,4013,4026,4040,4106,4111,4519,4649,4708,4721,4817,4846,4886,5101
+  s_ed44b01ef26714::t_887b09f7027c9f 5291-5300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "545d391fcc60b9fb5ade7a564a53336ae404ea50",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
