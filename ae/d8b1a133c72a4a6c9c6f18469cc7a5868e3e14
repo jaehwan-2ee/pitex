@@ -1,0 +1,31 @@
+Linux/crates/pitex/src/ibus_compat.c
+  s_ed44b01ef26714::t_31463381bc89ae 1-89
+.github/workflows/ibus-compat.yml
+  s_ed44b01ef26714::t_31463381bc89ae 1,5,10-14,20,35
+Linux/crates/pitex/build.rs
+  s_ed44b01ef26714::t_1ed866443162b4 1-18
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_2ca9588f7adbc3 486,5347,5366
+Linux/crates/pitex-shell/src/ghost_completion.rs
+  s_ed44b01ef26714::t_1f42c1a50e8868 97,119,139,169-177,206,214-215,496,565
+Mac/Sources/Features/EditorContainerView.swift
+  s_ed44b01ef26714::t_47ca56b86bcddc 201,226,1042,1056,1065
+Tools/audit-ibus-capslock.py
+  s_ed44b01ef26714::t_16a9586bc4b9a6 24-25,170-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aed8b1a133c72a4a6c9c6f18469cc7a5868e3e14",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
