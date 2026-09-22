@@ -4949,10 +4949,12 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     let next = gtk4::Button::from_icon_name("go-down-symbolic");
     let count = gtk4::Label::new(Some("0 / 0"));
     count.add_css_class("dim-label");
-    a11y(&count, "pitex.search.count", "editor.find");
+    count.set_widget_name("pitex.search.count");
     ui.search_count.replace(Some(count.clone()));
     a11y(&prev, "pitex.search.previous", "editor.find_previous");
     a11y(&next, "pitex.search.next", "editor.find_next");
+    compat::initial_tooltip(&prev, &tr(lang, "editor.find_previous"));
+    compat::initial_tooltip(&next, &tr(lang, "editor.find_next"));
     find_row.append(&entry);
     find_row.append(&count);
     find_row.append(&prev);

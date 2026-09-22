@@ -6,7 +6,7 @@ import Foundation
 import AppKit
 
 @MainActor
-private final class SessionTextView: NSTextView, @preconcurrency NSTextFinderClient {
+private final class SessionTextView: NSTextView {
     var findController: EditorFindController?
 
     override func performFindPanelAction(_ sender: Any?) { performTextFinderAction(sender) }
@@ -14,7 +14,7 @@ private final class SessionTextView: NSTextView, @preconcurrency NSTextFinderCli
     override func performTextFinderAction(_ sender: Any?) {
         let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSControl)?.tag ?? 1
         guard let action = NSTextFinder.Action(rawValue: tag), let scrollView = enclosingScrollView else { return }
-        if findController == nil { findController = EditorFindController(textView: self, client: self, scrollView: scrollView) }
+        if findController == nil { findController = EditorFindController(textView: self, scrollView: scrollView) }
         findController?.perform(action)
     }
 
@@ -196,6 +196,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     public func textDidChange(_ notification: Notification) {
         guard !isApplyingSessionSnapshot else { return }
         desiredText = textView.string
+        sessionTextView.findController?.contentDidChange()
         onTextDidChange?()
         scheduleCompletionTrigger()
         submitPendingChangeIfNeeded()
@@ -303,6 +304,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         let length = min(previousSelection.length, maximum - location)
         textView.setSelectedRange(NSRange(location: location, length: length))
         isApplyingSessionSnapshot = false
+        sessionTextView.findController?.contentDidChange()
     }
 }
 

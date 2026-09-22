@@ -108,7 +108,13 @@ mod tests {
         buffer.select_range(&start, &end);
         search.step("cat", false); settle(); assert_eq!(label.text(), "2 / 3");
         search.replace("cat", "dog"); settle(); assert_eq!(label.text(), "2 / 2");
-        buffer.insert(&mut buffer.end_iter(), " cat"); settle(); assert_eq!(label.text(), "2 / 3");
+        let (start, end) = buffer.selection_bounds().unwrap();
+        let (start, end) = (start.offset(), end.offset());
+        buffer.insert(&mut buffer.end_iter(), " cat");
+        // Insertion at the selection edge moves its mark; restore the
+        // original match to check its index after the document gains a hit.
+        buffer.select_range(&buffer.iter_at_offset(end), &buffer.iter_at_offset(start));
+        settle(); assert_eq!(label.text(), "2 / 3");
         search.replace_all("cat", "dog"); settle(); assert_eq!(label.text(), "0 / 0");
         search.step("한", true); settle(); assert_eq!(label.text(), "1 / 1");
         search.step("missing", true); settle(); assert_eq!(label.text(), "0 / 0");

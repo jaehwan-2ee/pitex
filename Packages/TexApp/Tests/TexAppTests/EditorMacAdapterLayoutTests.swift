@@ -10,9 +10,20 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
     @MainActor
     func testNativeFindCounterAndNavigation() async throws {
         _ = NSApplication.shared
-        let adapter = try await EditorMacAdapter.make(session: EditableDocumentSession())
+        let policy = NSApp.activationPolicy()
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { NSApp.setActivationPolicy(policy) }
+        let pasteboard = NSPasteboard(name: .find)
+        let saved = (pasteboard.types ?? []).compactMap { type in pasteboard.data(forType: type).map { (type, $0) } }
+        pasteboard.clearContents()
+        defer {
+            pasteboard.clearContents()
+            for (type, data) in saved { pasteboard.setData(data, forType: type) }
+        }
+        let session = EditableDocumentSession(text: "한 😀 cat CAT cat")
+        let adapter = try await EditorMacAdapter.make(session: session)
         let view = adapter.textView
-        view.string = "한 😀 cat CAT cat"
         view.setSelectedRange(NSRange(location: 0, length: 0))
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 300))
         scroll.documentView = view
@@ -26,25 +37,60 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
         let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         item.tag = NSTextFinder.Action.showFindInterface.rawValue
         view.performFindPanelAction(item)
+        try await Task.sleep(for: .milliseconds(100))
         let bar = try XCTUnwrap(scroll.findBarView)
-        let query = try XCTUnwrap(fields(bar).first { $0.isEditable })
+        let query = try XCTUnwrap(fields(bar).first { $0.isEditable && !$0.isHiddenOrHasHiddenAncestor })
         let count = try XCTUnwrap(fields(bar).first { $0.accessibilityIdentifier() == "pitex.search.count" })
-        window.makeFirstResponder(query)
-        let fieldEditor = try XCTUnwrap(window.fieldEditor(true, for: query) as? NSTextView)
-        fieldEditor.insertText("cat", replacementRange: NSRange(location: 0, length: 0))
+        query.selectText(nil)
+        let fieldEditor = try XCTUnwrap(query.currentEditor() as? NSTextView)
+        fieldEditor.insertText("cat", replacementRange: NSRange(location: 0, length: fieldEditor.string.utf16.count))
         for _ in 0..<100 {
-            if count.stringValue.hasSuffix("/ 3") { break }
+            if count.stringValue == "1 / 3" { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(count.stringValue, "1 / 3")
         for expected in ["2 / 3", "3 / 3", "1 / 3"] {
             item.tag = NSTextFinder.Action.nextMatch.rawValue
             view.performTextFinderAction(item)
+            try await Task.sleep(for: .milliseconds(200))
             XCTAssertEqual(count.stringValue, expected)
         }
         item.tag = NSTextFinder.Action.previousMatch.rawValue
         view.performTextFinderAction(item)
+        try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(count.stringValue, "3 / 3")
+        view.insertText(" cat", replacementRange: NSRange(location: view.string.utf16.count, length: 0))
+        for _ in 0..<100 {
+            if count.stringValue.hasSuffix("/ 4") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(count.stringValue.hasSuffix("/ 4"), "count=\(count.stringValue), text=\(view.string)")
+        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
+        view.performTextFinderAction(item)
+        let replacement = try XCTUnwrap(fields(bar).first { $0.isEditable && $0 !== query })
+        replacement.selectText(nil)
+        let replacementEditor = try XCTUnwrap(replacement.currentEditor() as? NSTextView)
+        replacementEditor.insertText("dog", replacementRange: NSRange(location: 0, length: replacementEditor.string.utf16.count))
+        item.tag = NSTextFinder.Action.replaceAll.rawValue
+        view.performTextFinderAction(item)
+        for _ in 0..<100 {
+            if count.stringValue == "0 / 0" { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(view.string, "한 😀 dog dog dog dog")
+        XCTAssertEqual(count.stringValue, "0 / 0")
+        for _ in 0..<100 {
+            if await session.snapshot().text == view.string { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let snapshot = await session.snapshot()
+        XCTAssertEqual(snapshot.text, view.string)
+        item.tag = NSTextFinder.Action.hideFindInterface.rawValue
+        view.performTextFinderAction(item)
+        XCTAssertFalse(scroll.isFindBarVisible)
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        view.performTextFinderAction(item)
+        XCTAssertTrue(scroll.isFindBarVisible)
     }
 
     @MainActor
@@ -192,7 +238,8 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
 }
 
 private actor EditableDocumentSession: DocumentSessionPort {
-    private var current = DocumentSnapshot(revision: 0, text: "a👩b")
+    private var current: DocumentSnapshot
+    init(text: String = "a👩b") { current = DocumentSnapshot(revision: 0, text: text) }
     var mutations: [DocumentMutation] = []
     func snapshot() async -> DocumentSnapshot { current }
     func submit(_ mutation: DocumentMutation) async throws -> DocumentMutationResult {
