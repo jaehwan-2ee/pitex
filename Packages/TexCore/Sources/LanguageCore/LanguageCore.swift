@@ -54,58 +54,57 @@ public enum TeXDialect: String, Codable, Sendable { case latex, bibtex }
 
 public enum DeterministicTeXLexer {
     public static func tokenize(_ source: String, dialect: TeXDialect = .latex) -> [LanguageToken] {
-        let scalars = Array(source.unicodeScalars)
-        var scalarOffsets: [Int] = []
-        scalarOffsets.reserveCapacity(scalars.count + 1)
-        var offset = 0
-        for scalar in scalars {
-            scalarOffsets.append(offset)
-            offset += scalar.utf8.count
-        }
-        scalarOffsets.append(offset)
-
+        // Syntax delimiters are ASCII. Scan UTF-8 directly instead of
+        // allocating a scalar array and a byte-offset array for every edit.
+        let bytes = Array(source.utf8)
         func token(_ kind: LanguageTokenKind, _ start: Int, _ end: Int) -> LanguageToken {
-            LanguageToken(kind: kind, range: .lexerRange(offset: scalarOffsets[start], length: scalarOffsets[end] - scalarOffsets[start]))
+            LanguageToken(kind: kind, range: .lexerRange(offset: start, length: end - start))
         }
         func string(_ start: Int, _ end: Int) -> String {
-            String(String.UnicodeScalarView(scalars[start..<end]))
+            String(decoding: bytes[start..<end], as: UTF8.self)
         }
-        func isLetter(_ scalar: Unicode.Scalar) -> Bool {
-            (scalar.value >= 65 && scalar.value <= 90) || (scalar.value >= 97 && scalar.value <= 122)
+        func isLetter(_ byte: UInt8) -> Bool {
+            (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122)
         }
-        func isWhitespace(_ scalar: Unicode.Scalar) -> Bool {
-            scalar == " " || scalar == "\t" || scalar == "\r" || scalar == "\n"
+        func isWhitespace(_ byte: UInt8) -> Bool {
+            byte == 32 || byte == 9 || byte == 13 || byte == 10
         }
+        // A failed search proves this closer is absent from the remainder.
+        // Repeated unfinished \( / \[ must not rescan the suffix quadratically.
+        var missingMathClosers = Set<UInt8>()
 
         var result: [LanguageToken] = []
         var index = 0
-        while index < scalars.count {
+        while index < bytes.count {
             let start = index
-            let scalar = scalars[index]
-            if scalar == "%" {
+            let byte = bytes[index]
+            if byte == 37 {
                 index += 1
-                while index < scalars.count, scalars[index] != "\n", scalars[index] != "\r" { index += 1 }
+                while index < bytes.count, bytes[index] != 10, bytes[index] != 13 { index += 1 }
                 result.append(token(.comment(string(start, index)), start, index))
-            } else if scalar == "\\" {
+            } else if byte == 92 {
                 index += 1
-                if index < scalars.count {
-                    if isLetter(scalars[index]) {
-                        while index < scalars.count, isLetter(scalars[index]) { index += 1 }
+                if index < bytes.count {
+                    if isLetter(bytes[index]) {
+                        while index < bytes.count, isLetter(bytes[index]) { index += 1 }
                     } else {
                         index += 1
+                        while index < bytes.count, bytes[index] & 0xC0 == 0x80 { index += 1 }
                     }
                 }
                 let name = string(start + 1, index)
                 if name == "(" || name == "[" {
                     // Display math \( … \) / \[ … \]: scan for the matching
                     // closer, skipping escaped characters.
-                    let closer: Unicode.Scalar = name == "(" ? ")" : "]"
-                    var scan = index
+                    let closer: UInt8 = name == "(" ? 41 : 93
+                    var scan = missingMathClosers.contains(closer) ? bytes.count : index
                     var closed = false
-                    while scan < scalars.count {
-                        if scalars[scan] == "\\", scan + 1 < scalars.count {
-                            if scalars[scan + 1] == closer { closed = true; scan += 2; break }
-                            scan += 2; continue
+                    while scan < bytes.count {
+                        if bytes[scan] == 92, scan + 1 < bytes.count {
+                            if bytes[scan + 1] == closer { closed = true; scan += 2; break }
+                            scan += 2
+                            while scan < bytes.count, bytes[scan] & 0xC0 == 0x80 { scan += 1 }
+                            continue
                         }
                         scan += 1
                     }
@@ -113,6 +112,7 @@ public enum DeterministicTeXLexer {
                         result.append(token(.math(string(start, scan)), start, scan))
                         index = scan
                     } else {
+                        missingMathClosers.insert(closer)
                         result.append(token(.controlSequence(name), start, index))
                     }
                 } else {
@@ -122,17 +122,17 @@ public enum DeterministicTeXLexer {
                         // gets its own token so the highlighter can paint it
                         // with the environment color like the reference editor.
                         var probe = index
-                        while probe < scalars.count, scalars[probe] == " " || scalars[probe] == "\t" { probe += 1 }
-                        if probe < scalars.count, scalars[probe] == "{" {
+                        while probe < bytes.count, bytes[probe] == 32 || bytes[probe] == 9 { probe += 1 }
+                        if probe < bytes.count, bytes[probe] == 123 {
                             if probe > index {
                                 result.append(token(.whitespace(string(index, probe)), index, probe))
                             }
                             result.append(token(.leftBrace, probe, probe + 1))
                             var cursor = probe + 1
-                            while cursor < scalars.count,
-                                  scalars[cursor] != "}",
-                                  scalars[cursor] != "\n",
-                                  scalars[cursor] != "\r" { cursor += 1 }
+                            while cursor < bytes.count,
+                                  bytes[cursor] != 125,
+                                  bytes[cursor] != 10,
+                                  bytes[cursor] != 13 { cursor += 1 }
                             if cursor > probe + 1 {
                                 result.append(token(.environmentName(string(probe + 1, cursor)), probe + 1, cursor))
                             }
@@ -141,19 +141,23 @@ public enum DeterministicTeXLexer {
                         }
                     }
                 }
-            } else if scalar == "$" {
+            } else if byte == 36 {
                 // Inline/display math $…$ / $$…$$. An unmatched opening
                 // delimiter emits only the delimiter itself as math so the
                 // rest of the file keeps its normal coloring.
-                let isDouble = index + 1 < scalars.count && scalars[index + 1] == "$"
+                let isDouble = index + 1 < bytes.count && bytes[index + 1] == 36
                 index += isDouble ? 2 : 1
                 var scan = index
                 var end = -1
-                while scan < scalars.count {
-                    if scalars[scan] == "\\" { scan += 2; continue }
-                    if scalars[scan] == "$" {
+                while scan < bytes.count {
+                    if bytes[scan] == 92 {
+                        scan += 2
+                        while scan < bytes.count, bytes[scan] & 0xC0 == 0x80 { scan += 1 }
+                        continue
+                    }
+                    if bytes[scan] == 36 {
                         if isDouble {
-                            if scan + 1 < scalars.count, scalars[scan + 1] == "$" { end = scan + 2; break }
+                            if scan + 1 < bytes.count, bytes[scan + 1] == 36 { end = scan + 2; break }
                             scan += 1; continue
                         }
                         end = scan + 1; break
@@ -166,25 +170,25 @@ public enum DeterministicTeXLexer {
                 } else {
                     result.append(token(.math(string(start, index)), start, index))
                 }
-            } else if scalar == "{" || scalar == "[" || (dialect == .latex && scalar == "(") {
+            } else if byte == 123 || byte == 91 || (dialect == .latex && byte == 40) {
                 index += 1; result.append(token(.leftBrace, start, index))
-            } else if scalar == "}" || scalar == "]" || (dialect == .latex && scalar == ")") {
+            } else if byte == 125 || byte == 93 || (dialect == .latex && byte == 41) {
                 index += 1; result.append(token(.rightBrace, start, index))
-            } else if isWhitespace(scalar) {
+            } else if isWhitespace(byte) {
                 index += 1
-                while index < scalars.count, isWhitespace(scalars[index]) { index += 1 }
+                while index < bytes.count, isWhitespace(bytes[index]) { index += 1 }
                 result.append(token(.whitespace(string(start, index)), start, index))
-            } else if dialect == .bibtex, scalar == "@" {
+            } else if dialect == .bibtex, byte == 64 {
                 index += 1; result.append(token(.bibEntryMarker, start, index))
-            } else if dialect == .bibtex, [",", "=", "(", ")", "#", "\""].contains(scalar) {
-                index += 1; result.append(token(.punctuation(String(scalar)), start, index))
+            } else if dialect == .bibtex, [44, 61, 40, 41, 35, 34].contains(byte) {
+                index += 1; result.append(token(.punctuation(string(start, index)), start, index))
             } else {
                 index += 1
-                while index < scalars.count {
-                    let next = scalars[index]
-                    if next == "%" || next == "\\" || next == "{" || next == "}" || next == "[" || next == "]" || next == "$" || isWhitespace(next) { break }
-                    if dialect == .bibtex, next == "@" || [",", "=", "(", ")", "#", "\""].contains(next) { break }
-                    if dialect == .latex, next == "(" || next == ")" { break }
+                while index < bytes.count {
+                    let next = bytes[index]
+                    if next == 37 || next == 92 || next == 123 || next == 125 || next == 91 || next == 93 || next == 36 || isWhitespace(next) { break }
+                    if dialect == .bibtex, next == 64 || [44, 61, 40, 41, 35, 34].contains(next) { break }
+                    if dialect == .latex, next == 40 || next == 41 { break }
                     index += 1
                 }
                 result.append(token(.text(string(start, index)), start, index))

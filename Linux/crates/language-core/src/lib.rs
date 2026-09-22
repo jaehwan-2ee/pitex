@@ -96,67 +96,57 @@ pub struct DeterministicTeXLexer;
 
 impl DeterministicTeXLexer {
     pub fn tokenize(source: &str, dialect: TeXDialect) -> Vec<LanguageToken> {
-        let scalars: Vec<char> = source.chars().collect();
-        let mut scalar_offsets: Vec<usize> = Vec::with_capacity(scalars.len() + 1);
-        let mut offset = 0usize;
-        for scalar in &scalars {
-            scalar_offsets.push(offset);
-            offset += scalar.len_utf8();
-        }
-        scalar_offsets.push(offset);
-
+        // ASCII syntax can be scanned in the existing UTF-8 buffer without
+        // allocating a scalar vector and its byte-offset vector per edit.
+        let bytes = source.as_bytes();
         let token = |kind: LanguageTokenKind, start: usize, end: usize| -> LanguageToken {
-            LanguageToken {
-                kind,
-                range: SourceRange::lexer_range(
-                    scalar_offsets[start],
-                    scalar_offsets[end] - scalar_offsets[start],
-                ),
-            }
+            LanguageToken { kind, range: SourceRange::lexer_range(start, end - start) }
         };
-        let string = |start: usize, end: usize| -> String {
-            scalars[start..end].iter().collect()
-        };
-        let is_letter = |scalar: char| scalar.is_ascii_uppercase() || scalar.is_ascii_lowercase();
-        let is_whitespace = |scalar: char| scalar == ' ' || scalar == '\t' || scalar == '\r' || scalar == '\n';
+        let string = |start: usize, end: usize| -> String { source[start..end].to_owned() };
+        let is_letter = |byte: u8| byte.is_ascii_uppercase() || byte.is_ascii_lowercase();
+        let is_whitespace = |byte: u8| matches!(byte, b' ' | b'\t' | b'\r' | b'\n');
+        // Avoid rescanning the suffix for every unfinished \( / \[ opener.
+        let mut missing_math_closers = HashSet::new();
 
         let mut result: Vec<LanguageToken> = Vec::new();
         let mut index = 0usize;
-        while index < scalars.len() {
+        while index < bytes.len() {
             let start = index;
-            let scalar = scalars[index];
-            if scalar == '%' {
+            let byte = bytes[index];
+            if byte == b'%' {
                 index += 1;
-                while index < scalars.len() && scalars[index] != '\n' && scalars[index] != '\r' {
+                while index < bytes.len() && bytes[index] != b'\n' && bytes[index] != b'\r' {
                     index += 1;
                 }
                 result.push(token(LanguageTokenKind::Comment(string(start, index)), start, index));
-            } else if scalar == '\\' {
+            } else if byte == b'\\' {
                 index += 1;
-                if index < scalars.len() {
-                    if is_letter(scalars[index]) {
-                        while index < scalars.len() && is_letter(scalars[index]) {
+                if index < bytes.len() {
+                    if is_letter(bytes[index]) {
+                        while index < bytes.len() && is_letter(bytes[index]) {
                             index += 1;
                         }
                     } else {
                         index += 1;
+                        while index < bytes.len() && bytes[index] & 0xC0 == 0x80 { index += 1; }
                     }
                 }
                 let name = string(start + 1, index);
                 if name == "(" || name == "[" {
                     // Display math \( … \) / \[ … \]: scan for the matching
                     // closer, skipping escaped characters.
-                    let closer: char = if name == "(" { ')' } else { ']' };
-                    let mut scan = index;
+                    let closer: u8 = if name == "(" { b')' } else { b']' };
+                    let mut scan = if missing_math_closers.contains(&closer) { bytes.len() } else { index };
                     let mut closed = false;
-                    while scan < scalars.len() {
-                        if scalars[scan] == '\\' && scan + 1 < scalars.len() {
-                            if scalars[scan + 1] == closer {
+                    while scan < bytes.len() {
+                        if bytes[scan] == b'\\' && scan + 1 < bytes.len() {
+                            if bytes[scan + 1] == closer {
                                 closed = true;
                                 scan += 2;
                                 break;
                             }
                             scan += 2;
+                            while scan < bytes.len() && bytes[scan] & 0xC0 == 0x80 { scan += 1; }
                             continue;
                         }
                         scan += 1;
@@ -165,19 +155,21 @@ impl DeterministicTeXLexer {
                         result.push(token(LanguageTokenKind::Math(string(start, scan)), start, scan));
                         index = scan;
                     } else {
+                        missing_math_closers.insert(closer);
                         result.push(token(LanguageTokenKind::ControlSequence(name), start, index));
                     }
                 } else {
-                    result.push(token(LanguageTokenKind::ControlSequence(name.clone()), start, index));
-                    if dialect == TeXDialect::Latex && (name == "begin" || name == "end") {
+                    let environment = dialect == TeXDialect::Latex && (name == "begin" || name == "end");
+                    result.push(token(LanguageTokenKind::ControlSequence(name), start, index));
+                    if environment {
                         // \begin{env} / \end{env}: the name inside the braces
                         // gets its own token so the highlighter can paint it
                         // with the environment color like the reference editor.
                         let mut probe = index;
-                        while probe < scalars.len() && (scalars[probe] == ' ' || scalars[probe] == '\t') {
+                        while probe < bytes.len() && (bytes[probe] == b' ' || bytes[probe] == b'\t') {
                             probe += 1;
                         }
-                        if probe < scalars.len() && scalars[probe] == '{' {
+                        if probe < bytes.len() && bytes[probe] == b'{' {
                             if probe > index {
                                 result.push(token(
                                     LanguageTokenKind::Whitespace(string(index, probe)),
@@ -187,10 +179,10 @@ impl DeterministicTeXLexer {
                             }
                             result.push(token(LanguageTokenKind::LeftBrace, probe, probe + 1));
                             let mut cursor = probe + 1;
-                            while cursor < scalars.len()
-                                && scalars[cursor] != '}'
-                                && scalars[cursor] != '\n'
-                                && scalars[cursor] != '\r'
+                            while cursor < bytes.len()
+                                && bytes[cursor] != b'}'
+                                && bytes[cursor] != b'\n'
+                                && bytes[cursor] != b'\r'
                             {
                                 cursor += 1;
                             }
@@ -206,22 +198,23 @@ impl DeterministicTeXLexer {
                         }
                     }
                 }
-            } else if scalar == '$' {
+            } else if byte == b'$' {
                 // Inline/display math $…$ / $$…$$. An unmatched opening
                 // delimiter emits only the delimiter itself as math so the
                 // rest of the file keeps its normal coloring.
-                let is_double = index + 1 < scalars.len() && scalars[index + 1] == '$';
+                let is_double = index + 1 < bytes.len() && bytes[index + 1] == b'$';
                 index += if is_double { 2 } else { 1 };
                 let mut scan = index;
                 let mut end: Option<usize> = None;
-                while scan < scalars.len() {
-                    if scalars[scan] == '\\' {
+                while scan < bytes.len() {
+                    if bytes[scan] == b'\\' {
                         scan += 2;
+                        while scan < bytes.len() && bytes[scan] & 0xC0 == 0x80 { scan += 1; }
                         continue;
                     }
-                    if scalars[scan] == '$' {
+                    if bytes[scan] == b'$' {
                         if is_double {
-                            if scan + 1 < scalars.len() && scalars[scan + 1] == '$' {
+                            if scan + 1 < bytes.len() && bytes[scan + 1] == b'$' {
                                 end = Some(scan + 2);
                                 break;
                             }
@@ -239,47 +232,47 @@ impl DeterministicTeXLexer {
                 } else {
                     result.push(token(LanguageTokenKind::Math(string(start, index)), start, index));
                 }
-            } else if scalar == '{' || scalar == '[' || (dialect == TeXDialect::Latex && scalar == '(') {
+            } else if byte == b'{' || byte == b'[' || (dialect == TeXDialect::Latex && byte == b'(') {
                 index += 1;
                 result.push(token(LanguageTokenKind::LeftBrace, start, index));
-            } else if scalar == '}' || scalar == ']' || (dialect == TeXDialect::Latex && scalar == ')') {
+            } else if byte == b'}' || byte == b']' || (dialect == TeXDialect::Latex && byte == b')') {
                 index += 1;
                 result.push(token(LanguageTokenKind::RightBrace, start, index));
-            } else if is_whitespace(scalar) {
+            } else if is_whitespace(byte) {
                 index += 1;
-                while index < scalars.len() && is_whitespace(scalars[index]) {
+                while index < bytes.len() && is_whitespace(bytes[index]) {
                     index += 1;
                 }
                 result.push(token(LanguageTokenKind::Whitespace(string(start, index)), start, index));
-            } else if dialect == TeXDialect::Bibtex && scalar == '@' {
+            } else if dialect == TeXDialect::Bibtex && byte == b'@' {
                 index += 1;
                 result.push(token(LanguageTokenKind::BibEntryMarker, start, index));
             } else if dialect == TeXDialect::Bibtex
-                && [',', '=', '(', ')', '#', '"'].contains(&scalar)
+                && [b',', b'=', b'(', b')', b'#', b'"'].contains(&byte)
             {
                 index += 1;
-                result.push(token(LanguageTokenKind::Punctuation(scalar.to_string()), start, index));
+                result.push(token(LanguageTokenKind::Punctuation(string(start, index)), start, index));
             } else {
                 index += 1;
-                while index < scalars.len() {
-                    let next = scalars[index];
-                    if next == '%'
-                        || next == '\\'
-                        || next == '{'
-                        || next == '}'
-                        || next == '['
-                        || next == ']'
-                        || next == '$'
+                while index < bytes.len() {
+                    let next = bytes[index];
+                    if next == b'%'
+                        || next == b'\\'
+                        || next == b'{'
+                        || next == b'}'
+                        || next == b'['
+                        || next == b']'
+                        || next == b'$'
                         || is_whitespace(next)
                     {
                         break;
                     }
                     if dialect == TeXDialect::Bibtex
-                        && (next == '@' || [',', '=', '(', ')', '#', '"'].contains(&next))
+                        && (next == b'@' || [b',', b'=', b'(', b')', b'#', b'"'].contains(&next))
                     {
                         break;
                     }
-                    if dialect == TeXDialect::Latex && (next == '(' || next == ')') {
+                    if dialect == TeXDialect::Latex && (next == b'(' || next == b')') {
                         break;
                     }
                     index += 1;

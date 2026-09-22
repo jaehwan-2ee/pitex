@@ -109,21 +109,20 @@ pub struct EditorDecoration {
 /// Stable per-variant tag name — the enum payloads carry token text, so the
 /// Debug format would produce a different name per token. Both the adapter
 /// (apply) and the shell (color) key tags through this name.
-pub fn decoration_tag_name(kind: &LanguageTokenKind) -> String {
+pub fn decoration_tag_name(kind: &LanguageTokenKind) -> &'static str {
     use LanguageTokenKind as K;
-    let name = match kind {
-        K::ControlSequence(_) => "controlsequence",
-        K::Comment(_) => "comment",
-        K::LeftBrace => "leftbrace",
-        K::RightBrace => "rightbrace",
-        K::Whitespace(_) => "whitespace",
-        K::Text(_) => "text",
-        K::BibEntryMarker => "bibentrymarker",
-        K::Punctuation(_) => "punctuation",
-        K::EnvironmentName(_) => "environmentname",
-        K::Math(_) => "math",
-    };
-    format!("pitex.decoration.{name}")
+    match kind {
+        K::ControlSequence(_) => "pitex.decoration.controlsequence",
+        K::Comment(_) => "pitex.decoration.comment",
+        K::LeftBrace => "pitex.decoration.leftbrace",
+        K::RightBrace => "pitex.decoration.rightbrace",
+        K::Whitespace(_) => "pitex.decoration.whitespace",
+        K::Text(_) => "pitex.decoration.text",
+        K::BibEntryMarker => "pitex.decoration.bibentrymarker",
+        K::Punctuation(_) => "pitex.decoration.punctuation",
+        K::EnvironmentName(_) => "pitex.decoration.environmentname",
+        K::Math(_) => "pitex.decoration.math",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

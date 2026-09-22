@@ -409,8 +409,7 @@ impl GtkEditorAdapter {
         }
         // char_indices() once → O(log n) lookup per token; counting chars
         // from byte 0 per token was O(tokens × doc).
-        let byte_of_char: Vec<usize> = std::iter::once(0)
-            .chain(text.char_indices().map(|(b, _)| b))
+        let byte_of_char: Vec<usize> = text.char_indices().map(|(b, _)| b)
             .chain(std::iter::once(text.len()))
             .collect();
         let char_of_byte = |byte: usize| -> i32 {

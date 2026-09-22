@@ -696,7 +696,7 @@ impl AppState {
     }
 
     /// Debounced variant — Swift's `scheduleHighlight` (~120ms), delivered
-    /// through `schedule_rehighlight_static`/`schedule_autosave` so the
+    /// through `schedule_rehighlight`/`schedule_autosave` so the
     /// timer callbacks re-borrow `AppState` lazily.
 
     // ── document/session wiring ────────────────────────────────────────────
@@ -767,7 +767,7 @@ impl AppState {
         self.refresh_after_document_change();
         self.model.sync_selection_attachment();
         self.schedule_autosave();
-        Self::schedule_rehighlight_static();
+        self.schedule_rehighlight();
     }
 
     /// `scheduleAutosave` — every edit cancels the pending timer and re-arms
@@ -979,25 +979,11 @@ impl AppState {
         self.refresh_pdf_ui();
     }
 
-    /// `STATE`-free rehighlight scheduling used by the submit path.
-    /// Coalesced via `highlight_pending` — a typing burst used to queue a
-    /// full retokenize per keystroke.
-    fn schedule_rehighlight_static() {
-        // try_borrow everywhere: this runs while a submit caller may still
-        // hold a borrow_mut on AppState (e.g. sync_snapshot_from_session) —
-        // a bare borrow() panics and aborts the GTK process.
-        let pending = STATE.with(|s| {
-            s.borrow()
-                .as_ref()
-                .and_then(|state| {
-                    state
-                        .try_borrow()
-                        .ok()
-                        .map(|st| st.highlight_pending.replace(true))
-                })
-                .unwrap_or(false)
-        });
-        if pending {
+    /// Coalesce typing bursts through the already-borrowed AppState. Trying
+    /// to borrow STATE again here always failed during snapshot submission,
+    /// leaving the pending flag unset and queuing one full pass per edit.
+    fn schedule_rehighlight(&self) {
+        if self.highlight_pending.replace(true) {
             return;
         }
         glib::timeout_add_local_once(Duration::from_millis(120), || {

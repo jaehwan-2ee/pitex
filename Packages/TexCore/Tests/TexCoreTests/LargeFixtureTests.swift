@@ -63,6 +63,22 @@ final class LargeFixtureTests: XCTestCase {
         XCTAssertEqual(map.utf16Count, source.utf16.count)
     }
 
+
+    func testLexerKeepsScalarEscapesAndUnfinishedMathBounded() {
+        let tokens = DeterministicTeXLexer.tokenize("\\é \\👩🏽‍💻")
+        XCTAssertEqual(tokens.map(\.range.utf8Offset), [0, 3, 4, 9])
+        XCTAssertEqual(tokens.map(\.range.utf8Length), [3, 1, 5, 11])
+        XCTAssertEqual(tokens[0].kind, .controlSequence("é"))
+        XCTAssertEqual(tokens[2].kind, .controlSequence("👩"))
+        let unfinished = String(repeating: "\\(\n", count: 10_000)
+        let pending = DeterministicTeXLexer.tokenize(unfinished)
+        XCTAssertEqual(pending.count, 20_000)
+        XCTAssertEqual(pending.last?.range.endUTF8Offset, unfinished.utf8.count)
+        let closed = DeterministicTeXLexer.tokenize(unfinished + "\\)")
+        XCTAssertEqual(closed.count, 1)
+        XCTAssertEqual(closed.first?.kind, .math(unfinished + "\\)"))
+    }
+
     private var repositoryRoot: URL {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { url.deleteLastPathComponent() }

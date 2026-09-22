@@ -44,24 +44,18 @@ final class SyntaxHighlighter {
         let tokens = DeterministicTeXLexer.tokenize(text, dialect: dialect)
         let fullRange = NSRange(location: 0, length: (text as NSString).length)
 
-        // One pass over the scalars maps every UTF-8 boundary to its UTF-16
-        // offset; per-token samePosition(in:) walks from the start each time
-        // and makes the pass quadratic on large documents.
-        var utf8Bounds: [Int] = [0]
-        var utf16Bounds: [Int] = [0]
-        utf8Bounds.reserveCapacity(text.unicodeScalars.count + 1)
-        utf16Bounds.reserveCapacity(text.unicodeScalars.count + 1)
-        for scalar in text.unicodeScalars {
-            utf8Bounds.append(utf8Bounds[utf8Bounds.count - 1] + scalar.utf8.count)
-            utf16Bounds.append(utf16Bounds[utf16Bounds.count - 1] + scalar.utf16.count)
-        }
+        // Lexer ranges are ordered. Advance one scalar cursor for their
+        // UTF-16 boundaries instead of allocating two document-sized maps
+        // and binary-searching both ends of every token.
+        var scalars = text.unicodeScalars.makeIterator()
+        var utf8Offset = 0
+        var utf16Position = 0
         func utf16Offset(forUTF8 offset: Int) -> Int? {
-            var lo = 0, hi = utf8Bounds.count - 1
-            while lo < hi {
-                let mid = (lo + hi) / 2
-                if utf8Bounds[mid] < offset { lo = mid + 1 } else { hi = mid }
+            while utf8Offset < offset, let scalar = scalars.next() {
+                utf8Offset += scalar.utf8.count
+                utf16Position += scalar.utf16.count
             }
-            return utf8Bounds[lo] == offset ? utf16Bounds[lo] : nil
+            return utf8Offset == offset ? utf16Position : nil
         }
 
         // Resolve the palette once per pass instead of a UserDefaults read +
@@ -75,15 +69,21 @@ final class SyntaxHighlighter {
         let mathColor = appearance.color(for: .math)
         let punctuationColor = appearance.color(for: .lineNumbers)
 
+        // TextKit shifts attributes with edits. Keep correct runs intact
+        // instead of clearing and repainting the whole document each time.
+        func applyColor(_ color: NSColor, from start: Int, to end: Int) {
+            guard end > start else { return }
+            var changed: [NSRange] = []
+            storage.enumerateAttribute(.foregroundColor,
+                in: NSRange(location: start, length: end - start),
+                options: .longestEffectiveRangeNotRequired) { current, range, _ in
+                if current as? NSColor != color { changed.append(range) }
+            }
+            for range in changed { storage.addAttribute(.foregroundColor, value: color, range: range) }
+        }
         storage.beginEditing()
-        storage.removeAttribute(.foregroundColor, range: fullRange)
-        storage.addAttribute(.foregroundColor, value: bodyColor, range: fullRange)
-
+        var paintedThrough = 0
         for token in tokens {
-            guard let start16 = utf16Offset(forUTF8: token.range.utf8Offset),
-                  let end16 = utf16Offset(forUTF8: token.range.endUTF8Offset),
-                  end16 >= start16
-            else { continue }
             let color: NSColor
             switch token.kind {
             case .controlSequence: color = commandColor
@@ -92,14 +92,17 @@ final class SyntaxHighlighter {
             case .bibEntryMarker, .environmentName: color = environmentColor
             case .math: color = mathColor
             case .punctuation: color = punctuationColor
-            case .whitespace, .text: color = bodyColor
+            case .whitespace, .text: continue // Coalesced into the gaps below.
             }
-            storage.addAttribute(
-                .foregroundColor,
-                value: color,
-                range: NSRange(location: start16, length: end16 - start16)
-            )
+            guard let start16 = utf16Offset(forUTF8: token.range.utf8Offset),
+                  let end16 = utf16Offset(forUTF8: token.range.endUTF8Offset),
+                  end16 >= start16
+            else { continue }
+            applyColor(bodyColor, from: paintedThrough, to: start16)
+            applyColor(color, from: start16, to: end16)
+            paintedThrough = end16
         }
+        applyColor(bodyColor, from: paintedThrough, to: fullRange.length)
         storage.endEditing()
     }
 

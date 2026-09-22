@@ -273,6 +273,12 @@ pub struct ActivatedDocument {
 pub type LabelScanCache =
     HashMap<PathBuf, (Option<std::time::SystemTime>, Vec<String>)>;
 
+/// Project identity plus file metadata; unchanged bibliographies need no reads.
+type BibliographyCacheKey = (
+    Option<PathBuf>,
+    Vec<(PathBuf, Option<(std::time::SystemTime, u64)>)>,
+);
+
 // ─── TeXProjectResolver (BuildSupport.swift port) ────────────────────────────
 
 /// Resolves ordinary TeX inclusion trees without executing TeX or guessing by
@@ -750,6 +756,7 @@ pub struct WorkspaceModel {
     /// Per-file `\label` scan cache keyed on mtime — a structure refresh
     /// re-reads only files that changed since the last scan.
     label_scan_cache: LabelScanCache,
+    bibliography_cache_key: Option<BibliographyCacheKey>,
     /// Bumped by `refresh_structure_with` — the sidebar rebuilds its lists
     /// only when this changes instead of on every refresh_sidebar call.
     pub structure_revision: u64,
@@ -852,6 +859,7 @@ impl WorkspaceModel {
             project_label_keys: BTreeSet::new(),
             citation_keys: BTreeSet::new(),
             label_scan_cache: HashMap::new(),
+            bibliography_cache_key: None,
             structure_revision: 0,
             files_revision: 0,
             read_write: true,
@@ -1387,6 +1395,7 @@ impl WorkspaceModel {
         self.project_label_keys.clear();
         self.citation_keys.clear();
         self.label_scan_cache.clear();
+        self.bibliography_cache_key = None;
         self.structure_revision += 1;
         self.synctex_binding = None;
         self.pinned_build_target = None;
@@ -1640,8 +1649,8 @@ impl WorkspaceModel {
         self.refresh_structure_with(None);
     }
 
-    /// `bib` carries items already parsed off-thread; `None` parses the
-    /// project's .bib files here (only cheap paths call it that way).
+    /// `bib` carries items already parsed off-thread; `None` reuses the
+    /// cached bibliography unless the project's .bib files changed.
     fn refresh_structure_with(&mut self, bib: Option<Vec<BibliographyItem>>) {
         // Parse from a borrow — cloning the whole document per refresh was
         // an O(doc) alloc on every structure update.
@@ -1655,19 +1664,14 @@ impl WorkspaceModel {
         };
         self.outline_items = outline;
         self.label_items = labels;
-        self.bibliography_items = bib.unwrap_or_else(|| {
-            let bib_files: Vec<PathBuf> = self
-                .project_files
-                .iter()
-                .filter(|f| {
-                    f.extension()
-                        .map(|e| e.eq_ignore_ascii_case("bib"))
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect();
-            Self::parse_bibliography(&bib_files, self.project_url.as_deref())
-        });
+        if let Some(items) = bib {
+            self.bibliography_items = items;
+            // Worker results may predate a disk edit. Establish the metadata
+            // key on the next read rather than caching old items under it.
+            self.bibliography_cache_key = None;
+        } else {
+            self.refresh_bibliography();
+        }
         self.refresh_todos();
         self.citation_keys = self
             .bibliography_items
@@ -1692,6 +1696,32 @@ impl WorkspaceModel {
         if let Some(cb) = &mut self.on_structure_changed {
             cb();
         }
+    }
+
+    fn refresh_bibliography(&mut self) {
+        let files: Vec<PathBuf> = self.project_files.iter()
+            .filter(|file| {
+                file.extension().map(|e| e.eq_ignore_ascii_case("bib")).unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        let metadata: Vec<_> = files.iter()
+            .map(|file| {
+                let stamp = std::fs::metadata(file).ok().and_then(|m| {
+                    m.modified().ok().map(|modified| (modified, m.len()))
+                });
+                (file.clone(), stamp)
+            })
+            .collect();
+        let complete_metadata = metadata.iter().all(|(_, stamp)| stamp.is_some());
+        let key = (self.project_url.clone(), metadata);
+        if self.bibliography_cache_key.as_ref() == Some(&key) {
+            return;
+        }
+        let (items, complete) = Self::read_bibliography(&files, self.project_url.as_deref());
+        self.bibliography_items = items;
+        // Retry transient read/metadata errors on the next refresh.
+        self.bibliography_cache_key = (complete && complete_metadata).then_some(key);
     }
 
     /// `refreshTodos` — scans every project .tex file. The active document
@@ -2191,9 +2221,17 @@ impl WorkspaceModel {
 
     /// `@([A-Za-z]+)\s*\{\s*([^,\s]+)`
     pub fn parse_bibliography(files: &[PathBuf], root: Option<&Path>) -> Vec<BibliographyItem> {
+        Self::read_bibliography(files, root).0
+    }
+
+    fn read_bibliography(files: &[PathBuf], root: Option<&Path>) -> (Vec<BibliographyItem>, bool) {
         let mut items = Vec::new();
+        let mut complete = true;
         for file in files {
-            let Ok(text) = std::fs::read_to_string(file) else { continue };
+            let Ok(text) = std::fs::read_to_string(file) else {
+                complete = false;
+                continue;
+            };
             let name = root
                 .and_then(|r| {
                     Self::relative_path(file, r)
@@ -2213,7 +2251,7 @@ impl WorkspaceModel {
                 });
             }
         }
-        items
+        (items, complete)
     }
 
     /// Citation keys in a .bib buffer — the active document's unsaved

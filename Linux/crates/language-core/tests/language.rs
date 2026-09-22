@@ -457,3 +457,21 @@ fn lexer_index_revision_replacement_and_coordinates_are_deterministic() {
     let total_utf16: i64 = source.chars().map(|c| c.len_utf16() as i64).sum();
     assert_eq!(map.utf16_count, total_utf16);
 }
+
+
+#[test]
+fn lexer_keeps_scalar_escapes_and_unfinished_math_bounded() {
+    let tokens = DeterministicTeXLexer::tokenize("\\é \\👩🏽‍💻", TeXDialect::Latex);
+    assert_eq!(tokens.iter().map(|t| t.range.utf8_offset).collect::<Vec<_>>(), [0, 3, 4, 9]);
+    assert_eq!(tokens.iter().map(|t| t.range.utf8_length).collect::<Vec<_>>(), [3, 1, 5, 11]);
+    assert_eq!(tokens[0].kind, LanguageTokenKind::ControlSequence("é".into()));
+    assert_eq!(tokens[2].kind, LanguageTokenKind::ControlSequence("👩".into()));
+    let unfinished = "\\(\n".repeat(10_000);
+    let pending = DeterministicTeXLexer::tokenize(&unfinished, TeXDialect::Latex);
+    assert_eq!(pending.len(), 20_000);
+    assert_eq!(pending.last().unwrap().range.end_utf8_offset(), unfinished.len() as i64);
+    let source = format!("{unfinished}\\)");
+    let closed = DeterministicTeXLexer::tokenize(&source, TeXDialect::Latex);
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].kind, LanguageTokenKind::Math(source));
+}
