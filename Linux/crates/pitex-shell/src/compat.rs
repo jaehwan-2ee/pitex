@@ -341,7 +341,10 @@ pub fn fix_ime_backspace(
     let keys = gtk4::EventControllerKey::new();
     keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
     keys.connect_key_pressed(move |_, key, _code, state| {
-        if key != gtk4::gdk::Key::BackSpace || !state.is_empty() {
+        // Caps Lock does not turn Backspace into a shortcut.
+        if key != gtk4::gdk::Key::BackSpace
+            || !state.difference(gtk4::gdk::ModifierType::LOCK_MASK).is_empty()
+        {
             return gtk4::glib::Propagation::Proceed;
         }
         let Some(adapter) = editor() else {
