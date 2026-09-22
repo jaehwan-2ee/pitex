@@ -5300,7 +5300,7 @@ mod startup_tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut ready_ticks = 0;
         while std::time::Instant::now() < deadline {
-            context.iteration(false);
+            while context.pending() { context.iteration(false); }
             if matches!(state.borrow().model.phase, WorkspacePhase::Ready) {
                 assert_eq!(state.borrow().editor.as_ref().unwrap().text(), source);
                 ready_ticks += 1;
@@ -5308,7 +5308,10 @@ mod startup_tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(ready_ticks, 100, "small project never became responsive");
+        if ready_ticks != 100 {
+            eprintln!("FAIL: small project never became responsive; phase: {:?}", state.borrow().model.phase);
+            std::process::abort();
+        }
         state.borrow_mut().shutdown_agent();
         UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
         finished.store(true, std::sync::atomic::Ordering::Release);
