@@ -23,9 +23,9 @@ final class EditorAnalysis {
     private init(_ storage: NSTextStorage) {
         self.storage = storage
         observer = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification,
-            object: storage, queue: .main) { [weak self] notification in
+            object: storage, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let storage = notification.object as? NSTextStorage,
+                guard let storage = self?.storage,
                       storage.editedMask.contains(.editedCharacters) else { return }
                 self?.cachedTokens = nil
                 self?.cachedStarts = nil

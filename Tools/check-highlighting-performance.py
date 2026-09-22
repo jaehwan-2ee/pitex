@@ -104,5 +104,5 @@ with tempfile.TemporaryDirectory(prefix='pitex-highlighting-') as directory:
     source = root / 'Check.swift'
     source.write_text(core + old_lexer + strip_imports(current) + strip_imports(prior) + host)
     executable = root / 'check'
-    subprocess.run(['swiftc', '-O', '-parse-as-library', str(source), '-o', str(executable)], check=True)
+    subprocess.run(['swiftc', '-swift-version', '6', '-O', '-parse-as-library', str(source), '-o', str(executable)], check=True)
     subprocess.run([str(executable), str(repo / 'Fixtures/projects/large/main.tex')], check=True, timeout=120)

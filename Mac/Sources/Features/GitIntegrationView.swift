@@ -78,8 +78,12 @@ extension WorkspaceModel {
         guard !gitRefreshInFlight else { return }
         gitRefreshInFlight = true
         Task {
-            defer { gitRefreshInFlight = false }
+            defer {
+                gitRefreshInFlight = false
+                if projectURL != projectRoot { refreshGit() }
+            }
             let top = await GitRunner.run(GitSupport.topLevelArgs, in: projectRoot)
+            guard projectURL == projectRoot else { return }
             guard top.code == 0 else {
                 gitStatus = nil
                 gitCommits = []
