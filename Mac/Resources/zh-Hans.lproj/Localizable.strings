@@ -373,3 +373,6 @@
 "git.folded_lines" = "%@ \U884C\U672A\U66F4\U6539";
 "git.diff.files" = "%@ \U4E2A\U6587\U4EF6";
 "git.diff.binary" = "\U4E8C\U8FDB\U5236\U6587\U4EF6";
+
+"editor.find_previous" = "上一个匹配";
+"editor.find_next" = "下一个匹配";

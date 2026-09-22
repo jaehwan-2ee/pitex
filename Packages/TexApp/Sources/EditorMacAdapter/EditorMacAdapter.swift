@@ -7,6 +7,25 @@ import AppKit
 
 @MainActor
 private final class SessionTextView: NSTextView {
+    var findController: EditorFindController?
+
+    override func performFindPanelAction(_ sender: Any?) { performTextFinderAction(sender) }
+
+    override func performTextFinderAction(_ sender: Any?) {
+        let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSControl)?.tag ?? 1
+        guard let action = NSTextFinder.Action(rawValue: tag), let scrollView = enclosingScrollView else { return }
+        if findController == nil { findController = EditorFindController(textView: self, scrollView: scrollView) }
+        findController?.perform(action)
+    }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(performTextFinderAction(_:)) || item.action == #selector(performFindPanelAction(_:)),
+           let action = NSTextFinder.Action(rawValue: item.tag), let findController {
+            return findController.finder.validateAction(action)
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
     let sessionUndoManager = UndoManager()
     private var pendingReveal: (range: NSRange, highlight: Bool)?
 
@@ -163,6 +182,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
 
     public func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange,
                          replacementString: String?) -> Bool {
+        sessionTextView.findController?.finder.noteClientStringWillChange()
         if !isApplyingSessionSnapshot, !isSubmitting, let replacementString {
             pendingNativeMutation = DocumentMutation(baseRevision: committed.revision,
                 range: DocumentTextRange(location: range.location, length: range.length),
@@ -176,6 +196,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     public func textDidChange(_ notification: Notification) {
         guard !isApplyingSessionSnapshot else { return }
         desiredText = textView.string
+        sessionTextView.findController?.contentDidChange()
         onTextDidChange?()
         scheduleCompletionTrigger()
         submitPendingChangeIfNeeded()
@@ -275,6 +296,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         // would push a whole-document undo entry (and, on AppKit, reset
         // the coalesced typing history around it).
         sessionTextView.sessionUndoManager.disableUndoRegistration()
+        sessionTextView.findController?.finder.noteClientStringWillChange()
         textView.string = snapshot.text
         sessionTextView.sessionUndoManager.enableUndoRegistration()
         let maximum = snapshot.text.utf16.count
@@ -282,6 +304,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         let length = min(previousSelection.length, maximum - location)
         textView.setSelectedRange(NSRange(location: location, length: length))
         isApplyingSessionSnapshot = false
+        sessionTextView.findController?.contentDidChange()
     }
 }
 

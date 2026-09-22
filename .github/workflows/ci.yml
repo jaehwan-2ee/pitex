@@ -86,6 +86,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
         working-directory: Linux
+      - name: Search navigation and match counter
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
       - name: Native GTK editing and PDF worker checks
         run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
         working-directory: Linux
@@ -115,6 +118,9 @@ jobs:
             libpoppler-glib-dev xvfb xdotool ibus-hangul dbus-x11
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build -p pitex --no-default-features
+        working-directory: Linux
+      - name: Search navigation and match counter on GTK 4.6
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Million-file Git pane on GTK 4.6
         timeout-minutes: 3
@@ -149,4 +155,7 @@ jobs:
             mingw-w64-ucrt-x86_64-adwaita-icon-theme
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
       - run: cargo build -p pitex-windows
+        working-directory: Windows
+      - name: Native Windows search navigation and counter
+        run: cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
         working-directory: Windows

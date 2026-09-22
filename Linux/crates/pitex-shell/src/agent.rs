@@ -2964,7 +2964,7 @@ pub mod pi_installer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod toolchain_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;

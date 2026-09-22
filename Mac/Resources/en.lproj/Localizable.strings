@@ -373,3 +373,6 @@
 "git.folded_lines" = "%@ unchanged lines";
 "git.diff.files" = "%@ files";
 "git.diff.binary" = "Binary file";
+
+"editor.find_previous" = "Previous match";
+"editor.find_next" = "Next match";

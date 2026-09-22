@@ -18,6 +18,7 @@ pub mod l10n;
 pub mod model;
 pub mod panes;
 pub mod pdf;
+mod search;
 pub mod settings;
 pub mod synctex;
 pub mod update;

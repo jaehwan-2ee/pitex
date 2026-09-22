@@ -139,6 +139,7 @@ pub struct UiHandles {
     pub selection_chip_label: RefCell<Option<gtk4::Label>>,
     pub search_bar: RefCell<Option<gtk4::SearchBar>>,
     pub search_entry: RefCell<Option<gtk4::SearchEntry>>,
+    pub search_count: RefCell<Option<gtk4::Label>>,
     pub shell_warning: RefCell<Option<gtk4::Box>>,
     /// "+" menu button — its model is rebuilt on refresh so the Open Recent
     /// section mirrors `recent_documents` (macOS File → Open Recent).
@@ -177,6 +178,7 @@ pub struct AppState {
     pub language: &'static str,
     pub terminal_running: bool,
     pub editor: Option<Rc<GtkEditorAdapter>>,
+    search: Option<crate::search::EditorSearch>,
     /// The `FoldEngine` bound to the current adapter — rebuilt per session
     /// like the macOS environment's `adapter`.
     pub fold: Option<Rc<crate::fold::FoldEngine>>,
@@ -290,6 +292,7 @@ impl AppState {
             language: "en",
             terminal_running: false,
             editor: None,
+            search: None,
             fold: None,
             completion: GhostCompletionCoordinator::new(),
             fold_chip: RefCell::new(None),
@@ -877,6 +880,13 @@ impl AppState {
             dialect,
             self.store.code_folding(),
         );
+        self.search = UI.with(|ui| ui.search_count.borrow().as_ref().map(|label| {
+            let search = crate::search::EditorSearch::new(adapter.view(), adapter.buffer(), label);
+            if ui.search_bar.borrow().as_ref().is_some_and(|bar| bar.is_search_mode()) {
+                if let Some(entry) = ui.search_entry.borrow().as_ref() { search.set_query(&entry.text()); }
+            }
+            search
+        }));
         self.editor = Some(adapter.clone());
         self.fold = Some(fold);
         // Ghost completion rebinds to the fresh view/buffer like
@@ -1439,6 +1449,8 @@ impl AppState {
     pub fn close_action(&mut self) {
         self.watchers.clear();
         self.editor = None;
+        self.search = None;
+        UI.with(|ui| { if let Some(label) = ui.search_count.borrow().as_ref() { label.set_text("0 / 0"); } });
         self.fold = None;
         // `agent?.shutdown(); agent = nil` — terminate the agent process with
         // the project; a reopen builds a fresh coordinator and subprocess.
@@ -4292,6 +4304,7 @@ fn build_chrome(
         UI.with(|ui| {
             if let Some(bar) = ui.search_bar.borrow().as_ref() {
                 bar.set_search_mode(true);
+                if let Some(entry) = ui.search_entry.borrow().as_ref() { entry.grab_focus(); }
             }
         });
     });
@@ -4934,7 +4947,16 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     entry.set_hexpand(true);
     let prev = gtk4::Button::from_icon_name("go-up-symbolic");
     let next = gtk4::Button::from_icon_name("go-down-symbolic");
+    let count = gtk4::Label::new(Some("0 / 0"));
+    count.add_css_class("dim-label");
+    count.set_widget_name("pitex.search.count");
+    ui.search_count.replace(Some(count.clone()));
+    a11y(&prev, "pitex.search.previous", "editor.find_previous");
+    a11y(&next, "pitex.search.next", "editor.find_next");
+    compat::initial_tooltip(&prev, &tr(lang, "editor.find_previous"));
+    compat::initial_tooltip(&next, &tr(lang, "editor.find_next"));
     find_row.append(&entry);
+    find_row.append(&count);
     find_row.append(&prev);
     find_row.append(&next);
     search_box.append(&find_row);
@@ -4956,6 +4978,15 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
             if let Some(state) = STATE.with(|s| s.borrow().clone()) {
                 search_step(&state, &e.text(), true);
             }
+        });
+        entry.connect_activate(move |e| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) { search_step(&state, &e.text(), true); }
+        });
+        entry.connect_previous_match(move |e| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) { search_step(&state, &e.text(), false); }
+        });
+        entry.connect_next_match(move |e| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) { search_step(&state, &e.text(), true); }
         });
         let e2 = entry.clone();
         prev.connect_clicked(move |_| {
@@ -4989,6 +5020,15 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
         });
         let _ = state;
     }
+    let query_entry = entry.clone();
+    search_bar.connect_search_mode_enabled_notify(move |bar| {
+        if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+            if let Some(search) = &state.borrow().search {
+                let query = query_entry.text();
+                search.set_query(if bar.is_search_mode() { &query } else { "" });
+            }
+        }
+    });
     ui.search_bar.replace(Some(search_bar.clone()));
     ui.search_entry.replace(Some(entry));
     root.append(&search_bar);
@@ -5138,74 +5178,16 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     root.upcast()
 }
 
-/// GtkSourceView `SearchContext` — parity with `performFindPanelAction`.
 fn search_step(state: &Rc<RefCell<AppState>>, query: &str, forward: bool) {
-    let s = state.borrow();
-    let Some(editor) = &s.editor else { return };
-    let settings = sourceview5::SearchSettings::new();
-    settings.set_search_text(if query.is_empty() {
-        None
-    } else {
-        Some(query)
-    });
-    settings.set_case_sensitive(false);
-    settings.set_wrap_around(true);
-    let context = sourceview5::SearchContext::new(editor.buffer(), Some(&settings));
-    context.set_highlight(true);
-    let (start, end) = editor.buffer().bounds();
-    let _ = (start, end);
-    let cursor = editor.buffer().iter_at_mark(&editor.buffer().get_insert());
-    let found = if forward {
-        context.forward(&cursor)
-    } else {
-        context.backward(&cursor)
-    };
-    if let Some((m_start, m_end, _wrapped)) = found {
-        editor.buffer().select_range(&m_start, &m_end);
-        let mut iter = m_start;
-        editor.view().scroll_to_iter(&mut iter, 0.1, false, 0.0, 0.0);
-    }
-}
-
-/// `SearchContext` helpers shared by the replace actions — NSTextView's
-/// find panel behaviour: `Replace` swaps the current match then advances;
-/// `Replace All` swaps every match in the buffer.
-fn search_context(editor: &GtkEditorAdapter, query: &str) -> sourceview5::SearchContext {
-    let settings = sourceview5::SearchSettings::new();
-    settings.set_search_text(if query.is_empty() {
-        None
-    } else {
-        Some(query)
-    });
-    settings.set_case_sensitive(false);
-    settings.set_wrap_around(true);
-    let context = sourceview5::SearchContext::new(editor.buffer(), Some(&settings));
-    context.set_highlight(true);
-    context
+    if let Some(search) = &state.borrow().search { search.step(query, forward); }
 }
 
 fn search_replace(state: &Rc<RefCell<AppState>>, query: &str, replacement: &str) {
-    {
-        let s = state.borrow();
-        let Some(editor) = &s.editor else { return };
-        let context = search_context(editor, query);
-        let buffer = editor.buffer();
-        if let Some((sel_start, sel_end)) = buffer.selection_bounds() {
-            if let Some((mut m_start, mut m_end, _)) = context.forward(&sel_start) {
-                if m_start.offset() == sel_start.offset() && m_end.offset() == sel_end.offset() {
-                    let _ = context.replace(&mut m_start, &mut m_end, replacement);
-                }
-            }
-        }
-    }
-    search_step(state, query, true);
+    if let Some(search) = &state.borrow().search { search.replace(query, replacement); }
 }
 
 fn search_replace_all(state: &Rc<RefCell<AppState>>, query: &str, replacement: &str) {
-    let s = state.borrow();
-    let Some(editor) = &s.editor else { return };
-    let context = search_context(editor, query);
-    let _ = context.replace_all(replacement);
+    if let Some(search) = &state.borrow().search { search.replace_all(query, replacement); }
 }
 
 #[cfg(all(test, target_os = "linux"))]
