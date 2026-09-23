@@ -69,8 +69,8 @@ func check(_ ok: Bool, _ message: String, line: Int = #line) {
                 check(la.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
                       == lb.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil),
                       "\(label): line fragment rect differs at glyph \(glyph)")
-                check(la.notShownAttributeForGlyph(at: glyph)
-                      == lb.notShownAttributeForGlyph(at: glyph),
+                check(la.notShownAttribute(forGlyphAt: glyph)
+                      == lb.notShownAttribute(forGlyphAt: glyph),
                       "\(label): not-shown flag differs at glyph \(glyph)")
             }
             let lines = FoldEngine.computeLineStarts(before.string as NSString).count
