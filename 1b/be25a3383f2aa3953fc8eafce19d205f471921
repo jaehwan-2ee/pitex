@@ -1,0 +1,121 @@
+Linux/Cargo.lock
+  s_61259ddb619c79::t_084db4f769d089 596-618,811,1005-1030,1271-1303
+Linux/Cargo.toml
+  s_61259ddb619c79::t_f187385cd95e70 42
+Linux/crates/linux-platform/src/lib.rs
+  s_61259ddb619c79::t_559e73a797eff6 361-362
+Linux/crates/pitex-shell/Cargo.toml
+  s_61259ddb619c79::t_21751626318202 34,44-46,48,51
+Linux/crates/pitex-shell/src/compat.rs
+  s_61259ddb619c79::t_354454bf22e121 101-102,122-123
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  s_61259ddb619c79::t_c8aa676c285a53 1-453
+Linux/crates/pitex-shell/src/model.rs
+  s_61259ddb619c79::t_ef447cb4113eb3 1999-2000,2005-2007,2012-2028,3347-3349
+Linux/crates/pitex-shell/src/settings.rs
+  s_61259ddb619c79::t_15c61338bf8341 289-326,919-957
+Linux/crates/pitex/Cargo.toml
+  s_61259ddb619c79::t_340888c74c31a6 19,21
+Linux/packaging/dev.pitex.app.desktop
+  s_61259ddb619c79::t_d9b5ea74e827d6 10
+Mac/Resources/en.lproj/Localizable.strings
+  s_61259ddb619c79::t_5639805be54ced 43-44,221-222,250-258
+Mac/Resources/es.lproj/Localizable.strings
+  s_61259ddb619c79::t_ea02714d8fcc6d 43-44,221-222,250-258
+Mac/Resources/ja.lproj/Localizable.strings
+  s_61259ddb619c79::t_7878e32765b536 43-44,221-222,250-258
+Mac/Resources/ko.lproj/Localizable.strings
+  s_61259ddb619c79::t_2183dfd47e526d 43-44,221-222,250-258
+Mac/Resources/ru.lproj/Localizable.strings
+  s_61259ddb619c79::t_eff0f078a248e5 43-44,221-222,250-258
+Mac/Resources/vi.lproj/Localizable.strings
+  s_61259ddb619c79::t_bcbac31bd0a164 43-44,221-222,250-258
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_61259ddb619c79::t_98dc027be2ff0f 43-44,221-222,250-258
+Mac/Sources/Features/Preview.swift
+  s_61259ddb619c79::t_669c3e5382f439 4-5,12-14,27-32,37-65,345-543
+Packages/TexCore/Sources/TexDomain/MarkdownLinkPolicy.swift
+  s_61259ddb619c79::t_f5ab38f6097b6a 1-65
+Tools/rust-target-dag.json
+  s_61259ddb619c79::t_d51485ec6cfc5b 10
+.github/workflows/ci.yml
+  s_61259ddb619c79::t_bc92236b30d132 34,88-89,107-109
+.github/workflows/release.yml
+  s_61259ddb619c79::t_3d3f5981e2200b 43-44
+Assets/markdown-preview/preview.css
+  s_61259ddb619c79::t_a43dce3a7d19eb 1-151
+Assets/markdown-preview/preview.js
+  s_61259ddb619c79::t_5750002c1d6bdd 1-133
+Assets/markdown-preview/template.html
+  s_61259ddb619c79::t_613517ffbba32b 1-16
+Assets/markdown-preview/vendor/VERSIONS
+  s_61259ddb619c79::t_a3d26c04bde6d7 1-9
+Assets/markdown-preview/vendor/katex/LICENSE
+  s_61259ddb619c79::t_05b374491933f3 1-21
+Assets/markdown-preview/vendor/katex/katex.min.css
+  s_61259ddb619c79::t_351d2970a1b05d 1
+Assets/markdown-preview/vendor/katex/katex.min.js
+  s_61259ddb619c79::t_6aff45ba2457c0 1
+Assets/markdown-preview/vendor/markdown-it-texmath/license.txt
+  s_61259ddb619c79::t_d8b6393f93fb97 1-21
+Assets/markdown-preview/vendor/markdown-it-texmath/texmath.css
+  s_61259ddb619c79::t_108e22e3fd5ee9 1-19
+Assets/markdown-preview/vendor/markdown-it-texmath/texmath.js
+  s_61259ddb619c79::t_92d08f9715e523 1-368
+Assets/markdown-preview/vendor/markdown-it/LICENSE
+  s_61259ddb619c79::t_3c0d4d19a32473 1-22
+Assets/markdown-preview/vendor/markdown-it/markdown-it.min.js
+  s_61259ddb619c79::t_4b7421920ebc4e 1-14
+Fixtures/expected/accessibility-identifiers.json
+  s_61259ddb619c79::t_108afae663956d 37,113-114,138-147
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_70f7afd45611bc 34,113-115,183-185,294,300-301,718-724,1011-1043,1066,1442-1446,1448,2855-2863,2884-2990,3811-3859,4600-4601,5589-5615
+Linux/crates/pitex-shell/src/lib.rs
+  s_61259ddb619c79::t_e00102bd599f98 18
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_decddee869565f 1180-1182,1186,1387-1393,1398-1400,1612-1687
+Linux/crates/pitex-shell/tests/editor_rebase.rs
+  s_61259ddb619c79::t_1adde3fac7aec3 1-159
+Mac/Config/Info.plist
+  s_61259ddb619c79::t_11eb96932b9782 88-120
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_61259ddb619c79::t_d26913386d56e5 51,89,198,297
+Mac/Resources/markdown-preview.html
+  s_61259ddb619c79::t_5a90339f11df0c 1-702
+Mac/Sources/AppShell/PitexApp.swift
+  s_61259ddb619c79::t_6a7c8742623487 156-158,304-305,360-361,1836,1842-1851
+Mac/Sources/Features/EditorContainerView.swift
+  s_61259ddb619c79::t_b54feeb8a5d7b9 15-21,122-151,166-172,185-189,240-242,245,273-312
+Mac/Sources/Features/SettingsView.swift
+  s_61259ddb619c79::t_274bfc822d6973 76-91,115-118,149-160,215,226,237,274,379-413
+Mac/Sources/Features/SyntaxHighlighting.swift
+  s_61259ddb619c79::t_9350dc262b2484 62-64,68-70,93
+Mac/Sources/Features/WorkspaceView.swift
+  s_61259ddb619c79::t_74031759adbcab 348-352
+Packages/TexCore/Tests/TexCoreTests/MarkdownLinkPolicyTests.swift
+  s_61259ddb619c79::t_6204c752bd2423 1-121
+README.md
+  s_61259ddb619c79::t_3bdc9d8ab0a2ea 59-86,103
+Tools/build-markdown-preview.mjs
+  s_61259ddb619c79::t_9439458c67d700 1-78
+Tools/check-markdown-preview.mjs
+  s_61259ddb619c79::t_27f2cda40a3944 1-120
+Tools/validate-xcodeproj.mjs
+  s_61259ddb619c79::t_918814ff11edb7 134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1bbe25a3383f2aa3953fc8eafce19d205f471921",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
