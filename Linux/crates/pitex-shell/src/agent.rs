@@ -2217,6 +2217,11 @@ pub mod pi_installer {
     /// tops out at 0.73.1 so installs from it would 404.
     pub const PACKAGE_NAME: &str = "@earendil-works/pi-coding-agent";
     pub const DESIRED_VERSION: &str = "0.85.1";
+    static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    pub fn installation_in_progress() -> bool {
+        INSTALL_LOCK.try_lock().is_err()
+    }
 
     /// `InstallError.runtimeMissing` — shared with `PiToolchain.launch`.
     pub const RUNTIME_MISSING: &str =
@@ -2289,17 +2294,61 @@ pub mod pi_installer {
     /// global packages or provider credentials are changed. The launcher is
     /// published only after a `--version` smoke check succeeds.
     pub fn install() -> Result<(), String> {
-        let tools = PiToolchain::discover(
-            std::env::vars().collect(),
-            &dirs::home_dir().unwrap_or_default(),
-            &PiToolchain::SYSTEM_DIRECTORIES,
-        );
-        install_with_tools(&tools)
+        install_managed(false, None).map(|_| ())
+    }
+
+    /// Explicit user update: resolve the registry's stable latest tag.
+    pub fn update() -> Result<String, String> {
+        install_managed(true, None)
+    }
+
+    pub fn update_with_tools(tools: &PiToolchain) -> Result<String, String> {
+        install_managed(true, Some(tools))
     }
 
     pub fn install_with_tools(tools: &PiToolchain) -> Result<(), String> {
+        install_managed(false, Some(tools)).map(|_| ())
+    }
+
+    fn install_managed(latest: bool, tools: Option<&PiToolchain>) -> Result<String, String> {
+        let _guard = INSTALL_LOCK.try_lock()
+            .map_err(|_| "An agent installation is already in progress.".to_string())?;
+        let discovered;
+        let tools = match tools {
+            Some(tools) => tools,
+            None => {
+                discovered = PiToolchain::discover(std::env::vars().collect(),
+                    &dirs::home_dir().unwrap_or_default(), &PiToolchain::SYSTEM_DIRECTORIES);
+                &discovered
+            }
+        };
         let runtime = pi_paths::runtime_directory();
-        let spec = format!("{PACKAGE_NAME}@{DESIRED_VERSION}");
+        let backup = runtime.with_file_name(format!("pi-runtime-backup-{}", crate::model::uuid_v4()));
+        let backed_up = latest && runtime.exists();
+        if backed_up { std::fs::rename(&runtime, &backup).map_err(|e| e.to_string())?; }
+        let result = install_package(tools, if latest { "latest" } else { DESIRED_VERSION })
+            .and_then(|_| installed_version().or_else(|| (!latest).then(|| DESIRED_VERSION.into()))
+                .ok_or_else(|| "The installed agent version could not be verified.".to_string()));
+        if let Err(error) = result {
+            if latest {
+                let restore = (|| -> std::io::Result<()> {
+                    if runtime.exists() { std::fs::remove_dir_all(&runtime)?; }
+                    if backed_up { std::fs::rename(&backup, &runtime)?; }
+                    Ok(())
+                })();
+                if let Err(restore_error) = restore {
+                    return Err(format!("{error} Previous runtime preserved at {}; restore failed: {restore_error}", backup.display()));
+                }
+            }
+            return Err(error);
+        }
+        if backed_up { let _ = std::fs::remove_dir_all(backup); }
+        result
+    }
+
+    fn install_package(tools: &PiToolchain, version: &str) -> Result<(), String> {
+        let runtime = pi_paths::runtime_directory();
+        let spec = format!("{PACKAGE_NAME}@{version}");
         let runtime_str = runtime.to_string_lossy().into_owned();
         // npm is a real fallback even when bun exists: `bun add` can exit 0
         // while laying down nothing (stale tree it won't re-extract, corrupt
@@ -2327,6 +2376,7 @@ pub mod pi_installer {
             "--prefix".into(),
             runtime_str.clone(),
             "--save-exact".into(),
+            "--prefer-online".into(),
             "--no-audit".into(),
             "--no-fund".into(),
             spec.clone(),

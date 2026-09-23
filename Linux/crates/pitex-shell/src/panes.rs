@@ -2165,6 +2165,10 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             );
         }
     });
+    let update_agent = gtk4::Button::with_label(&tr(lang, "settings.ai.update_agent"));
+    update_agent.set_valign(gtk4::Align::Center);
+    a11y(&update_agent, "pitex.settings.ai.updateAgent", "settings.ai.update_agent");
+    custom_provider.add_suffix(&update_agent);
     agent_group.add(&custom_provider);
     let config = adw::ActionRow::new();
     config.set_title(&tr(lang, "settings.ai.open_config"));
@@ -2179,6 +2183,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     });
     agent_group.add(&config);
     let install = adw::ActionRow::new();
+    install.set_widget_name("pitex.settings.ai.runtimeStatus");
     install.set_title(&tr(lang, if crate::agent::app_local_runtime_installed() {
         "settings.ai.reinstall_runtime"
     } else {
@@ -2309,6 +2314,58 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         });
     }
     ai.add(&skills_group);
+    {
+        let state = state.clone();
+        let agent_group = agent_group.downgrade();
+        let skills_group = skills_group.downgrade();
+        let status = install.downgrade();
+        update_agent.connect_clicked(move |button| {
+            let (Some(agent_group), Some(skills_group), Some(status)) =
+                (agent_group.upgrade(), skills_group.upgrade(), status.upgrade()) else { return };
+            {
+                let Ok(mut s) = state.try_borrow_mut() else { return };
+                if crate::agent::pi_installer::installation_in_progress() {
+                    s.toast(&tr(lang, "settings.ai.updating_agent"));
+                    return;
+                }
+                if s.agent.as_ref().is_some_and(|agent| agent.is_running) {
+                    s.toast(&tr(lang, "settings.ai.update_busy"));
+                    return;
+                }
+                if let Some(agent) = s.agent.as_mut() {
+                    agent.shutdown();
+                    agent.connection = crate::agent::Connection::Connecting;
+                }
+                s.refresh_assistant();
+            }
+            agent_group.set_sensitive(false);
+            skills_group.set_sensitive(false);
+            button.set_label(&tr(lang, "settings.ai.updating_agent"));
+            status.set_subtitle(&tr(lang, "settings.ai.updating_agent"));
+            let button = button.clone();
+            let state = state.clone();
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                let result = gtk4::gio::spawn_blocking(crate::agent::pi_installer::update).await
+                    .unwrap_or_else(|_| Err("Agent update worker failed.".into()));
+                let message = match result {
+                    Ok(version) => tr1(lang, "settings.ai.agent_updated", &version),
+                    Err(error) => error,
+                };
+                button.set_label(&tr(lang, "settings.ai.update_agent"));
+                status.set_subtitle(&message);
+                agent_group.set_sensitive(true);
+                skills_group.set_sensitive(true);
+                if let Ok(mut s) = state.try_borrow_mut() {
+                    if let Some(agent) = s.agent.as_mut() { agent.restart(); }
+                    s.refresh_assistant();
+                    s.toast(&message);
+                }
+                SKILLS_REBUILD.with(|slot| {
+                    if let Some(rebuild) = slot.borrow().as_ref() { rebuild(); }
+                });
+            });
+        });
+    }
     window.add(&ai);
 
     // ── General ──

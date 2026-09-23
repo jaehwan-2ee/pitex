@@ -86,7 +86,15 @@ jobs:
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
             libvte-2.91-gtk4-dev libpoppler-glib-dev xvfb gdb dbus-x11
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
       - run: cargo test --workspace
+        working-directory: Linux
+      - name: Agent update through the real Settings button (Bun and npm)
+        timeout-minutes: 10
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib agent_update_tests -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Search navigation and match counter
         run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
@@ -119,7 +127,15 @@ jobs:
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
             libpoppler-glib-dev xvfb xdotool ibus-hangul dbus-x11
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
       - run: cargo build -p pitex --no-default-features
+        working-directory: Linux
+      - name: Agent update through the real Settings button on GTK 4.6
+        timeout-minutes: 10
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features agent_update_tests -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Search navigation and match counter on GTK 4.6
         run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
@@ -145,6 +161,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
+          path-type: inherit
           update: true
           install: >-
             mingw-w64-ucrt-x86_64-gcc
@@ -156,7 +173,15 @@ jobs:
             mingw-w64-ucrt-x86_64-poppler
             mingw-w64-ucrt-x86_64-adwaita-icon-theme
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
       - run: cargo build -p pitex-windows
+        working-directory: Windows
+      - name: Native Windows Agent update (Bun and npm)
+        timeout-minutes: 10
+        run: cargo test -p pitex-shell --lib agent_update_tests -- --ignored --nocapture --test-threads=1
         working-directory: Windows
       - name: Native Windows search navigation and counter
         run: cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
