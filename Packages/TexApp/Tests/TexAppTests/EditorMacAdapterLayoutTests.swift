@@ -4,7 +4,7 @@ import XCTest
 #if os(macOS)
 import AppKit
 import Carbon
-import EditorMacAdapter
+@testable import EditorMacAdapter
 
 final class EditorMacAdapterLayoutTests: XCTestCase {
     @MainActor
@@ -241,6 +241,46 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
 
             adapter.revealSelection(NSRange(location: source.utf16.count + 10, length: 20))
             XCTAssertEqual(adapter.selectedRange, NSRange(location: source.utf16.count, length: 0))
+        }
+    }
+
+    /// scrollToLine's cached line-start table must land on exactly the index
+    /// the old from-scratch lineRange walk produced, for every line and any
+    /// line break flavor (NSString counts CR, CRLF, U+2028 and U+2029).
+    @MainActor
+    func testScrollTargetIndexMatchesTheLineRangeWalk() {
+        func walk(_ line: Int, _ text: NSString) -> Int {
+            var index = 0
+            var current = 0
+            while current < line, index < text.length {
+                let next = NSMaxRange(text.lineRange(for: NSRange(location: index, length: 0)))
+                guard next > index else { break }
+                index = next
+                current += 1
+            }
+            return index
+        }
+        let texts = [
+            "one\ntwo\nthree\nfour",
+            "crlf\r\nsecond\r\nthird",
+            "carriage\rreturn\ronly",
+            "sep\u{2028}para\u{2029}break",
+            "mixed\nline\r\nand\u{2028}more\rtext",
+            "trailing newline\n",
+            "한글\n👩🏽‍💻 emoji\n",
+            "",
+            "no breaks",
+        ]
+        for text in texts {
+            let ns = text as NSString
+            let starts = EditorMacAdapter.computeScrollLineStarts(ns)
+            for line in -1...(starts.count + 3) {
+                XCTAssertEqual(
+                    EditorMacAdapter.scrollTargetIndex(forLine: line, starts: starts),
+                    walk(line, ns),
+                    "line \(line) in \(text.debugDescription)"
+                )
+            }
         }
     }
 }

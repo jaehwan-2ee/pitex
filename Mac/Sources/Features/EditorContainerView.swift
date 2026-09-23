@@ -306,7 +306,7 @@ struct EditorContainerView: NSViewRepresentable {
             let glyph = layoutManager.glyphIndex(for: origin, in: textContainer)
             guard glyph < layoutManager.numberOfGlyphs else { return }
             let character = layoutManager.characterIndexForGlyph(at: glyph)
-            let (line, _) = Self.lineAndColumn(for: character, in: textView.string as NSString)
+            let (line, _) = Self.lineAndColumn(for: character, in: textView)
             scrollSync.editorScrolled(to: line - 1)
         }
 
@@ -337,23 +337,24 @@ struct EditorContainerView: NSViewRepresentable {
             let glyph = layoutManager.glyphIndex(for: containerPoint, in: textContainer)
             guard glyph < layoutManager.numberOfGlyphs else { return false }
             let index = layoutManager.characterIndexForGlyph(at: glyph)
-            let (line, column) = Self.lineAndColumn(for: index, in: textView.string as NSString)
+            let (line, column) = Self.lineAndColumn(for: index, in: textView)
             onSyncRequest(line, column)
             return true
         }
 
-        /// 1-based (line, column) for a UTF-16 character index.
-        static func lineAndColumn(for index: Int, in text: NSString) -> (Int, Int) {
-            var line = 1
-            var location = 0
-            let bounded = min(index, text.length)
-            while location < bounded {
-                let next = text.range(of: "\n", range: NSRange(location: location, length: bounded - location))
-                guard next.location != NSNotFound else { break }
-                line += 1
-                location = next.location + 1
+        /// 1-based (line, column) for a UTF-16 character index — a binary
+        /// search over the analysis's "\n"-only line map rather than a
+        /// rescan from the top on every scroll event.
+        static func lineAndColumn(for index: Int, in textView: NSTextView) -> (Int, Int) {
+            let bounded = min(index, (textView.string as NSString).length)
+            let starts = textView.textStorage.map { EditorAnalysis.shared(for: $0).lineStarts } ?? [0]
+            var lo = 0, hi = starts.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if starts[mid] <= bounded { lo = mid + 1 } else { hi = mid }
             }
-            return (line, max(bounded - location, 0))
+            let line = max(lo - 1, 0)
+            return (line + 1, max(bounded - starts[line], 0))
         }
     }
 

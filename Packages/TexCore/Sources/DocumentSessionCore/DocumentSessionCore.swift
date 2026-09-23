@@ -9,12 +9,30 @@ public struct DiskContentHash: RawRepresentable, Hashable, Codable, Sendable {
     }
 
     public static func hashing(_ text: String) -> Self {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in text.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
+        func hash(_ bytes: UnsafeBufferPointer<UInt8>) -> UInt64 {
+            var hash: UInt64 = 14_695_981_039_346_656_037
+            for byte in bytes {
+                hash ^= UInt64(byte)
+                hash &*= 1_099_511_628_211
+            }
+            return hash
         }
-        return Self(rawValue: hash)
+        // Bridged strings iterate .utf8 by transcoding a byte at a time;
+        // hashing the contiguous buffer gives the identical FNV-1a digest.
+        if let value = text.utf8.withContiguousStorageIfAvailable({ hash($0) }) {
+            return Self(rawValue: value)
+        }
+        var copy = text
+        copy.makeContiguousUTF8()
+        if let value = copy.utf8.withContiguousStorageIfAvailable({ hash($0) }) {
+            return Self(rawValue: value)
+        }
+        var fallback: UInt64 = 14_695_981_039_346_656_037
+        for byte in copy.utf8 {
+            fallback ^= UInt64(byte)
+            fallback &*= 1_099_511_628_211
+        }
+        return Self(rawValue: fallback)
     }
 }
 

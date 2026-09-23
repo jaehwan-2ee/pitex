@@ -95,6 +95,46 @@ enum AppearanceColorRole { case bodyText, commands, comments, braces, environmen
             old.attach(to: before, fileExtension: ext); new.attach(to: after, fileExtension: ext)
             checkColors()
         }
+        // Seeded random edits: identical inserts/deletes/replaces on both
+        // views, rehighlighting after each batch, attribute state compared
+        // over the whole document every round.
+        struct SeededRNG: RandomNumberGenerator {
+            var state: UInt64
+            mutating func next() -> UInt64 {
+                state &+= 0x9E3779B97F4A7C15
+                var z = state
+                z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+                z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+                return z ^ (z >> 31)
+            }
+        }
+        var rng = SeededRNG(state: 0x5EED)
+        func randomEdits(_ rounds: Int, _ snippets: [String]) {
+            for _ in 0..<rounds {
+                for _ in 0..<Int.random(in: 1...3, using: &rng) {
+                    let length = before.textView.textStorage!.length
+                    let location = length == 0 ? 0 : Int.random(in: 0...length, using: &rng)
+                    let removed = Int.random(in: 0...min(length - location, 24), using: &rng)
+                    let insert = snippets[Int.random(in: 0..<snippets.count, using: &rng)]
+                    before.textView.textStorage!.replaceCharacters(in: NSRange(location: location, length: removed), with: insert)
+                    after.textView.textStorage!.replaceCharacters(in: NSRange(location: location, length: removed), with: insert)
+                }
+                old.highlightNow(); new.highlightNow()
+                checkColors()
+            }
+        }
+        // The dialect loop above left both attached as .bibtex; rebind to LaTeX
+        // so the long run exercises the LaTeX highlighting path.
+        before.textView.string = source; after.textView.string = source
+        old.attach(to: before, fileExtension: "tex"); new.attach(to: after, fileExtension: "tex")
+        checkColors()
+        randomEdits(220, ["x", "한", "👩🏽‍💻", "e\u{301}", "\\cmd", "{", "}", "$", "% note\n", "\n", "\\section{T}\n"])
+        // Shorter run in the BibTeX dialect on a BibTeX-ish document.
+        let bib = String(repeating: "@article{한글, title={👩🏽‍💻 e\u{301}}, year={2026}}\n", count: 300)
+        before.textView.string = bib; after.textView.string = bib
+        old.attach(to: before, fileExtension: "bib"); new.attach(to: after, fileExtension: "bib")
+        checkColors()
+        randomEdits(60, ["@book{k,", "title={", "}", ",\n", "x", "한", "👩🏽‍💻", "\n"])
         print("PASS native TextKit: identical colors, Unicode offsets, preserved attributes and edit/rebind behavior")
     }
 }
