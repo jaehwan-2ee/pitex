@@ -125,7 +125,11 @@ enum AppearanceColorRole { case bodyText, commands, comments, braces, environmen
         }
         // The dialect loop above left both attached as .bibtex; rebind to LaTeX
         // so the long run exercises the LaTeX highlighting path.
-        before.textView.string = source; after.textView.string = source
+        // A 60k-character excerpt (dozens of sections, verbatim blocks,
+        // Unicode) keeps 220 full compare rounds inside the CI timeout —
+        // the 2 MB fixture already covers timing and whole-document colors.
+        let excerpt = String(source.prefix(60_000))
+        before.textView.string = excerpt; after.textView.string = excerpt
         old.attach(to: before, fileExtension: "tex"); new.attach(to: after, fileExtension: "tex")
         checkColors()
         randomEdits(220, ["x", "한", "👩🏽‍💻", "e\u{301}", "\\cmd", "{", "}", "$", "% note\n", "\n", "\\section{T}\n"])

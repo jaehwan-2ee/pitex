@@ -38,7 +38,10 @@ func check(_ ok: Bool, _ message: String, line: Int = #line) {
 @main struct FoldLayoutCheck {
     @MainActor static func main() throws {
         _ = NSApplication.shared
-        let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
+        // A 60k-character excerpt of the large fixture: dozens of sections
+        // and verbatim environments to fold, while the per-glyph compare of
+        // every step (two passes) stays well inside the CI timeout.
+        let source = String(try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8).prefix(60_000))
         func makeView(_ text: String) -> NSTextView {
             let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
             let view = NSTextView(frame: scroll.bounds)
