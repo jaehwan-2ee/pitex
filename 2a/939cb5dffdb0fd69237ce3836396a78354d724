@@ -1,0 +1,21 @@
+Linux/crates/pitex-shell/tests/native.rs
+  s_61259ddb619c79::t_722da6ad29e508 143-145
+  s_61259ddb619c79::t_1235f3a7243cf4 16
+  s_61259ddb619c79::t_b7da43ac82f620 2-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a939cb5dffdb0fd69237ce3836396a78354d724",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
