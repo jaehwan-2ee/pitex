@@ -1,0 +1,24 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_ad9aaecbf4b5fe 1315-1322,1324-1348,1350,4330-4331,4413-4414
+  s_61259ddb619c79::t_b86558f1523b16 4355-4356
+Linux/crates/pitex-shell/src/lib.rs
+  s_61259ddb619c79::t_b86558f1523b16 27-28
+Linux/crates/pitex-shell/src/window_ipc.rs
+  s_61259ddb619c79::t_b86558f1523b16 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f25b12db42e04bd0a266a90af54c2b9a7730a30e",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
