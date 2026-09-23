@@ -280,7 +280,8 @@ final class EditorMacAdapterRebaseTests: XCTestCase {
         view.insertText("%", replacementRange: NSRange(location: 1, length: 0))
         try await settle()
         XCTAssertEqual(adapter.text, "a%b")
-        XCTAssertEqual(await session.snapshot().text, "a%b")
+        let sessionText = await session.snapshot().text
+        XCTAssertEqual(sessionText, "a%b")
         XCTAssertEqual(view.selectedRange().location, 2)
     }
 
@@ -297,7 +298,8 @@ final class EditorMacAdapterRebaseTests: XCTestCase {
             try await settle()
         }
         XCTAssertEqual(adapter.text, "a%b")
-        XCTAssertEqual(await session.snapshot().text, "a%b")
+        let sessionText = await session.snapshot().text
+        XCTAssertEqual(sessionText, "a%b")
         XCTAssertEqual(view.selectedRange().location, 3)
     }
 
