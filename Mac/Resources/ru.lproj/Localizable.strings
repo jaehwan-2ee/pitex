@@ -376,3 +376,9 @@
 
 "editor.find_previous" = "Предыдущее совпадение";
 "editor.find_next" = "Следующее совпадение";
+
+/* Manual agent update */
+"settings.ai.update_agent" = "Agent update";
+"settings.ai.updating_agent" = "Обновление агента…";
+"settings.ai.agent_updated" = "Агент обновлён до версии %@.";
+"settings.ai.update_busy" = "Дождитесь завершения текущего ответа агента перед обновлением.";

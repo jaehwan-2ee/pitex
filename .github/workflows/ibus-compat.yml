@@ -1,7 +1,7 @@
 name: IBus compatibility regression
 on:
   push:
-    branches: [main, codex/caps-lock-audit]
+    branches: [main]
     paths: ['Linux/**', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']
   pull_request:
     paths: ['Linux/**', '.github/workflows/ibus-compat.yml', 'Tools/audit-ibus-capslock.py']

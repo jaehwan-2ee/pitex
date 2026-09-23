@@ -376,3 +376,9 @@
 
 "editor.find_previous" = "Previous match";
 "editor.find_next" = "Next match";
+
+/* Manual agent update */
+"settings.ai.update_agent" = "Agent update";
+"settings.ai.updating_agent" = "Updating agent…";
+"settings.ai.agent_updated" = "Agent updated to %@.";
+"settings.ai.update_busy" = "Wait for the current agent response to finish before updating.";

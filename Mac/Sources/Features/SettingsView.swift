@@ -514,6 +514,11 @@ struct SettingsView: View {
                         performAgentSettingsAction { try PiPaths.openConfiguration(customProvider: true) }
                     }
                     .accessibilityIdentifier("pitex.settings.ai.customProvider")
+                    Button("settings.ai.update_agent") {
+                        installPiRuntime(latest: true)
+                    }
+                    .disabled(piInstallInFlight || skillInstallInFlight)
+                    .accessibilityIdentifier("pitex.settings.ai.updateAgent")
                 }
                 Button("settings.ai.open_config") {
                     performAgentSettingsAction { try PiPaths.openConfiguration() }
@@ -532,7 +537,7 @@ struct SettingsView: View {
                            : "settings.ai.install_runtime") {
                         installPiRuntime()
                     }
-                    .disabled(piInstallInFlight)
+                    .disabled(piInstallInFlight || skillInstallInFlight)
                     if piInstallInFlight {
                         ProgressView()
                             .controlSize(.small)
@@ -589,12 +594,12 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 TextField("settings.ai.install_skill", text: $skillSource)
                     .textFieldStyle(.roundedBorder)
-                    .disabled(skillInstallInFlight)
+                    .disabled(skillInstallInFlight || piInstallInFlight)
                     .accessibilityIdentifier("pitex.settings.ai.skillSource")
                 Button("settings.ai.install") {
                     installSkill()
                 }
-                .disabled(skillInstallInFlight
+                .disabled(skillInstallInFlight || piInstallInFlight
                           || skillSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || !PiExecutableLocator.appLocalRuntimeInstalled)
                 .accessibilityIdentifier("pitex.settings.ai.installSkill")
@@ -830,21 +835,31 @@ struct SettingsView: View {
         }
     }
 
-    private func installPiRuntime() {
+    private func installPiRuntime(latest: Bool = false) {
+        guard !piInstallInFlight else { return }
+        if latest && workspace.agent?.isRunning == true {
+            piInstallMessage = String(localized: "settings.ai.update_busy")
+            piInstallIsError = false
+            return
+        }
         piInstallInFlight = true
-        piInstallMessage = nil
+        piInstallMessage = latest ? String(localized: "settings.ai.updating_agent") : nil
         piInstallIsError = false
+        if latest { workspace.agent?.shutdown() }
         Task {
             do {
-                try await PiRuntimeInstaller.install()
-                piInstallMessage = PiPaths.runtimeExecutable.path
+                try await PiRuntimeInstaller.install(latest: latest)
+                piInstallMessage = latest
+                    ? String(format: String(localized: "settings.ai.agent_updated"), PiRuntimeInstaller.installedVersion() ?? "")
+                    : PiPaths.runtimeExecutable.path
                 piInstallIsError = false
+                refreshSkills()
             } catch {
                 piInstallMessage = error.localizedDescription
                 piInstallIsError = true
             }
             piInstallInFlight = false
-            workspace.agent?.prepare()
+            if latest { workspace.agent?.restart() } else { workspace.agent?.prepare() }
         }
     }
 

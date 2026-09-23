@@ -5,6 +5,7 @@ Reproduce Finder's minimal PATH with Homebrew, curl, npm-prefix and nvm
 layouts. Install the pinned agent in temporary directories using real Bun and
 Node/npm, then exercise RPC and auth-script generation without model requests
 or user credentials. Requires Bun and Node/npm to validate both routes.
+Pass --latest to also check manual updates and rollback after a failed update.
 """
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ bun = shutil.which('bun')
 node = shutil.which('node')
 npm = shutil.which('npm')
 assert bun and node and npm, 'Install Bun and Node/npm to exercise both runtime routes'
+latest = subprocess.check_output(['npm', 'view', '@earendil-works/pi-coding-agent@latest', 'version'], text=True).strip() if '--latest' in sys.argv else ''
 check = r'''
 import Foundation
 import BuildCore
@@ -120,6 +122,29 @@ import BuildCore
         precondition(PiRuntimeInstaller.installedVersion() == PiRuntimeInstaller.desiredVersion)
         precondition(PiExecutableLocator.resolve(environment: tools.environment) == PiPaths.runtimeExecutable)
         print("PASS \(mode) real install and version check; credentials and old CLI preserved"); fflush(nil)
+        let latest = CommandLine.arguments[6]
+        if !latest.isEmpty {
+            let settings = Data("{\"test-setting\":true}".utf8)
+            let models = Data("{\"providers\":{}}".utf8)
+            try settings.write(to: PiPaths.settingsFileURL)
+            try models.write(to: PiPaths.modelsFileURL)
+            try await PiRuntimeInstaller.install(latest: true, toolchain: tools)
+            precondition(PiRuntimeInstaller.installedVersion() == latest)
+            let bad = PiToolchain(environment: tools.environment, bun: URL(fileURLWithPath: "/usr/bin/false"))
+            do {
+                try await PiRuntimeInstaller.install(latest: true, toolchain: bad)
+                preconditionFailure("A failed package manager must not report a successful update")
+            } catch {
+                precondition(PiRuntimeInstaller.installedVersion() == latest, "Failed update must restore the working runtime")
+            }
+            let actualCredentials = try Data(contentsOf: PiPaths.authFileURL)
+            let actualSettings = try Data(contentsOf: PiPaths.settingsFileURL)
+            let actualModels = try Data(contentsOf: PiPaths.modelsFileURL)
+            precondition(actualCredentials == credentials && actualSettings == settings && actualModels == models)
+            let remaining = try files.contentsOfDirectory(atPath: root.path)
+            precondition(!remaining.contains { $0.hasPrefix("pi-runtime-backup-") })
+            print("PASS \(mode) latest update to \(latest), failure rollback and auth/settings preservation"); fflush(nil)
+        }
         let launch = try tools.launch(PiPaths.runtimeExecutable, arguments: ["--mode", "rpc", "--no-session"])
         precondition(launch.executable == (mode == "bun" ? tools.bun! : tools.node!))
         let process = PiAgentProcess(executableURL: launch.executable, workingDirectory: root,
@@ -160,4 +185,4 @@ with tempfile.TemporaryDirectory(prefix="pitex runtime's ", dir='/tmp') as direc
     for mode in ['bun','node']:
         work=root/mode; work.mkdir()
         env={**os.environ,'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','PI_CODING_AGENT_DIR':str(work/'pi')}
-        subprocess.run([str(executable),str(work),mode,bun,node,npm],env=env,check=True,timeout=240)
+        subprocess.run([str(executable),str(work),mode,bun,node,npm,latest],env=env,check=True,timeout=480)

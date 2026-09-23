@@ -167,6 +167,8 @@ enum PiRuntimeInstaller {
     /// command surface still matches (get_state, set_thinking_level, …).
     static let desiredVersion = "0.85.1"
 
+    @MainActor private static var installationInProgress = false
+
     /// First-launch path: installs the app-local runtime when missing,
     /// upgrades it when the installed version trails `desiredVersion`, and
     /// always (re)mirrors the bundled skills so reinstalls refresh them too.
@@ -224,9 +226,41 @@ enum PiRuntimeInstaller {
 
     /// Both package managers install locally; no global packages or provider
     /// credentials are changed. Publish the launcher only after a smoke check.
-    static func install(toolchain: PiToolchain? = nil) async throws {
+    @MainActor
+    static func install(latest: Bool = false, toolchain: PiToolchain? = nil) async throws {
+        guard !installationInProgress else {
+            throw InstallError.installFailed("An agent installation is already in progress.")
+        }
+        installationInProgress = true
+        defer { installationInProgress = false }
         let tools = if let toolchain { toolchain } else { await PiToolchain.discover() }
-        let spec = "\(packageName)@\(desiredVersion)"
+        let files = FileManager.default
+        let runtime = PiPaths.runtimeDirectory
+        let backup = runtime.deletingLastPathComponent().appendingPathComponent("pi-runtime-backup-\(UUID().uuidString)")
+        // A failed manual update must leave the previous working runtime usable.
+        // Auth, settings, sessions and skills live in the separate agent directory.
+        let backedUp = latest && files.fileExists(atPath: runtime.path)
+        if backedUp { try files.moveItem(at: runtime, to: backup) }
+        do {
+            try await installPackage(version: latest ? "latest" : desiredVersion, tools: tools)
+        } catch {
+            if latest {
+                do {
+                    if files.fileExists(atPath: runtime.path) { try files.removeItem(at: runtime) }
+                    if backedUp { try files.moveItem(at: backup, to: runtime) }
+                } catch let restoreError {
+                    throw InstallError.installFailed("\(error.localizedDescription) Previous runtime preserved at \(backup.path); restore failed: \(restoreError.localizedDescription)")
+                }
+            }
+            throw error
+        }
+        if backedUp {
+            _ = await Task.detached { try? FileManager.default.removeItem(at: backup) }.value
+        }
+    }
+
+    private static func installPackage(version: String, tools: PiToolchain) async throws {
+        let spec = "\(packageName)@\(version)"
         // npm is a real fallback even when bun exists: `bun add` can exit 0
         // while laying down nothing (stale tree it won't re-extract, corrupt
         // cache, a `bun` that isn't bun, a registry mirror serving a stub).
@@ -236,7 +270,7 @@ enum PiRuntimeInstaller {
                 "--force", "--linker", "hoisted", "--no-cache", "--exact", spec]))
         }
         if let npm = tools.npmCommand(arguments: ["install", "--prefix", PiPaths.runtimeDirectory.path,
-                    "--save-exact", "--no-audit", "--no-fund", spec]) {
+                    "--save-exact", "--prefer-online", "--no-audit", "--no-fund", spec]) {
             attempts.append(("npm", npm.executable, npm.arguments))
             attempts.append(("npm+npmjs", npm.executable, npm.arguments + ["--registry", "https://registry.npmjs.org"]))
         }
