@@ -99,6 +99,22 @@ check('javascript: link gets no href', !html.includes('href="javascript:'));
 check('https link kept', html.includes('href="https://example.com"'));
 check('relative image src kept', html.includes('src="pics/rel.png"'));
 
+// Math that wraps across the lines of one paragraph (a reported document).
+const count = (s, re) => (s.match(re) || []).length;
+const wrapped = render([
+  'Text right before display math.',
+  '\\[',
+  '\\rho_N=\\widehat R_N',
+  '-\\inf_{\\phi}\\widehat R_N\\ge0',
+  '\\]',
+  'then \\(R\\le G_N',
+  '\\le\\inf R\\) and $a',
+  '+b$ end.',
+].join('\n'));
+check('\\[…\\] inside a paragraph renders as display math', count(wrapped, /class="katex-display"/g) === 1);
+check('\\(…\\) and $…$ across a line break render', count(wrapped, /class="katex"/g) === 3);
+check('prices across lines stay text', count(render('costs $5 and\nthen $10 total'), /class="katex"/g) === 0);
+
 const page = await readFile(OUT, 'utf8');
 const csp = page.match(/<meta http-equiv="Content-Security-Policy"\s+content="([^"]+)"/);
 check('CSP meta present', !!csp);

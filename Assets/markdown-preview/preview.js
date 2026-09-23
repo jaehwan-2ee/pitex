@@ -11,6 +11,38 @@ pitexMd.use(texmath, {
     katexOptions: { throwOnError: false }
 });
 
+// texmath's inline rules stop at a line break, and it treats `\[…\]` as
+// display math only when it stands in a block of its own — so math that
+// wraps across the soft line breaks of one paragraph stayed plain text.
+// This rule runs after texmath's (both sit before 'escape') and matches
+// those across lines. `$` follows pandoc: no space just inside the
+// delimiters and no digit right after, so "$5 and $10" stays text.
+const PITEX_WRAPPED_MATH = [['\\[', '\\]', true], ['\\(', '\\)', false], ['$', '$', false]];
+
+pitexMd.inline.ruler.before('escape', 'pitex_wrapped_math', (state, silent) => {
+    for (const [open, close, display] of PITEX_WRAPPED_MATH) {
+        if (!state.src.startsWith(open, state.pos)) continue;
+        const start = state.pos + open.length;
+        const end = state.src.indexOf(close, start);
+        if (end <= start) continue;
+        const content = state.src.slice(start, end);
+        if (open === '$' && (state.src[start] === '$' || /^\s|\s$/.test(content) ||
+            /\d/.test(state.src[end + 1] ?? ''))) continue;
+        if (!silent) {
+            const token = state.push('pitex_math', 'math', 0);
+            token.content = content;
+            token.meta = { display };
+        }
+        state.pos = end + close.length;
+        return true;
+    }
+    return false;
+});
+
+pitexMd.renderer.rules.pitex_math = (tokens, idx) => katex.renderToString(tokens[idx].content, {
+    displayMode: tokens[idx].meta.display, throwOnError: false
+});
+
 // Block tokens rendered through renderToken/renderAttrs get data-line via a
 // core pass; the rules that bypass it (fence, html_block, texmath's sections)
 // are wrapped below to inject the same attribute.
