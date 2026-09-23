@@ -3940,16 +3940,19 @@ fn append_project_node(
         row.append(&name);
         let dir_path = node.path.clone();
         let gesture = gtk4::GestureClick::new();
+        // The whole row (disclosure, icon, name) toggles. The rebuild waits
+        // for idle so the clicked row isn't destroyed mid-gesture.
         gesture.connect_released(move |_, _, _, _| {
-            STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    if let Ok(mut s) = state.try_borrow_mut() {
-                        if !s.model.collapsed_project_dirs.remove(&dir_path) {
-                            s.model.collapsed_project_dirs.insert(dir_path.clone());
+            let dir_path = dir_path.clone();
+            glib::idle_add_local_once(move || {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() {
+                            s.model.toggle_project_dir(&dir_path);
+                            s.refresh_sidebar();
                         }
-                        s.refresh_sidebar();
                     }
-                }
+                });
             });
         });
         row.add_controller(gesture);

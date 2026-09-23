@@ -105,7 +105,10 @@ check = r'''
         checkSources(collapsed)
         precondition(collapsed["a.pdf"] == nil && collapsed["b.pdf"] == nil)
         precondition(collapsed["ch3.tex"] != nil, "Collapsing one folder changed another")
-        print("PASS: main first; source dependencies always visible and indented; file activation; independent folder toggles and indentation")
+        click(collapsed["figures"]!)
+        let byName = try await snapshot("byName")
+        precondition(byName["a.pdf"] != nil, "Clicking a folder name must expand it")
+        print("PASS: main first; source dependencies always visible and indented; file activation; independent folder toggles by chevron or name, and indentation")
     }
 }
 '''

@@ -2679,6 +2679,16 @@ impl WorkspaceModel {
     }
 
     /// `togglePinnedBuildTarget` — only .tex sources can be pinned.
+    /// Folds or unfolds a project-tree directory. The sidebar only rebuilds
+    /// the project list when `files_revision` moves, so bump it — without
+    /// this the click changed the state but the tree never redrew.
+    pub fn toggle_project_dir(&mut self, path: &str) {
+        if !self.collapsed_project_dirs.remove(path) {
+            self.collapsed_project_dirs.insert(path.to_string());
+        }
+        self.files_revision += 1;
+    }
+
     pub fn toggle_pinned_build_target(&mut self) {
         let Some(url) = self.active_document_url.clone() else { return };
         if url

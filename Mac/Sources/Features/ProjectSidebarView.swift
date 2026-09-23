@@ -407,19 +407,7 @@ private struct ProjectTreeRows<FileRow: View>: View {
         VStack(alignment: .leading, spacing: 1) {
             ForEach(nodes) { node in
                 if node.isDirectory {
-                    DisclosureGroup {
-                        ProjectTreeRows(nodes: node.children ?? [], fileRow: fileRow)
-                            .padding(.leading, 24)
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: "folder")
-                            Text(verbatim: node.name)
-                                .lineLimit(1)
-                            Spacer()
-                        }
-                        .padding(.vertical, 3)
-                        .accessibilityIdentifier("pitex.project.dir.\(node.path)")
-                    }
+                    ProjectFolderRow(node: node, fileRow: fileRow)
                 } else {
                     fileRow(node)
                     if let children = node.children {
@@ -428,6 +416,32 @@ private struct ProjectTreeRows<FileRow: View>: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// A directory row. The whole label (icon, name, blank space) toggles, not
+/// just DisclosureGroup's chevron.
+private struct ProjectFolderRow<FileRow: View>: View {
+    let node: ProjectFileNode
+    let fileRow: (ProjectFileNode) -> FileRow
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            ProjectTreeRows(nodes: node.children ?? [], fileRow: fileRow)
+                .padding(.leading, 24)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "folder")
+                Text(verbatim: node.name)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation { isExpanded.toggle() } }
+            .accessibilityIdentifier("pitex.project.dir.\(node.path)")
         }
     }
 }
