@@ -1287,10 +1287,12 @@ final class WorkspaceModel: ObservableObject {
                   guard let path = try? Self.relativePath(for: url, root: root) else { return false }
                   return session.path == path
               }) else { return }
-        guard let (diskText, observedHash) = try? await Task.detached(priority: .userInitiated) {
+        // Hoisted: a trailing closure can't sit inside a guard condition.
+        let disk = try? await Task.detached(priority: .userInitiated) {
             let text = try Self.readExactUTF8(url)
             return (text, DiskContentHash.hashing(text))
-        }.value else {
+        }.value
+        guard let (diskText, observedHash) = disk else {
             // Deleted or unreadable: never replace content with nothing. Flag
             // a conflict only when unsaved in-memory edits are at stake.
             let snapshot = await session.snapshot()
