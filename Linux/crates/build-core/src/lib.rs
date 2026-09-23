@@ -1313,6 +1313,8 @@ fn resolved_environment(policy: &EnvironmentPolicy) -> HashMap<String, String> {
         EnvironmentPolicy::Inherit { overrides } => {
             let mut env: HashMap<String, String> = std::env::vars().collect();
             for (key, value) in overrides {
+                #[cfg(windows)]
+                env.retain(|existing, _| !existing.eq_ignore_ascii_case(key));
                 env.insert(key.clone(), value.clone());
             }
             env

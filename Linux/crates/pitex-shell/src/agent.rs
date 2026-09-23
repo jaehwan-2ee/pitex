@@ -258,6 +258,9 @@ impl PiToolchain {
         home: &Path,
         system_directories: &[&str],
     ) -> PiToolchain {
+        // Explorer commonly supplies "Path"; Windows keys are case-insensitive.
+        #[cfg(windows)]
+        let environment = environment.into_iter().map(|(key, value)| (key.to_ascii_uppercase(), value)).collect();
         let mut result = PiToolchain {
             environment,
             bun: None,

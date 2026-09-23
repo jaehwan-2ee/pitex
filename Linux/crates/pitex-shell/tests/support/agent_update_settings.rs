@@ -45,7 +45,16 @@ fn settings_button_updates_latest_and_restores_failed_update() {
     std::fs::write(pi_paths::auth_file(), credentials).unwrap();
     std::fs::write(pi_paths::settings_file(), settings).unwrap();
     std::fs::write(pi_paths::models_file(), models).unwrap();
-    let tools = PiToolchain::discover(std::env::vars().collect(), &root, &PiToolchain::SYSTEM_DIRECTORIES);
+    let environment = std::env::vars().collect();
+    #[cfg(windows)]
+    let environment = {
+        let mut values: std::collections::HashMap<String, String> = environment;
+        let path = std::env::var("PATH").unwrap();
+        values.retain(|key, _| !key.eq_ignore_ascii_case("PATH"));
+        values.insert("Path".into(), path);
+        values
+    };
+    let tools = PiToolchain::discover(environment, &root, &PiToolchain::SYSTEM_DIRECTORIES);
     assert!(tools.bun.is_some() && tools.node.is_some() && tools.npm.is_some());
     let (exe, args) = tools.npm_command(&["view".into(), format!("{}@latest", pi_installer::PACKAGE_NAME), "version".into()]).unwrap();
     let output = std::process::Command::new(exe).args(args).envs(&tools.environment).output().unwrap();
