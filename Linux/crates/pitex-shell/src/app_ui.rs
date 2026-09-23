@@ -960,8 +960,23 @@ impl AppState {
     fn rebind_editor_widget(&self) {
         let Some(editor) = &self.editor else { return };
         UI.with(|ui| {
+            // GtkSourceMap (5.12) hooks the view's vadjustment as it is at
+            // set_view time and unhooks whatever vadjustment the view has
+            // at the next set_view. Leaving the scroller gives a view a fresh
+            // adjustment, so swapping first made the unhook miss
+            // (GLib-GObject-CRITICAL "has no handler with id" on every
+            // document switch) and leaked two handlers on the scroller's
+            // adjustment each time. Unhook while the old view still holds
+            // the scroller's adjustment, and hook once the new one does.
+            let map = ui.minimap.borrow().clone();
+            if let Some(map) = &map {
+                map.set_property("view", None::<sourceview5::View>);
+            }
             if let Some(scroller) = ui.editor_scroller.borrow().as_ref() {
                 scroller.set_child(Some(editor.view()));
+            }
+            if let Some(map) = &map {
+                map.set_view(editor.view());
             }
             if let Some(overlay) = ui.editor_overlay.borrow().as_ref() {
                 if let Some(old) = self.fold_chip.borrow_mut().take() {
@@ -971,9 +986,6 @@ impl AppState {
                     overlay.add_overlay(fold.chip_area());
                     *self.fold_chip.borrow_mut() = Some(fold.chip_area().clone());
                 }
-            }
-            if let Some(map) = ui.minimap.borrow().as_ref() {
-                map.set_view(editor.view());
             }
         });
     }
