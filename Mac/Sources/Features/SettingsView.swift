@@ -410,6 +410,14 @@ struct SettingsView: View {
                     in: 10...28
                 )
             }
+            Section {
+                Button("settings.markdown.make_default_editor") {
+                    DefaultEditorRegistration.registerAsDefault(markdown: true)
+                }
+                Text("settings.markdown.make_default_note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding(8)
@@ -1396,27 +1404,30 @@ enum SettingsBackup {
     }
 }
 
-/// One-click "register as default .tex editor" from the Compile tab — sets
-/// Launch Services' editor-role handler for every content type the app
-/// declares (read from the bundle's own document types so the list never
-/// drifts from Info.plist).
+/// One-click "register as default editor" — sets Launch Services'
+/// editor-role handler for the content types the app declares (read from
+/// the bundle's own document types so the list never drifts from
+/// Info.plist). The TeX Compile tab's button claims everything except
+/// Markdown; the Markdown tab's button claims Markdown alone.
 enum DefaultEditorRegistration {
-    static func registerAsDefault() {
+    private static let markdownType = "net.daringfireball.markdown"
+
+    static func registerAsDefault(markdown: Bool = false) {
         guard let bundleID = Bundle.main.bundleIdentifier else { return }
         let documentTypes = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleDocumentTypes"
         ) as? [[String: Any]] ?? []
         let contentTypes = documentTypes.flatMap {
             $0["LSItemContentTypes"] as? [String] ?? []
-        }
+        }.filter { ($0 == markdownType) == markdown }
         for contentType in contentTypes {
             LSSetDefaultRoleHandlerForContentType(
                 contentType as CFString, .editor, bundleID as CFString
             )
         }
-        if let tex = UTType(filenameExtension: "tex") {
+        if let type = UTType(filenameExtension: markdown ? "md" : "tex") {
             NSWorkspace.shared.setDefaultApplication(
-                at: Bundle.main.bundleURL, toOpen: tex
+                at: Bundle.main.bundleURL, toOpen: type
             ) { _ in }
         }
     }

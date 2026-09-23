@@ -256,6 +256,8 @@
 "settings.markdown.theme.light" = "浅色";
 "settings.markdown.theme.dark" = "深色";
 "settings.markdown.font_size" = "预览字号";
+"settings.markdown.make_default_editor" = "用于 .md 文件";
+"settings.markdown.make_default_note" = "将 Pitex 注册为 .md 和 .markdown 文件的默认应用（双击在此打开）。";
 "settings.editor.autosave" = "自动保存";
 "settings.editor.autosave_delay" = "自动保存延迟";
 "settings.editor.delay_2" = "2 秒";

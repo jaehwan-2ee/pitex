@@ -360,11 +360,22 @@ impl LinuxDefaultEditorRegistration {
     /// the bundle's document type declarations.
     const DECLARED_TYPES: &'static [&'static str] =
         &["text/x-tex", "text/x-bib", "text/markdown"];
+    /// Claimed only by the Markdown tab's button — the TeX button leaves it.
+    const MARKDOWN_TYPE: &'static str = "text/markdown";
 
-    /// Registers the app as the default handler for every declared type.
+    /// "Use for .tex Files" — the default handler for the TeX types.
     pub fn register_as_default() -> Result<(), PlatformPortError> {
+        Self::claim(|mime| mime != Self::MARKDOWN_TYPE)
+    }
+
+    /// "Use for .md Files" — the default handler for Markdown only.
+    pub fn register_markdown_as_default() -> Result<(), PlatformPortError> {
+        Self::claim(|mime| mime == Self::MARKDOWN_TYPE)
+    }
+
+    fn claim(wanted: impl Fn(&str) -> bool) -> Result<(), PlatformPortError> {
         Self::ensure_desktop_entry().map_err(|_| PlatformPortError::InvalidCapability)?;
-        for mime in Self::DECLARED_TYPES {
+        for mime in Self::DECLARED_TYPES.iter().filter(|mime| wanted(mime)) {
             let _ = std::process::Command::new("xdg-mime")
                 .args(["default", Self::DESKTOP_ID, mime])
                 .stdin(std::process::Stdio::null())

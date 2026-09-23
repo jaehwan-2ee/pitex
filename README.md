@@ -61,7 +61,9 @@ glyph to insert its LaTeX command at the caret; hover to see the command.
 `.md` and `.markdown` files open in the same editor, and the inspector
 shows a live rendered preview instead of the PDF column — including
 KaTeX math (`$…$`, `$$…$$`, `\[…\]`, `\(…\)`). On macOS and Linux Pitex
-also registers as an "Open With" handler for Markdown files.
+also registers as an "Open With" handler for Markdown files; *Settings →
+Markdown → Use for .md Files* makes it the default app, like *Use for .tex
+Files* does for TeX.
 
 - **Live or on save** — the preview refreshes as you type; turn off
   *Settings → Markdown → Live preview* to render only when the document

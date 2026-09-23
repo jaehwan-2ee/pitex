@@ -256,6 +256,8 @@
 "settings.markdown.theme.light" = "Sáng";
 "settings.markdown.theme.dark" = "Tối";
 "settings.markdown.font_size" = "Cỡ chữ xem trước";
+"settings.markdown.make_default_editor" = "Dùng cho tệp .md";
+"settings.markdown.make_default_note" = "Đăng ký Pitex làm ứng dụng mặc định cho tệp .md và .markdown (nhấp đúp để mở tại đây).";
 "settings.editor.autosave" = "Tự động lưu";
 "settings.editor.autosave_delay" = "Độ trễ tự động lưu";
 "settings.editor.delay_2" = "2 giây";

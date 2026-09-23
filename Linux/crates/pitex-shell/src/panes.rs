@@ -1820,6 +1820,21 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     }
     preview_group.add(&size_row);
     markdown.add(&preview_group);
+    // Markdown twin of the TeX Compile page's default-editor row. Windows
+    // has no Markdown preview, so it doesn't offer to claim .md files.
+    #[cfg(not(windows))]
+    {
+        let default_group = adw::PreferencesGroup::new();
+        let make_default = adw::ActionRow::new();
+        make_default.set_title(&tr(lang, "settings.markdown.make_default_editor"));
+        make_default.set_subtitle(&tr(lang, "settings.markdown.make_default_note"));
+        make_default.set_activatable(true);
+        make_default.connect_activated(|_| {
+            let _ = PlatformDefaultEditorRegistration::register_markdown_as_default();
+        });
+        default_group.add(&make_default);
+        markdown.add(&default_group);
+    }
     window.add(&markdown);
 
     // ── Editor ──

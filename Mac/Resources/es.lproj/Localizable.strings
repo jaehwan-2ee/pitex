@@ -256,6 +256,8 @@
 "settings.markdown.theme.light" = "Claro";
 "settings.markdown.theme.dark" = "Oscuro";
 "settings.markdown.font_size" = "Tamaño de letra de la vista previa";
+"settings.markdown.make_default_editor" = "Usar para archivos .md";
+"settings.markdown.make_default_note" = "Registra Pitex como la app predeterminada para archivos .md y .markdown (doble clic para abrir aquí).";
 "settings.editor.autosave" = "Guardado automático";
 "settings.editor.autosave_delay" = "Retraso del guardado automático";
 "settings.editor.delay_2" = "2 segundos";

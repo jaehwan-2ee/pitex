@@ -256,6 +256,8 @@
 "settings.markdown.theme.light" = "라이트";
 "settings.markdown.theme.dark" = "다크";
 "settings.markdown.font_size" = "미리보기 글꼴 크기";
+"settings.markdown.make_default_editor" = ".md 파일에 사용";
+"settings.markdown.make_default_note" = "Pitex를 기본 .md/.markdown 편집기로 등록합니다 (더블 클릭으로 열기).";
 "settings.editor.autosave" = "자동 저장";
 "settings.editor.autosave_delay" = "자동 저장 지연";
 "settings.editor.delay_2" = "2초";

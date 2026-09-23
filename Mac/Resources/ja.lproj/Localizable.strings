@@ -256,6 +256,8 @@
 "settings.markdown.theme.light" = "ライト";
 "settings.markdown.theme.dark" = "ダーク";
 "settings.markdown.font_size" = "プレビューのフォントサイズ";
+"settings.markdown.make_default_editor" = ".md ファイルに使用";
+"settings.markdown.make_default_note" = "Pitex を既定の .md / .markdown エディタとして登録します（ダブルクリックで開く）。";
 "settings.editor.autosave" = "自動保存";
 "settings.editor.autosave_delay" = "自動保存の遅延";
 "settings.editor.delay_2" = "2 秒";
