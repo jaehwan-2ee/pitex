@@ -1,0 +1,19 @@
+Mac/Sources/AppShell/PitexApp.swift
+  s_61259ddb619c79::t_2ee77d1300f5cc 1290-1291,1294-1295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70d1b20f7ff0de6a672729c61bce230dec043f1d",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
