@@ -188,6 +188,282 @@ final class DocumentSessionPersistenceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "disk truth")
     }
 
+    func testCommitSaveAtCurrentRevisionBehavesLikeCommitMutation() async throws {
+        let session = try makeSession(initialText: "base")
+        let edited = try await session.apply(.replaceText("edit"), expectedRevision: 0)
+
+        let committed = try await session.commitSave(
+            writtenDiskHash: .hashing("edit"),
+            writtenRevision: edited.revision
+        )
+        XCTAssertEqual(committed.revision, edited.revision + 1)
+        XCTAssertEqual(committed.saveState, .clean)
+        XCTAssertEqual(committed.diskBaselineHash, .hashing("edit"))
+        XCTAssertNil(committed.conflict)
+
+        do {
+            _ = try await session.commitSave(
+                writtenDiskHash: .hashing("not the content"),
+                writtenRevision: committed.revision
+            )
+            XCTFail("Expected a saved-content hash mismatch")
+        } catch {
+            XCTAssertEqual(
+                error as? DocumentSessionError,
+                .savedContentHashMismatch(
+                    expected: .hashing("edit"),
+                    written: .hashing("not the content")
+                )
+            )
+        }
+    }
+
+    func testCommitSaveAfterInterleavedEditMovesBaselineAndStaysDirty() async throws {
+        let session = try makeSession(initialText: "v0")
+        // Revision 1's text is what the in-flight write put on disk.
+        let written = try await session.apply(.replaceText("v1"), expectedRevision: 0)
+        // A keystroke lands while the file is still being written.
+        let edited = try await session.apply(
+            .replaceText("v2"),
+            expectedRevision: written.revision
+        )
+
+        let committed = try await session.commitSave(
+            writtenDiskHash: .hashing(written.text),
+            writtenRevision: written.revision
+        )
+        XCTAssertEqual(committed.revision, edited.revision + 1)
+        XCTAssertEqual(committed.diskBaselineHash, .hashing("v1"))
+        XCTAssertEqual(committed.contentHash, .hashing("v2"))
+        XCTAssertEqual(committed.text, "v2")
+        XCTAssertEqual(committed.saveState, .dirty)
+        XCTAssertNil(committed.conflict)
+    }
+
+    func testCommitSaveLosesToAConflictRecordedMidWrite() async throws {
+        let session = try makeSession(initialText: "base")
+        let written = try await session.apply(.replaceText("edit"), expectedRevision: 0)
+        let observed = DiskContentHash.hashing("external")
+        let conflicted = try await session.apply(
+            .recordExternalChange(observedDiskHash: observed),
+            expectedRevision: written.revision
+        )
+
+        let committed = try await session.commitSave(
+            writtenDiskHash: .hashing(written.text),
+            writtenRevision: written.revision
+        )
+        // Everything untouched: no baseline move, no revision bump.
+        XCTAssertEqual(committed, conflicted)
+        XCTAssertEqual(committed.saveState, .conflicted)
+        XCTAssertEqual(committed.diskBaselineHash, .hashing("base"))
+    }
+
+    func testCommitSaveWithFutureRevisionThrows() async throws {
+        let session = try makeSession(initialText: "base")
+        let snapshot = await session.snapshot()
+        do {
+            _ = try await session.commitSave(
+                writtenDiskHash: .hashing("base"),
+                writtenRevision: snapshot.revision + 1
+            )
+            XCTFail("Expected a stale revision error")
+        } catch {
+            XCTAssertEqual(
+                error as? DocumentSessionError,
+                .staleRevision(expected: 1, actual: 0)
+            )
+        }
+    }
+
+    func testApplyTextNeutralAppliesConflictsAtTheCurrentRevision() async throws {
+        let session = try makeSession(initialText: "base")
+        _ = try await session.apply(.replaceText("edit"), expectedRevision: 0)
+        // A second edit lands between the caller's snapshot and the
+        // conflict record — expectedRevision-based apply would throw here.
+        _ = try await session.apply(.replaceText("edit again"), expectedRevision: 1)
+        let observed = DiskContentHash.hashing("external")
+
+        let conflicted = try await session.applyTextNeutral(
+            .recordExternalChange(observedDiskHash: observed)
+        )
+        let twin = try makeSession(initialText: "base")
+        _ = try await twin.apply(.replaceText("edit"), expectedRevision: 0)
+        _ = try await twin.apply(.replaceText("edit again"), expectedRevision: 1)
+        let expected = try await twin.apply(
+            .recordExternalChange(observedDiskHash: observed),
+            expectedRevision: 2
+        )
+        XCTAssertEqual(conflicted, expected)
+        XCTAssertEqual(conflicted.saveState, .conflicted)
+
+        for mutation in [
+            DocumentMutation.replaceText("x"),
+            .commitSave(writtenDiskHash: .hashing("x")),
+            .resolveConflict(text: "x", diskBaselineHash: .hashing("x"))
+        ] {
+            do {
+                _ = try await session.applyTextNeutral(mutation)
+                XCTFail("Expected notTextNeutral for \(mutation)")
+            } catch {
+                XCTAssertEqual(error as? DocumentSessionError, .notTextNeutral)
+            }
+        }
+    }
+
+    /// The race the async save pipeline hits at session level: a dirty
+    /// session's revision-R text is written to disk, a keystroke lands
+    /// before the commit, and the commit must still move the baseline —
+    /// otherwise the next save and the file watcher both invent conflicts.
+    func testInterleavedEditDuringWriteKeepsBaselineConsistent() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("main.tex")
+        try "v0".write(to: fileURL, atomically: true, encoding: .utf8)
+        let session = try makeSession(initialText: "v0")
+        let store = FoundationAtomicDocumentStore()
+
+        let written = try await session.apply(.replaceText("v1"), expectedRevision: 0)
+        guard case .saved = store.save(
+            text: written.text,
+            to: fileURL,
+            expectedBaselineHash: written.diskBaselineHash
+        ) else {
+            return XCTFail("Expected the revision-1 write to succeed")
+        }
+
+        _ = try await session.apply(.replaceText("v2"), expectedRevision: written.revision)
+        let committed = try await session.commitSave(
+            writtenDiskHash: .hashing(written.text),
+            writtenRevision: written.revision
+        )
+        XCTAssertNil(committed.conflict)
+        XCTAssertEqual(committed.diskBaselineHash, .hashing("v1"))
+        XCTAssertEqual(committed.saveState, .dirty)
+
+        // The follow-up save must see disk == baseline — no false conflict.
+        let resave = store.save(
+            text: committed.text,
+            to: fileURL,
+            expectedBaselineHash: committed.diskBaselineHash
+        )
+        guard case .saved = resave else {
+            return XCTFail("Expected a clean re-save, got \(resave)")
+        }
+    }
+
+    /// The write serializer's shape, exercised without AppKit: each
+    /// enqueued write awaits the previous task (commit included), then
+    /// re-reads the session before touching disk.
+    func testSerializedWritesLeaveNewestTextOnDisk() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("main.tex")
+        try "v0".write(to: fileURL, atomically: true, encoding: .utf8)
+        let session = try makeSession(initialText: "v0")
+        let store = FoundationAtomicDocumentStore()
+
+        var queue: Task<Void, Never>?
+        func enqueue() {
+            let previous = queue
+            queue = Task {
+                await previous?.value
+                let snapshot = await session.snapshot()
+                guard snapshot.saveState == .dirty else { return }
+                if case let .saved(document) = store.save(
+                    text: snapshot.text,
+                    to: fileURL,
+                    expectedBaselineHash: snapshot.diskBaselineHash
+                ) {
+                    _ = try? await session.commitSave(
+                        writtenDiskHash: document.hash,
+                        writtenRevision: snapshot.revision
+                    )
+                }
+            }
+        }
+
+        _ = try await session.apply(.replaceText("v1"), expectedRevision: 0)
+        enqueue()
+        // The edit may race the first write's commit; retry on a stale
+        // base until it lands (staleRevision is the only possible error).
+        var applied = false
+        for _ in 0 ..< 100 where !applied {
+            let current = await session.snapshot()
+            applied = (try? await session.apply(
+                .replaceText("v2"),
+                expectedRevision: current.revision
+            )) != nil
+        }
+        XCTAssertTrue(applied)
+        enqueue()
+        await queue?.value
+
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "v2")
+        let snapshot = await session.snapshot()
+        XCTAssertEqual(snapshot.diskBaselineHash, .hashing("v2"))
+        XCTAssertEqual(snapshot.saveState, .clean)
+    }
+
+    /// A keep-mine write that lands after an interleaved edit must still
+    /// clear the conflict it was issued to resolve — that conflict is the
+    /// session's own, not a different one that should win.
+    func testCommitSaveResolvingSameConflictWithInterleavedEdit() async throws {
+        let session = try makeSession(initialText: "base")
+        _ = try await session.apply(.replaceText("mine"), expectedRevision: 0)
+        let conflicted = try await session.apply(
+            .recordExternalChange(observedDiskHash: .hashing("external")),
+            expectedRevision: 1
+        )
+        let conflict = try XCTUnwrap(conflicted.conflict)
+        // A keystroke lands while the keep-mine write is still in flight.
+        _ = try await session.apply(
+            .replaceText("mine plus typing"),
+            expectedRevision: conflicted.revision
+        )
+
+        let committed = try await session.commitSave(
+            writtenDiskHash: .hashing("mine"),
+            writtenRevision: conflicted.revision,
+            resolving: conflict
+        )
+        XCTAssertNil(committed.conflict)
+        XCTAssertEqual(committed.diskBaselineHash, .hashing("mine"))
+        XCTAssertEqual(committed.text, "mine plus typing")
+        XCTAssertEqual(committed.saveState, .dirty)
+        XCTAssertEqual(committed.revision, conflicted.revision + 2)
+    }
+
+    /// A conflict recorded after the resolving write started is a
+    /// different conflict: it still wins and leaves the session untouched.
+    func testCommitSaveResolvingLosesToADifferentConflict() async throws {
+        let session = try makeSession(initialText: "base")
+        _ = try await session.apply(.replaceText("mine"), expectedRevision: 0)
+        let conflicted = try await session.apply(
+            .recordExternalChange(observedDiskHash: .hashing("external")),
+            expectedRevision: 1
+        )
+        let conflict = try XCTUnwrap(conflicted.conflict)
+        // Mid-write: another resolution lands, then a fresh conflict.
+        _ = try await session.apply(
+            .resolveConflict(text: "adopted", diskBaselineHash: .hashing("external")),
+            expectedRevision: conflicted.revision
+        )
+        let reconflicted = try await session.apply(
+            .recordExternalChange(observedDiskHash: .hashing("external-2")),
+            expectedRevision: conflicted.revision + 1
+        )
+
+        let committed = try await session.commitSave(
+            writtenDiskHash: .hashing("mine"),
+            writtenRevision: conflicted.revision,
+            resolving: conflict
+        )
+        XCTAssertEqual(committed, reconflicted)
+        XCTAssertEqual(committed.saveState, .conflicted)
+        XCTAssertEqual(committed.diskBaselineHash, .hashing("external"))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("texspark-tests-\(UUID().uuidString)", isDirectory: true)
