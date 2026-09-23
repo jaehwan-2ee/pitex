@@ -123,7 +123,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y build-essential pkg-config libssl-dev curl \
-            ca-certificates git \
+            ca-certificates git unzip \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
             libpoppler-glib-dev xvfb xdotool ibus-hangul dbus-x11
       - uses: dtolnay/rust-toolchain@stable
