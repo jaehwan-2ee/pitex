@@ -134,3 +134,52 @@ fn sample_pdf() -> Vec<u8> {
     output.push_str(&format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"));
     output.into_bytes()
 }
+
+/// The `CommitDiffView` surface: a parsed patch becomes lazily bound
+/// rows, a long unchanged run renders as a fold bar, and expanding it
+/// reveals the hidden context pairs.
+#[test]
+#[ignore = "requires a GTK display (use xvfb-run)"]
+fn native_git_diff_surface_folds_and_expands() {
+    use pitex_shell::git_diff::{DiffList, DiffRow};
+    // `gtk4::init` may already have run in the sibling test — the model
+    // is a plain GObject and needs no display either way.
+    let _ = gtk4::init();
+    let mut patch = String::from(
+        "diff --git a/main.tex b/main.tex\nindex 1111111..2222222 100644\n--- a/main.tex\n+++ b/main.tex\n@@ -1,21 +1,21 @@\n",
+    );
+    for n in 1..=20 {
+        patch.push_str(&format!(" line {n}\n"));
+    }
+    patch.push_str("-old tail\n+new tail\n");
+    let section = git_core::GitDiffFileSection {
+        file: git_core::GitCommitFile {
+            path: "main.tex".into(),
+            kind: git_core::GitChangeKind::Modified,
+        },
+        binary: false,
+        rows: git_core::parse_file_diff(&patch),
+    };
+    let list = DiffList::new();
+    list.set_sections(1, true, vec![section]);
+    // 3 context + fold(14) + 3 context + the change pair.
+    assert_eq!(list.n_items(), 8);
+    let Some(DiffRow::Fold { section, id, count }) = list.row(3) else {
+        panic!("middle row should be the fold")
+    };
+    assert_eq!(count, 14);
+    list.expand_fold(section, id);
+    assert_eq!(list.n_items(), 8 - 1 + 14);
+    assert!(matches!(list.row(3), Some(DiffRow::Pair { .. })));
+    // A re-set of the same session keeps the expansion instead of
+    // re-folding on every refresh.
+    list.set_sections(1, true, vec![git_core::GitDiffFileSection {
+        file: git_core::GitCommitFile {
+            path: "main.tex".into(),
+            kind: git_core::GitChangeKind::Modified,
+        },
+        binary: false,
+        rows: git_core::parse_file_diff(&patch),
+    }]);
+    assert_eq!(list.n_items(), 8 - 1 + 14);
+}

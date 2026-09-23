@@ -374,6 +374,8 @@
 "git.folded_lines" = "\UBCC0\UACBD \UC5C6\UB294 %@\UC904";
 "git.diff.files" = "\UD30C\UC77C %@\UAC1C";
 "git.diff.binary" = "\UBC14\UC774\UB108\UB9AC \UD30C\UC77C";
+"git.diff.working_tree" = "\UC791\UC5C5 \UD2B8\UB9AC";
+"git.diff.staged" = "\UC2A4\UD14C\UC774\UC9D5\UB428";
 
 "editor.find_previous" = "이전 검색 결과";
 "editor.find_next" = "다음 검색 결과";

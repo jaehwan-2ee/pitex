@@ -49,11 +49,18 @@ enum GitRunner {
     }
 }
 
-/// An open commit diff covering the editor area. `file` nil means the
-/// whole commit ("Open Changes"); `sections` is nil while `git show` is
-/// in flight and `error` carries a failed run.
+/// An open diff covering the editor area. `file` nil means the whole
+/// change set ("Open Changes"); `sections` is nil while git is in
+/// flight and `error` carries a failed run.
 struct GitDiffSession {
-    let commit: GitCommit
+    /// What the diff is against: a commit's patch (`git show`), or the
+    /// working tree — unstaged rows compare index ↔ worktree, staged
+    /// rows HEAD ↔ index.
+    enum Source: Equatable {
+        case commit(GitCommit)
+        case workingTree(staged: Bool)
+    }
+    let source: Source
     let file: GitCommitFile?
     var sections: [GitDiffFileSection]?
     var error: String?
@@ -253,7 +260,7 @@ extension WorkspaceModel {
     func openGitDiff(_ commit: GitCommit, file: GitCommitFile) {
         guard let status = gitStatus else { return }
         let root = URL(fileURLWithPath: status.root)
-        gitDiff = GitDiffSession(commit: commit, file: file)
+        gitDiff = GitDiffSession(source: .commit(commit), file: file)
         Task {
             let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.fullHash, path: file.path), in: root)
             let sections: [GitDiffFileSection]? = await Task.detached(priority: .utility) {
@@ -261,12 +268,39 @@ extension WorkspaceModel {
                                                      rows: GitSupport.parseFileDiff(result.stdout))] : nil
             }.value
             // A second file click or project switch may have replaced the session.
-            guard gitStatus?.root == root.path, gitDiff?.commit.hash == commit.hash, gitDiff?.file == file else { return }
+            guard gitStatus?.root == root.path, gitDiff?.source == .commit(commit), gitDiff?.file == file else { return }
             gitDiff = GitDiffSession(
-                commit: commit,
+                source: .commit(commit),
                 file: file,
                 sections: sections,
                 error: result.code == 0 ? nil : result.errorText
+            )
+        }
+    }
+
+    /// Clicking a Changes row opens its working-tree diff the same way —
+    /// the row's ↗ button still opens the file itself.
+    func openGitWorkingDiff(_ change: GitChange) {
+        guard let status = gitStatus else { return }
+        let root = URL(fileURLWithPath: status.root)
+        let file = GitCommitFile(path: change.path, kind: change.kind)
+        let source = GitDiffSession.Source.workingTree(staged: change.staged)
+        gitDiff = GitDiffSession(source: source, file: file)
+        Task {
+            let result = await GitRunner.run(GitSupport.workingFileDiffArgs(change), in: root)
+            // `git diff --no-index` (untracked files) exits 1 on differences.
+            let ok = result.code == 0 || (change.kind == .untracked && result.code == 1)
+            let sections: [GitDiffFileSection]? = await Task.detached(priority: .utility) {
+                ok ? [GitDiffFileSection(file: file, binary: result.stdout.contains("Binary files"),
+                                         rows: GitSupport.parseFileDiff(result.stdout))] : nil
+            }.value
+            // A second row click or project switch may have replaced the session.
+            guard gitStatus?.root == root.path, gitDiff?.source == source, gitDiff?.file == file else { return }
+            gitDiff = GitDiffSession(
+                source: source,
+                file: file,
+                sections: sections,
+                error: ok ? nil : result.errorText
             )
         }
     }
@@ -276,14 +310,14 @@ extension WorkspaceModel {
     func openGitDiff(_ commit: GitCommit) {
         guard let status = gitStatus else { return }
         let root = URL(fileURLWithPath: status.root)
-        gitDiff = GitDiffSession(commit: commit, file: nil)
+        gitDiff = GitDiffSession(source: .commit(commit), file: nil)
         Task {
             async let filesResult = GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root)
             async let diffResult = GitRunner.run(GitSupport.commitDiffArgs(commit.fullHash), in: root)
             let (files, diff) = await (filesResult, diffResult)
-            guard gitDiff?.commit.hash == commit.hash, gitDiff?.file == nil else { return }
+            guard gitDiff?.source == .commit(commit), gitDiff?.file == nil else { return }
             guard diff.code == 0 else {
-                gitDiff = GitDiffSession(commit: commit, file: nil, error: diff.errorText)
+                gitDiff = GitDiffSession(source: .commit(commit), file: nil, error: diff.errorText)
                 return
             }
             let sections = await Task.detached(priority: .utility) {
@@ -296,8 +330,8 @@ extension WorkspaceModel {
                                        binary: section.binary, rows: section.rows)
                 }
             }.value
-            guard gitStatus?.root == root.path, gitDiff?.commit.hash == commit.hash, gitDiff?.file == nil else { return }
-            gitDiff = GitDiffSession(commit: commit, file: nil, sections: sections)
+            guard gitStatus?.root == root.path, gitDiff?.source == .commit(commit), gitDiff?.file == nil else { return }
+            gitDiff = GitDiffSession(source: .commit(commit), file: nil, sections: sections)
         }
     }
 
@@ -668,7 +702,7 @@ struct GitIntegrationView: View {
                 .foregroundStyle(badgeColor(change.kind))
                 .frame(width: 12)
             Button {
-                workspace.openGitChange(change)
+                workspace.openGitWorkingDiff(change)
             } label: {
                 HStack(spacing: 5) {
                     Text(verbatim: change.path.split(separator: "/").last.map(String.init) ?? change.path)
@@ -685,7 +719,7 @@ struct GitIntegrationView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(String(localized: "git.open_file"))
+            .help(String(localized: "git.open_diff"))
             Button {
                 workspace.openGitChange(change)
             } label: {
@@ -1011,16 +1045,26 @@ struct CommitDiffView: View {
                     .font(monoSmall)
                     .foregroundStyle(.secondary)
             }
-            Text(verbatim: session.commit.hash)
-                .font(monoSmall)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(Capsule().fill(Color.secondary.opacity(0.15)))
-            Text(verbatim: session.commit.subject)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            switch session.source {
+            case .commit(let commit):
+                Text(verbatim: commit.hash)
+                    .font(monoSmall)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                Text(verbatim: commit.subject)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            case .workingTree(let staged):
+                Text(staged ? "git.diff.staged" : "git.diff.working_tree")
+                    .font(monoSmall)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
+            }
             Spacer()
             Button {
                 workspace.closeGitDiff()

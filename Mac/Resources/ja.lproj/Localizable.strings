@@ -374,6 +374,8 @@
 "git.folded_lines" = "\U5909\U66F4\U306A\U3057 %@ \U884C";
 "git.diff.files" = "%@ \U30D5\U30A1\U30A4\U30EB";
 "git.diff.binary" = "\U30D0\U30A4\U30CA\U30EA\U30D5\U30A1\U30A4\U30EB";
+"git.diff.working_tree" = "\U30EF\U30FC\U30AD\U30F3\U30B0\U30C4\U30EA\U30FC";
+"git.diff.staged" = "\U30B9\U30C6\U30FC\U30B8\U6E08\U307F";
 
 "editor.find_previous" = "前の検索結果";
 "editor.find_next" = "次の検索結果";

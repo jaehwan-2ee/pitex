@@ -211,6 +211,20 @@ pub enum WorkspaceMessage {
     /// `suggestCommitMessage()` — the one-shot `pi --print` run returned a
     /// drafted message (Ok) or an error string for the panel's error line.
     GitSuggestFinished(Result<String, String>),
+    /// `openGitDiff`/`openGitWorkingDiff` — the diff payload arrived; `id`
+    /// is the stale-result token matching `GitDiff.id`, `root` the repo
+    /// the command ran in.
+    GitDiffLoaded {
+        id: u64,
+        root: String,
+        result: Result<Vec<git_core::GitDiffFileSection>, String>,
+    },
+    /// `toggleGitCommit`'s `commit_files_args` result for one graph row.
+    GitCommitFilesLoaded {
+        hash: String,
+        root: String,
+        files: Vec<git_core::GitCommitFile>,
+    },
 }
 
 /// One `refreshGit()` payload — status + branches + log collected off-thread.
@@ -218,6 +232,26 @@ pub struct GitRefresh {
     pub status: Arc<GitStatus>,
     pub commits: Vec<GitCommit>,
     pub branches: Vec<String>,
+}
+
+/// `GitDiffSession` — a diff covering the editor area. `sections` stays
+/// `None` while the worker runs; `error` carries a failed git call.
+pub struct GitDiff {
+    /// Stale-result token — the dispatch drops payloads for older ids.
+    pub id: u64,
+    pub source: GitDiffSource,
+    /// `file != nil` → single-file session (the header shows its badge +
+    /// path instead of the "N files" caption).
+    pub file: Option<git_core::GitCommitFile>,
+    pub sections: Option<Vec<git_core::GitDiffFileSection>>,
+    pub error: Option<String>,
+}
+
+/// What a `GitDiff` session is looking at (`GitDiffSession.Source`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitDiffSource {
+    Commit(git_core::GitCommit),
+    WorkingTree { staged: bool },
 }
 impl std::fmt::Debug for WorkspaceMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -236,6 +270,8 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::GitRefreshed(_) => write!(f, "GitRefreshed"),
             Self::GitOpFinished { .. } => write!(f, "GitOpFinished"),
             Self::GitSuggestFinished(_) => write!(f, "GitSuggestFinished"),
+            Self::GitDiffLoaded { .. } => write!(f, "GitDiffLoaded"),
+            Self::GitCommitFilesLoaded { .. } => write!(f, "GitCommitFilesLoaded"),
         }
     }
 }
@@ -749,6 +785,15 @@ pub struct WorkspaceModel {
     /// enabled while a suggestion runs.
     pub git_suggest_busy: bool,
     pub git_error: Option<String>,
+    /// `gitDiff` — the diff session covering the editor area; the PDF
+    /// inspector hides while this is set.
+    pub git_diff: Option<GitDiff>,
+    /// `gitExpandedCommits`/`gitCommitFiles`/`gitCommitFilesBusy` — graph
+    /// rows expanded to list their changed files, and the lazy per-commit
+    /// file cache filled by `toggleGitCommit`.
+    pub git_expanded_commits: std::collections::HashSet<String>,
+    pub git_commit_files: HashMap<String, Vec<git_core::GitCommitFile>>,
+    pub git_commit_files_busy: std::collections::HashSet<String>,
     /// `todoCache` — per-file (mtime | snapshot-revision, items) entries so
     /// a per-keystroke refresh only re-parses the file that changed.
     todo_cache: HashMap<PathBuf, ((u128, u64), Vec<DocumentTodoItem>)>,
@@ -860,6 +905,10 @@ impl WorkspaceModel {
             git_busy: false,
             git_suggest_busy: false,
             git_error: None,
+            git_diff: None,
+            git_expanded_commits: std::collections::HashSet::new(),
+            git_commit_files: HashMap::new(),
+            git_commit_files_busy: std::collections::HashSet::new(),
             todo_cache: HashMap::new(),
             project_label_keys: BTreeSet::new(),
             citation_keys: BTreeSet::new(),
@@ -1105,6 +1154,9 @@ impl WorkspaceModel {
         if !self.project_files.contains(&url) {
             return;
         }
+        // Activating a real document dismisses a commit-diff overlay —
+        // the user asked to see the document, not the diff.
+        self.git_diff = None;
         // Keep the workspace mounted when switching sources: a loading phase
         // destroys the split view and PDF view, losing their size and position.
         let registry = self.registry.clone();
@@ -1397,6 +1449,12 @@ impl WorkspaceModel {
         self.git_busy = false;
         self.git_suggest_busy = false;
         self.git_error = None;
+        // `clearGitHistoryState` — the history overlays refer to commits
+        // that may no longer resolve.
+        self.git_diff = None;
+        self.git_expanded_commits.clear();
+        self.git_commit_files.clear();
+        self.git_commit_files_busy.clear();
         self.todo_cache.clear();
         self.project_label_keys.clear();
         self.citation_keys.clear();

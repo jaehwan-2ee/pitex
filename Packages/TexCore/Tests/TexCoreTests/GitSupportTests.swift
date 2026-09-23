@@ -101,6 +101,50 @@ final class GitSupportTests: XCTestCase {
         guard case .meta = rows[9] else { return XCTFail("row 9 should be the \\ meta") }
     }
 
+    func testFileDiffParsesNoIndexNewFile() {
+        // `git diff --no-index /dev/null path` (untracked Changes rows)
+        // emits a normal new-file block: `/dev/null` on the `---` side.
+        let raw = """
+            diff --git a/untracked.tex b/untracked.tex
+            new file mode 100644
+            index 0000000..d5a09df
+            --- /dev/null
+            +++ b/untracked.tex
+            @@ -0,0 +1 @@
+            +brand new
+            """
+        let rows = GitSupport.parseFileDiff(raw)
+        // 5 header metas + hunk + one added pair.
+        XCTAssertEqual(rows.count, 7)
+        guard case let .pair(l, r) = rows[6] else { return XCTFail("last row should be the added line") }
+        XCTAssertNil(l)
+        XCTAssertEqual(r, GitDiffLine(number: 1, text: "brand new", kind: .added))
+    }
+
+    func testWorkingFileDiffArgs() {
+        let unified = "--unified=\(GitSupport.diffContextLines)"
+        // Unstaged tracked: index ↔ worktree.
+        XCTAssertEqual(
+            GitSupport.workingFileDiffArgs(GitChange(path: "a.tex", originalPath: nil, kind: .modified, staged: false)),
+            ["diff", unified, "--", "a.tex"])
+        // Unstaged deleted is the same form.
+        XCTAssertEqual(
+            GitSupport.workingFileDiffArgs(GitChange(path: "gone.tex", originalPath: nil, kind: .deleted, staged: false)),
+            ["diff", unified, "--", "gone.tex"])
+        // Staged: HEAD ↔ index.
+        XCTAssertEqual(
+            GitSupport.workingFileDiffArgs(GitChange(path: "a.tex", originalPath: nil, kind: .modified, staged: true)),
+            ["diff", "--staged", unified, "--", "a.tex"])
+        // Staged renames list both paths so git pairs them.
+        XCTAssertEqual(
+            GitSupport.workingFileDiffArgs(GitChange(path: "new.tex", originalPath: "old.tex", kind: .renamed, staged: true)),
+            ["diff", "--staged", unified, "--", "old.tex", "new.tex"])
+        // Untracked: --no-index against /dev/null (exits 1 on differences).
+        XCTAssertEqual(
+            GitSupport.workingFileDiffArgs(GitChange(path: "new.tex", originalPath: nil, kind: .untracked, staged: false)),
+            ["diff", "--no-index", unified, "--", "/dev/null", "new.tex"])
+    }
+
     func testFileDiffMetaOnlyForBinary() {
         let rows = GitSupport.parseFileDiff("diff --git a/a.pdf b/a.pdf\nBinary files differ\n")
         XCTAssertEqual(rows, [.meta("diff --git a/a.pdf b/a.pdf"), .meta("Binary files differ")])

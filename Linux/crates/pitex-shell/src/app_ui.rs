@@ -158,12 +158,29 @@ pub struct UiHandles {
     pub git_changes_list: RefCell<Option<gtk4::ListView>>,
     pub(crate) git_changes_model: RefCell<Option<crate::git_list::GitList>>,
     pub(crate) git_rendered_commits: RefCell<Vec<git_core::GitCommit>>,
+    /// `(expanded, file-list busy, file-list loaded)` — graph rebuild
+    /// state that `git_rendered_commits` alone doesn't capture.
+    #[allow(clippy::type_complexity)]
+    pub(crate) git_rendered_graph_state:
+        RefCell<(std::collections::BTreeSet<String>, std::collections::BTreeSet<String>, std::collections::BTreeSet<String>)>,
     pub git_graph_list: RefCell<Option<gtk4::ListBox>>,
     pub git_commit_view: RefCell<Option<gtk4::TextView>>,
     pub git_commit_button: RefCell<Option<gtk4::Button>>,
     /// The "Suggest" half of the commit box — child swaps to a Spinner
     /// while `git_suggest_busy`.
     pub git_suggest_button: RefCell<Option<gtk4::Button>>,
+    /// `CommitDiffView` — the diff overlay child of `editor_stack` and
+    /// the per-session header/content widgets it updates.
+    pub git_diff_stack: RefCell<Option<gtk4::Stack>>,
+    pub git_diff_badge: RefCell<Option<gtk4::Label>>,
+    pub git_diff_path: RefCell<Option<gtk4::Label>>,
+    pub git_diff_adds: RefCell<Option<gtk4::Label>>,
+    pub git_diff_dels: RefCell<Option<gtk4::Label>>,
+    pub git_diff_files: RefCell<Option<gtk4::Label>>,
+    pub git_diff_chip: RefCell<Option<gtk4::Label>>,
+    pub git_diff_subject: RefCell<Option<gtk4::Label>>,
+    pub git_diff_error: RefCell<Option<gtk4::Label>>,
+    pub(crate) git_diff_model: RefCell<Option<crate::git_diff::DiffList>>,
 }
 
 /// Shared application state — replaces SwiftUI's `@Published` propagation
@@ -204,6 +221,8 @@ pub struct AppState {
     git_panel_was_visible: Cell<bool>,
     pub(crate) git_refresh_pending: Cell<bool>,
     pub(crate) git_refresh_root: RefCell<Option<PathBuf>>,
+    /// `gitDiff` session counter — the `GitDiffLoaded` stale-result token.
+    pub(crate) git_diff_seq: Cell<u64>,
     /// Last `agent_context_key` pushed into `context_cell` — event dispatch
     /// skips the clone-heavy rebuild while the key is unchanged.
     pub last_context_key: Cell<u64>,
@@ -345,6 +364,7 @@ impl AppState {
             tx: Some(tx),
             git_pending_discard: None,
             git_branch_updating: Cell::new(false),
+            git_diff_seq: Cell::new(0),
         };
         state.wire_model_callbacks();
         // `completion.contextProvider` — reads live workspace state
@@ -624,8 +644,21 @@ impl AppState {
                 self.appearance.font_family.clone()
             };
             let size = self.appearance.font_size.max(1.0);
+            // Diff cell tints — `NSColor.systemRed`/`systemGreen` at the
+            // macOS `.opacity(0.16)` row alpha, light then dark.
+            let (removed, added) = if self.appearance.effective_dark() {
+                ("rgba(255, 69, 58, 0.16)", "rgba(48, 209, 88, 0.16)")
+            } else {
+                ("rgba(255, 59, 48, 0.16)", "rgba(40, 205, 65, 0.16)")
+            };
             provider.load_from_data(&format!(
-                ".pitex-editor, .pitex-editor text {{ background-color: {bg}; color: {fg}; caret-color: {fg}; font-family: {family}; font-size: {size}pt; }}"
+                ".pitex-editor, .pitex-editor text {{ background-color: {bg}; color: {fg}; caret-color: {fg}; font-family: {family}; font-size: {size}pt; }}
+                 .pitex-diff-removed {{ background-color: {removed}; }}
+                 .pitex-diff-added {{ background-color: {added}; }}
+                 .pitex-diff-empty {{ background-color: alpha(currentColor, 0.05); }}
+                 .pitex-diff-fold {{ background-color: alpha(currentColor, 0.10); padding: 4px 0; }}
+                 .pitex-diff-filehdr {{ background-color: alpha(currentColor, 0.08); border-radius: 0; }}
+                 .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}"
             ));
             gtk4::style_context_add_provider_for_display(
                 &display,
@@ -1003,18 +1036,150 @@ impl AppState {
         self.refresh_conflict_banner();
         self.refresh_shell_warning();
         self.refresh_save_sensitivity();
-        UI.with(|ui| {
-            if let Some(stack) = ui.editor_stack.borrow().as_ref() {
-                stack.set_visible_child_name(if self.model.document_snapshot.is_some() {
-                    "editor"
-                } else {
-                    "empty"
-                });
-            }
-        });
+        // Also restores the inspector after a dismissed diff — it owns
+        // the editor-stack child and inspector visibility updates.
+        self.refresh_git_diff();
         // `restoreBuiltPreview` may have swapped the bound PDF alongside the
         // document change (main document vs. chapter/bibliography target).
         self.refresh_pdf_ui();
+    }
+
+    /// The visible `editor_stack` child — a `gitDiff` session covers the
+    /// editor like `WorkspaceView`'s `CommitDiffView` overlay.
+    fn editor_stack_child(&self) -> &'static str {
+        if self.model.git_diff.is_some() {
+            "diff"
+        } else if self.model.document_snapshot.is_some() {
+            "editor"
+        } else {
+            "empty"
+        }
+    }
+
+    /// Push `model.git_diff` into the diff overlay: stack child, header
+    /// labels, content state, and the while-open inspector hiding
+    /// (`WorkspaceView` hides it whenever `gitDiff != nil`).
+    pub fn refresh_git_diff(&self) {
+        UI.with(|ui| {
+            if let Some(stack) = ui.editor_stack.borrow().as_ref() {
+                stack.set_visible_child_name(self.editor_stack_child());
+            }
+            if let Some(paned) = ui.inner_paned.borrow().as_ref() {
+                if let Some(inspector) = paned.end_child() {
+                    inspector
+                        .set_visible(self.model.inspector_visible && self.model.git_diff.is_none());
+                }
+            }
+            let Some(diff) = self.model.git_diff.as_ref() else {
+                return;
+            };
+            if let Some(badge) = ui.git_diff_badge.borrow().as_ref() {
+                badge.set_visible(diff.file.is_some());
+                if let Some(file) = &diff.file {
+                    badge.set_label(file.kind.badge());
+                    for class in ["warning", "success", "error", "accent"] {
+                        badge.remove_css_class(class);
+                    }
+                    badge.add_css_class(match file.kind {
+                        git_core::GitChangeKind::Modified | git_core::GitChangeKind::TypeChanged => "warning",
+                        git_core::GitChangeKind::Added | git_core::GitChangeKind::Untracked => "success",
+                        git_core::GitChangeKind::Deleted | git_core::GitChangeKind::Conflicted => "error",
+                        git_core::GitChangeKind::Renamed | git_core::GitChangeKind::Copied => "accent",
+                    });
+                }
+            }
+            if let Some(path) = ui.git_diff_path.borrow().as_ref() {
+                path.set_visible(diff.file.is_some());
+                if let Some(file) = &diff.file {
+                    path.set_label(&file.path);
+                }
+            }
+            // `+N −N` appears once the sections land, like
+            // `session.sections?.first` on macOS.
+            let stats = diff
+                .file
+                .as_ref()
+                .and_then(|_| diff.sections.as_ref())
+                .and_then(|s| s.first());
+            if let Some(adds) = ui.git_diff_adds.borrow().as_ref() {
+                adds.set_visible(stats.is_some());
+                if let Some(section) = stats {
+                    adds.set_label(&format!("+{}", section.additions()));
+                }
+            }
+            if let Some(dels) = ui.git_diff_dels.borrow().as_ref() {
+                dels.set_visible(stats.is_some());
+                if let Some(section) = stats {
+                    dels.set_label(&format!("−{}", section.deletions()));
+                }
+            }
+            if let Some(files) = ui.git_diff_files.borrow().as_ref() {
+                let show = diff.file.is_none() && diff.sections.is_some();
+                files.set_visible(show);
+                if show {
+                    files.set_label(&tr1(
+                        self.language,
+                        "git.diff.files",
+                        &diff.sections.as_ref().map_or(0, Vec::len).to_string(),
+                    ));
+                }
+            }
+            match &diff.source {
+                crate::model::GitDiffSource::Commit(commit) => {
+                    if let Some(chip) = ui.git_diff_chip.borrow().as_ref() {
+                        chip.set_label(&commit.hash);
+                    }
+                    if let Some(subject) = ui.git_diff_subject.borrow().as_ref() {
+                        subject.set_label(&commit.subject);
+                        subject.set_visible(true);
+                    }
+                }
+                crate::model::GitDiffSource::WorkingTree { staged } => {
+                    if let Some(chip) = ui.git_diff_chip.borrow().as_ref() {
+                        chip.set_label(&tr(
+                            self.language,
+                            if *staged { "git.diff.staged" } else { "git.diff.working_tree" },
+                        ));
+                    }
+                    if let Some(subject) = ui.git_diff_subject.borrow().as_ref() {
+                        subject.set_visible(false);
+                    }
+                }
+            }
+            if let Some(stack) = ui.git_diff_stack.borrow().as_ref() {
+                if let Some(error) = &diff.error {
+                    stack.set_visible_child_name("error");
+                    if let Some(label) = ui.git_diff_error.borrow().as_ref() {
+                        label.set_label(error);
+                    }
+                } else if let Some(sections) = &diff.sections {
+                    if sections.is_empty() {
+                        stack.set_visible_child_name("empty");
+                    } else {
+                        stack.set_visible_child_name("rows");
+                        if let Some(model) = ui.git_diff_model.borrow().as_ref() {
+                            // Binds can run while AppState is borrowed, so
+                            // the markup colors travel with the model.
+                            let (r, g, b, _) = self.appearance.color(
+                                self.store.prefs(),
+                                crate::settings::AppearanceColorRole::EditorBackground,
+                            );
+                            model.set_theme_colors(
+                                self.appearance.effective_dark(),
+                                (r, g, b),
+                            );
+                            // `set_sections` no-ops on the same session —
+                            // check before cloning every row of the diff.
+                            if model.session() != diff.id {
+                                model.set_sections(diff.id, diff.file.is_some(), sections.clone());
+                            }
+                        }
+                    }
+                } else {
+                    stack.set_visible_child_name("loading");
+                }
+            }
+        });
     }
 
     /// Coalesce typing bursts through the already-borrowed AppState. Trying
@@ -1205,6 +1370,8 @@ impl AppState {
         if let Some(tx) = self.tx.clone() {
             self.model.activate_document(url, tx);
         }
+        // `activateDocument` dismisses the diff overlay synchronously.
+        self.refresh_git_diff();
     }
 
     pub fn close_document(&mut self, url: PathBuf) {
@@ -1472,6 +1639,11 @@ impl AppState {
         self.refresh_console_visibility();
     }
     pub fn toggle_inspector_action(&mut self) {
+        // `.disabled(gitDiff != nil)` — the inspector stays while a diff
+        // covers the editor area.
+        if self.model.git_diff.is_some() {
+            return;
+        }
         self.model.inspector_visible = !self.model.inspector_visible;
         self.refresh_console_visibility();
     }
@@ -1994,7 +2166,10 @@ impl AppState {
             }
             if let Some(paned) = ui.inner_paned.borrow().as_ref() {
                 if let Some(inspector) = paned.end_child() {
-                    inspector.set_visible(self.model.inspector_visible);
+                    // `WorkspaceView` hides the inspector while `gitDiff`
+                    // covers the editor area.
+                    inspector
+                        .set_visible(self.model.inspector_visible && self.model.git_diff.is_none());
                 }
             }
         });
@@ -2486,8 +2661,24 @@ impl AppState {
                 self.git_branch_updating.set(false);
             }
             if let Some(list) = ui.git_graph_list.borrow().as_ref() {
-                if *ui.git_rendered_commits.borrow() == self.model.git_commits && list.first_child().is_some() { return; }
+                // Expansion state lives outside `git_commits` — fold it
+                // into the rendered fingerprint so a toggle/file-load
+                // rebuilds the rows too.
+                let expanded: std::collections::BTreeSet<String> =
+                    self.model.git_expanded_commits.iter().cloned().collect();
+                let busy: std::collections::BTreeSet<String> =
+                    self.model.git_commit_files_busy.iter().cloned().collect();
+                let loaded: std::collections::BTreeSet<String> =
+                    self.model.git_commit_files.keys().cloned().collect();
+                let graph_state = (expanded, busy, loaded);
+                if *ui.git_rendered_commits.borrow() == self.model.git_commits
+                    && *ui.git_rendered_graph_state.borrow() == graph_state
+                    && list.first_child().is_some()
+                {
+                    return;
+                }
                 *ui.git_rendered_commits.borrow_mut() = self.model.git_commits.clone();
+                *ui.git_rendered_graph_state.borrow_mut() = graph_state;
                 clear_list(list);
                 if self.model.git_commits.is_empty() {
                     let row = gtk4::Label::new(Some(&tr(lang, "git.no_commits")));
@@ -2496,7 +2687,16 @@ impl AppState {
                     list.append(&row);
                 } else {
                     for commit in &self.model.git_commits {
-                        list.append(&crate::panes::git_commit_row(commit, lang));
+                        list.append(&crate::panes::git_commit_row(
+                            commit,
+                            self.model.git_expanded_commits.contains(&commit.hash),
+                            self.model
+                                .git_commit_files
+                                .get(&commit.hash)
+                                .map(Vec::as_slice),
+                            self.model.git_commit_files_busy.contains(&commit.hash),
+                            lang,
+                        ));
                     }
                 }
             }
@@ -2618,44 +2818,6 @@ impl AppState {
             d.close();
         });
         dialog.present();
-    }
-
-    /// The graph context menu's "Open Changes" — `git show` on a worker,
-    /// then a read-only scrolled window with the raw patch (the Linux
-    /// panel has no side-by-side diff surface like macOS).
-    pub fn git_open_commit_diff(&self, commit: &git_core::GitCommit) {
-        let Some(root) = self.model.git_status.as_ref().map(|s| s.root.clone()) else {
-            return;
-        };
-        let title = format!("{} — {}", commit.hash, commit.subject);
-        let hash = commit.full_hash.clone();
-        std::thread::spawn(move || {
-            let result = crate::git::run_git(
-                Path::new(&root),
-                git_core::show_commit_args(&hash),
-            );
-            glib::idle_add_once(move || {
-                let text = result.unwrap_or_else(|e| e);
-                let window = UI.with(|ui| ui.window.borrow().clone());
-                let dialog = gtk4::Window::new();
-                dialog.set_title(Some(&title));
-                dialog.set_transient_for(window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()));
-                dialog.set_default_size(880, 560);
-                dialog.set_titlebar(Some(&gtk4::HeaderBar::new()));
-                let scroll = gtk4::ScrolledWindow::new();
-                let view = gtk4::TextView::new();
-                view.set_editable(false);
-                view.set_monospace(true);
-                view.set_top_margin(8);
-                view.set_bottom_margin(8);
-                view.set_left_margin(10);
-                view.set_right_margin(10);
-                view.buffer().set_text(&text);
-                scroll.set_child(Some(&view));
-                dialog.set_child(Some(&scroll));
-                dialog.present();
-            });
-        });
     }
 
     pub fn refresh_build_ui(&mut self) {
@@ -3326,6 +3488,13 @@ impl AppState {
                         self.model.git_status = None;
                         self.model.git_commits.clear();
                         self.model.git_branches.clear();
+                        // `clearGitHistoryState` — expanded rows and an
+                        // open diff refer to a repo that may be gone.
+                        self.model.git_expanded_commits.clear();
+                        self.model.git_commit_files.clear();
+                        self.model.git_commit_files_busy.clear();
+                        self.model.git_diff = None;
+                        self.refresh_git_diff();
                     }
                 }
                 self.refresh_git_panel();
@@ -3364,6 +3533,31 @@ impl AppState {
                 }
                 self.refresh_git_panel();
                 self.refresh_git_commit_button();
+            }
+            WorkspaceMessage::GitDiffLoaded { id, root, result } => {
+                // Stale-result guards — a later click, close, or project
+                // switch replaced the session this payload belongs to.
+                let current = self.model.git_diff.as_ref().map(|d| d.id) == Some(id)
+                    && self.model.git_status.as_ref().map(|s| s.root.as_str())
+                        == Some(root.as_str());
+                if current {
+                    if let Some(diff) = self.model.git_diff.as_mut() {
+                        match result {
+                            Ok(sections) => diff.sections = Some(sections),
+                            Err(error) => diff.error = Some(error),
+                        }
+                    }
+                    self.refresh_git_diff();
+                }
+            }
+            WorkspaceMessage::GitCommitFilesLoaded { hash, root, files } => {
+                if self.model.git_status.as_ref().map(|s| s.root.as_str())
+                    == Some(root.as_str())
+                {
+                    self.model.git_commit_files_busy.remove(&hash);
+                    self.model.git_commit_files.insert(hash, files);
+                }
+                self.refresh_git_panel();
             }
         }
         self.drain_side_effects();
@@ -4008,6 +4202,7 @@ fn build_chrome(
         let state = state.clone();
         pdf_toggle.connect_clicked(move |_| {
             let Ok(mut s) = state.try_borrow_mut() else { return };
+            if s.model.git_diff.is_some() { return; }
             s.model.inspector_visible = !s.model.inspector_visible;
             s.refresh_console_visibility();
         });
@@ -5073,6 +5268,8 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     ui.minimap.replace(Some(minimap.clone()));
     editor_row.append(&minimap);
     editor_stack.add_named(&editor_row, Some("editor"));
+    // `CommitDiffView` — a `gitDiff` session covers the editor area.
+    editor_stack.add_named(&crate::git_diff::build(&state, &ui, lang), Some("diff"));
     editor_stack.set_visible_child_name("empty");
     ui.editor_stack.replace(Some(editor_stack.clone()));
     root.append(&editor_stack);
@@ -5130,6 +5327,7 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
         let state = state.clone();
         inspector_btn.connect_clicked(move |_| {
             let Ok(mut s) = state.try_borrow_mut() else { return };
+            if s.model.git_diff.is_some() { return; }
             s.model.inspector_visible = !s.model.inspector_visible;
             s.refresh_console_visibility();
         });
@@ -5360,6 +5558,88 @@ for line in sys.stdin:
         UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
         finished.store(true, std::sync::atomic::Ordering::Release);
         eprintln!("PASS: small project opened and GTK continued processing events");
+    }
+
+    /// Screenshot sanity check for `CommitDiffView`: inject a real parsed
+    /// working-tree diff, present the window, and write a PNG to
+    /// `PITEX_DIFF_SHOT` (default /tmp/pitex-git-diff.png).
+    #[test]
+    #[ignore = "requires a GTK display (use xvfb-run)"]
+    fn git_diff_surface_renders_to_png() {
+        let root = std::env::temp_dir().join(format!("pitex-diffshot-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("config"));
+        std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
+        std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id("app.pitex.DiffShot")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        build_window(&app, "diffshot-test");
+        let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        // The diff surface sits inside the workspace — open a project.
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let file = project.join("main.tex");
+        std::fs::write(&file, "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n").unwrap();
+        state.borrow_mut().open_selected(file);
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            if matches!(state.borrow().model.phase, WorkspacePhase::Ready) { break; }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(state.borrow().model.phase, WorkspacePhase::Ready));
+
+        // A patch with a long folded context run and a changed pair
+        // exercising the intra-line highlight.
+        let mut patch = String::from(
+            "diff --git a/main.tex b/main.tex\nindex 1111111..2222222 100644\n--- a/main.tex\n+++ b/main.tex\n@@ -1,21 +1,21 @@\n",
+        );
+        for n in 1..=20 {
+            patch.push_str(&format!(" \\section{{Chapter {n}}} body text\n"));
+        }
+        patch.push_str("-the quick brown fox jumps over\n+the quick brown fox leaps over\n");
+        let section = git_core::GitDiffFileSection {
+            file: git_core::GitCommitFile {
+                path: "main.tex".into(),
+                kind: git_core::GitChangeKind::Modified,
+            },
+            binary: false,
+            rows: git_core::parse_file_diff(&patch),
+        };
+        {
+            let mut s = state.borrow_mut();
+            s.model.git_diff = Some(crate::model::GitDiff {
+                id: 1,
+                source: crate::model::GitDiffSource::WorkingTree { staged: false },
+                file: Some(section.file.clone()),
+                sections: Some(vec![section]),
+                error: None,
+            });
+        }
+        state.borrow().refresh_git_diff();
+        let window = UI.with(|ui| ui.window.borrow().as_ref().unwrap().clone());
+        window.present();
+        for _ in 0..50 {
+            while context.pending() { context.iteration(false); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let widget = window.upcast_ref::<gtk4::Widget>();
+        let (w, h) = (widget.width() as f64, widget.height() as f64);
+        let paintable = gtk4::WidgetPaintable::new(Some(widget));
+        let snapshot = gtk4::Snapshot::new();
+        paintable.snapshot(&snapshot, w, h);
+        let node = snapshot.to_node().expect("snapshot produced a node");
+        let renderer = window.native().unwrap().renderer().unwrap();
+        // `None` viewport renders the node's full bounds.
+        let texture = renderer.render_texture(&node, None);
+        let out = std::env::var("PITEX_DIFF_SHOT")
+            .unwrap_or_else(|_| "/tmp/pitex-git-diff.png".into());
+        texture.save_to_png(&out).unwrap();
+        eprintln!("diff screenshot written to {out}");
+        window.close();
     }
 }
 

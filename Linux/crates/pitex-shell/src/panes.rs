@@ -405,7 +405,7 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
         let model = changes_model.clone();
         changes_list.connect_activate(move |_, position| {
             if let Some(crate::git_list::Row::Change(change)) = model.row(position) {
-                if let Ok(mut s) = state.try_borrow_mut() { s.git_open_change(&change); }
+                if let Ok(mut s) = state.try_borrow_mut() { s.git_open_working_diff(&change); }
             }
         });
     }
@@ -517,6 +517,26 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     let graph_list = gtk4::ListBox::new();
     graph_list.set_selection_mode(gtk4::SelectionMode::None);
     a11y(&graph_list, "pitex.git.graph", "git.graph");
+    {
+        // `toggleGitCommit` — activation expands/collapses the file list.
+        let state = state.clone();
+        graph_list.connect_row_activated(move |_, row| {
+            let hash = row.widget_name();
+            let hash = hash.strip_prefix("pitex.git.commit.").unwrap_or(&hash);
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            let Some(commit) = s
+                .model
+                .git_commits
+                .iter()
+                .find(|c| c.hash == hash)
+                .cloned()
+            else {
+                return;
+            };
+            s.git_toggle_commit(&commit);
+            s.refresh_git_panel();
+        });
+    }
     graph_scroll.set_child(Some(&graph_list));
     ui.git_graph_list.replace(Some(graph_list.clone()));
     right.append(&graph_scroll);
@@ -617,7 +637,8 @@ pub(crate) fn git_section_row(
 }
 
 /// One `GitChange` row — badge letter, file name, path, and the
-/// stage/unstage + discard actions (row activation opens the file).
+/// open-file + stage/unstage + discard actions (row activation opens
+/// the working-tree diff).
 pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::Box {
     let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     hbox.set_margin_start(8);
@@ -665,22 +686,24 @@ pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::Box {
     }
 
     let change = change.clone();
+    // Cloned before the toggle closure moves `change` — discard renders last.
+    let discard_change = change.clone();
     {
+        // ↗ opens the file itself — row activation shows its diff.
         let change = change.clone();
-        let discard = gtk4::Button::from_icon_name("user-trash-symbolic");
-        compat::initial_tooltip(&discard, &tr(lang, "git.discard"));
-        discard.add_css_class("flat");
-        discard.connect_clicked(move |_| {
+        let open = gtk4::Button::from_icon_name("document-open-symbolic");
+        compat::initial_tooltip(&open, &tr(lang, "git.open_file"));
+        open.add_css_class("flat");
+        open.connect_clicked(move |_| {
             STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     if let Ok(mut st) = state.try_borrow_mut() {
-                        st.git_pending_discard = Some(change.clone());
-                        st.git_discard_dialog();
+                        st.git_open_change(&change);
                     }
                 }
             });
         });
-        hbox.append(&discard);
+        hbox.append(&open);
     }
     {
         let toggle = gtk4::Button::from_icon_name(if change.staged {
@@ -712,20 +735,56 @@ pub(crate) fn git_change_row(change: &GitChange, lang: &str) -> gtk4::Box {
         });
         hbox.append(&toggle);
     }
+    {
+        let change = discard_change;
+        let discard = gtk4::Button::from_icon_name("user-trash-symbolic");
+        compat::initial_tooltip(&discard, &tr(lang, "git.discard"));
+        discard.add_css_class("flat");
+        discard.connect_clicked(move |_| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.git_pending_discard = Some(change.clone());
+                        st.git_discard_dialog();
+                    }
+                }
+            });
+        });
+        hbox.append(&discard);
+    }
     hbox
 }
 
-/// One `GitCommit` row — lane dot + connector, subject, ref chips, and the
-/// author · date · hash subtitle.
-pub(crate) fn git_commit_row(commit: &GitCommit, lang: &'static str) -> gtk4::ListBoxRow {
+/// One `GitCommit` row — disclosure chevron, lane dot + connector,
+/// subject, ref chips, and the author · date · hash subtitle. Activation
+/// toggles the changed-files list (VSCode/GitLens-style expansion).
+pub(crate) fn git_commit_row(
+    commit: &GitCommit,
+    expanded: bool,
+    files: Option<&[git_core::GitCommitFile]>,
+    busy: bool,
+    lang: &'static str,
+) -> gtk4::ListBoxRow {
     let row = gtk4::ListBoxRow::new();
-    row.set_activatable(false);
+    row.set_activatable(true);
     row.set_selectable(false);
+    row.set_widget_name(&format!("pitex.git.commit.{}", commit.hash));
+    let outer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     hbox.set_margin_start(8);
     hbox.set_margin_end(8);
     hbox.set_margin_top(2);
     hbox.set_margin_bottom(2);
+
+    let chevron = gtk4::Image::from_icon_name(if expanded {
+        "pan-down-symbolic"
+    } else {
+        "pan-end-symbolic"
+    });
+    chevron.add_css_class("dim-label");
+    chevron.set_valign(gtk4::Align::Start);
+    chevron.set_margin_top(4);
+    hbox.append(&chevron);
 
     let lane = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let dot = gtk4::Label::new(Some("●"));
@@ -764,9 +823,83 @@ pub(crate) fn git_commit_row(commit: &GitCommit, lang: &'static str) -> gtk4::Li
     vbox.append(&subtitle);
     vbox.set_hexpand(true);
     hbox.append(&vbox);
-    row.set_child(Some(&hbox));
+    outer.append(&hbox);
+
+    // Changed files under an expanded commit — each opens the diff.
+    if expanded {
+        let file_list = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        file_list.set_margin_start(28);
+        file_list.set_margin_top(2);
+        file_list.set_margin_bottom(2);
+        if busy {
+            let spinner = gtk4::Spinner::new();
+            spinner.set_halign(gtk4::Align::Start);
+            spinner.start();
+            file_list.append(&spinner);
+        } else {
+            for file in files.unwrap_or(&[]) {
+                file_list.append(&commit_file_row(commit, file, lang));
+            }
+        }
+        outer.append(&file_list);
+    }
+
+    row.set_child(Some(&outer));
     attach_commit_menu(&row, commit, lang);
     row
+}
+
+/// A file under an expanded commit — badge + name + dim directory;
+/// clicking opens the side-by-side diff (`pitex.git.commitFile`).
+fn commit_file_row(
+    commit: &GitCommit,
+    file: &git_core::GitCommitFile,
+    lang: &'static str,
+) -> gtk4::Button {
+    let button = gtk4::Button::new();
+    button.add_css_class("flat");
+    button.set_widget_name("pitex.git.commitFile");
+    compat::initial_tooltip(&button, &tr(lang, "git.open_diff"));
+    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let badge = gtk4::Label::new(Some(file.kind.badge()));
+    badge.add_css_class("monospace");
+    badge.add_css_class("caption");
+    badge.add_css_class(match file.kind {
+        git_core::GitChangeKind::Modified | git_core::GitChangeKind::TypeChanged => "warning",
+        git_core::GitChangeKind::Added | git_core::GitChangeKind::Untracked => "success",
+        git_core::GitChangeKind::Deleted | git_core::GitChangeKind::Conflicted => "error",
+        git_core::GitChangeKind::Renamed | git_core::GitChangeKind::Copied => "accent",
+    });
+    badge.set_width_chars(2);
+    hbox.append(&badge);
+    let name = file.path.rsplit('/').next().unwrap_or(&file.path).to_string();
+    let name_label = gtk4::Label::new(Some(&name));
+    name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    name_label.set_xalign(0.0);
+    hbox.append(&name_label);
+    if let Some(dir) = file.path.rsplit_once('/').map(|(d, _)| d) {
+        let dir_label = gtk4::Label::new(Some(dir));
+        dir_label.add_css_class("caption");
+        dir_label.add_css_class("dim-label");
+        dir_label.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
+        dir_label.set_xalign(0.0);
+        hbox.append(&dir_label);
+    }
+    button.set_child(Some(&hbox));
+    {
+        let commit = commit.clone();
+        let file = file.clone();
+        button.connect_clicked(move |_| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.git_open_commit_diff(&commit, file.clone());
+                    }
+                }
+            });
+        });
+    }
+    button
 }
 
 /// Right-click popover on a graph row — VSCode's commit context menu:
@@ -786,6 +919,7 @@ fn attach_commit_menu(row: &gtk4::ListBoxRow, commit: &GitCommit, lang: &'static
         popover.set_child(Some(&vbox));
 
         let open = gtk4::Button::with_label(&tr(lang, "git.open_changes"));
+        open.set_widget_name("pitex.git.commit.openChanges");
         open.set_has_frame(false);
         {
             let commit = commit.clone();
@@ -794,8 +928,8 @@ fn attach_commit_menu(row: &gtk4::ListBoxRow, commit: &GitCommit, lang: &'static
                 popover.popdown();
                 STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        if let Ok(st) = state.try_borrow() {
-                            st.git_open_commit_diff(&commit);
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            st.git_open_commit_full_diff(&commit);
                         }
                     }
                 });
@@ -804,6 +938,7 @@ fn attach_commit_menu(row: &gtk4::ListBoxRow, commit: &GitCommit, lang: &'static
         vbox.append(&open);
 
         let copy_hash = gtk4::Button::with_label(&tr(lang, "git.copy_hash"));
+        copy_hash.set_widget_name("pitex.git.commit.copyHash");
         copy_hash.set_has_frame(false);
         {
             let text = commit.full_hash.clone();
@@ -816,6 +951,7 @@ fn attach_commit_menu(row: &gtk4::ListBoxRow, commit: &GitCommit, lang: &'static
         vbox.append(&copy_hash);
 
         let copy_message = gtk4::Button::with_label(&tr(lang, "git.copy_message"));
+        copy_message.set_widget_name("pitex.git.commit.copyMessage");
         copy_message.set_has_frame(false);
         {
             let text = commit.message.clone();
@@ -830,6 +966,7 @@ fn attach_commit_menu(row: &gtk4::ListBoxRow, commit: &GitCommit, lang: &'static
         vbox.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
 
         let branch = gtk4::Button::with_label(&tr(lang, "git.branch_new"));
+        branch.set_widget_name("pitex.git.commit.newBranch");
         branch.set_has_frame(false);
         {
             let hash = commit.full_hash.clone();

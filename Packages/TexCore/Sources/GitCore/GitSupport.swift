@@ -263,6 +263,22 @@ public enum GitSupport {
          "--unified=\(diffContextLines)", hash]
     }
 
+    /// One Changes row's patch: index ↔ worktree normally, HEAD ↔ index
+    /// when `staged` (rename rows list both paths so git pairs them
+    /// instead of showing add+delete), and `--no-index` against
+    /// `/dev/null` for untracked files — which exits 1 when the file
+    /// differs, so callers treat codes 0 and 1 as success there.
+    public static func workingFileDiffArgs(_ change: GitChange) -> [String] {
+        if change.kind == .untracked {
+            return ["diff", "--no-index", "--unified=\(diffContextLines)", "--", "/dev/null", change.path]
+        }
+        if change.staged {
+            return ["diff", "--staged", "--unified=\(diffContextLines)", "--"]
+                + (change.originalPath.map { [$0] } ?? []) + [change.path]
+        }
+        return ["diff", "--unified=\(diffContextLines)", "--", change.path]
+    }
+
     /// `commitFilesArgs` output → badge + path rows. Rename/copy rows end
     /// with the new path — the diff targets that name.
     public static func parseCommitFiles(_ raw: String) -> [GitCommitFile] {

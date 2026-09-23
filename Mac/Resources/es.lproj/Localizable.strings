@@ -373,6 +373,8 @@
 "git.folded_lines" = "%@ l\U00EDneas sin cambios";
 "git.diff.files" = "%@ archivos";
 "git.diff.binary" = "Archivo binario";
+"git.diff.working_tree" = "\U00C1rbol de trabajo";
+"git.diff.staged" = "Preparado";
 
 "editor.find_previous" = "Coincidencia anterior";
 "editor.find_next" = "Coincidencia siguiente";

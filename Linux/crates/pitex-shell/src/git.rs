@@ -4,14 +4,17 @@
 //! and reports back through `WorkspaceMessage`; `app_ui.rs` applies them.
 
 use crate::app_ui::AppState;
-use crate::model::{GitRefresh, WorkspaceMessage};
-use git_core::{self, GitChange, GitChangeKind};
+use crate::model::{GitDiff, GitDiffSource, GitRefresh, WorkspaceMessage};
+use git_core::{self, GitChange, GitChangeKind, GitCommitFile};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-pub(crate) fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
+/// `run_git` with an explicit set of success exit codes — `git diff
+/// --no-index` exits 1 when the compared files differ, which is not an
+/// error for the untracked-file diff.
+pub(crate) fn run_git_codes<I, S>(dir: &Path, args: I, ok: &[i32]) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -25,7 +28,7 @@ where
         .current_dir(dir)
         .output()
         .map_err(|e| e.to_string())?;
-    if output.status.success() {
+    if ok.contains(&output.status.code().unwrap_or(-1)) {
         Ok(String::from_utf8(output.stdout)
             .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
     } else {
@@ -33,6 +36,14 @@ where
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         Err(if stderr.is_empty() { stdout } else { stderr })
     }
+}
+
+pub(crate) fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    run_git_codes(dir, args, &[0])
 }
 
 /// `refreshGit()`'s off-thread half — detect the repo, then read status,
@@ -279,6 +290,171 @@ impl AppState {
         let Some(tx) = self.tx.clone() else { return };
         self.model
             .activate_document(PathBuf::from(root).join(&change.path), tx);
+        self.refresh_git_diff();
+    }
+
+    /// `toggleGitCommit` — a graph row's disclosure: the first expansion
+    /// fetches the commit's `--name-status` list on a worker.
+    pub fn git_toggle_commit(&mut self, commit: &git_core::GitCommit) {
+        if self.model.git_expanded_commits.contains(&commit.hash) {
+            self.model.git_expanded_commits.remove(&commit.hash);
+            return;
+        }
+        self.model.git_expanded_commits.insert(commit.hash.clone());
+        if self.model.git_commit_files.contains_key(&commit.hash) {
+            return;
+        }
+        let Some(root) = self.model.git_status.as_ref().map(|s| s.root.clone()) else {
+            return;
+        };
+        let Some(tx) = self.tx.clone() else { return };
+        self.model.git_commit_files_busy.insert(commit.hash.clone());
+        let hash = commit.full_hash.clone();
+        let key = commit.hash.clone();
+        std::thread::spawn(move || {
+            let files = run_git(Path::new(&root), git_core::commit_files_args(&hash))
+                .map(|raw| git_core::parse_commit_files(&raw))
+                .unwrap_or_default();
+            let _ = tx.send(WorkspaceMessage::GitCommitFilesLoaded {
+                hash: key,
+                root,
+                files,
+            });
+        });
+    }
+
+    /// `openGitDiff(_:file:)` — clicking a file under a commit opens its
+    /// diff over the editor area.
+    pub fn git_open_commit_diff(&mut self, commit: &git_core::GitCommit, file: GitCommitFile) {
+        let Some(root) = self.model.git_status.as_ref().map(|s| s.root.clone()) else {
+            return;
+        };
+        let Some(tx) = self.tx.clone() else { return };
+        let id = self.next_git_diff_id();
+        self.model.git_diff = Some(GitDiff {
+            id,
+            source: GitDiffSource::Commit(commit.clone()),
+            file: Some(file.clone()),
+            sections: None,
+            error: None,
+        });
+        self.refresh_git_diff();
+        let hash = commit.full_hash.clone();
+        std::thread::spawn(move || {
+            let result = run_git(Path::new(&root), git_core::file_diff_args(&hash, &file.path))
+                .map(|stdout| {
+                    vec![git_core::GitDiffFileSection {
+                        binary: stdout.contains("Binary files"),
+                        rows: git_core::parse_file_diff(&stdout),
+                        file,
+                    }]
+                });
+            let _ = tx.send(WorkspaceMessage::GitDiffLoaded { id, root, result });
+        });
+    }
+
+    /// `openGitDiff(_:)` — the context menu's "Open Changes": the whole
+    /// commit as a multi-file diff, like VSCode's multi-diff editor.
+    pub fn git_open_commit_full_diff(&mut self, commit: &git_core::GitCommit) {
+        let Some(root) = self.model.git_status.as_ref().map(|s| s.root.clone()) else {
+            return;
+        };
+        let Some(tx) = self.tx.clone() else { return };
+        let id = self.next_git_diff_id();
+        self.model.git_diff = Some(GitDiff {
+            id,
+            source: GitDiffSource::Commit(commit.clone()),
+            file: None,
+            sections: None,
+            error: None,
+        });
+        self.refresh_git_diff();
+        let hash = commit.full_hash.clone();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let diff = run_git(Path::new(&root), git_core::commit_diff_args(&hash))?;
+                let files = run_git(Path::new(&root), git_core::commit_files_args(&hash))
+                    .map(|raw| git_core::parse_commit_files(&raw))
+                    .unwrap_or_default();
+                let kinds: std::collections::HashMap<String, GitChangeKind> = files
+                    .into_iter()
+                    .map(|f| (f.path, f.kind))
+                    .collect();
+                Ok(git_core::parse_commit_diff(&diff)
+                    .into_iter()
+                    .map(|(path, binary, rows)| git_core::GitDiffFileSection {
+                        file: GitCommitFile {
+                            kind: kinds.get(&path).copied().unwrap_or(GitChangeKind::Modified),
+                            path,
+                        },
+                        binary,
+                        rows,
+                    })
+                    .collect())
+            })();
+            let _ = tx.send(WorkspaceMessage::GitDiffLoaded { id, root, result });
+        });
+    }
+
+    /// `openGitWorkingDiff` — clicking a Changes row opens its
+    /// working-tree diff the same way; the row's ↗ button still opens
+    /// the file itself.
+    pub fn git_open_working_diff(&mut self, change: &GitChange) {
+        let Some(root) = self.model.git_status.as_ref().map(|s| s.root.clone()) else {
+            return;
+        };
+        let Some(tx) = self.tx.clone() else { return };
+        let file = GitCommitFile {
+            path: change.path.clone(),
+            kind: change.kind,
+        };
+        let id = self.next_git_diff_id();
+        self.model.git_diff = Some(GitDiff {
+            id,
+            source: GitDiffSource::WorkingTree {
+                staged: change.staged,
+            },
+            file: Some(file),
+            sections: None,
+            error: None,
+        });
+        self.refresh_git_diff();
+        let change = change.clone();
+        std::thread::spawn(move || {
+            let args = git_core::working_file_diff_args(&change);
+            // `git diff --no-index` (untracked files) exits 1 on differences.
+            let ok: &[i32] = if change.kind == GitChangeKind::Untracked {
+                &[0, 1]
+            } else {
+                &[0]
+            };
+            let result = run_git_codes(Path::new(&root), args, ok).map(|stdout| {
+                vec![git_core::GitDiffFileSection {
+                    binary: stdout.contains("Binary files"),
+                    rows: git_core::parse_file_diff(&stdout),
+                    file: GitCommitFile {
+                        path: change.path.clone(),
+                        kind: change.kind,
+                    },
+                }]
+            });
+            let _ = tx.send(WorkspaceMessage::GitDiffLoaded { id, root, result });
+        });
+    }
+
+    /// `closeGitDiff` — the diff overlay's close button.
+    pub fn git_close_diff(&mut self) {
+        self.model.git_diff = None;
+        self.refresh_git_diff();
+    }
+
+    /// `openGitDiff*` sessions get a monotonically increasing id — the
+    /// dispatch drops worker results for superseded sessions (the Swift
+    /// `gitDiff?.source == …` guards).
+    fn next_git_diff_id(&self) -> u64 {
+        let id = self.git_diff_seq.get() + 1;
+        self.git_diff_seq.set(id);
+        id
     }
 }
 
