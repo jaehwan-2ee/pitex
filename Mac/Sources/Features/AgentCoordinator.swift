@@ -76,6 +76,10 @@ final class AgentCoordinator: ObservableObject {
     }
 
     @Published private(set) var connection: Connection = .idle
+    /// True once the panel (or a send path) has asked for the agent — pi
+    /// spawns lazily on first use, and reconnect hooks must not start it
+    /// for a window whose Assistant was never opened.
+    private(set) var wantsConnection = false
     /// The history list (`/resume` or the clock button), newest first.
     @Published private(set) var pastSessions: [AgentSessionSummary] = []
     @Published var showingSessionHistory = false
@@ -160,6 +164,11 @@ final class AgentCoordinator: ObservableObject {
     private var textContentIndex: Int?
     private var thinkingContentIndex: Int?
     private var toolIndexByCallID: [String: Int] = [:]
+    /// Token deltas buffer per entry id — transcript indices shift when the
+    /// history-limit trim drops rows, so flushes resolve ids at apply time.
+    /// One merge per 50 ms window replaces a publish per token.
+    private var pendingDeltas: [UUID: String] = [:]
+    private var deltaFlushTask: Task<Void, Never>?
     private var prepareTask: Task<Void, Never>?
     private var modelSettingsRequestID: String?
     /// Watches `PiPaths.agentDirectory` so auth/model/settings edits made in
@@ -195,6 +204,7 @@ final class AgentCoordinator: ObservableObject {
     /// first prompt is sent. Safe to call again after installing pi or a
     /// spawn failure.
     func prepare() {
+        wantsConnection = true
         startConfigWatcher()
         switch connection {
         case .connecting, .ready: return
@@ -206,6 +216,7 @@ final class AgentCoordinator: ObservableObject {
 
     func shutdown() {
         intentionalStop = true
+        flushDeltas()
         prepareTask?.cancel()
         eventTask?.cancel()
         process?.terminate()
@@ -217,14 +228,25 @@ final class AgentCoordinator: ObservableObject {
 
     /// Reconnect after provider/model/settings changes: `shutdown()` leaves
     /// `connection` at `.ready`, which would make `prepare()` early-return,
-    /// so the state is reset to `.idle` first.
+    /// so the state is reset to `.idle` first. A coordinator that never
+    /// wanted a connection resets the same way but stays idle — config and
+    /// install hooks must not spawn pi for an unopened Assistant.
     func restart() {
         shutdown()
         connection = .idle
         intentionalStop = false
         sessionStats = nil
         commands = []
-        prepare()
+        if wantsConnection { prepare() }
+    }
+
+    /// Install hooks (re)connect only when the panel already asked for a
+    /// connection; otherwise the first panel appearance prepares it.
+    /// `reconnect` takes the shutdown-and-prepare path for a binary update —
+    /// a plain `prepare()` early-returns on `.ready` and can't pick it up.
+    func resumeIfWanted(reconnect: Bool = false) {
+        guard wantsConnection else { return }
+        if reconnect { restart() } else { prepare() }
     }
 
     // MARK: - Agent config watch
@@ -354,6 +376,7 @@ final class AgentCoordinator: ObservableObject {
 
     private func processDidExit(_ exited: PiAgentProcess?) {
         guard exited == nil || process === exited else { return }
+        flushDeltas()
         process = nil
         isRunning = false
         modelSettingsRequestID = nil
@@ -381,17 +404,29 @@ final class AgentCoordinator: ObservableObject {
             showSessionHistory()
             return
         }
+        flushDeltas()
         transcript.append(AgentTranscriptEntry(role: .user, title: "You", text: trimmed))
         statusMessage = nil
         Task {
             if let problem = await persistDirtySessions() {
+                flushDeltas()
                 transcript.append(AgentTranscriptEntry(
                     role: .notice, title: "Assistant",
                     text: problem, status: .failed
                 ))
                 return
             }
-            if process == nil { await prepareAgent() }
+            if process == nil {
+                // Sending counts as wanting the agent. Await an in-flight
+                // prepare rather than racing a second spawn; a post-
+                // shutdown `.ready` still prepares directly, as before.
+                prepare()
+                if let prepareTask {
+                    await prepareTask.value
+                } else {
+                    await prepareAgent()
+                }
+            }
             guard let process, process.isRunning else {
                 if connection == .idle { connection = .connecting }
                 statusMessage = "The agent is not running."
@@ -421,6 +456,7 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func clearTranscript() {
+        flushDeltas()
         transcript = []
         toolIndexByCallID = [:]
         assistantEntryIndex = nil
@@ -577,6 +613,8 @@ final class AgentCoordinator: ObservableObject {
     // MARK: - Event handling
 
     private func handle(_ event: PiRPCEvent) {
+        // Buffered deltas land before anything else rewrites the transcript.
+        if event.type != "message_update" { flushDeltas() }
         switch event.type {
         case "response":
             handleResponse(event)
@@ -735,37 +773,71 @@ final class AgentCoordinator: ObservableObject {
         thinkingContentIndex = nil
     }
 
+    /// Accumulates one token onto an entry's pending text; the first delta
+    /// after a flush schedules the next merge.
+    private func bufferDelta(_ text: String, for id: UUID) {
+        pendingDeltas[id, default: ""] += text
+        guard deltaFlushTask == nil else { return }
+        deltaFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard let self, !Task.isCancelled else { return }
+            self.flushDeltas()
+        }
+    }
+
+    /// Merges buffered deltas into their transcript rows and drops any
+    /// scheduled flush. Anything else that rewrites rows — other events,
+    /// sends, clears, shutdown — calls this first so a late flush can never
+    /// append after them. Ids no longer in the transcript drop silently.
+    private func flushDeltas() {
+        deltaFlushTask?.cancel()
+        deltaFlushTask = nil
+        guard !pendingDeltas.isEmpty else { return }
+        let deltas = pendingDeltas
+        pendingDeltas = [:]
+        for (id, text) in deltas {
+            guard let index = transcript.firstIndex(where: { $0.id == id }) else { continue }
+            transcript[index].text += text
+        }
+    }
+
     private func handleMessageUpdate(_ event: PiRPCEvent) {
         guard let delta = event.nested("assistantMessageEvent"),
               let deltaType = delta["type"] as? String else { return }
         switch deltaType {
         case "text_start":
+            flushDeltas()
             textContentIndex = delta["contentIndex"] as? Int
             appendAssistantEntry()
         case "text_delta":
             if delta["contentIndex"] as? Int != textContentIndex {
+                flushDeltas()
                 textContentIndex = delta["contentIndex"] as? Int
                 appendAssistantEntry()
             }
             if let text = delta["delta"] as? String,
                let index = assistantEntryIndex, transcript.indices.contains(index) {
-                transcript[index].text += text
+                bufferDelta(text, for: transcript[index].id)
             }
         case "thinking_start":
+            flushDeltas()
             thinkingContentIndex = delta["contentIndex"] as? Int
             appendThinkingEntry()
         case "thinking_delta":
             if delta["contentIndex"] as? Int != thinkingContentIndex {
+                flushDeltas()
                 thinkingContentIndex = delta["contentIndex"] as? Int
                 appendThinkingEntry()
             }
             if let text = delta["delta"] as? String,
                let index = thinkingEntryIndex, transcript.indices.contains(index) {
-                transcript[index].text += text
+                bufferDelta(text, for: transcript[index].id)
             }
         case "done":
+            flushDeltas()
             finalizeEntries()
         case "error":
+            flushDeltas()
             let reason = delta["errorMessage"] as? String ?? delta["reason"] as? String ?? "The response failed."
             if let index = assistantEntryIndex, transcript.indices.contains(index) {
                 transcript[index].status = .failed

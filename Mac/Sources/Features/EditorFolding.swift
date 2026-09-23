@@ -68,7 +68,7 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
                 guard let self, self.isEnabled else { return }
                 self.recomputeTask?.cancel()
                 self.recomputeTask = Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .milliseconds(120))
+                    try? await Task.sleep(for: EditorTiming.analysisDebounce)
                     guard !Task.isCancelled else { return }
                     self?.recompute()
                 }
@@ -426,6 +426,10 @@ final class BracketMatcher {
         paint([NSRange(location: bracket, length: 1), NSRange(location: match, length: 1)])
     }
 
+    /// UTF-16 units either direction may scan from the anchor — caret moves
+    /// must not walk a whole document chasing an unmatched bracket.
+    private static let maxMatchDistance = 20_000
+
     /// Depth scan for the same bracket pair only — other bracket types nested
     /// inside are ignored. Skips brackets inside comments so `% }` never
     /// matches.
@@ -451,7 +455,8 @@ final class BracketMatcher {
         }
         var depth = 0
         var index = location
-        while index >= 0, index < text.length {
+        while index >= 0, index < text.length,
+              abs(index - location) <= maxMatchDistance {
             let char = text.character(at: index)
             if forward, char == 37 { // % — comment runs to end of line
                 let lineRange = text.lineRange(for: NSRange(location: index, length: 0))

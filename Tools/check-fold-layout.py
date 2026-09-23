@@ -83,7 +83,7 @@ func check(_ ok: Bool, _ message: String, line: Int = #line) {
             }
         }
         // When set, lay out both views between the edit and recompute — the
-        // real app lays out during the 120 ms debounce, with the stale
+        // real app lays out during the 300 ms debounce, with the stale
         // delegate state the incremental invalidation then has to repair.
         var layOutBetweenEdits = false
         func edit(_ location: Int, _ length: Int, _ insert: String, _ label: String) {
