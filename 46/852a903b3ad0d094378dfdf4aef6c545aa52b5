@@ -1,0 +1,50 @@
+Mac/Resources/es.lproj/Localizable.strings
+  s_61259ddb619c79::t_76d515d6689e74 207-208
+Linux/crates/pitex-shell/src/agent.rs
+  s_61259ddb619c79::t_d423827342d53a 1622,3453-3505
+  s_61259ddb619c79::t_6db057703c5433 1908-1914
+  s_61259ddb619c79::t_7181e067a7170e 1209-1211,1336-1340,1344-1345,1442-1449,1521,1525-1528,1533-1561,1564-1621,1925-1948
+  s_61259ddb619c79::t_c9cc69da5f2202 670-673,691-692,1062-1120,1145-1150
+  s_61259ddb619c79::t_a185dad46700da 1518,1522-1524
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_61259ddb619c79::t_76d515d6689e74 207-208
+Mac/Resources/en.lproj/Localizable.strings
+  s_61259ddb619c79::t_76d515d6689e74 206-207
+Mac/Resources/ja.lproj/Localizable.strings
+  s_61259ddb619c79::t_76d515d6689e74 206-207
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_d9228803269888 1097-1117,3086-3163
+  s_61259ddb619c79::t_31be3a20f9fd7b 3164
+Mac/Sources/Features/AgentPanel.swift
+  s_61259ddb619c79::t_c70a4db609f761 121-133,526-556
+  s_61259ddb619c79::t_78d1355ce66ba4 557-558
+Mac/Sources/Features/AgentCoordinator.swift
+  s_61259ddb619c79::t_6db057703c5433 693-698
+  s_61259ddb619c79::t_192ce0c39fb2f1 55-62,79-83,299-303,306,368-373,409-413,418-530,703-710
+Mac/Resources/ko.lproj/Localizable.strings
+  s_61259ddb619c79::t_76d515d6689e74 206-207
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_d9228803269888 132-133,3195-3202
+Mac/Resources/ru.lproj/Localizable.strings
+  s_61259ddb619c79::t_76d515d6689e74 207-208
+Mac/Resources/vi.lproj/Localizable.strings
+  s_61259ddb619c79::t_76d515d6689e74 206-207
+Mac/Sources/Features/PiRPC.swift
+  s_61259ddb619c79::t_192ce0c39fb2f1 30-31,53-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "46852a903b3ad0d094378dfdf4aef6c545aa52b5",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
