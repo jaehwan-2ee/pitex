@@ -35,6 +35,7 @@
   "pitex.pdf.openExternal",
   "pitex.preview",
   "pitex.preview.markdown",
+  "pitex.preview.markdown.download",
   "pitex.projectOutline",
   "pitex.settings",
   "pitex.settings.updates.autoInstall",

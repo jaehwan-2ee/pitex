@@ -112,40 +112,49 @@ body {
     color: inherit;
 }
 
-html.dark #content {
-    color: #e6edf3;
-    background: #0d1117;
+/* The dark palette is screen-only: Download (PDF export) always prints light. */
+@media screen {
+    html.dark #content {
+        color: #e6edf3;
+        background: #0d1117;
+    }
+
+    html.dark #content h1, html.dark #content h2 {
+        border-bottom-color: #3d444d;
+    }
+
+    html.dark #content a {
+        color: #4493f8;
+    }
+
+    html.dark #content code {
+        background: rgba(110, 118, 129, 0.4);
+    }
+
+    html.dark #content pre {
+        background: #161b22;
+    }
+
+    html.dark #content blockquote {
+        color: #9198a1;
+        border-left-color: #3d444d;
+    }
+
+    html.dark #content th, html.dark #content td {
+        border-color: #3d444d;
+    }
+
+    html.dark #content tr:nth-child(2n) {
+        background: #161b22;
+    }
+
+    html.dark #content hr {
+        background: #3d444d;
+    }
 }
 
-html.dark #content h1, html.dark #content h2 {
-    border-bottom-color: #3d444d;
-}
-
-html.dark #content a {
-    color: #4493f8;
-}
-
-html.dark #content code {
-    background: rgba(110, 118, 129, 0.4);
-}
-
-html.dark #content pre {
-    background: #161b22;
-}
-
-html.dark #content blockquote {
-    color: #9198a1;
-    border-left-color: #3d444d;
-}
-
-html.dark #content th, html.dark #content td {
-    border-color: #3d444d;
-}
-
-html.dark #content tr:nth-child(2n) {
-    background: #161b22;
-}
-
-html.dark #content hr {
-    background: #3d444d;
+/* PDF export: use the page width and wrap long code instead of clipping it. */
+@media print {
+    #content { max-width: none; padding: 0; }
+    #content pre { white-space: pre-wrap; overflow: visible; }
 }

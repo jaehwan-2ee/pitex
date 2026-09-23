@@ -12,6 +12,8 @@ struct Preview: View {
     /// Observed so a light/dark flip re-renders the Markdown preview when
     /// its theme is "Match app".
     @ObservedObject private var appearance = AppearanceSettings.shared
+    /// The Markdown toolbar's Download reaches the live web view through it.
+    @State private var markdownExport = MarkdownPDFExport()
 
     init(workspace: WorkspaceModel) {
         self.workspace = workspace
@@ -35,27 +37,48 @@ struct Preview: View {
     @ViewBuilder
     private var preview: some View {
         if activeIsMarkdown, let url = workspace.activeDocumentURL {
-            MarkdownPreviewView(
-                documentURL: url,
-                text: workspace.documentSnapshot?.text ?? "",
-                fontSize: settings.markdownFontSize,
-                dark: MarkdownLinkPolicy.previewIsDark(
-                    theme: settings.markdownTheme,
-                    appIsDark: appearance.effectiveDark
-                ),
-                livePreview: settings.markdownLivePreview,
-                syncScroll: settings.markdownSyncScroll,
-                documentClean: workspace.documentSnapshot?.saveState == .clean,
-                sync: workspace.markdownScrollSync,
-                onBlockedLink: {
-                    workspace.agent?.statusMessage = String(localized: "preview.markdown.blocked_link")
+            VStack(spacing: 0) {
+                // Same toolbar as the PDF preview: document name + Download.
+                HStack(spacing: 8) {
+                    Text(verbatim: url.lastPathComponent)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        markdownExport.save(suggestedName: url.deletingPathExtension().lastPathComponent + ".pdf")
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(String(localized: "preview.download"))
+                    .accessibilityIdentifier("pitex.preview.markdown.download")
                 }
-            )
-            // A new documentURL rebuilds the web view; text/settings edits
-            // flow through updateNSView.
-            .id(url)
-            .frame(maxHeight: .infinity)
-            .accessibilityIdentifier("pitex.preview.markdown")
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                Divider()
+                MarkdownPreviewView(
+                    documentURL: url,
+                    text: workspace.documentSnapshot?.text ?? "",
+                    fontSize: settings.markdownFontSize,
+                    dark: MarkdownLinkPolicy.previewIsDark(
+                        theme: settings.markdownTheme,
+                        appIsDark: appearance.effectiveDark
+                    ),
+                    livePreview: settings.markdownLivePreview,
+                    syncScroll: settings.markdownSyncScroll,
+                    documentClean: workspace.documentSnapshot?.saveState == .clean,
+                    sync: workspace.markdownScrollSync,
+                    exporter: markdownExport,
+                    onBlockedLink: {
+                        workspace.agent?.statusMessage = String(localized: "preview.markdown.blocked_link")
+                    }
+                )
+                // A new documentURL rebuilds the web view; text/settings edits
+                // flow through updateNSView.
+                .id(url)
+                .frame(maxHeight: .infinity)
+                .accessibilityIdentifier("pitex.preview.markdown")
+            }
         } else {
             pdfPreview
         }
@@ -386,6 +409,7 @@ private struct MarkdownPreviewView: NSViewRepresentable {
     var syncScroll: Bool
     var documentClean: Bool
     var sync: MarkdownScrollSync
+    var exporter: MarkdownPDFExport
     var onBlockedLink: () -> Void
 
     func makeNSView(context: Context) -> WKWebView {
@@ -397,6 +421,7 @@ private struct MarkdownPreviewView: NSViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
+        exporter.webView = view
         context.coordinator.sync = sync
         if let page = Bundle.main.url(forResource: "markdown-preview", withExtension: "html") {
             // The page lives inside the bundle, so the granted read scope
@@ -531,6 +556,33 @@ private struct MarkdownPreviewView: NSViewRepresentable {
                 webView.evaluateJavaScript(script, completionHandler: nil)
             }
         }
+    }
+}
+
+/// Download for the Markdown preview: prints the live web view to a
+/// paginated PDF. The dark palette is screen-only CSS, so the file always
+/// comes out light.
+@MainActor
+final class MarkdownPDFExport {
+    weak var webView: WKWebView?
+
+    func save(suggestedName: String) {
+        guard let webView, let window = webView.window else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        panel.allowedContentTypes = [.pdf]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let info = NSPrintInfo(dictionary: [.jobSavingURL: url])
+        info.jobDisposition = .save
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        let operation = webView.printOperation(with: info)
+        operation.showsPrintPanel = false
+        operation.showsProgressPanel = false
+        // WKWebView's print view starts with a zero frame, which prints
+        // blank pages; run it attached to the window (not run()).
+        operation.view?.frame = webView.bounds
+        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
     }
 }
 

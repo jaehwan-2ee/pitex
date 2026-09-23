@@ -15,7 +15,6 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::app_ui::a11y;
-#[cfg(not(feature = "markdown-preview"))]
 use crate::l10n::tr;
 
 #[cfg(feature = "markdown-preview")]
@@ -111,6 +110,9 @@ pub struct MarkdownPreview {
     /// the WebKit process cost.
     #[cfg(feature = "markdown-preview")]
     web: Rc<RefCell<Option<Rc<WebState>>>>,
+    /// The toolbar's document name, like the PDF toolbar's.
+    #[cfg(feature = "markdown-preview")]
+    name: gtk4::Label,
     /// (document url, revision, font-size bits, dark) of the last render —
     /// unchanged keys skip the webview round-trip entirely.
     rendered: Rc<RefCell<Option<(PathBuf, u64, u64, bool)>>>,
@@ -124,7 +126,15 @@ pub struct MarkdownPreview {
 impl MarkdownPreview {
     pub fn new(language: &'static str) -> Self {
         #[cfg(feature = "markdown-preview")]
-        let widget: gtk4::Widget = gtk4::Box::new(gtk4::Orientation::Vertical, 0).upcast();
+        let name = gtk4::Label::new(None);
+        #[cfg(feature = "markdown-preview")]
+        let widget: gtk4::Widget = {
+            // The web view is appended below the toolbar on first render.
+            let column = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+            column.append(&download_toolbar(&name, language));
+            column.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+            column.upcast()
+        };
         #[cfg(not(feature = "markdown-preview"))]
         let widget: gtk4::Widget = {
             let page = libadwaita::StatusPage::new();
@@ -139,6 +149,8 @@ impl MarkdownPreview {
             widget,
             #[cfg(feature = "markdown-preview")]
             web: Rc::new(RefCell::new(None)),
+            #[cfg(feature = "markdown-preview")]
+            name,
             rendered: Rc::new(RefCell::new(None)),
             render_source: Rc::new(RefCell::new(None)),
             editor_quiet: Rc::new(Cell::new(None)),
@@ -186,6 +198,7 @@ impl MarkdownPreview {
             if self.rendered.borrow().as_ref() == Some(&key) {
                 return;
             }
+            self.name.set_text(&url.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
             self.rendered.replace(Some(key));
             // `<base href>` — the document's directory as a file:// URL so
             // relative images resolve; needs the trailing slash.
@@ -217,6 +230,34 @@ impl MarkdownPreview {
         }
         #[cfg(not(feature = "markdown-preview"))]
         let _ = (url, revision, text, font_size, dark);
+    }
+
+    /// Download: prints the rendered page to `path` as a paginated PDF
+    /// (GTK's "Print to File", no dialog). The dark palette is screen-only
+    /// CSS, so the file always comes out light.
+    pub fn export_pdf(&self, path: &Path) {
+        #[cfg(feature = "markdown-preview")]
+        if let Some(web) = self.web.borrow().as_ref() {
+            let settings = gtk4::PrintSettings::new();
+            settings.set_printer("Print to File");
+            settings.set(&gtk4::PRINT_SETTINGS_OUTPUT_FILE_FORMAT, Some("pdf"));
+            settings.set(&gtk4::PRINT_SETTINGS_OUTPUT_URI, Some(&gio::File::for_path(path).uri()));
+            let operation = webkit6::PrintOperation::new(&web.view);
+            operation.set_print_settings(&settings);
+            operation.connect_failed(|_, error| {
+                let message = error.message().to_string();
+                crate::app_ui::STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(st) = state.try_borrow() {
+                            st.toast(&message);
+                        }
+                    }
+                });
+            });
+            operation.print();
+        }
+        #[cfg(not(feature = "markdown-preview"))]
+        let _ = path;
     }
 
     /// Editor→preview scroll sync — `pitexScrollToLine(line)` on the page.
@@ -347,6 +388,44 @@ impl MarkdownPreview {
         }
         web
     }
+}
+
+/// Document name + Download, mirroring the PDF preview's toolbar.
+#[cfg(feature = "markdown-preview")]
+fn download_toolbar(name: &gtk4::Label, lang: &'static str) -> gtk4::Box {
+    let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    toolbar.set_margin_start(10);
+    toolbar.set_margin_end(10);
+    toolbar.set_margin_top(6);
+    toolbar.set_margin_bottom(6);
+    name.set_hexpand(true);
+    name.set_xalign(0.0);
+    name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    name.add_css_class("caption");
+    toolbar.append(name);
+    let download = gtk4::Button::from_icon_name("document-save-symbolic");
+    crate::compat::initial_tooltip(&download, &tr(lang, "preview.download"));
+    a11y(&download, "pitex.preview.markdown.download", "preview.download");
+    download.connect_clicked(|button| {
+        let pdf_name = crate::app_ui::STATE.with(|s| {
+            let slot = s.borrow();
+            let state = slot.as_ref()?.try_borrow().ok()?;
+            let url = state.model.active_document_url.as_ref()?.with_extension("pdf");
+            Some(url.file_name()?.to_string_lossy().into_owned())
+        });
+        let window = button.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+        crate::compat::save_file(window.as_ref(), "Save PDF", pdf_name.as_deref(), |path| {
+            crate::app_ui::STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(st) = state.try_borrow() {
+                        st.markdown.export_pdf(&path);
+                    }
+                }
+            });
+        });
+    });
+    toolbar.append(&download);
+    toolbar
 }
 
 #[cfg(all(test, unix))]
