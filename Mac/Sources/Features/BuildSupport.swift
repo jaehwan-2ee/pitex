@@ -138,17 +138,42 @@ struct TeXProjectResolver {
     private var snapshots: [URL: LanguageFileSnapshot] = [:]
     var activeText: (url: URL, text: String)?
 
+    /// Caller-owned cache of disk-parsed files that survives a single
+    /// resolution: refreshBuildTarget hands it in and takes it back, so
+    /// unchanged project files skip the read + LanguageFileSnapshot tokenize.
+    /// The activeText override is consulted first and never enters it.
+    var diskCache: [URL: (mtime: Double, size: Int, snapshot: LanguageFileSnapshot)] = [:]
+
     private func canonical(_ url: URL) -> URL {
         url.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    private static func diskKey(_ file: URL) -> (mtime: Double, size: Int)? {
+        guard let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let mtime = values.contentModificationDate?.timeIntervalSince1970,
+              let size = values.fileSize else { return nil }
+        return (mtime, size)
     }
 
     private mutating func snapshot(_ url: URL) -> LanguageFileSnapshot? {
         let file = canonical(url)
         if let cached = snapshots[file] { return cached }
-        let text = activeText.flatMap { canonical($0.url) == file ? $0.text : nil }
-            ?? (try? String(contentsOf: file, encoding: .utf8))
-        guard let text, let parsed = try? LanguageFileSnapshot(sourceID: file.path, revision: 0, source: text) else { return nil }
+        if let override = activeText, canonical(override.url) == file {
+            guard let parsed = try? LanguageFileSnapshot(sourceID: file.path, revision: 0, source: override.text)
+            else { return nil }
+            snapshots[file] = parsed
+            return parsed
+        }
+        let key = Self.diskKey(file)
+        if let key, let entry = diskCache[file], entry.mtime == key.mtime, entry.size == key.size {
+            snapshots[file] = entry.snapshot
+            return entry.snapshot
+        }
+        guard let text = try? String(contentsOf: file, encoding: .utf8),
+              let parsed = try? LanguageFileSnapshot(sourceID: file.path, revision: 0, source: text)
+        else { return nil }
         snapshots[file] = parsed
+        if let key { diskCache[file] = (key.mtime, key.size, parsed) }
         return parsed
     }
 
@@ -459,6 +484,7 @@ extension WorkspaceModel {
         buildState = .building
         buildLogText = ""
         pendingLogText = ""
+        pendingBuildIssues = []
         buildIssues = []
         let orchestrator = buildOrchestrator
         do {
@@ -502,23 +528,42 @@ extension WorkspaceModel {
         return false
     }
 
-    /// Log chunks accumulate here and flush once per runloop turn — appending
-    /// each chunk straight into the @Published log re-rendered the whole
-    /// console per chunk, O(log²) per build. Storage lives on WorkspaceModel
-    /// (extensions can't hold stored properties).
+    /// Log chunks and issue records accumulate here and flush on a ~100 ms
+    /// cadence — appending each chunk straight into the @Published log
+    /// re-rendered the whole console per chunk, O(log²) per build. Storage
+    /// lives on WorkspaceModel (extensions can't hold stored properties).
+    /// The captured build ID keeps a flush queued by a previous build from
+    /// appending into the new build's log.
     private func scheduleLogFlush() {
         guard !logFlushScheduled else { return }
         logFlushScheduled = true
+        let buildID = activeBuildID
         Task { @MainActor [weak self] in
-            self?.flushBuildLog()
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let self else { return }
+            if self.activeBuildID != buildID {
+                // This task still owns the flag — a build that started
+                // meanwhile must be able to schedule its own flush.
+                self.logFlushScheduled = false
+                if !self.pendingLogText.isEmpty || !self.pendingBuildIssues.isEmpty {
+                    self.scheduleLogFlush()
+                }
+                return
+            }
+            self.flushBuildLog()
         }
     }
 
     private func flushBuildLog() {
         logFlushScheduled = false
-        guard !pendingLogText.isEmpty else { return }
-        buildLogText += pendingLogText
-        pendingLogText = ""
+        if !pendingLogText.isEmpty {
+            buildLogText += pendingLogText
+            pendingLogText = ""
+        }
+        if !pendingBuildIssues.isEmpty {
+            buildIssues.append(contentsOf: pendingBuildIssues)
+            pendingBuildIssues = []
+        }
     }
 
     private func handleBuildEvent(_ event: BuildEvent) async {
@@ -527,7 +572,8 @@ extension WorkspaceModel {
             pendingLogText += entry.text
             scheduleLogFlush()
         case let .issue(record):
-            buildIssues.append(record)
+            pendingBuildIssues.append(record)
+            scheduleLogFlush()
         case .lifecycle, .stageStarted:
             break
         }

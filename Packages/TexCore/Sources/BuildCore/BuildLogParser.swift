@@ -49,16 +49,21 @@ public struct BuildLogParser: Sendable {
         _ bytes: Data,
         channel: BuildLogChannel
     ) -> [BuildIssueRecord] {
-        var buffer = buffers[channel, default: Data()]
+        // Taking the buffer out of the dictionary leaves it uniquely owned
+        // here, so neither the append nor the one prefix removal copies it
+        // — the per-line removeSubrange made each chunk O(buffer²).
+        var buffer = buffers.removeValue(forKey: channel) ?? Data()
         buffer.append(bytes)
         var records: [BuildIssueRecord] = []
+        var start = buffer.startIndex
 
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            var lineData = buffer[..<newline]
+        while let newline = buffer[start...].firstIndex(of: 0x0A) {
+            var lineData = buffer[start..<newline]
             if lineData.last == 0x0D { lineData = lineData.dropLast() }
             records.append(contentsOf: parseLine(String(decoding: lineData, as: UTF8.self)))
-            buffer.removeSubrange(...newline)
+            start = buffer.index(after: newline)
         }
+        if start > buffer.startIndex { buffer.removeSubrange(..<start) }
         buffers[channel] = buffer
         return records
     }

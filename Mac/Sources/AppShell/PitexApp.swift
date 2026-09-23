@@ -163,9 +163,12 @@ final class WorkspaceModel: ObservableObject {
         didSet { scheduleStructureRefresh(); scheduleAutosave() }
     }
     @Published var buildLogText = ""
-    /// Buffered build-log chunks; flushed into buildLogText once per runloop
-    /// turn by BuildSupport.scheduleLogFlush.
+    /// Buffered build-log chunks; flushed into buildLogText on a ~100 ms
+    /// cadence by BuildSupport.scheduleLogFlush.
     var pendingLogText = ""
+    /// Issue records buffered the same way — appended to buildIssues in the
+    /// same flush so a warning-heavy run publishes once per batch.
+    var pendingBuildIssues: [BuildIssueRecord] = []
     var logFlushScheduled = false
     @Published var buildIssues: [BuildIssueRecord] = []
     @Published internal(set) var buildState: WorkspaceBuildState = .unavailable(
@@ -217,6 +220,11 @@ final class WorkspaceModel: ObservableObject {
     /// in the view body re-sorted the whole tree on every keystroke.
     @Published private(set) var projectTree: [ProjectFileNode] = []
     @Published internal(set) var buildTargetMessage: String?
+
+    /// Parsed-file cache handed to each refreshBuildTarget resolver so a
+    /// document activation doesn't re-read and re-tokenize every project
+    /// .tex file. Stat-keyed (mtime + size); cleared with the workspace.
+    private var resolverDiskCache: [URL: (mtime: Double, size: Int, snapshot: LanguageFileSnapshot)] = [:]
     /// Recently opened documents/projects, shown in the tab bar's + menu.
     @Published private(set) var recentDocuments: [URL] = []
     /// Build command shown in the console bar, remembered per project.
@@ -754,6 +762,7 @@ final class WorkspaceModel: ObservableObject {
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
         agent?.shutdown()
+        agent?.stopConfigWatcher()
         completion?.shutdown()
         highlighter.detach()
         let brokerToClose = capabilityBroker
@@ -796,7 +805,8 @@ final class WorkspaceModel: ObservableObject {
         todoCache.removeAll()
         projectLabels = []
         citationKeys = []
-        projectLabelCache = nil
+        projectLabelCache = [:]
+        resolverDiskCache = [:]
         structureTask?.cancel()
         structureTask = nil
         phase = .noProject
@@ -1266,12 +1276,21 @@ final class WorkspaceModel: ObservableObject {
         let snapshot = documentSnapshot
         let root = projectURL
         let text = snapshot?.text ?? ""
+        // The active .tex document's TODOs parse off-actor with the rest of
+        // the structure data; refreshTodos stores them under the revision key.
+        let activeTodo = activeDocumentURL.flatMap { url in
+            url.pathExtension.lowercased() == "tex"
+                ? (url, (try? Self.relativePath(for: url, root: root ?? url.deletingLastPathComponent()).rawValue)
+                    ?? url.lastPathComponent)
+                : nil
+        }
         Task { @MainActor [weak self] in
-            let (outline, labels, count) = await Task.detached(priority: .userInitiated) {
+            let (outline, labels, count, todos) = await Task.detached(priority: .userInitiated) {
                 let starts = Self.lineStartOffsets(text as NSString)
                 return (Self.parseOutline(text, lineStarts: starts),
                         Self.parseLabels(text, lineStarts: starts),
-                        text.split { $0 == " " || $0 == "\n" || $0 == "\t" }.count)
+                        text.split { $0 == " " || $0 == "\n" || $0 == "\t" }.count,
+                        activeTodo.map { Self.parseTodos(text, file: $0.1, url: $0.0) })
             }.value
             guard let self, projectURL == root,
                   documentSnapshot?.documentID == snapshot?.documentID,
@@ -1280,7 +1299,7 @@ final class WorkspaceModel: ObservableObject {
             if labelItems != labels { labelItems = labels }
             if wordCount != count { wordCount = count }
             refreshBibliography()
-            refreshTodos()
+            refreshTodos(activeItems: todos)
             refreshCompletionKeys(text: text)
         }
     }
@@ -1304,11 +1323,12 @@ final class WorkspaceModel: ObservableObject {
         if citationKeys != citations { citationKeys = citations }
     }
 
-    /// mtime-keyed cache on the same contract as `bibliographyCache` —
-    /// project .tex files are only re-read when the file list or a
-    /// modification date changes. The active document is excluded: its
-    /// in-memory buffer is the authority for its labels.
-    private var projectLabelCache: (key: [String], labels: Set<String>)?
+    /// mtime-keyed per-file label cache on the same contract as
+    /// `todoCache` — a tab switch re-reads only files whose modification
+    /// date changed instead of re-parsing every project .tex file. The
+    /// active document is excluded: its in-memory buffer is the authority
+    /// for its labels.
+    private var projectLabelCache: [URL: (key: Double, labels: Set<String>)] = [:]
 
     private func cachedProjectLabels() -> Set<String> {
         let activePath = activeDocumentURL?.standardizedFileURL.path
@@ -1316,20 +1336,22 @@ final class WorkspaceModel: ObservableObject {
             $0.pathExtension.lowercased() == "tex"
                 && $0.standardizedFileURL.path != activePath
         }
-        let key = files.map { file in
-            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
-                .contentModificationDate?.timeIntervalSince1970) ?? 0
-            return "\(file.path)#\(modified)"
-        }
-        if let cache = projectLabelCache, cache.key == key {
-            return cache.labels
-        }
         var labels = Set<String>()
         for file in files {
-            guard let fileText = try? Self.readExactUTF8(file) else { continue }
-            labels.formUnion(Self.parseLabels(fileText).map(\.name))
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate?.timeIntervalSince1970) ?? 0
+            if let entry = projectLabelCache[file], entry.key == modified {
+                labels.formUnion(entry.labels)
+                continue
+            }
+            let parsed = (try? Self.readExactUTF8(file)).map {
+                Set(Self.parseLabels($0).map(\.name))
+            } ?? []
+            projectLabelCache[file] = (modified, parsed)
+            labels.formUnion(parsed)
         }
-        projectLabelCache = (key, labels)
+        let alive = Set(files)
+        projectLabelCache = projectLabelCache.filter { alive.contains($0.key) }
         return labels
     }
 
@@ -1395,7 +1417,7 @@ final class WorkspaceModel: ObservableObject {
     /// refresh re-reads only the file that changed.
     private var todoCache: [URL: (key: String, items: [DocumentTodoItem])] = [:]
 
-    private func refreshTodos() {
+    private func refreshTodos(activeItems: [DocumentTodoItem]? = nil) {
         let active = activeDocumentURL
         let revision = documentSnapshot?.revision ?? 0
         let texFiles = projectFiles.filter { $0.pathExtension.lowercased() == "tex" }
@@ -1416,8 +1438,11 @@ final class WorkspaceModel: ObservableObject {
             }
             let name = (try? Self.relativePath(for: file, root: projectURL ?? file.deletingLastPathComponent()).rawValue)
                 ?? file.lastPathComponent
-            let text = isActive ? documentSnapshot?.text : try? Self.readExactUTF8(file)
-            let parsed = text.map { Self.parseTodos($0, file: name, url: file) } ?? []
+            // refreshStructure hands over the active document's parse,
+            // already computed off-actor from this same revision.
+            let parsed = (isActive ? activeItems : nil)
+                ?? (isActive ? documentSnapshot?.text : try? Self.readExactUTF8(file))
+                    .map { Self.parseTodos($0, file: name, url: file) } ?? []
             todoCache[file] = (key, parsed)
             items.append(contentsOf: parsed)
         }
@@ -1538,7 +1563,7 @@ final class WorkspaceModel: ObservableObject {
     /// Locates a `% TODO:`/`% DONE:` marker inside `line`: the done flag,
     /// the keyword range (incl. colon), and the text tail after it. Any `%`
     /// can introduce the comment, so trailing `code % TODO: x` lines count.
-    private static func todoMarker(in line: String) -> (done: Bool, keyword: Range<String.Index>, tail: Range<String.Index>)? {
+    nonisolated private static func todoMarker(in line: String) -> (done: Bool, keyword: Range<String.Index>, tail: Range<String.Index>)? {
         var index = line.startIndex
         while index < line.endIndex, let percent = line[index...].firstIndex(of: "%") {
             var cursor = line.index(after: percent)
@@ -1686,7 +1711,7 @@ final class WorkspaceModel: ObservableObject {
 
     /// `%[ \t]*(TODO|DONE):[ \t]*(…)` — one item per comment line, in file
     /// order like the reference editor's checklist.
-    static func parseTodos(_ text: String, file: String, url: URL) -> [DocumentTodoItem] {
+    nonisolated static func parseTodos(_ text: String, file: String, url: URL) -> [DocumentTodoItem] {
         var items: [DocumentTodoItem] = []
         var line = 1
         for rawLine in (text as NSString).components(separatedBy: "\n") {
@@ -1826,6 +1851,7 @@ final class WorkspaceModel: ObservableObject {
 
     func refreshBuildTarget() {
         var resolver = TeXProjectResolver()
+        resolver.diskCache = resolverDiskCache
         if let url = activeDocumentURL, let text = documentSnapshot?.text {
             resolver.activeText = (url, text)
         }
@@ -1839,6 +1865,7 @@ final class WorkspaceModel: ObservableObject {
             buildTargetMessage = error.localizedDescription
         }
         projectChildren = buildSourceURL().map { resolver.directDependencies(main: $0) } ?? []
+        resolverDiskCache = resolver.diskCache
     }
 
     func buildSourceRelativePath() -> String? {

@@ -69,6 +69,36 @@ final class BuildOrchestratorTests: XCTestCase {
         }
     }
 
+    /// consume() must produce identical records whether the log arrives
+    /// whole or chunked at any byte boundary — including splits inside a
+    /// multi-byte UTF-8 sequence and between \r and \n.
+    func testParserChunkBoundariesNeverChangeRecords() {
+        let root = URL(fileURLWithPath: "/tmp/project")
+        let log = "(./main.tex\n(./chapters/intro.tex\r\n"
+            + "! Undefined control sequence.\r\nl.12 \\bad\r\n"
+            + "Overfull \\hbox (12.0pt too wide) at lines 5--6\n"
+            + "./main.tex:9:2: warning: café 한국어\n"
+            + "Underfull \\vbox detected at line 3\r\n"
+            + ")\n"
+        var reference = BuildLogParser(projectRoot: root)
+        var expected = reference.consume(Data(log.utf8), channel: .standardOutput)
+        expected += reference.finish()
+
+        let bytes = Array(log.utf8)
+        for size in 1...64 {
+            var parser = BuildLogParser(projectRoot: root)
+            var issues: [BuildIssueRecord] = []
+            var offset = 0
+            while offset < bytes.count {
+                let end = min(offset + size, bytes.count)
+                issues += parser.consume(Data(bytes[offset..<end]), channel: .standardOutput)
+                offset = end
+            }
+            issues += parser.finish()
+            XCTAssertEqual(issues, expected, "chunk size \(size)")
+        }
+    }
+
     func testParserTracksNestedFilesClassicErrorsWarningsAndControlCharacters() {
         var parser = BuildLogParser(projectRoot: URL(fileURLWithPath: "/work/project"))
         var issues = parser.consume("(./main.tex\n(./chapters/one.tex\n! Undefined control sequence.\nl.27 \\bad\n)\nOverfull \\hbox (2.0pt too wide) at lines 40--41\nWarning--empty journal\u{1B}\n", channel: .standardOutput)

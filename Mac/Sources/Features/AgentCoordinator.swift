@@ -253,6 +253,16 @@ final class AgentCoordinator: ObservableObject {
         configWatcher = source
     }
 
+    /// Workspace teardown — cancelling the source closes its O_EVTONLY fd
+    /// in the cancel handler. Kept out of shutdown()/restart(): the watcher
+    /// is what triggers config-change restarts, so it survives those.
+    func stopConfigWatcher() {
+        pendingConfigRestart?.cancel()
+        pendingConfigRestart = nil
+        configWatcher?.cancel()
+        configWatcher = nil
+    }
+
     private func agentConfigChangedOnDisk() {
         let snapshot = Self.agentConfigSnapshot()
         guard snapshot != configSnapshot else { return }

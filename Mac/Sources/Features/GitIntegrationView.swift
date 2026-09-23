@@ -63,6 +63,9 @@ struct GitDiffSession {
     let source: Source
     let file: GitCommitFile?
     var sections: [GitDiffFileSection]?
+    /// Folded render rows for `sections`, computed once when the diff loads
+    /// — the view body re-folded every row on each unrelated publish before.
+    var displayItems: [[GitDiffItem]]?
     var error: String?
 }
 
@@ -263,16 +266,20 @@ extension WorkspaceModel {
         gitDiff = GitDiffSession(source: .commit(commit), file: file)
         Task {
             let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.fullHash, path: file.path), in: root)
-            let sections: [GitDiffFileSection]? = await Task.detached(priority: .utility) {
-                result.code == 0 ? [GitDiffFileSection(file: file, binary: result.stdout.contains("Binary files"),
-                                                     rows: GitSupport.parseFileDiff(result.stdout))] : nil
+            let rendered: (sections: [GitDiffFileSection], items: [[GitDiffItem]])?
+                = await Task.detached(priority: .utility) {
+                guard result.code == 0 else { return nil }
+                let section = GitDiffFileSection(file: file, binary: result.stdout.contains("Binary files"),
+                                               rows: GitSupport.parseFileDiff(result.stdout))
+                return ([section], [GitSupport.displayItems(section.rows)])
             }.value
             // A second file click or project switch may have replaced the session.
             guard gitStatus?.root == root.path, gitDiff?.source == .commit(commit), gitDiff?.file == file else { return }
             gitDiff = GitDiffSession(
                 source: .commit(commit),
                 file: file,
-                sections: sections,
+                sections: rendered?.sections,
+                displayItems: rendered?.items,
                 error: result.code == 0 ? nil : result.errorText
             )
         }
@@ -290,16 +297,20 @@ extension WorkspaceModel {
             let result = await GitRunner.run(GitSupport.workingFileDiffArgs(change), in: root)
             // `git diff --no-index` (untracked files) exits 1 on differences.
             let ok = result.code == 0 || (change.kind == .untracked && result.code == 1)
-            let sections: [GitDiffFileSection]? = await Task.detached(priority: .utility) {
-                ok ? [GitDiffFileSection(file: file, binary: result.stdout.contains("Binary files"),
-                                         rows: GitSupport.parseFileDiff(result.stdout))] : nil
+            let rendered: (sections: [GitDiffFileSection], items: [[GitDiffItem]])?
+                = await Task.detached(priority: .utility) {
+                guard ok else { return nil }
+                let section = GitDiffFileSection(file: file, binary: result.stdout.contains("Binary files"),
+                                               rows: GitSupport.parseFileDiff(result.stdout))
+                return ([section], [GitSupport.displayItems(section.rows)])
             }.value
             // A second row click or project switch may have replaced the session.
             guard gitStatus?.root == root.path, gitDiff?.source == source, gitDiff?.file == file else { return }
             gitDiff = GitDiffSession(
                 source: source,
                 file: file,
-                sections: sections,
+                sections: rendered?.sections,
+                displayItems: rendered?.items,
                 error: ok ? nil : result.errorText
             )
         }
@@ -320,18 +331,21 @@ extension WorkspaceModel {
                 gitDiff = GitDiffSession(source: .commit(commit), file: nil, error: diff.errorText)
                 return
             }
-            let sections = await Task.detached(priority: .utility) {
+            let rendered: (sections: [GitDiffFileSection], items: [[GitDiffItem]])
+                = await Task.detached(priority: .utility) {
                 var kinds: [String: GitChangeKind] = [:]
                 if files.code == 0 {
                     for f in GitSupport.parseCommitFiles(files.stdout) { kinds[f.path] = f.kind }
                 }
-                return GitSupport.parseCommitDiff(diff.stdout).map { section in
+                let sections = GitSupport.parseCommitDiff(diff.stdout).map { section in
                     GitDiffFileSection(file: GitCommitFile(path: section.path, kind: kinds[section.path] ?? .modified),
                                        binary: section.binary, rows: section.rows)
                 }
+                return (sections, sections.map { GitSupport.displayItems($0.rows) })
             }.value
             guard gitStatus?.root == root.path, gitDiff?.source == .commit(commit), gitDiff?.file == nil else { return }
-            gitDiff = GitDiffSession(source: .commit(commit), file: nil, sections: sections)
+            gitDiff = GitDiffSession(source: .commit(commit), file: nil,
+                                     sections: rendered.sections, displayItems: rendered.items)
         }
     }
 
@@ -486,7 +500,19 @@ struct GitIntegrationView: View {
         .accessibilityIdentifier("pitex.git")
         .onAppear { workspace.refreshGit() }
         .onReceive(refreshTimer) { _ in
+            // A minimized/fully covered window spawns no git subprocesses;
+            // reappearing refreshes immediately via the observer below.
+            if let window = workspace.window, !window.occlusionState.contains(.visible) { return }
             if !workspace.gitBusy { workspace.refreshGit() }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSWindow.didChangeOcclusionStateNotification
+        )) { note in
+            guard let window = workspace.window,
+                  (note.object as? NSWindow) === window,
+                  window.occlusionState.contains(.visible),
+                  !workspace.gitBusy else { return }
+            workspace.refreshGit()
         }
         .confirmationDialog(
             "git.discard",
@@ -1127,7 +1153,8 @@ struct CommitDiffView: View {
                             fileHeader(section)
                         }
                         if session.file != nil || !collapsedFiles.contains(section.file.path) {
-                            fileRows(section, columnWidth: columnWidth)
+                            fileRows(section, items: session.displayItems?[index] ?? [],
+                                     columnWidth: columnWidth)
                         }
                         if index < sections.count - 1 {
                             Divider().padding(.vertical, 4)
@@ -1179,12 +1206,12 @@ struct CommitDiffView: View {
     /// outer LazyVStack, so an expanded fold of thousands of lines still
     /// renders lazily.
     @ViewBuilder
-    private func fileRows(_ section: GitDiffFileSection, columnWidth: CGFloat) -> some View {
+    private func fileRows(_ section: GitDiffFileSection, items: [GitDiffItem], columnWidth: CGFloat) -> some View {
         if section.binary {
             noteRow("git.diff.binary")
         }
         ForEach(
-            Array(GitSupport.displayItems(section.rows).enumerated()),
+            Array(items.enumerated()),
             id: \.offset
         ) { _, item in
             diffItem(item, path: section.file.path, columnWidth: columnWidth)
