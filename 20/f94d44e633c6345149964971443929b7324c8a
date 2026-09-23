@@ -1,0 +1,28 @@
+Linux/crates/pitex-shell/src/agent.rs
+  s_ed44b01ef26714::t_6fc3b304664cb8 2396,2416-2421,2489,2498,2508,2553
+Linux/crates/pitex-shell/tests/support/agent_update_settings.rs
+  s_ed44b01ef26714::t_b30144103fd2be 79,100
+  s_ed44b01ef26714::t_944dd98b50e549 14-29,72-76,78,83,95-96
+Linux/crates/build-core/src/lib.rs
+  s_ed44b01ef26714::t_6fc3b304664cb8 77-80,1556-1558
+Linux/crates/build-core/tests/command_environment.rs
+  s_ed44b01ef26714::t_1ffc89186c54bf 1-27
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_1ffc89186c54bf 180-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20f94d44e633c6345149964971443929b7324c8a",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
