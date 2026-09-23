@@ -1,0 +1,21 @@
+Tools/check-fold-layout.py
+  s_61259ddb619c79::t_9f129c78742ca4 53-55
+Mac/Sources/Features/EditorFolding.swift
+  s_61259ddb619c79::t_a84f9b53ab1701 301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fcd66b717dd12d297079c1b5ed7665f1be326de0",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
