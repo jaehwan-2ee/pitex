@@ -287,7 +287,9 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(minWidth: 640, minHeight: 560)
+        // Wide enough for all six tabs on one line in every locale (Russian
+        // and Vietnamese titles are the longest).
+        .frame(minWidth: 780, minHeight: 560)
     }
 
     /// Segmented capsule strip matching the reference settings window.
@@ -316,6 +318,8 @@ struct SettingsView: View {
         }
         .padding(3)
         .background(.quaternary, in: Capsule())
+        // Never squeeze titles onto two lines — the sheet widens instead.
+        .fixedSize()
         .frame(maxWidth: .infinity)
     }
 
