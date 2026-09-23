@@ -50,6 +50,9 @@ func check(_ ok: Bool, _ message: String, line: Int = #line) {
             view.textContainer!.widthTracksTextView = true
             view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
             view.string = text
+            // Deterministic comparison: no idle-time layout or glyph work
+            // may touch one view and not the other during the runloop pumps.
+            view.layoutManager!.backgroundLayoutEnabled = false
             scroll.documentView = view
             return view
         }
