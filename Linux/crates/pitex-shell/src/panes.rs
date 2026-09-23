@@ -2238,7 +2238,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
                 skills_group.remove(&row);
             }
             // Re-append the install row last — `add` appends at the end.
-            skills_group.remove(&install_row);
+            if install_row.parent().is_some() { skills_group.remove(&install_row); }
             for skill in installed_skills() {
                 let row = adw::ActionRow::new();
                 row.set_title(&skill.name);

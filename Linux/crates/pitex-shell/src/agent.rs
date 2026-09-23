@@ -431,7 +431,7 @@ impl PiToolchain {
     /// script runs through node instead of relying on its `env` shebang.
     pub fn npm_command(&self, arguments: &[String]) -> Option<(PathBuf, Vec<String>)> {
         let (npm, node) = (self.npm.as_ref()?, self.node.as_ref()?);
-        let script = npm.canonicalize().unwrap_or_else(|_| npm.clone());
+        let script = crate::model::standardize(npm.clone());
         if script
             .extension()
             .map(|e| e == "js")
@@ -453,9 +453,9 @@ impl PiToolchain {
         executable: &Path,
         arguments: &[String],
     ) -> Result<(PathBuf, Vec<String>), String> {
-        let script = executable
-            .canonicalize()
-            .unwrap_or_else(|_| executable.to_path_buf());
+        // Node cannot load a main module spelled as a Windows verbatim disk
+        // path (\\?\C:\...). Reuse the app's canonical, plain-path helper.
+        let script = crate::model::standardize(executable.to_path_buf());
         let header = std::fs::File::open(&script)
             .ok()
             .and_then(|mut f| {
@@ -472,17 +472,12 @@ impl PiToolchain {
                     .to_string()
             })
             .unwrap_or_default();
-        // Windows script shims cannot be spawned directly — CreateProcess
-        // only runs PE executables. Route `.cmd`/`.bat` through `cmd` and
-        // `.ps1` through `powershell`, the same way `cmd` itself resolves
-        // npm's global shims.
+        // Rust handles cmd/bat escaping natively; PowerShell needs an interpreter.
         #[cfg(windows)]
         if let Some(ext) = script.extension().and_then(|e| e.to_str()) {
             let lower = ext.to_ascii_lowercase();
             if lower == "cmd" || lower == "bat" {
-                let mut args = vec!["/c".into(), script.to_string_lossy().into_owned()];
-                args.extend(arguments.iter().cloned());
-                return Ok((PathBuf::from("cmd"), args));
+                return Ok((script, arguments.to_vec()));
             }
             if lower == "ps1" {
                 let mut args = vec![
