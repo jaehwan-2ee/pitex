@@ -85,10 +85,13 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
                 forName: NSTextStorage.didProcessEditingNotification,
                 object: storage,
                 queue: .main
-            ) { [weak self] note in
+            ) { [weak self] _ in
+                // Read the storage through self like EditorAnalysis does —
+                // the non-Sendable Notification can't cross into the
+                // main-actor closure under Swift 6.
                 MainActor.assumeIsolated {
                     guard let self,
-                          let storage = note.object as? NSTextStorage,
+                          let storage = self.textView?.textStorage,
                           storage.editedMask.contains(.editedCharacters) else { return }
                     let location = storage.editedRange.location
                     self.minEditLocation = min(self.minEditLocation ?? location, location)
