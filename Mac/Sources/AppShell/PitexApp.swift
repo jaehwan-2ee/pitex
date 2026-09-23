@@ -698,8 +698,8 @@ final class WorkspaceModel: ObservableObject {
     private func enqueueSessionWrite(
         url: URL,
         session: DocumentSessionCore.DocumentSession,
-        shouldWrite: @Sendable (DocumentSessionCore.DocumentSnapshot) -> Bool,
-        baseline: @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash,
+        shouldWrite: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> Bool,
+        baseline: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash,
         resolvesConflict: Bool = false
     ) -> Task<SessionWriteResult, Never> {
         let url = url.standardizedFileURL
