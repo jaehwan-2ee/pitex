@@ -1,0 +1,49 @@
+Tools/check-pi-runtime.py
+  s_ed44b01ef26714::t_706432dee1c35d 8,23,125-147,188
+Mac/Config/Info.plist
+  s_ed44b01ef26714::t_0785bd9fe5798c 20,22
+Windows/crates/pitex-windows/Cargo.toml
+  s_ed44b01ef26714::t_0785bd9fe5798c 3
+Mac/Sources/Features/PiAgentProcess.swift
+  s_ed44b01ef26714::t_9c7bd0052802cf 170-171,229-235,237-263,273
+Mac/Sources/Features/SettingsView.swift
+  s_ed44b01ef26714::t_9c7bd0052802cf 517-521,540,597,602,838-844,846,848,851-854,856,862
+.github/workflows/ibus-compat.yml
+  s_ed44b01ef26714::t_0785bd9fe5798c 4
+Linux/crates/pitex/Cargo.toml
+  s_ed44b01ef26714::t_0785bd9fe5798c 3
+Linux/Cargo.lock
+  s_ed44b01ef26714::t_cbeae51f402c70 754
+Mac/Resources/en.lproj/Localizable.strings
+  s_ed44b01ef26714::t_dc239a398157bf 379-384
+Mac/Resources/es.lproj/Localizable.strings
+  s_ed44b01ef26714::t_5d5ec6076a4057 379-384
+Mac/Resources/ja.lproj/Localizable.strings
+  s_ed44b01ef26714::t_53673660ee58d6 380-385
+Mac/Resources/ko.lproj/Localizable.strings
+  s_ed44b01ef26714::t_e3a6bd867a06a7 380-385
+Mac/Resources/ru.lproj/Localizable.strings
+  s_ed44b01ef26714::t_00acf148b53632 379-384
+Mac/Resources/vi.lproj/Localizable.strings
+  s_ed44b01ef26714::t_5061f961b20931 379-384
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_ed44b01ef26714::t_38e61d1b2e49e9 379-384
+Windows/Cargo.lock
+  s_ed44b01ef26714::t_a64dbb8d6e5d54 869
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1b065ab26eb44bd216f96e3711ae283c80dee70",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
