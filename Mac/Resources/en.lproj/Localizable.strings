@@ -203,6 +203,8 @@
 "assistant.attach_document" = "Attach activated document";
 "assistant.attach_files_help" = "Attach project files to the composer";
 "assistant.clear" = "Clear conversation";
+"assistant.history" = "Conversation history";
+"assistant.history_empty" = "No saved conversations for this project yet.";
 "assistant.empty_headline" = "Ask anything about your LaTeX";
 "assistant.configure_hint" = "Providers and accounts are configured through Pitex Agent's own sign-in flow.";
 "assistant.open_pi_config" = "Open Pitex Agent Configuration";

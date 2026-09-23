@@ -129,6 +129,8 @@ pub struct UiHandles {
     pub agent_model_picker: RefCell<Option<gtk4::DropDown>>,
     pub agent_reasoning_picker: RefCell<Option<gtk4::DropDown>>,
     pub agent_attach_toggle: RefCell<Option<gtk4::Switch>>,
+    /// Anchor for the conversation-history popover (`/resume` opens it too).
+    pub agent_history_button: RefCell<Option<gtk4::Button>>,
     pub agent_composer: RefCell<Option<gtk4::Entry>>,
     /// Reloaded (not re-added) whenever `ai.fontSize` changes so the composer
     /// entry tracks the conversation font.
@@ -3190,6 +3192,14 @@ impl AppState {
             let font_size = self.store.ai_font_size();
             let font_changed = font_size != self.rendered_ai_font_size.get();
             let dirty = agent.ui_revision != self.rendered_agent_revision.get() || font_changed;
+            if std::mem::take(&mut agent.history_requested) {
+                if let Some(button) = ui.agent_history_button.borrow().clone() {
+                    let sessions = agent.past_sessions.clone();
+                    glib::idle_add_local_once(move || {
+                        crate::panes::show_session_history(&button, sessions, lang);
+                    });
+                }
+            }
             if dirty {
                 self.rendered_agent_revision.set(agent.ui_revision);
                 self.rendered_ai_font_size.set(font_size);

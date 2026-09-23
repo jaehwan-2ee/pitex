@@ -203,6 +203,8 @@
 "assistant.attach_document" = "アクティブな書類を添付";
 "assistant.attach_files_help" = "プロジェクトファイルを入力欄に添付";
 "assistant.clear" = "会話を消去";
+"assistant.history" = "会話履歴";
+"assistant.history_empty" = "このプロジェクトの保存済みの会話はまだありません。";
 "assistant.empty_headline" = "LaTeX について何でも聞いてください";
 "assistant.configure_hint" = "プロバイダとアカウントは Pitex Agent のサインイン手順で設定します。";
 "assistant.open_pi_config" = "Pitex Agent 設定を開く";

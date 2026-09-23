@@ -204,6 +204,8 @@
 "assistant.attach_document" = "Прикрепить активный документ";
 "assistant.attach_files_help" = "Прикрепить файлы проекта к полю ввода";
 "assistant.clear" = "Очистить диалог";
+"assistant.history" = "История разговоров";
+"assistant.history_empty" = "Для этого проекта пока нет сохранённых разговоров.";
 "assistant.empty_headline" = "Спросите что угодно о вашем LaTeX";
 "assistant.configure_hint" = "Провайдеры и учётные записи настраиваются через собственный процесс входа Pitex Agent.";
 "assistant.open_pi_config" = "Открыть конфигурацию Pitex Agent";

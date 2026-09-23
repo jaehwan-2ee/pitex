@@ -52,6 +52,14 @@ struct AgentTranscriptEntry: Identifiable {
     var status: Status = .done
 }
 
+/// A saved conversation for the current project — one pi session file.
+struct AgentSessionSummary: Identifiable {
+    let url: URL
+    let date: Date
+    let title: String
+    var id: URL { url }
+}
+
 /// Drives the assistant panel as a native UI front-end for a `pi --mode rpc`
 /// subprocess (the paseo-style embedding: the agent runs headlessly and the
 /// app renders its event stream). Providers and credentials are configured
@@ -68,6 +76,11 @@ final class AgentCoordinator: ObservableObject {
     }
 
     @Published private(set) var connection: Connection = .idle
+    /// The history list (`/resume` or the clock button), newest first.
+    @Published private(set) var pastSessions: [AgentSessionSummary] = []
+    @Published var showingSessionHistory = false
+    /// Where pi saves this project's sessions (`--session-dir`).
+    private var sessionDirectory: URL?
     @Published private(set) var transcript: [AgentTranscriptEntry] = [] {
         didSet {
             // The settings' chat-history limit trims the oldest entries once
@@ -283,9 +296,14 @@ final class AgentCoordinator: ObservableObject {
     private func spawn(executable: URL, root: URL, tools: PiToolchain) async {
         intentionalStop = false
         connection = .connecting
+        // Every launch starts a new saved session in this project's folder,
+        // so past conversations can be resumed after a restart.
+        let sessions = Self.sessionDirectory(for: root)
+        try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        sessionDirectory = sessions
         let arguments = [
             "--mode", "rpc",
-            "--no-session",
+            "--session-dir", sessions.path,
             "--append-system-prompt", Self.systemPromptSupplement,
         ]
         let launch: (executable: URL, arguments: [String])
@@ -347,6 +365,12 @@ final class AgentCoordinator: ObservableObject {
         default:
             break
         }
+        // pi's own /resume is an interactive TUI picker; here it opens the
+        // panel's history list instead.
+        if trimmed == "/resume" {
+            showSessionHistory()
+            return
+        }
         transcript.append(AgentTranscriptEntry(role: .user, title: "You", text: trimmed))
         statusMessage = nil
         Task {
@@ -382,11 +406,128 @@ final class AgentCoordinator: ObservableObject {
 
     func newSession() {
         guard let process, process.isRunning else { return }
+        clearTranscript()
+        try? process.send(.newSession)
+    }
+
+    private func clearTranscript() {
         transcript = []
         toolIndexByCallID = [:]
         assistantEntryIndex = nil
         thinkingEntryIndex = nil
-        try? process.send(.newSession)
+    }
+
+    // MARK: - Conversation history
+
+    /// Each project's conversations live in their own folder, so the history
+    /// list only shows this project's chats.
+    static func sessionDirectory(for root: URL) -> URL {
+        let name = String(root.standardizedFileURL.path.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        return PiPaths.agentDirectory
+            .appendingPathComponent("pitex-sessions", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
+    }
+
+    func showSessionHistory() {
+        let files = sessionDirectory.flatMap {
+            try? FileManager.default.contentsOfDirectory(
+                at: $0, includingPropertiesForKeys: [.contentModificationDateKey]
+            )
+        } ?? []
+        pastSessions = files
+            .filter { $0.pathExtension == "jsonl" }
+            .compactMap(Self.sessionSummary)
+            .sorted { $0.date > $1.date }
+        showingSessionHistory = true
+    }
+
+    /// Loads a saved session into pi, then redraws the transcript from its
+    /// messages (`switch_session` → `get_messages`).
+    func resume(_ session: AgentSessionSummary) {
+        showingSessionHistory = false
+        guard let process, process.isRunning, !isRunning else { return }
+        clearTranscript()
+        try? process.send(.switchSession(path: session.url.path))
+    }
+
+    /// Title = the first prompt as typed; sessions without one are skipped.
+    /// Only the head of the file is read — later tool output can be large.
+    nonisolated static func sessionSummary(_ url: URL) -> AgentSessionSummary? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let head = String(decoding: (try? handle.read(upToCount: 512 * 1024)) ?? Data(), as: UTF8.self)
+        for line in head.split(separator: "\n") {
+            guard let entry = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  entry["type"] as? String == "message",
+                  let message = entry["message"] as? [String: Any],
+                  message["role"] as? String == "user" else { continue }
+            let title = userPromptText(message)
+            guard !title.isEmpty else { return nil }
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            return AgentSessionSummary(url: url, date: date, title: String(title.prefix(120)))
+        }
+        return nil
+    }
+
+    /// A user message as typed: prose prompts carry the `<editor-context>`
+    /// envelope in front (see `envelope(for:)`).
+    nonisolated static func userPromptText(_ message: [String: Any]) -> String {
+        let raw = message["content"] as? String
+            ?? (message["content"] as? [[String: Any]] ?? [])
+                .compactMap { $0["text"] as? String }
+                .joined(separator: "\n")
+        guard raw.hasPrefix("<editor-context>"),
+              let end = raw.range(of: "\n</editor-context>\n") else {
+            return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return raw[end.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The same row shapes the live event stream produces.
+    private func transcriptEntries(from messages: [[String: Any]]) -> [AgentTranscriptEntry] {
+        var entries: [AgentTranscriptEntry] = []
+        var toolRows: [String: Int] = [:]
+        for message in messages {
+            switch message["role"] as? String {
+            case "user":
+                let text = Self.userPromptText(message)
+                if !text.isEmpty {
+                    entries.append(AgentTranscriptEntry(role: .user, title: "You", text: text))
+                }
+            case "assistant":
+                for block in message["content"] as? [[String: Any]] ?? [] {
+                    switch block["type"] as? String {
+                    case "thinking":
+                        if let text = block["thinking"] as? String, !text.isEmpty {
+                            entries.append(AgentTranscriptEntry(role: .thinking, title: "Thinking", text: text))
+                        }
+                    case "text":
+                        if let text = block["text"] as? String, !text.isEmpty {
+                            entries.append(AgentTranscriptEntry(role: .assistant, title: assistantTitle, text: text))
+                        }
+                    case "toolCall":
+                        let name = block["name"] as? String ?? "tool"
+                        entries.append(AgentTranscriptEntry(
+                            role: .tool, title: name, text: "",
+                            detail: toolSummary(name: name, args: block["arguments"] as? [String: Any])
+                        ))
+                        if let id = block["id"] as? String { toolRows[id] = entries.count - 1 }
+                    default:
+                        break
+                    }
+                }
+            case "toolResult":
+                guard let id = message["toolCallId"] as? String, let index = toolRows[id] else { break }
+                if message["isError"] as? Bool == true { entries[index].status = .failed }
+                if let text = toolResultText(message) {
+                    entries[index].detail = bounded(text, limit: 4_000)
+                }
+            default:
+                break
+            }
+        }
+        return entries
     }
 
     func selectModel(_ model: PiModelDescriptor) {
@@ -549,11 +690,24 @@ final class AgentCoordinator: ObservableObject {
             }
         case "get_commands":
             let raw = event.responseData?["commands"] as? [Any] ?? []
-            commands = raw.compactMap(PiSlashCommand.init)
+            // Handled by the panel itself (see `send`), so the composer's
+            // completion offers it instead of swapping in another command.
+            let resume: [String: Any] = [
+                "name": "resume", "description": "Resume a past conversation of this project", "source": "pitex",
+            ]
+            commands = ([resume] + raw).compactMap(PiSlashCommand.init)
         case "set_model", "set_thinking_level":
             sendModelSettings(.getState, id: modelSettingsRequestID)
         case "new_session":
             sendModelSettings(.getState)
+        case "switch_session":
+            if event.responseData?["cancelled"] as? Bool != true {
+                sendSilently(.getMessages)
+            }
+            sendModelSettings(.getState)
+        case "get_messages":
+            transcript = transcriptEntries(from: event.responseData?["messages"] as? [[String: Any]] ?? [])
+            sendSilently(.getSessionStats)
         default:
             break
         }

@@ -667,6 +667,10 @@ pub enum PiRPCCommand {
     ExtensionUICancelled {
         id: String,
     },
+    SwitchSession {
+        path: String,
+    },
+    GetMessages,
 }
 impl PiRPCCommand {
     pub fn object(&self) -> Value {
@@ -684,6 +688,8 @@ impl PiRPCCommand {
             Self::Steer { message } => json!({"type": "steer", "message": message}),
             Self::Abort => json!({"type": "abort"}),
             Self::NewSession => json!({"type": "new_session"}),
+            Self::SwitchSession { path } => json!({"type": "switch_session", "sessionPath": path}),
+            Self::GetMessages => json!({"type": "get_messages"}),
             Self::GetState => json!({"type": "get_state"}),
             Self::GetAvailableModels => json!({"type": "get_available_models"}),
             Self::GetAvailableThinkingLevels => {
@@ -1053,6 +1059,65 @@ pub struct AgentTranscriptEntry {
     pub status: TranscriptStatus,
 }
 
+/// A saved conversation for the current project — one pi session file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentSessionSummary {
+    pub path: PathBuf,
+    pub modified: std::time::SystemTime,
+    pub title: String,
+}
+
+/// Each project's conversations live in their own folder (`--session-dir`),
+/// so the history list only shows this project's chats.
+pub fn session_directory(root: &Path) -> PathBuf {
+    let name: String = root
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect();
+    pi_paths::agent_directory().join("pitex-sessions").join(name)
+}
+
+/// A user message as typed: prose prompts carry the `<editor-context>`
+/// envelope in front (see `envelope`).
+fn user_prompt_text(message: &Map<String, Value>) -> String {
+    let raw = match message.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    };
+    match raw.strip_prefix("<editor-context>").and_then(|r| r.split_once("\n</editor-context>\n")) {
+        Some((_, prompt)) => prompt.trim().to_string(),
+        None => raw.trim().to_string(),
+    }
+}
+
+/// Title = the first prompt as typed; sessions without one are skipped.
+/// Only the head of the file is read — later tool output can be large.
+fn session_summary(path: &Path) -> Option<AgentSessionSummary> {
+    let mut head = Vec::new();
+    std::fs::File::open(path).ok()?.take(512 * 1024).read_to_end(&mut head).ok()?;
+    let head = String::from_utf8_lossy(&head);
+    let title = head.lines().find_map(|line| {
+        let entry: Value = serde_json::from_str(line).ok()?;
+        let message = entry.get("message")?.as_object()?;
+        (entry.get("type")?.as_str()? == "message" && message.get("role")?.as_str()? == "user")
+            .then(|| user_prompt_text(message))
+    })?;
+    if title.is_empty() {
+        return None;
+    }
+    Some(AgentSessionSummary {
+        path: path.to_path_buf(),
+        modified: std::fs::metadata(path).and_then(|m| m.modified()).ok()?,
+        title: title.chars().take(120).collect(),
+    })
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AgentContextSnapshot {
     pub project_root: Option<PathBuf>,
@@ -1077,6 +1142,12 @@ pub struct AgentSelectionAttachment {
 pub struct AgentCoordinator {
     pub connection: Connection,
     pub transcript: Vec<AgentTranscriptEntry>,
+    /// The history list (`/resume` or the clock button), newest first.
+    pub past_sessions: Vec<AgentSessionSummary>,
+    /// `/resume` was typed — the panel opens the history popover.
+    pub history_requested: bool,
+    /// Where pi saves this project's sessions (`--session-dir`).
+    session_directory: Option<PathBuf>,
     pub preferred_model_id: Option<String>,
     pub history_limit: usize,
     pub is_running: bool,
@@ -1135,6 +1206,9 @@ impl AgentCoordinator {
         Self {
             connection: Connection::Idle,
             transcript: Vec::new(),
+            past_sessions: Vec::new(),
+            history_requested: false,
+            session_directory: None,
             preferred_model_id: None,
             history_limit: 50,
             is_running: false,
@@ -1259,10 +1333,16 @@ impl AgentCoordinator {
     fn spawn_with_tools(&mut self, executable: &Path, root: &Path, tools: PiToolchain) {
         self.intentional_stop = false;
         self.connection = Connection::Connecting;
+        // Every launch starts a new saved session in this project's folder,
+        // so past conversations can be resumed after a restart.
+        let sessions = session_directory(root);
+        let _ = std::fs::create_dir_all(&sessions);
+        self.session_directory = Some(sessions.clone());
         let arguments = vec![
             "--mode".into(),
             "rpc".into(),
-            "--no-session".into(),
+            "--session-dir".into(),
+            sessions.to_string_lossy().into_owned(),
             "--append-system-prompt".into(),
             Self::system_prompt_supplement().to_string(),
         ];
@@ -1359,6 +1439,14 @@ impl AgentCoordinator {
             );
             return;
         }
+        // pi's own /resume is an interactive TUI picker; here it opens the
+        // panel's history list instead.
+        if trimmed == "/resume" {
+            self.load_past_sessions();
+            self.history_requested = true;
+            self.ui_revision += 1;
+            return;
+        }
         self.push_entry(AgentTranscriptEntry {
             role: TranscriptRole::User,
             title: "You".into(),
@@ -1427,16 +1515,110 @@ impl AgentCoordinator {
         self.ui_revision += 1;
     }
     pub fn new_session(&mut self) {
-        let Some(process) = &self.process else { return };
-        if !process.is_running() {
+        if !self.process.as_ref().is_some_and(|p| p.is_running()) {
             return;
         }
+        self.clear_transcript();
+        if let Some(process) = &self.process {
+            let _ = process.send(&PiRPCCommand::NewSession, None);
+        }
+        self.ui_revision += 1;
+    }
+
+    fn clear_transcript(&mut self) {
         self.transcript.clear();
         self.tool_index_by_call_id.clear();
         self.assistant_entry_index = None;
         self.thinking_entry_index = None;
-        let _ = process.send(&PiRPCCommand::NewSession, None);
+    }
+
+    pub fn load_past_sessions(&mut self) {
+        let files = self
+            .session_directory
+            .as_deref()
+            .and_then(|d| std::fs::read_dir(d).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"));
+        self.past_sessions = files.filter_map(|p| session_summary(&p)).collect();
+        self.past_sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+    }
+
+    /// Loads a saved session into pi, then redraws the transcript from its
+    /// messages (`switch_session` → `get_messages`).
+    pub fn resume(&mut self, path: &Path) {
+        if self.is_running {
+            return;
+        }
+        let Some(process) = &self.process else { return };
+        if !process.is_running() {
+            return;
+        }
+        let command = PiRPCCommand::SwitchSession { path: path.to_string_lossy().into_owned() };
+        if process.send(&command, None).is_ok() {
+            self.clear_transcript();
+        }
         self.ui_revision += 1;
+    }
+
+    /// The same row shapes the live event stream produces.
+    fn transcript_from_messages(&self, messages: &[Value]) -> Vec<AgentTranscriptEntry> {
+        let entry = |role, title: &str, text: String, detail: String| AgentTranscriptEntry {
+            role,
+            title: title.to_string(),
+            text,
+            detail,
+            status: TranscriptStatus::Done,
+        };
+        let title = self.assistant_title();
+        let mut entries: Vec<AgentTranscriptEntry> = Vec::new();
+        let mut tool_rows: HashMap<String, usize> = HashMap::new();
+        for message in messages.iter().filter_map(|m| m.as_object()) {
+            match message.get("role").and_then(|r| r.as_str()) {
+                Some("user") => {
+                    let text = user_prompt_text(message);
+                    if !text.is_empty() {
+                        entries.push(entry(TranscriptRole::User, "You", text, String::new()));
+                    }
+                }
+                Some("assistant") => {
+                    let blocks = message.get("content").and_then(|c| c.as_array());
+                    for block in blocks.into_iter().flatten() {
+                        let text = |key: &str| block.get(key).and_then(|t| t.as_str()).unwrap_or("").to_string();
+                        match block.get("type").and_then(|t| t.as_str()) {
+                            Some("thinking") if !text("thinking").is_empty() => {
+                                entries.push(entry(TranscriptRole::Thinking, "Thinking", text("thinking"), String::new()));
+                            }
+                            Some("text") if !text("text").is_empty() => {
+                                entries.push(entry(TranscriptRole::Assistant, &title, text("text"), String::new()));
+                            }
+                            Some("toolCall") => {
+                                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
+                                let summary = tool_summary(name, block.get("arguments").and_then(|a| a.as_object()));
+                                entries.push(entry(TranscriptRole::Tool, name, String::new(), summary));
+                                tool_rows.insert(text("id"), entries.len() - 1);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Some("toolResult") => {
+                    let id = message.get("toolCallId").and_then(|i| i.as_str()).unwrap_or("");
+                    let Some(&index) = tool_rows.get(id) else { continue };
+                    if message.get("isError").and_then(|e| e.as_bool()) == Some(true) {
+                        entries[index].status = TranscriptStatus::Failed;
+                    }
+                    if let Some(text) = tool_result_text(Some(message)) {
+                        entries[index].detail = bounded(&text, 4_000);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let keep = entries.len().saturating_sub(self.history_limit);
+        entries.drain(..keep);
+        entries
     }
     pub fn select_model(&mut self, model: &PiModelDescriptor) {
         if self.is_updating_model_settings || self.current_model.as_ref() == Some(model) {
@@ -1723,6 +1905,13 @@ impl AgentCoordinator {
                     .and_then(|c| c.as_array())
                     .map(|a| a.iter().filter_map(PiSlashCommand::from_value).collect())
                     .unwrap_or_default();
+                // Handled by the panel itself (see `send`), so the composer's
+                // completion offers it instead of swapping in another command.
+                self.commands.insert(0, PiSlashCommand {
+                    name: "resume".into(),
+                    description: Some("Resume a past conversation of this project".into()),
+                    source: "pitex".into(),
+                });
             }
             Some("set_model" | "set_thinking_level") => {
                 self.send_model_settings(
@@ -1732,6 +1921,30 @@ impl AgentCoordinator {
             }
             Some("new_session") => {
                 self.send_model_settings(PiRPCCommand::GetState, None);
+            }
+            Some("switch_session") => {
+                let cancelled = event
+                    .response_data()
+                    .and_then(|d| d.get("cancelled"))
+                    .and_then(|c| c.as_bool())
+                    == Some(true);
+                if let (false, Some(process)) = (cancelled, &self.process) {
+                    let _ = process.send(&PiRPCCommand::GetMessages, None);
+                }
+                self.send_model_settings(PiRPCCommand::GetState, None);
+            }
+            Some("get_messages") => {
+                let messages = event
+                    .response_data()
+                    .and_then(|d| d.get("messages"))
+                    .and_then(|m| m.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                self.transcript = self.transcript_from_messages(&messages);
+                if let Some(process) = &self.process {
+                    let _ = process.send(&PiRPCCommand::GetSessionStats, None);
+                }
+                self.ui_revision += 1;
             }
             _ => {}
         }
@@ -3235,5 +3448,58 @@ mod toolchain_tests {
         let mut versions = vec!["v9.11.2", "v20.11.0", "v18.20.4"];
         versions.sort_by(|a, b| numeric_compare(b, a));
         assert_eq!(versions, ["v20.11.0", "v18.20.4", "v9.11.2"]);
+    }
+}
+
+#[cfg(test)]
+mod session_history_tests {
+    use super::*;
+
+    #[test]
+    fn prompt_text_strips_the_editor_envelope() {
+        let wrapped = json!({"role": "user", "content": [{"type": "text",
+            "text": "<editor-context>\nActive document: main.tex\n</editor-context>\n\nFix the intro"}]});
+        assert_eq!(user_prompt_text(wrapped.as_object().unwrap()), "Fix the intro");
+        let raw = json!({"role": "user", "content": "/skill:latex-compile"});
+        assert_eq!(user_prompt_text(raw.as_object().unwrap()), "/skill:latex-compile");
+    }
+
+    #[test]
+    fn summaries_use_the_first_prompt_and_skip_empty_sessions() {
+        let dir = std::env::temp_dir().join(format!("pitex-sessions-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let chat = dir.join("a.jsonl");
+        std::fs::write(&chat, [
+            r#"{"type":"session","version":3,"id":"s","timestamp":"2026-09-23T00:00:00Z","cwd":"/p"}"#,
+            r#"{"type":"message","id":"1","message":{"role":"user","content":[{"type":"text","text":"<editor-context>\nx\n</editor-context>\n\n한글 질문"}]}}"#,
+            r#"{"type":"message","id":"2","message":{"role":"user","content":"second"}}"#,
+        ].join("\n")).unwrap();
+        let empty = dir.join("b.jsonl");
+        std::fs::write(&empty, r#"{"type":"session","version":3,"id":"t"}"#).unwrap();
+        assert_eq!(session_summary(&chat).map(|s| s.title), Some("한글 질문".into()));
+        assert_eq!(session_summary(&empty), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resumed_messages_rebuild_the_live_row_shapes() {
+        let agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let messages = vec![
+            json!({"role": "user", "content": "Build it"}),
+            json!({"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "plan"},
+                {"type": "toolCall", "id": "c1", "name": "bash", "arguments": {"command": "latexmk"}},
+            ]}),
+            json!({"role": "toolResult", "toolCallId": "c1", "toolName": "bash", "isError": true,
+                   "content": [{"type": "text", "text": "! Undefined control sequence"}]}),
+            json!({"role": "assistant", "content": [{"type": "text", "text": "Fixed."}]}),
+        ];
+        let rows = agent.transcript_from_messages(&messages);
+        let roles: Vec<_> = rows.iter().map(|r| r.role).collect();
+        assert_eq!(roles, [TranscriptRole::User, TranscriptRole::Thinking, TranscriptRole::Tool, TranscriptRole::Assistant]);
+        assert_eq!(rows[2].title, "bash");
+        assert_eq!(rows[2].status, TranscriptStatus::Failed);
+        assert!(rows[2].detail.contains("Undefined control sequence"));
+        assert_eq!(rows[3].text, "Fixed.");
     }
 }

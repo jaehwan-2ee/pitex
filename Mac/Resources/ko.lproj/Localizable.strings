@@ -203,6 +203,8 @@
 "assistant.attach_document" = "활성 문서 첨부";
 "assistant.attach_files_help" = "프로젝트 파일을 입력창에 첨부";
 "assistant.clear" = "대화 지우기";
+"assistant.history" = "대화 기록";
+"assistant.history_empty" = "이 프로젝트에 저장된 대화가 아직 없습니다.";
 "assistant.empty_headline" = "LaTeX에 대해 무엇이든 물어보세요";
 "assistant.configure_hint" = "제공자와 계정은 Pitex Agent의 로그인 절차로 설정합니다.";
 "assistant.open_pi_config" = "Pitex Agent 설정 열기";

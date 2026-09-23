@@ -203,6 +203,8 @@
 "assistant.attach_document" = "Đính kèm tài liệu đang mở";
 "assistant.attach_files_help" = "Đính kèm tệp dự án vào khung soạn";
 "assistant.clear" = "Xóa hội thoại";
+"assistant.history" = "Lịch sử hội thoại";
+"assistant.history_empty" = "Dự án này chưa có cuộc hội thoại nào được lưu.";
 "assistant.empty_headline" = "Hỏi bất cứ điều gì về LaTeX của bạn";
 "assistant.configure_hint" = "Nhà cung cấp và tài khoản được thiết lập qua quy trình đăng nhập của Pitex Agent.";
 "assistant.open_pi_config" = "Mở cấu hình Pitex Agent";

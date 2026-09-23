@@ -27,6 +27,8 @@ enum PiRPCCommand {
     case steer(message: String)
     case abort
     case newSession
+    case switchSession(path: String)
+    case getMessages
     case getState
     case getAvailableModels
     case getSessionStats
@@ -48,6 +50,10 @@ enum PiRPCCommand {
             return ["type": "abort"]
         case .newSession:
             return ["type": "new_session"]
+        case let .switchSession(path):
+            return ["type": "switch_session", "sessionPath": path]
+        case .getMessages:
+            return ["type": "get_messages"]
         case .getState:
             return ["type": "get_state"]
         case .getAvailableModels:

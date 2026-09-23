@@ -1094,6 +1094,27 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
         });
     }
     controls.append(&clear);
+
+    // Past conversations of this project; `/resume` opens it too.
+    let history = gtk4::Button::from_icon_name("document-open-recent-symbolic");
+    compat::initial_tooltip(&history, &tr(lang, "assistant.history"));
+    {
+        let state = state.clone();
+        history.connect_clicked(move |button| {
+            let sessions = {
+                let Ok(mut s) = state.try_borrow_mut() else { return };
+                let Some(agent) = s.agent.as_mut() else { return };
+                if agent.is_running {
+                    return;
+                }
+                agent.load_past_sessions();
+                agent.past_sessions.clone()
+            };
+            show_session_history(button, sessions, lang);
+        });
+    }
+    ui.agent_history_button.replace(Some(history.clone()));
+    controls.append(&history);
     let usage = gtk4::Label::new(None);
     usage.set_hexpand(true);
     usage.set_halign(gtk4::Align::End);
@@ -3061,4 +3082,83 @@ mod skill_frontmatter_tests {
         assert_eq!(description, "Detect TeX tools.");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// The resumable conversations of the current project, newest first.
+/// Takes the list by value: `refresh_assistant` calls this while it holds
+/// the app state, so only the row click touches `STATE`.
+pub(crate) fn show_session_history(
+    anchor: &gtk4::Button,
+    sessions: Vec<crate::agent::AgentSessionSummary>,
+    lang: &'static str,
+) {
+    let popover = gtk4::Popover::new();
+    let list = gtk4::ListBox::new();
+    list.set_selection_mode(gtk4::SelectionMode::None);
+    if sessions.is_empty() {
+        let empty = gtk4::Label::new(Some(&tr(lang, "assistant.history_empty")));
+        empty.add_css_class("dim-label");
+        empty.set_margin_top(16);
+        empty.set_margin_bottom(16);
+        empty.set_margin_start(16);
+        empty.set_margin_end(16);
+        list.append(&empty);
+    }
+    for session in &sessions {
+        let row = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        row.set_margin_top(4);
+        row.set_margin_bottom(4);
+        row.set_margin_start(6);
+        row.set_margin_end(6);
+        let title = gtk4::Label::new(Some(&session.title));
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        title.set_lines(2);
+        title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        title.set_max_width_chars(48);
+        row.append(&title);
+        let seconds = session
+            .modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let date = gtk4::glib::DateTime::from_unix_local(seconds)
+            .and_then(|d| d.format("%Y-%m-%d %H:%M"))
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let when = gtk4::Label::new(Some(&date));
+        when.set_xalign(0.0);
+        when.add_css_class("dim-label");
+        when.add_css_class("caption");
+        row.append(&when);
+        list.append(&row);
+    }
+    {
+        let popover = popover.clone();
+        list.connect_row_activated(move |_, row| {
+            let Some(session) = sessions.get(row.index().max(0) as usize) else { return };
+            let path = session.path.clone();
+            popover.popdown();
+            crate::app_ui::STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        if let Some(agent) = st.agent.as_mut() {
+                            agent.resume(&path);
+                        }
+                        st.refresh_assistant();
+                    }
+                }
+            });
+        });
+    }
+    let scroll = gtk4::ScrolledWindow::new();
+    scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+    scroll.set_max_content_height(320);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_min_content_width(380);
+    scroll.set_child(Some(&list));
+    popover.set_child(Some(&scroll));
+    popover.set_parent(anchor);
+    popover.connect_closed(|p| p.unparent());
+    popover.popup();
 }

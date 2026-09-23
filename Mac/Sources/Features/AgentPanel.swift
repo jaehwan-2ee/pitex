@@ -118,6 +118,19 @@ struct AgentPanel: View {
             .help(String(localized: "assistant.clear"))
             .accessibilityIdentifier("pitex.agent.newSession")
 
+            // Past conversations of this project; `/resume` opens it too.
+            Button {
+                coordinator.showSessionHistory()
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+            .buttonStyle(.borderless)
+            .disabled(coordinator.connection != .ready || coordinator.isRunning)
+            .help(String(localized: "assistant.history"))
+            .popover(isPresented: $coordinator.showingSessionHistory, arrowEdge: .bottom) {
+                AgentSessionHistory(coordinator: coordinator)
+            }
+
             if let usage = usageText {
                 Text(String(format: String(localized: "assistant.usage"), usage))
                     .font(.caption)
@@ -508,5 +521,38 @@ private struct AgentEntryRow: View {
 
     private func firstLine(_ text: String) -> String {
         text.components(separatedBy: .newlines).first ?? text
+    }
+}
+
+/// The resumable conversations of the current project, newest first.
+private struct AgentSessionHistory: View {
+    @ObservedObject var coordinator: AgentCoordinator
+
+    var body: some View {
+        Group {
+            if coordinator.pastSessions.isEmpty {
+                Text("assistant.history_empty")
+                    .foregroundStyle(.secondary)
+                    .padding(20)
+            } else {
+                List(coordinator.pastSessions) { session in
+                    Button {
+                        coordinator.resume(session)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: session.title)
+                                .lineLimit(2)
+                            Text(session.date, format: .dateTime.year().month().day().hour().minute())
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .frame(width: 380, height: 320)
+            }
+        }
     }
 }

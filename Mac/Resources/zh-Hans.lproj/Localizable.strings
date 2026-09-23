@@ -204,6 +204,8 @@
 "assistant.attach_document" = "附加活动文档";
 "assistant.attach_files_help" = "将项目文件附加到输入框";
 "assistant.clear" = "清除对话";
+"assistant.history" = "对话记录";
+"assistant.history_empty" = "此项目尚无已保存的对话。";
 "assistant.empty_headline" = "询问有关 LaTeX 的任何问题";
 "assistant.configure_hint" = "提供商和账户通过 Pitex Agent 自己的登录流程进行配置。";
 "assistant.open_pi_config" = "打开 Pitex Agent 配置";

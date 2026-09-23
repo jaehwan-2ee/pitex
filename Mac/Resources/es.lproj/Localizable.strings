@@ -204,6 +204,8 @@
 "assistant.attach_document" = "Adjuntar documento activo";
 "assistant.attach_files_help" = "Adjuntar archivos del proyecto al campo de entrada";
 "assistant.clear" = "Borrar conversación";
+"assistant.history" = "Historial de conversaciones";
+"assistant.history_empty" = "Aún no hay conversaciones guardadas para este proyecto.";
 "assistant.empty_headline" = "Pregunta cualquier cosa sobre tu LaTeX";
 "assistant.configure_hint" = "Los proveedores y las cuentas se configuran mediante el propio flujo de inicio de sesión de Pitex Agent.";
 "assistant.open_pi_config" = "Abrir configuración de Pitex Agent";
