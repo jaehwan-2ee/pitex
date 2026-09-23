@@ -1,4 +1,6 @@
 //! Run with: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
+//! One `#[test]` per binary: GTK initializes on a single thread per process,
+//! and libtest runs each test on its own thread.
 use app_ports::{DocumentMutation, DocumentMutationResult, DocumentSnapshot};
 use editor_feature::{decoration_tag_name, EditorDecoration, EditorDecorationSnapshot};
 use gtk4::prelude::*;
@@ -11,6 +13,7 @@ use std::{cell::RefCell, rc::Rc, sync::{mpsc, Arc}, time::Duration};
 #[ignore = "requires a GTK display (use xvfb-run)"]
 fn native_edits_highlighting_and_pdf_worker() {
     gtk4::init().unwrap();
+    git_diff_surface_folds_and_expands();
     #[cfg(unix)]
     for stop in [false, true] {
         let process = pitex_shell::agent::PiAgentProcess::start(
@@ -137,14 +140,10 @@ fn sample_pdf() -> Vec<u8> {
 
 /// The `CommitDiffView` surface: a parsed patch becomes lazily bound
 /// rows, a long unchanged run renders as a fold bar, and expanding it
-/// reveals the hidden context pairs.
-#[test]
-#[ignore = "requires a GTK display (use xvfb-run)"]
-fn native_git_diff_surface_folds_and_expands() {
+/// reveals the hidden context pairs. Called from the test above, on the
+/// thread that initialized GTK.
+fn git_diff_surface_folds_and_expands() {
     use pitex_shell::git_diff::{DiffList, DiffRow};
-    // `gtk4::init` may already have run in the sibling test — the model
-    // is a plain GObject and needs no display either way.
-    let _ = gtk4::init();
     let mut patch = String::from(
         "diff --git a/main.tex b/main.tex\nindex 1111111..2222222 100644\n--- a/main.tex\n+++ b/main.tex\n@@ -1,21 +1,21 @@\n",
     );
