@@ -96,6 +96,7 @@ public enum DocumentSessionError: Error, Equatable, Sendable {
     case staleRevision(expected: UInt64, actual: UInt64)
     case savedContentHashMismatch(expected: DiskContentHash, written: DiskContentHash)
     case revisionExhausted
+    case notTextNeutral
 }
 
 public actor DocumentSession {
@@ -184,6 +185,64 @@ public actor DocumentSession {
 
         revision += 1
         return makeSnapshot()
+    }
+
+    /// Commits a finished disk write at the session's current revision —
+    /// the atomic form of `.commitSave` for writes issued off the main
+    /// actor, where edits may land between the write and its commit.
+    /// `writtenRevision` is the revision whose text was written to disk:
+    /// equal to `revision` behaves exactly like applying `.commitSave`;
+    /// lower means the disk holds that revision's text, so its hash
+    /// becomes the baseline while the current text stays untouched;
+    /// higher is a programmer error. A conflict recorded meanwhile wins
+    /// over the commit and leaves the session untouched — unless it is
+    /// the conflict named by `resolving`, the very conflict a keep-mine
+    /// write resolves, which is cleared along with the baseline move.
+    @discardableResult
+    public func commitSave(
+        writtenDiskHash: DiskContentHash,
+        writtenRevision: UInt64,
+        resolving conflict: DocumentConflict? = nil
+    ) throws -> DocumentSnapshot {
+        guard writtenRevision <= revision else {
+            throw DocumentSessionError.staleRevision(
+                expected: writtenRevision,
+                actual: revision
+            )
+        }
+        if writtenRevision == revision {
+            return try apply(
+                .commitSave(writtenDiskHash: writtenDiskHash),
+                expectedRevision: revision
+            )
+        }
+        if let existing = self.conflict, existing != conflict {
+            return makeSnapshot()
+        }
+        guard revision < UInt64.max else {
+            throw DocumentSessionError.revisionExhausted
+        }
+        diskBaselineHash = writtenDiskHash
+        self.conflict = nil
+        revision += 1
+        return makeSnapshot()
+    }
+
+    /// Applies a mutation that cannot change the document's text or disk
+    /// baseline at whatever revision the session is on — the atomic form
+    /// of `apply(mutation, expectedRevision: revision)` for the async
+    /// save pipeline, where recording a conflict must not fail just
+    /// because an edit landed mid-write.
+    @discardableResult
+    public func applyTextNeutral(
+        _ mutation: DocumentMutation
+    ) throws -> DocumentSnapshot {
+        switch mutation {
+        case .recordExternalChange, .recordSaveConflict:
+            return try apply(mutation, expectedRevision: revision)
+        case .replaceText, .commitSave, .resolveConflict:
+            throw DocumentSessionError.notTextNeutral
+        }
     }
 
     private func makeSnapshot() -> DocumentSnapshot {

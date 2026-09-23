@@ -274,6 +274,15 @@ final class WorkspaceModel: ObservableObject {
     var registeredSessions: [DocumentSessionCore.DocumentSession] = []
     private var fileWatchers: [URL: DispatchSourceFileSystemObject] = [:]
     private var pendingDiskChecks: [URL: Task<Void, Never>] = [:]
+    /// Newest queued write per document; the next write chains onto it so
+    /// a file's saves can never overlap or reorder.
+    private var pendingWrites: [URL: Task<SessionWriteResult, Never>] = [:]
+    /// Writes queued or in flight — quit and teardown drain them first.
+    private var pendingWriteCount = 0
+    /// Hash of the text the newest write puts on disk, recorded before the
+    /// write starts so `processDiskChange` can tell our own rename from an
+    /// external edit. Cleared when the document closes.
+    private var lastOwnWrite: [URL: DiskContentHash] = [:]
     private var selectionObserver: NSObjectProtocol?
 
     init() { loadRecents() }
@@ -648,47 +657,144 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
+    /// True while document writes are queued or in flight — app
+    /// termination waits for them via `waitForPendingWrites`.
+    var hasPendingWrites: Bool { pendingWriteCount > 0 }
+
+    /// Resolves after every queued/running write finished (its session
+    /// commit included), so quit and workspace teardown never cut a save.
+    func waitForPendingWrites() async {
+        while pendingWriteCount > 0 {
+            for pending in pendingWrites.values { _ = await pending.value }
+        }
+    }
+
+    /// What one serialized session write did, plus the session snapshot
+    /// after its commit/conflict was applied.
+    private struct SessionWriteResult: Sendable {
+        enum Kind: Sendable {
+            /// The session moved on while the write queued (already clean,
+            /// conflict resolved, …) — nothing was written.
+            case skipped
+            case saved
+            case saveConflict
+            case permissionFailure(path: String)
+            case interruptedWrite(path: String)
+        }
+        let kind: Kind
+        let snapshot: DocumentSessionCore.DocumentSnapshot
+    }
+
+    /// Serializes writes to `url`: the new write awaits the previous one
+    /// (commit included), then re-reads the session — anything snapshotted
+    /// before the wait is stale. The atomic write itself runs off the main
+    /// actor; committing by written revision keeps edits that landed
+    /// mid-write from breaking the baseline, and a mid-write conflict is
+    /// still recorded through `applyTextNeutral`. `resolvesConflict`
+    /// marks a keep-mine write so its commit clears the conflict it was
+    /// issued to resolve instead of losing to it. A failed write restores
+    /// the previous `lastOwnWrite` entry — the disk never held its hash.
+    private func enqueueSessionWrite(
+        url: URL,
+        session: DocumentSessionCore.DocumentSession,
+        shouldWrite: @Sendable (DocumentSessionCore.DocumentSnapshot) -> Bool,
+        baseline: @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash,
+        resolvesConflict: Bool = false
+    ) -> Task<SessionWriteResult, Never> {
+        let url = url.standardizedFileURL
+        let previous = pendingWrites[url]
+        pendingWriteCount += 1
+        let task = Task { @MainActor [weak self] in
+            defer { self?.pendingWriteCount -= 1 }
+            _ = await previous?.value
+            var snapshot = await session.snapshot()
+            guard shouldWrite(snapshot) else {
+                return SessionWriteResult(kind: .skipped, snapshot: snapshot)
+            }
+            let text = snapshot.text
+            let expectedBaseline = baseline(snapshot)
+            let previousOwnWrite = self?.lastOwnWrite[url]
+            self?.lastOwnWrite[url] = .hashing(text)
+            let outcome = await Task.detached(priority: .userInitiated) {
+                FoundationAtomicDocumentStore().save(
+                    text: text,
+                    to: url,
+                    expectedBaselineHash: expectedBaseline
+                )
+            }.value
+            switch outcome {
+            case let .saved(document):
+                if let committed = try? await session.commitSave(
+                    writtenDiskHash: document.hash,
+                    writtenRevision: snapshot.revision,
+                    resolving: resolvesConflict ? snapshot.conflict : nil
+                ) {
+                    snapshot = committed
+                } else {
+                    snapshot = await session.snapshot()
+                }
+                return SessionWriteResult(kind: .saved, snapshot: snapshot)
+            case let .staleBaseline(conflict):
+                self?.lastOwnWrite[url] = previousOwnWrite
+                let observedHash = conflict.observedDisk?.hash ?? .hashing("")
+                if let conflicted = try? await session.applyTextNeutral(
+                    .recordSaveConflict(observedDiskHash: observedHash)
+                ) {
+                    snapshot = conflicted
+                } else {
+                    snapshot = await session.snapshot()
+                }
+                return SessionWriteResult(kind: .saveConflict, snapshot: snapshot)
+            case let .permissionFailure(path):
+                self?.lastOwnWrite[url] = previousOwnWrite
+                return SessionWriteResult(
+                    kind: .permissionFailure(path: path),
+                    snapshot: snapshot
+                )
+            case let .interruptedWrite(path):
+                self?.lastOwnWrite[url] = previousOwnWrite
+                return SessionWriteResult(
+                    kind: .interruptedWrite(path: path),
+                    snapshot: snapshot
+                )
+            }
+        }
+        pendingWrites[url] = task
+        return task
+    }
+
     func save() async {
         guard canSave,
               let url = activeDocumentURL,
               let snapshot = documentSnapshot,
               let session = registeredSessions.first(where: { $0.path == snapshot.path }) else { return }
-        do {
-            let outcome = FoundationAtomicDocumentStore().save(
-                text: snapshot.text,
-                to: url,
-                expectedBaselineHash: snapshot.diskBaselineHash
-            )
-            switch outcome {
-            case let .saved(document):
-                let saved = try await session.apply(
-                    .commitSave(writtenDiskHash: document.hash),
-                    expectedRevision: snapshot.revision
-                )
-                documentSnapshot = saved
-                refreshGit()
-            case let .staleBaseline(conflict):
-                let observedHash = conflict.observedDisk?.hash ?? .hashing("")
-                let conflicted = try await session.apply(
-                    .recordSaveConflict(observedDiskHash: observedHash),
-                    expectedRevision: snapshot.revision
-                )
-                documentSnapshot = conflicted
-                syncTeXState = .stale("The source changed on disk; SyncTeX locations may be stale.")
-            case let .permissionFailure(path):
-                throw WorkspaceOpenError.savePermissionDenied(path)
-            case let .interruptedWrite(path):
-                throw WorkspaceOpenError.saveInterrupted(path)
-            }
-        } catch let error as DocumentSessionError {
-            switch error {
-            case .staleRevision:
-                documentSnapshot = await session.snapshot()
-            default:
-                phase = .failed(error.localizedDescription)
-            }
-        } catch {
-            phase = .failed(error.localizedDescription)
+        let generation = documentLoadGeneration
+        let result = await enqueueSessionWrite(
+            url: url,
+            session: session,
+            shouldWrite: { $0.saveState == .dirty },
+            baseline: { $0.diskBaselineHash }
+        ).value
+        // The write queued and ran off the main actor: the workspace may
+        // have switched documents or closed in between, so only publish a
+        // snapshot that still belongs to the displayed document — and
+        // never downgrade it to an older revision.
+        guard documentLoadGeneration == generation else { return }
+        if result.snapshot.path == documentSnapshot?.path,
+           result.snapshot.revision >= documentSnapshot?.revision ?? 0 {
+            documentSnapshot = result.snapshot
+        }
+        switch result.kind {
+        case .saved:
+            refreshGit()
+        case .saveConflict:
+            syncTeXState = .stale("The source changed on disk; SyncTeX locations may be stale.")
+        case .skipped:
+            break
+        case let .permissionFailure(path):
+            phase = .failed(WorkspaceOpenError.savePermissionDenied(path).localizedDescription)
+        case let .interruptedWrite(path):
+            phase = .failed(WorkspaceOpenError.saveInterrupted(path).localizedDescription)
         }
     }
 
@@ -699,34 +805,53 @@ final class WorkspaceModel: ObservableObject {
         guard let snapshot = documentSnapshot, snapshot.saveState == .conflicted,
               let url = activeDocumentURL,
               let session = registeredSessions.first(where: { $0.path == snapshot.path }) else { return }
+        let generation = documentLoadGeneration
         do {
             if useDiskVersion {
+                // Writes queued for this file land first so the adopted
+                // text is what the disk actually holds afterwards.
+                _ = await pendingWrites[url.standardizedFileURL]?.value
                 let diskText = try Self.readExactUTF8(url)
+                let current = await session.snapshot()
+                guard documentLoadGeneration == generation,
+                      current.saveState == .conflicted,
+                      current.path == documentSnapshot?.path else { return }
                 let updated = try await session.apply(
                     .resolveConflict(text: diskText, diskBaselineHash: .hashing(diskText)),
-                    expectedRevision: snapshot.revision
+                    expectedRevision: current.revision
                 )
+                // The adopted disk content is the baseline now; the
+                // own-write record no longer describes the file.
+                lastOwnWrite[url.standardizedFileURL] = nil
+                guard documentLoadGeneration == generation,
+                      updated.path == documentSnapshot?.path,
+                      updated.revision >= documentSnapshot?.revision ?? 0 else { return }
                 documentSnapshot = updated
                 await environment?.editor.refreshFromSession()
             } else {
-                let outcome = FoundationAtomicDocumentStore().save(
-                    text: snapshot.text,
-                    to: url,
-                    expectedBaselineHash: snapshot.conflict.flatMap { conflict in
-                        if case let .externalModification(_, observed) = conflict { return observed }
-                        if case let .saveCollision(_, observed) = conflict { return observed }
-                        return nil
-                    } ?? snapshot.diskBaselineHash
-                )
-                guard case let .saved(document) = outcome else {
+                let result = await enqueueSessionWrite(
+                    url: url,
+                    session: session,
+                    shouldWrite: { $0.saveState == .conflicted },
+                    baseline: { snapshot in
+                        snapshot.conflict.flatMap { conflict in
+                            if case let .externalModification(_, observed) = conflict { return observed }
+                            if case let .saveCollision(_, observed) = conflict { return observed }
+                            return nil
+                        } ?? snapshot.diskBaselineHash
+                    },
+                    resolvesConflict: true
+                ).value
+                guard documentLoadGeneration == generation,
+                      result.snapshot.path == documentSnapshot?.path else { return }
+                switch result.kind {
+                case .saved, .skipped:
+                    if result.snapshot.revision >= documentSnapshot?.revision ?? 0 {
+                        documentSnapshot = result.snapshot
+                    }
+                case .saveConflict, .permissionFailure, .interruptedWrite:
                     phase = .failed("The conflicted file could not be written to disk.")
-                    return
                 }
-                let updated = try await session.apply(
-                    .commitSave(writtenDiskHash: document.hash),
-                    expectedRevision: snapshot.revision
-                )
-                documentSnapshot = updated
             }
         } catch {
             phase = .failed("The conflict could not be resolved: \(error.localizedDescription)")
@@ -736,6 +861,9 @@ final class WorkspaceModel: ObservableObject {
     func closeDocument(_ url: URL) async {
         guard let root = projectURL else { return }
         stopWatcher(for: url)
+        // Writes queued for this file land before its session goes away.
+        _ = await pendingWrites[url.standardizedFileURL]?.value
+        lastOwnWrite[url.standardizedFileURL] = nil
         if let index = registeredSessions.firstIndex(where: { session in
             guard let path = try? Self.relativePath(for: url, root: root) else { return false }
             return session.path == path
@@ -764,6 +892,9 @@ final class WorkspaceModel: ObservableObject {
         for url in fileWatchers.keys { stopWatcher(for: url) }
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
+        // In-flight saves finish before their sessions are torn down.
+        await waitForPendingWrites()
+        lastOwnWrite.removeAll()
         agent?.shutdown()
         agent?.stopConfigWatcher()
         completion?.shutdown()
@@ -1155,20 +1286,27 @@ final class WorkspaceModel: ObservableObject {
                   guard let path = try? Self.relativePath(for: url, root: root) else { return false }
                   return session.path == path
               }) else { return }
-        guard let diskText = try? Self.readExactUTF8(url) else {
+        guard let (diskText, observedHash) = try? await Task.detached(priority: .userInitiated) {
+            let text = try Self.readExactUTF8(url)
+            return (text, DiskContentHash.hashing(text))
+        }.value else {
             // Deleted or unreadable: never replace content with nothing. Flag
             // a conflict only when unsaved in-memory edits are at stake.
             let snapshot = await session.snapshot()
             if snapshot.saveState != .clean, snapshot.conflict == nil,
-               let updated = try? await session.apply(
-                   .recordExternalChange(observedDiskHash: .hashing("")),
-                   expectedRevision: snapshot.revision
+               let updated = try? await session.applyTextNeutral(
+                   .recordExternalChange(observedDiskHash: .hashing(""))
                ), snapshot.path == documentSnapshot?.path {
                 documentSnapshot = updated
             }
             return
         }
-        let observedHash = DiskContentHash.hashing(diskText)
+        // Our own write put exactly this on disk — its session commit owns
+        // the baseline, so it is not an external change. Anything else means
+        // the disk moved past that write: drop the record so a later file
+        // matching it byte-for-byte registers as external again.
+        guard observedHash != lastOwnWrite[url.standardizedFileURL] else { return }
+        lastOwnWrite[url.standardizedFileURL] = nil
         let snapshot = await session.snapshot()
         guard observedHash != snapshot.diskBaselineHash, snapshot.conflict == nil else { return }
         // "Confirm before overwriting external changes" off → adopt the disk
@@ -1182,9 +1320,8 @@ final class WorkspaceModel: ObservableObject {
                 documentSnapshot = updated
                 await environment?.editor.refreshFromSession()
             }
-        } else if let updated = try? await session.apply(
-            .recordExternalChange(observedDiskHash: observedHash),
-            expectedRevision: snapshot.revision
+        } else if let updated = try? await session.applyTextNeutral(
+            .recordExternalChange(observedDiskHash: observedHash)
         ), snapshot.path == documentSnapshot?.path {
             documentSnapshot = updated
         }
@@ -1201,6 +1338,7 @@ final class WorkspaceModel: ObservableObject {
     @discardableResult
     func persistDirtySessions() async -> String? {
         guard let root = projectURL else { return nil }
+        let generation = documentLoadGeneration
         for session in registeredSessions {
             let sessionSnapshot = await session.snapshot()
             if sessionSnapshot.saveState == .conflicted {
@@ -1208,28 +1346,26 @@ final class WorkspaceModel: ObservableObject {
             }
             guard sessionSnapshot.saveState == .dirty else { continue }
             let fileURL = root.appendingPathComponent(sessionSnapshot.path.rawValue)
-            let outcome = FoundationAtomicDocumentStore().save(
-                text: sessionSnapshot.text,
-                to: fileURL,
-                expectedBaselineHash: sessionSnapshot.diskBaselineHash
-            )
-            switch outcome {
-            case let .saved(document):
-                _ = try? await session.apply(
-                    .commitSave(writtenDiskHash: document.hash),
-                    expectedRevision: sessionSnapshot.revision
-                )
-            case .staleBaseline:
-                _ = try? await session.apply(
-                    .recordSaveConflict(observedDiskHash: .hashing((try? String(contentsOf: fileURL, encoding: .utf8)) ?? "")),
-                    expectedRevision: sessionSnapshot.revision
-                )
-                return "The file \(sessionSnapshot.path.rawValue) changed on disk while preparing the agent. Resolve the conflict first."
+            let result = await enqueueSessionWrite(
+                url: fileURL,
+                session: session,
+                shouldWrite: { $0.saveState == .dirty },
+                baseline: { $0.diskBaselineHash }
+            ).value
+            switch result.kind {
+            case .saved, .skipped:
+                // A conflict recorded while the write was queued blocks
+                // the run the same way the pre-check above does.
+                if result.snapshot.saveState == .conflicted {
+                    return "The file \(result.snapshot.path.rawValue) has an unresolved external-change conflict. Resolve it before using the agent."
+                }
+            case .saveConflict:
+                return "The file \(result.snapshot.path.rawValue) changed on disk while preparing the agent. Resolve the conflict first."
             case .permissionFailure, .interruptedWrite:
-                return "The file \(sessionSnapshot.path.rawValue) could not be saved before running the agent."
+                return "The file \(result.snapshot.path.rawValue) could not be saved before running the agent."
             }
         }
-        if let snapshot = documentSnapshot {
+        if let snapshot = documentSnapshot, documentLoadGeneration == generation {
             documentSnapshot = await registeredSessions
                 .first(where: { $0.path == snapshot.path })?.snapshot() ?? snapshot
         }
@@ -2135,6 +2271,22 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Quit must not cut an in-flight save short: while any workspace has
+    /// writes queued, termination defers until they have finished on disk.
+    @MainActor
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard WorkspaceWindows.live.contains(where: { $0.hasPendingWrites }) else {
+            return .terminateNow
+        }
+        Task { @MainActor in
+            for workspace in WorkspaceWindows.live {
+                await workspace.waitForPendingWrites()
+            }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         Task { @MainActor in
