@@ -180,7 +180,7 @@ final class WorkspaceModel: ObservableObject {
     var gitRefreshInFlight = false
     @Published private(set) var wordCount = 0
     let registry = DocumentSessionRegistry()
-    let settings = SettingsStore()
+    let settings = SettingsStore.shared
     let buildOrchestrator = BuildOrchestrator(executor: StreamingBuildExecutor())
     let syncTeXRunner = SyncTeXRunner()
     let highlighter = SyntaxHighlighter()
@@ -268,6 +268,38 @@ final class WorkspaceModel: ObservableObject {
     init() { loadRecents() }
 
     var hasProject: Bool { projectURL != nil }
+
+    // MARK: - Window routing
+
+    /// The window hosting this workspace — set by `WorkspaceWindow` so a
+    /// Finder open routed here can bring it forward.
+    weak var window: NSWindow?
+
+    /// True when `url` is this window's project folder or lies inside it.
+    func owns(_ url: URL) -> Bool {
+        guard let root = projectURL?.standardizedFileURL.path else { return false }
+        let path = url.standardizedFileURL.path
+        return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+    }
+
+    /// An empty window (nothing open, nothing loading) takes the next open.
+    var acceptsNewProject: Bool {
+        if case .loading = phase { return false }
+        return !hasProject
+    }
+
+    /// Brings this window forward and shows `url` — a file of its project
+    /// activates like a sidebar click; a folder just focuses the window.
+    func reveal(_ url: URL) {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        let url = url.standardizedFileURL
+        if projectFiles.contains(url) {
+            Task { await activateDocument(url) }
+        } else if Self.isSourceFile(url) {
+            Task { await open(url) }
+        }
+    }
     private var didRestoreSession = false
     var canSave: Bool {
         documentSnapshot?.saveState == .dirty && capabilityLease?.access == .readWrite
@@ -304,7 +336,7 @@ final class WorkspaceModel: ObservableObject {
         panel.allowedContentTypes = ["tex", "bib", "md", "markdown"]
             .compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await open(url) }
+        WorkspaceWindows.route(url, from: self)
     }
 
     // MARK: - Recents & file operations
@@ -980,7 +1012,7 @@ final class WorkspaceModel: ObservableObject {
             )
             NotificationCenter.default.post(
                 name: .syncTeXHighlightRequested,
-                object: nil,
+                object: self,
                 userInfo: [
                     "page": match.pdf.page,
                     "x": match.h,
@@ -1930,7 +1962,10 @@ private enum WorkspaceOpenError: LocalizedError {
 }
 
 struct AppCommands: Commands {
-    @ObservedObject var workspace: WorkspaceModel
+    /// Menu commands act on the key window's workspace; with no window
+    /// focused they fall back to an empty model, so only Open stays live.
+    @FocusedObject private var focusedWorkspace: WorkspaceModel?
+    private var workspace: WorkspaceModel { focusedWorkspace ?? WorkspaceWindows.unfocused }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -1943,7 +1978,7 @@ struct AppCommands: Commands {
             if !workspace.recentDocuments.isEmpty {
                 Menu("command.open_recent") {
                     ForEach(workspace.recentDocuments, id: \.self) { url in
-                        Button(url.lastPathComponent) { Task { await workspace.open(url) } }
+                        Button(url.lastPathComponent) { WorkspaceWindows.route(url, from: workspace) }
                     }
                     Divider()
                     Button("command.clear_recents") { workspace.clearRecents() }
@@ -1954,9 +1989,16 @@ struct AppCommands: Commands {
                 .keyboardShortcut("p", modifiers: [.command])
                 .disabled(workspace.activeDocumentURL == nil)
             Divider()
-            Button("command.close") { Task { await workspace.close() } }
+            // Closes the project; an empty window closes itself, like VS Code.
+            Button("command.close") {
+                if workspace.hasProject {
+                    Task { await workspace.close() }
+                } else {
+                    workspace.window?.performClose(nil)
+                }
+            }
                 .keyboardShortcut("w")
-                .disabled(!workspace.hasProject)
+                .disabled(workspace.window == nil)
             Button("command.clear_session") { Task { await workspace.close() } }
                 .disabled(!workspace.hasProject)
         }
@@ -2019,8 +2061,6 @@ struct AppCommands: Commands {
 }
 
 final class PitexAppDelegate: NSObject, NSApplicationDelegate {
-    weak var workspace: WorkspaceModel?
-
     /// LaunchServices caches the Dock/Finder icon keyed by the app bundle's
     /// modification date — a drag-copied update preserves it, so a new icon
     /// can stay invisible. Bump the bundle's mtime once per app version.
@@ -2041,23 +2081,24 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
         // The Pitex Agent installs itself into the app's own support folder
         // on first launch (and refreshes its bundled skills on every launch)
         // — no install button required.
-        Task { [weak self] in
+        Task {
             await PiRuntimeInstaller.ensureInstalled()
-            await MainActor.run { self?.workspace?.agent?.prepare() }
+            await MainActor.run { WorkspaceWindows.live.forEach { $0.agent?.prepare() } }
         }
         // Auto-update: check+install on launch when the preference allows
         // it — same pref key the Linux/Windows shells read.
-        Task { @MainActor [weak self] in
-            if self?.workspace?.settings.autoInstallUpdates == true {
+        Task { @MainActor in
+            if SettingsStore.shared.autoInstallUpdates {
                 await UpdateChecker().autoUpdate()
             }
         }
     }
 
+    /// Finder / Open With / `open -a`: each URL goes to the window whose
+    /// project contains it, else an empty window, else a new window.
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first else { return }
         Task { @MainActor in
-            await workspace?.open(url)
+            urls.forEach { WorkspaceWindows.route($0) }
         }
     }
 
@@ -2066,9 +2107,8 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        guard let workspace else { return }
         Task { @MainActor in
-            await workspace.close()
+            for workspace in WorkspaceWindows.live { await workspace.close() }
         }
     }
 }
@@ -2076,21 +2116,118 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct PitexApp: App {
     @NSApplicationDelegateAdaptor(PitexAppDelegate.self) private var appDelegate
-    @StateObject private var workspace = WorkspaceModel()
 
     var body: some Scene {
-        // A single window: every window hosts the same shared
-        // adapter.textView, and an NSTextView can only live in one
-        // scrollView — extra windows would steal it and leave blank editors.
-        Window("Pitex", id: "main") {
-            WorkspaceView(workspace: workspace)
-                .frame(minWidth: 980, minHeight: 620)
-                .onAppear { appDelegate.workspace = workspace }
-                .sheet(isPresented: $workspace.showingSettings) {
-                    SettingsView(store: workspace.settings, workspace: workspace)
-                }
-                .onAppear { workspace.restoreSessionIfNeeded() }
+        // One WorkspaceModel per window, so each window owns its own
+        // adapter.textView (an NSTextView can only live in one scroll view).
+        // Opens route through WorkspaceWindows: a file outside every open
+        // project gets a new window, like VS Code.
+        WindowGroup("Pitex", id: "workspace", for: WindowOpenRequest.self) { $request in
+            WorkspaceWindow(initialURL: request?.url)
         }
-        .commands { AppCommands(workspace: workspace) }
+        // The app delegate routes Finder opens itself; SwiftUI must not add
+        // a window of its own for them.
+        .handlesExternalEvents(matching: [])
+        .commands { AppCommands() }
+    }
+}
+
+/// A new window's initial file. The id keeps SwiftUI from reusing an older
+/// window that was opened with the same URL but now shows something else.
+struct WindowOpenRequest: Codable, Hashable {
+    var id = UUID()
+    var url: URL
+}
+
+private struct WorkspaceWindow: View {
+    let initialURL: URL?
+    @StateObject private var workspace = WorkspaceModel()
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        WorkspaceView(workspace: workspace)
+            .frame(minWidth: 980, minHeight: 620)
+            .background(WindowReader { workspace.window = $0 })
+            .focusedSceneObject(workspace)
+            .navigationTitle(workspace.projectURL?.lastPathComponent ?? "Pitex")
+            .sheet(isPresented: $workspace.showingSettings) {
+                SettingsView(store: workspace.settings, workspace: workspace)
+            }
+            .onAppear {
+                WorkspaceWindows.register(workspace, openWindow: openWindow)
+                if let url = initialURL ?? WorkspaceWindows.takePending() {
+                    Task { await workspace.open(url) }
+                } else {
+                    workspace.restoreSessionIfNeeded()
+                }
+            }
+            .onDisappear { Task { await workspace.close() } }
+    }
+}
+
+/// Every open window's workspace, and the VS Code-style open routing.
+@MainActor
+enum WorkspaceWindows {
+    private struct Entry { weak var workspace: WorkspaceModel? }
+    private static var entries: [Entry] = []
+    private static var openWindow: OpenWindowAction?
+    /// Finder opens that arrived before the first window appeared.
+    private static var pending: [URL] = []
+    /// Menu target while no window is focused — never shown.
+    static let unfocused = WorkspaceModel()
+
+    static var live: [WorkspaceModel] { entries.compactMap { $0.workspace } }
+
+    static func register(_ workspace: WorkspaceModel, openWindow: OpenWindowAction) {
+        entries.removeAll { $0.workspace == nil || $0.workspace === workspace }
+        entries.append(Entry(workspace: workspace))
+        self.openWindow = openWindow
+    }
+
+    static func takePending() -> URL? {
+        pending.isEmpty ? nil : pending.removeFirst()
+    }
+
+    /// The window whose project contains `url` shows it; otherwise the
+    /// requesting window if it is empty, then any empty window, then a new
+    /// window.
+    static func route(_ url: URL, from origin: WorkspaceModel? = nil) {
+        let url = url.standardizedFileURL
+        let windows = live
+        // The requesting window first; `unfocused` is not a window.
+        let candidates = (origin.map { [$0] } ?? []) + windows
+        if let owner = windows.first(where: { $0.owns(url) }) {
+            owner.reveal(url)
+        } else if let empty = candidates.first(where: { candidate in
+            candidate.acceptsNewProject && windows.contains { $0 === candidate }
+        }) {
+            empty.window?.makeKeyAndOrderFront(nil)
+            Task { await empty.open(url) }
+        } else if let openWindow {
+            openWindow(value: WindowOpenRequest(url: url))
+        } else {
+            pending.append(url)
+        }
+    }
+}
+
+/// Hands the hosting NSWindow to SwiftUI content once it is attached.
+private struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView { WindowReaderView(onWindow: onWindow) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class WindowReaderView: NSView {
+        let onWindow: (NSWindow) -> Void
+        init(onWindow: @escaping (NSWindow) -> Void) {
+            self.onWindow = onWindow
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { onWindow(window) }
+        }
     }
 }

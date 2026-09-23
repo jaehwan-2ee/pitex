@@ -8,6 +8,10 @@ import UniformTypeIdentifiers
 /// here — only the preference schema owned by SettingsFeature.
 @MainActor
 final class SettingsStore: ObservableObject {
+    /// One store for every window, so a change made in one window's
+    /// Settings reaches the others immediately.
+    static let shared = SettingsStore()
+
     @Published private(set) var settings: PersistedSettings {
         didSet { persist() }
     }

@@ -96,6 +96,7 @@ struct Preview: View {
                 Divider()
                 PDFDocumentView(
                     data: pdfData,
+                    workspace: workspace,
                     highlightSync: settings.forwardSyncHighlight,
                     onInverseSync: { page, point in
                         Task { await workspace.syncInverse(page: page, point: point) }
@@ -187,6 +188,9 @@ struct Preview: View {
 
 private struct PDFDocumentView: NSViewRepresentable {
     let data: Data
+    /// Only this workspace's forward-sync highlights reach this view — every
+    /// window has its own PDF, and the notification is app-wide.
+    let workspace: AnyObject
     var highlightSync = false
     var onInverseSync: (Int, SyncTeXCore.PDFPoint) -> Void = { _, _ in }
 
@@ -220,7 +224,7 @@ private struct PDFDocumentView: NSViewRepresentable {
             context.coordinator,
             selector: #selector(Coordinator.highlightRequested(_:)),
             name: .syncTeXHighlightRequested,
-            object: nil
+            object: workspace
         )
         return view
     }

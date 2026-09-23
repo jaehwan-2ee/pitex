@@ -1294,6 +1294,33 @@ impl AppState {
         self.refresh_phase();
     }
 
+    /// VS Code-style open (`WorkspaceWindows.route` on macOS): this window
+    /// takes `path` when it is empty or `path` lies inside its project;
+    /// anything else opens in a new window.
+    pub fn open_routed(&mut self, path: PathBuf) {
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let file = canonical(&path);
+        let root = self.model.project_url.as_deref().map(canonical);
+        let loading = matches!(self.model.phase, WorkspacePhase::Loading(_));
+        match root {
+            None if !loading => self.open_selected(path),
+            Some(root) if file.starts_with(&root) => {
+                UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.present()));
+                let listed = self.model.project_files.iter().find(|f| canonical(f) == file).cloned();
+                if let Some(url) = listed {
+                    self.activate_document(url);
+                } else if file.is_file() {
+                    self.open_selected(path);
+                }
+            }
+            _ => {
+                if let Err(e) = open_in_new_window(&path) {
+                    self.toast(&e.to_string());
+                }
+            }
+        }
+    }
+
     /// File → Open Recent — `open(url)` for a recents entry (menu target is
     /// the index into `recent_documents`).
     pub fn open_recent_action(&mut self, index: i32) {
@@ -1305,7 +1332,7 @@ impl AppState {
         else {
             return;
         };
-        self.open_selected(url);
+        self.open_routed(url);
     }
 
     /// File → Open Recent → Clear — `clearRecents()`.
@@ -1347,7 +1374,7 @@ impl AppState {
             compat::pick_source_file(window.as_ref(), "Open", |path| {
                 STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        if let Ok(mut s) = state.try_borrow_mut() { s.open_selected(path); }
+                        if let Ok(mut s) = state.try_borrow_mut() { s.open_routed(path); }
                     }
                 });
             });
@@ -1359,7 +1386,7 @@ impl AppState {
             compat::pick_folder(window.as_ref(), "Open Project Folder", |path| {
                 STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        if let Ok(mut s) = state.try_borrow_mut() { s.open_selected(path); }
+                        if let Ok(mut s) = state.try_borrow_mut() { s.open_routed(path); }
                     }
                 });
             });
@@ -4253,10 +4280,38 @@ fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64) ->
 
 // ─── window assembly ─────────────────────────────────────────────────────────
 
+/// Marks a process spawned by `open_in_new_window`.
+const NEW_WINDOW_FLAG: &str = "--new-window";
+
+/// A second window is a second Pitex process (`STATE`/`UI` hold one window
+/// per process). It runs non-unique so it keeps its own window instead of
+/// handing the file back to the first instance; the shared application id
+/// keeps both under one dock/taskbar entry.
+// ponytail: a file whose project is open in a spawned window gets yet another
+// window (only the first instance receives OS opens); add per-window IPC
+// routing if that becomes common.
+fn open_in_new_window(path: &Path) -> std::io::Result<()> {
+    let mut child = std::process::Command::new(std::env::current_exe()?)
+        .arg(NEW_WINDOW_FLAG)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 pub fn run(app_version: &str) -> i32 {
+    let mut args: Vec<String> = std::env::args().collect();
+    let new_window = args.iter().position(|a| a == NEW_WINDOW_FLAG).map(|i| args.remove(i)).is_some();
+    let mut flags = gio::ApplicationFlags::HANDLES_OPEN;
+    if new_window {
+        flags |= gio::ApplicationFlags::NON_UNIQUE;
+    }
     let app = adw::Application::builder()
         .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .flags(flags)
         .build();
     let version = app_version.to_string();
     {
@@ -4289,14 +4344,14 @@ pub fn run(app_version: &str) -> i32 {
                 STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
                         if let Ok(mut st) = state.try_borrow_mut() {
-                            st.open_selected(path.to_path_buf());
+                            st.open_routed(path.to_path_buf());
                         }
                     }
                 });
             }
         }
     });
-    app.run().value()
+    app.run_with_args(&args).value()
 }
 
 fn build_window(app: &adw::Application, app_version: &str) {
