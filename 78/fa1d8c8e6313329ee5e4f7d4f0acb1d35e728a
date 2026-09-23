@@ -1,0 +1,30 @@
+Mac/Resources/markdown-preview.html
+  s_61259ddb619c79::t_1b70eae6b11bd7 144-188
+Fixtures/expected/accessibility-identifiers.json
+  s_61259ddb619c79::t_8629f90f45dac0 38
+Mac/Sources/Features/Preview.swift
+  s_61259ddb619c79::t_2686f3b965d0fc 40-54,56-80
+  s_61259ddb619c79::t_42fa2d5acc1d64 15-16,81,412,424,562-585
+  s_61259ddb619c79::t_e8473b3a09e150 586-588
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  s_61259ddb619c79::t_8629f90f45dac0 113-115,129-137,152-153,201,235-262,393-428
+  s_61259ddb619c79::t_f4d9805adc5ad7 429-430
+Assets/markdown-preview/preview.css
+  s_61259ddb619c79::t_1b70eae6b11bd7 115-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "78fa1d8c8e6313329ee5e4f7d4f0acb1d35e728a",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
