@@ -447,6 +447,16 @@ private struct MarkdownPreviewView: NSViewRepresentable {
         let settingsChanged = context.coordinator.renderedFontSize != fontSize
             || context.coordinator.renderedDark != dark
         guard switched || documentClean || livePreview || settingsChanged else { return }
+        // Unrelated workspace publishes reach this point with identical
+        // content — don't re-encode the whole document when the last render
+        // already covered it and no debounced render is queued.
+        if context.coordinator.renderTask == nil,
+           context.coordinator.renderedText == text,
+           context.coordinator.renderedURL == documentURL,
+           context.coordinator.renderedFontSize == fontSize,
+           context.coordinator.renderedDark == dark {
+            return
+        }
         context.coordinator.scheduleRender(
             text: text, url: documentURL, fontSize: fontSize, dark: dark,
             immediate: switched || settingsChanged
@@ -471,6 +481,9 @@ private struct MarkdownPreviewView: NSViewRepresentable {
         /// live preview is off.
         var renderedFontSize: Double?
         var renderedDark: Bool?
+        /// Content half of the last completed render — with the other
+        /// rendered* fields it lets updateNSView skip no-op updates.
+        var renderedText: String?
         var renderTask: Task<Void, Never>?
         private var loaded = false
         private var queuedScript: String?
@@ -483,6 +496,9 @@ private struct MarkdownPreviewView: NSViewRepresentable {
                     guard !Task.isCancelled else { return }
                 }
                 self?.render(text: text, url: url, fontSize: fontSize, dark: dark)
+                // A cancelled task left renderTask pointing at its
+                // replacement — only clear it when that didn't happen.
+                if !Task.isCancelled { self?.renderTask = nil }
             }
         }
 
@@ -490,6 +506,7 @@ private struct MarkdownPreviewView: NSViewRepresentable {
             renderedURL = url
             renderedFontSize = fontSize
             renderedDark = dark
+            renderedText = text
             // The document's directory as a file:// base so relative image
             // and link URLs resolve before the navigation policy sees them.
             let base = url.deletingLastPathComponent().absoluteString

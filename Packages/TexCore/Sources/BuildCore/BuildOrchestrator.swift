@@ -431,20 +431,18 @@ public actor BuildOrchestrator {
         for id: BuildID,
         eventHandler: EventHandler
     ) async {
-        guard var active, active.id == id else { return }
+        guard self.active?.id == id else { return }
         let text = String(decoding: output.bytes, as: UTF8.self)
         let log = BuildLogEntry(sequence: logSequence, channel: output.channel, text: text)
         logSequence += 1
-        let parsed = active.parser.consume(output.bytes, channel: output.channel)
-        self.active = active
+        let parsed = self.active?.parser.consume(output.bytes, channel: output.channel) ?? []
         await eventHandler(.log(log))
         await emit(parsed, for: id, eventHandler: eventHandler)
     }
 
     private func flushParser(for id: BuildID, eventHandler: EventHandler) async {
-        guard var active, active.id == id else { return }
-        let parsed = active.parser.finish()
-        self.active = active
+        guard self.active?.id == id else { return }
+        let parsed = self.active?.parser.finish() ?? []
         await emit(parsed, for: id, eventHandler: eventHandler)
     }
 
@@ -453,12 +451,14 @@ public actor BuildOrchestrator {
         for id: BuildID,
         eventHandler: EventHandler
     ) async {
+        // Mutating self.active in place keeps the issue list and key set
+        // copy-on-write unique — a local copy per record made each append
+        // O(issues) and a warning-heavy build quadratic.
         for record in records {
-            guard var active, active.id == id else { return }
+            guard self.active?.id == id else { return }
             let key = IssueKey(record)
-            guard active.issueKeys.insert(key).inserted else { continue }
-            active.issues.append(record)
-            self.active = active
+            guard self.active?.issueKeys.insert(key).inserted == true else { continue }
+            self.active?.issues.append(record)
             await eventHandler(.issue(record))
         }
     }

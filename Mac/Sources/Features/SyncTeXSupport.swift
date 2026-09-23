@@ -78,8 +78,7 @@ actor SyncTeXRunner {
         // Input tag 1 records the original main source. Preserve relative
         // paths beneath that directory when a downloaded project is moved;
         // never guess using just a chapter's filename.
-        let inputs = try SyncTeXTextParser.parse(String(decoding: metadata, as: UTF8.self)
-            .split(separator: "\n").filter { $0.hasPrefix("Input:") }.joined(separator: "\n")).inputs
+        let inputs = try SyncTeXTextParser.parse(Self.inputLines(metadata)).inputs
         let originalMain = inputs.first { $0.tag == 1 }?.path.value
         let originalDirectory = originalMain.map { ($0 as NSString).deletingLastPathComponent }
         var sourcePaths: [String: URL] = [:]
@@ -219,6 +218,26 @@ actor SyncTeXRunner {
             outputHash: binding.outputHash,
             coordinateEpsilon: 2
         )
+    }
+
+    /// The `Input:` lines of a decompressed .synctex file, joined by \n —
+    /// a byte scan so refreshBinding never decodes or splits the whole
+    /// metadata blob (tens of MB for a thesis) just to filter it.
+    /// Equivalent to decoding the data, splitting on \n and keeping the
+    /// lines starting with "Input:" (the prefix is ASCII, and \n can never
+    /// sit inside a multi-byte UTF-8 sequence, so per-line decoding is
+    /// identical to decoding the whole file first).
+    static func inputLines(_ metadata: Data) -> String {
+        var lines: [String] = []
+        var start = metadata.startIndex
+        while start < metadata.endIndex {
+            let end = metadata[start...].firstIndex(of: 0x0A) ?? metadata.endIndex
+            if metadata[start...].starts(with: "Input:".utf8) {
+                lines.append(String(decoding: metadata[start..<end], as: UTF8.self))
+            }
+            start = metadata.index(after: end)
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Collapses raw `synctex` output to the normalized record shape. Fields not

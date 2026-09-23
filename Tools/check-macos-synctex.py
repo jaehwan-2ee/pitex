@@ -5,6 +5,7 @@ Runs the production PDF/editor coordinators and SyncTeXRunner against a real
 three-page document, including /tmp's macOS alias and an included source file.
 """
 from pathlib import Path
+import gzip
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,16 @@ struct SyncTeXCheck {
         let pdf = root.appendingPathComponent("main.pdf")
         let runner = SyncTeXRunner()
         let binding = try await runner.refreshBinding(projectRoot: root, pdfURL: pdf, buildID: "check")
+
+        // The byte-level Input scan must produce exactly what decoding the
+        // whole .synctex and filtering the lines produced before.
+        let metadata = try Data(contentsOf: root.appendingPathComponent("inputs-check.bin"))
+        let scanned = SyncTeXRunner.inputLines(metadata)
+        let reference = String(decoding: metadata, as: UTF8.self)
+            .split(separator: "\n").filter { $0.hasPrefix("Input:") }.joined(separator: "\n")
+        precondition(scanned == reference, "Input scan diverged from the decoded filter")
+        print("PASS Input scan: \(metadata.count) metadata bytes -> \(scanned.utf8.count) filtered bytes")
+
         let document = PDFDocument(url: pdf)!
         let view = RecordingPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 700))
         view.displayMode = .singlePageContinuous
@@ -125,6 +136,10 @@ with tempfile.TemporaryDirectory(prefix="pitex-synctex-", dir="/tmp") as directo
     (root / "sections/child.tex").write_text("% child\n" + "\n" * 100 + "ChildTarget\\par\n")
     subprocess.run(["/Library/TeX/texbin/xelatex", "-synctex=1", "-interaction=nonstopmode",
                     "-halt-on-error", "main.tex"], cwd=root, check=True, stdout=subprocess.DEVNULL)
+    # A decompressed copy lets the check compare the byte-level Input scan
+    # against the old decode-then-filter expression. The name must not be
+    # <name>.synctex — the runner and the synctex CLI pick that over the .gz.
+    (root / "inputs-check.bin").write_bytes(gzip.decompress((root / "main.synctex.gz").read_bytes()))
     # Keep the private PDF coordinator in the same compilation unit as its check.
     preview = (features / "Preview.swift").read_text()
     (root / "Check.swift").write_text(
