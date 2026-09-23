@@ -614,7 +614,7 @@ final class MinimapOverlayView: NSView {
     func invalidateContent() {
         refreshTask?.cancel()
         refreshTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(180))
+            try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let self else { return }
             cachedImage = nil
             needsDisplay = true

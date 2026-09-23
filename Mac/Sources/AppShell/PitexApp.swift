@@ -562,7 +562,8 @@ final class WorkspaceModel: ObservableObject {
             highlighter.attach(to: appEnvironment.editor, fileExtension: initialURL.pathExtension)
             attachCompletion(to: appEnvironment.editor)
             startWatcher(for: initialURL)
-            coordinator.prepare()
+            // The pi subprocess stays unspawned until the Assistant panel
+            // first appears (AgentPanel's .task calls prepare()).
             phase = .ready
             await restoreBuiltPreview()
             recordRecent(selectedURL)
@@ -1267,7 +1268,7 @@ final class WorkspaceModel: ObservableObject {
     private func scheduleStructureRefresh() {
         structureTask?.cancel()
         structureTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: EditorTiming.analysisDebounce)
             guard !Task.isCancelled else { return }
             self?.refreshStructure()
         }
@@ -2113,7 +2114,7 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
         // — no install button required.
         Task {
             await PiRuntimeInstaller.ensureInstalled()
-            await MainActor.run { WorkspaceWindows.live.forEach { $0.agent?.prepare() } }
+            await MainActor.run { WorkspaceWindows.live.forEach { $0.agent?.resumeIfWanted() } }
         }
         // Auto-update: check+install on launch when the preference allows
         // it — same pref key the Linux/Windows shells read.

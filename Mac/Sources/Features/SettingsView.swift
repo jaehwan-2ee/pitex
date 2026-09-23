@@ -946,7 +946,7 @@ struct SettingsView: View {
                 piInstallIsError = true
             }
             piInstallInFlight = false
-            if latest { workspace.agent?.restart() } else { workspace.agent?.prepare() }
+            workspace.agent?.resumeIfWanted(reconnect: latest)
         }
     }
 

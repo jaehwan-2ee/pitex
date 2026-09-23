@@ -51,6 +51,12 @@ final class EditorAnalysis {
     }
 }
 
+/// One cadence for every per-edit analysis pass (highlighting, fold
+/// recompute, sidebar structure) so they cannot drift apart.
+enum EditorTiming {
+    static let analysisDebounce: Duration = .milliseconds(300)
+}
+
 /// Applies deterministic LaTeX/BibTeX token coloring to the editor's text
 /// storage. Attribute-only mutations never produce textDidChange callbacks, so
 /// rehighlighting cannot recurse or desynchronize the canonical session text.
@@ -83,7 +89,7 @@ final class SyntaxHighlighter {
     private func scheduleHighlight() {
         pendingTask?.cancel()
         pendingTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: EditorTiming.analysisDebounce)
             guard !Task.isCancelled else { return }
             self?.highlightNow()
         }
