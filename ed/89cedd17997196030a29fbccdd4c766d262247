@@ -1,0 +1,23 @@
+.github/workflows/ci.yml
+  s_ed44b01ef26714::t_003b1ca256bfc0 126
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_ed44b01ef26714::t_abc4a44aec64f1 5367-5368
+Linux/crates/pitex-shell/tests/support/agent_update_settings.rs
+  s_ed44b01ef26714::t_abc4a44aec64f1 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed89cedd17997196030a29fbccdd4c766d262247",
+  "prompts": {},
+  "sessions": {
+    "s_ed44b01ef26714": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd07-72ba-7012-87d4-a125f298efab",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
