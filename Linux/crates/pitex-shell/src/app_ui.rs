@@ -1312,27 +1312,42 @@ impl AppState {
     /// takes `path` when it is empty or `path` lies inside its project;
     /// anything else opens in a new window.
     pub fn open_routed(&mut self, path: PathBuf) {
-        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-        let file = canonical(&path);
-        let root = self.model.project_url.as_deref().map(canonical);
-        let loading = matches!(self.model.phase, WorkspacePhase::Loading(_));
-        match root {
-            None if !loading => self.open_selected(path),
-            Some(root) if file.starts_with(&root) => {
-                UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.present()));
-                let listed = self.model.project_files.iter().find(|f| canonical(f) == file).cloned();
-                if let Some(url) = listed {
-                    self.activate_document(url);
-                } else if file.is_file() {
-                    self.open_selected(path);
-                }
-            }
-            _ => {
-                if let Err(e) = open_in_new_window(&path) {
-                    self.toast(&e.to_string());
-                }
-            }
+        if self.show_if_owned(&path) {
+            return;
         }
+        // Another Pitex window (a separate process) may own the project.
+        #[cfg(unix)]
+        if crate::window_ipc::offer_to_other_windows(&path) {
+            return;
+        }
+        let loading = matches!(self.model.phase, WorkspacePhase::Loading(_));
+        if self.model.project_url.is_none() && !loading {
+            self.open_selected(path);
+        } else if let Err(e) = open_in_new_window(&path) {
+            self.toast(&e.to_string());
+        }
+    }
+
+    /// Brings this window forward and shows `path` when it lies inside the
+    /// window's project (a listed file activates like a sidebar click).
+    /// `false` leaves the file to another window.
+    pub fn show_if_owned(&mut self, path: &Path) -> bool {
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let Some(root) = self.model.project_url.as_deref().map(canonical) else {
+            return false;
+        };
+        let file = canonical(path);
+        if !file.starts_with(&root) {
+            return false;
+        }
+        UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.present()));
+        let listed = self.model.project_files.iter().find(|f| canonical(f) == file).cloned();
+        if let Some(url) = listed {
+            self.activate_document(url);
+        } else if file.is_file() {
+            self.open_selected(path.to_path_buf());
+        }
+        true
     }
 
     /// File → Open Recent — `open(url)` for a recents entry (menu target is
@@ -4312,9 +4327,8 @@ const NEW_WINDOW_FLAG: &str = "--new-window";
 /// per process). It runs non-unique so it keeps its own window instead of
 /// handing the file back to the first instance; the shared application id
 /// keeps both under one dock/taskbar entry.
-// ponytail: a file whose project is open in a spawned window gets yet another
-// window (only the first instance receives OS opens); add per-window IPC
-// routing if that becomes common.
+// Only the first instance receives OS opens; `window_ipc` lets it (and every
+// spawned window) hand a file to the window that already owns its project.
 fn open_in_new_window(path: &Path) -> std::io::Result<()> {
     let mut child = std::process::Command::new(std::env::current_exe()?)
         .arg(NEW_WINDOW_FLAG)
@@ -4338,6 +4352,8 @@ pub fn run(app_version: &str) -> i32 {
         .application_id(APP_ID)
         .flags(flags)
         .build();
+    #[cfg(unix)]
+    app.connect_shutdown(|_| crate::window_ipc::stop());
     let version = app_version.to_string();
     {
         let version = version.clone();
@@ -4394,6 +4410,8 @@ fn build_window(app: &adw::Application, app_version: &str) {
     state.borrow_mut().language = lang;
     LANG.with(|l| l.set(lang));
     STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+    #[cfg(unix)]
+    crate::window_ipc::listen();
     state.borrow_mut().install_agent_config_watch();
 
     UI.with(|ui| build_chrome(app, &state, ui, model_rx));

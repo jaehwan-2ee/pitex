@@ -24,6 +24,8 @@ mod search;
 pub mod settings;
 pub mod synctex;
 pub mod update;
+#[cfg(unix)]
+mod window_ipc;
 
 // Unit tests that mutate/read the process PATH must not overlap.
 #[cfg(test)]
