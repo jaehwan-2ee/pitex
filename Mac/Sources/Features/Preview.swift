@@ -401,7 +401,6 @@ private struct MarkdownPreviewView: NSViewRepresentable {
             // bundle; images/relative links (`../figures/x.png`) resolve
             // anywhere on disk, link clicks route through the policy.
             view.loadFileURL(page, allowingReadAccessTo: URL(fileURLWithPath: "/"))
-            context.coordinator.resourceURL = page
         }
         sync.onEditorTopLine = { [weak coordinator = context.coordinator] line in
             coordinator?.scrollPreview(to: line)
@@ -438,7 +437,6 @@ private struct MarkdownPreviewView: NSViewRepresentable {
         var sync: MarkdownScrollSync?
         var onBlockedLink: (() -> Void)?
         var syncScroll = true
-        var resourceURL: URL?
         var renderedURL: URL?
         /// Settings half of the render key — a flip re-renders even while
         /// live preview is off.
@@ -503,7 +501,10 @@ private struct MarkdownPreviewView: NSViewRepresentable {
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction
         ) async -> WKNavigationActionPolicy {
-            if !loaded, navigationAction.request.url == resourceURL {
+            // The bundled page is the only navigation before `didFinish`:
+            // Markdown content is injected afterwards, so nothing it contains
+            // can navigate yet. Comparing the exact URL was fragile.
+            if !loaded, navigationAction.request.url?.isFileURL == true {
                 return .allow
             }
             if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url {

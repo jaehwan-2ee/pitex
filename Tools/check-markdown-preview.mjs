@@ -105,6 +105,10 @@ check('CSP meta present', !!csp);
 const scriptSrc = csp?.[1].match(/script-src ([^;]+)/)?.[1] ?? '';
 check('script-src uses a sha256 hash', /^'sha256-[A-Za-z0-9+/=]+'$/.test(scriptSrc));
 check('script-src has no unsafe-inline', !scriptSrc.includes('unsafe-inline'));
+// Browsers hash the script after the HTML parser folds CRLF/CR into LF, so a
+// single CR makes the CSP hash miss and the whole preview stays blank.
+check('page has no CR characters', !page.includes('\r'));
+check('no CSP-blocked font fallbacks', !page.includes('url(fonts/'));
 
 const bundle = page.match(/<script>([\s\S]*)<\/script>/)?.[1] ?? '';
 const hash = createHash('sha256').update(bundle).digest('base64');

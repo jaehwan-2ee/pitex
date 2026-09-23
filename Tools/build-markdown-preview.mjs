@@ -29,10 +29,11 @@ const CSS_SOURCES = [
   join('..', 'preview.css'),
 ];
 
-// Inline the woff2 font files referenced by katex.min.css as data: URIs.
-// The .woff/.ttf alternates stay as plain url()s — the CSP only allows data:
-// fonts, so they are never fetched once the woff2 entry resolves.
+// Inline the woff2 font files referenced by katex.min.css as data: URIs and
+// drop the .woff/.ttf alternates: they resolve against the document's
+// <base>, which the CSP (data: fonts only) refuses, flooding the console.
 async function inlineFonts(css) {
+  css = css.replace(/,url\(fonts\/[^)]*\.(?:woff|ttf)\) format\("(?:woff|truetype)"\)/g, '');
   const matches = [...css.matchAll(/url\(fonts\/([^)]*\.woff2)\)/g)];
   const fonts = new Map();
   for (const [, name] of matches) {
@@ -43,19 +44,24 @@ async function inlineFonts(css) {
     (_, name) => `url(data:font/woff2;base64,${fonts.get(name).toString('base64')})`);
 }
 
+// The HTML parser turns CRLF/CR into LF before the browser hashes an inline
+// script for CSP, so the bundle must be LF-only or its sha256 never matches
+// and the whole script is refused (texmath.js ships with CRLF).
+const readText = async path => (await readFile(path, 'utf8')).replace(/\r\n?/g, '\n');
+
 export async function buildHtml() {
   const parts = [];
   for (const src of SCRIPT_SOURCES)
-    parts.push(await readFile(join(VENDOR, src), 'utf8'));
+    parts.push(await readText(join(VENDOR, src)));
   const script = parts.map(p => p.trimEnd()).join('\n');
 
   const cssParts = [];
   for (const src of CSS_SOURCES)
-    cssParts.push(await readFile(join(VENDOR, src), 'utf8'));
+    cssParts.push(await readText(join(VENDOR, src)));
   const css = (await inlineFonts(cssParts[0])) + cssParts.slice(1).join('');
 
   const hash = createHash('sha256').update(script).digest('base64');
-  const template = await readFile(join(ASSETS, 'template.html'), 'utf8');
+  const template = await readText(join(ASSETS, 'template.html'));
   return template
     .replace('@@CSP_HASH@@', hash)
     .replace('@@CSS@@', () => css)
