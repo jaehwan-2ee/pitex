@@ -252,6 +252,7 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
 /// keystroke, moving the caret, and doubling live IME compositions.
 final class EditorMacAdapterRebaseTests: XCTestCase {
     /// The submit path is an async Task — give it a beat to drain.
+    @MainActor
     private func settle() async throws {
         try await Task.sleep(for: .milliseconds(300))
     }
