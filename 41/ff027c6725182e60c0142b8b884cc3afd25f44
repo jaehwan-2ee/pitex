@@ -1,0 +1,53 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_e1b252d85961ea 161-165,172-183,224-225,367,647-653,655-661,1039-1062,1065-1177,1179-1180,1373-1374,1642-1646,2169-2172,2664-2679,2681,2690-2699,3491-3497,3537-3561,4205,5271-5272,5330,5562-5643
+Linux/crates/pitex-shell/src/git_diff.rs
+  s_61259ddb619c79::t_ad27150a7d5eb7 1-604
+Linux/crates/git-core/src/lib.rs
+  s_61259ddb619c79::t_3b9685c969abfe 73-161,278-684,956-1207
+Linux/crates/pitex-shell/src/git.rs
+  s_61259ddb619c79::t_5f64a6737a6253 7-8,14-17,31,41-48,293-457
+Linux/crates/pitex-shell/src/lib.rs
+  s_61259ddb619c79::t_a1563eebc2bd25 16
+Linux/crates/pitex-shell/src/model.rs
+  s_61259ddb619c79::t_183d6de620c961 214-227,236-255,273-274,788-796,908-911,1157-1159,1452-1457
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_02b095c1f7affa 408,520-539,640-641,689-690,692,694-697,701,706,738-754,758-767,769,771-772,779-788,826-847,852-904,922,931-932,941,954,969
+Linux/crates/pitex-shell/tests/native.rs
+  s_61259ddb619c79::t_229cd24837303b 137-185
+Mac/Resources/en.lproj/Localizable.strings
+  s_61259ddb619c79::t_dacf9bfc0db58c 376-377
+Mac/Resources/es.lproj/Localizable.strings
+  s_61259ddb619c79::t_55a4654ca5406b 376-377
+Mac/Resources/ja.lproj/Localizable.strings
+  s_61259ddb619c79::t_b3a91f863a43de 377-378
+Mac/Resources/ko.lproj/Localizable.strings
+  s_61259ddb619c79::t_50f6c2eebb1e9f 377-378
+Mac/Resources/ru.lproj/Localizable.strings
+  s_61259ddb619c79::t_45b902d418888a 376-377
+Mac/Resources/vi.lproj/Localizable.strings
+  s_61259ddb619c79::t_1460eb7450e83d 376-377
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_61259ddb619c79::t_71eb94b4e5e6f8 376-377
+Mac/Sources/Features/GitIntegrationView.swift
+  s_61259ddb619c79::t_ff3025ea1db42f 52-54,56-63,263,271,273,281-307,313,318,320,333-334,705,722,1048-1067
+Packages/TexCore/Sources/GitCore/GitSupport.swift
+  s_61259ddb619c79::t_d59fdebf9bf220 266-281
+Packages/TexCore/Tests/TexCoreTests/GitSupportTests.swift
+  s_61259ddb619c79::t_b5c01509322446 104-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "41ff027c6725182e60c0142b8b884cc3afd25f44",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
