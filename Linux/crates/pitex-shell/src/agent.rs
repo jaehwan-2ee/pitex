@@ -2393,10 +2393,7 @@ pub mod pi_installer {
         // Ok(()) when the installed CLI runs `--version` cleanly.
         let smoke_check = |entry: &Path| -> Result<(), String> {
             let (check_exe, check_args) = tools.launch(entry, &["--version".into()])?;
-            let Some(check) = run_install(&check_exe, &check_args, &tools.environment, &runtime, 15)
-            else {
-                return Err("the agent smoke check could not be started".into());
-            };
+            let check = run_install(&check_exe, &check_args, &tools.environment, &runtime, 15)?;
             if check.termination != (build_core::ProcessTermination::Exited { code: 0 })
                 || check.stop_reason != build_core::ProcessStopReason::Completed
             {
@@ -2416,10 +2413,12 @@ pub mod pi_installer {
             for file in ["bun.lock", "bun.lockb", "package-lock.json", "package.json"] {
                 let _ = std::fs::remove_file(runtime.join(file));
             }
-            let Some(result) = run_install(executable, arguments, &tools.environment, &runtime, 300)
-            else {
-                failures.push(format!("{name}: the install command could not be started"));
-                continue;
+            let result = match run_install(executable, arguments, &tools.environment, &runtime, 300) {
+                Ok(result) => result,
+                Err(error) => {
+                    failures.push(format!("{name}: {error}"));
+                    continue;
+                }
             };
             let output = format!(
                 "{}{}",
@@ -2487,7 +2486,7 @@ pub mod pi_installer {
         environment: &std::collections::HashMap<String, String>,
         cwd: &Path,
         timeout_secs: u64,
-    ) -> Option<build_core::ProcessResult> {
+    ) -> Result<build_core::ProcessResult, String> {
         let plan = build_core::DirectCommandPlan::new(
             executable.to_string_lossy().into_owned(),
             arguments.to_vec(),
@@ -2496,7 +2495,7 @@ pub mod pi_installer {
                 overrides: environment.clone(),
             },
         )
-        .ok()?;
+        .map_err(|error| format!("The install command is invalid: {error}"))?;
         build_core::ProcessRunner::default()
             .run(
                 &plan,
@@ -2506,7 +2505,7 @@ pub mod pi_installer {
                 None,
                 None,
             )
-            .ok()
+            .map_err(|error| format!("The install command could not be started: {error}"))
     }
 
     /// Copy bundled skills into the agent skills dir (replacing stale copies).
@@ -2551,9 +2550,7 @@ pub mod pi_installer {
             pi_paths::agent_directory().to_string_lossy().into_owned(),
         );
         let cwd = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let Some(result) = run_install(&exe, &args, &environment, &cwd, 300) else {
-            return Err("The install command could not be started.".into());
-        };
+        let result = run_install(&exe, &args, &environment, &cwd, 300)?;
         if result.stop_reason != build_core::ProcessStopReason::Completed
             || result.termination != (build_core::ProcessTermination::Exited { code: 0 })
         {

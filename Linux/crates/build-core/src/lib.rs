@@ -74,7 +74,10 @@ impl EnvironmentPolicy {
             Self::Replace(v) => v,
         };
         for (key, value) in values {
-            if key.is_empty() || key.contains('=') || key.chars().any(|c| c == '\0') {
+            // Windows exports drive working directories as keys such as =C:.
+            // Match std::process::Command: only a leading '=' is permitted.
+            let name = if cfg!(windows) { key.strip_prefix('=').unwrap_or(key) } else { key };
+            if key.is_empty() || name.contains('=') || key.chars().any(|c| c == '\0') {
                 return Err(BuildCoreError::InvalidEnvironmentKey(key.clone()));
             }
             if value.chars().any(|c| c == '\0') {
@@ -1550,9 +1553,9 @@ fn spawn(
     })
 }
 
-/// Windows counterpart — `std::process::Command` with piped output. Script
-/// shims (`npm.cmd`, `pi.bat`) cannot run through CreateProcess, so they go
-/// through `cmd /c` / `powershell -File` the way the console resolves them.
+/// Windows counterpart — `std::process::Command` with piped output. Rust
+/// routes .cmd/.bat shims through cmd.exe with its native argument escaping.
+/// PowerShell scripts still need an explicit interpreter.
 /// `taskkill /T` covers the child tree, matching the Unix process group.
 #[cfg(windows)]
 fn spawn(
@@ -1567,11 +1570,6 @@ fn spawn(
         .map(|e| e.to_ascii_lowercase())
         .unwrap_or_default();
     let mut command = match extension.as_str() {
-        "cmd" | "bat" => {
-            let mut c = std::process::Command::new("cmd");
-            c.arg("/c").arg(executable).args(arguments);
-            c
-        }
         "ps1" => {
             let mut c = std::process::Command::new("powershell");
             c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])

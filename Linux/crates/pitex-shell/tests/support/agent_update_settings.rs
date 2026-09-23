@@ -11,6 +11,22 @@ fn find(root: &gtk4::Widget, name: &str) -> Option<gtk4::Widget> {
     None
 }
 
+fn wait_for_agent(state: &Rc<RefCell<AppState>>) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        let mut state = state.borrow_mut();
+        let agent = state.agent.as_mut().unwrap();
+        agent.poll_toolchain();
+        while let Some(event) = agent.poll_event() {
+            if event.response_command().as_deref() == Some("get_state")
+                && event.object.get("success").and_then(|v| v.as_bool()) == Some(true) { return; }
+        }
+        drop(state);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("The agent did not reconnect and answer get_state");
+}
+
 /// CI runs this on real GTK 4.6/4.14 and Windows UCRT64, in a fresh process.
 #[test]
 #[ignore = "requires GTK display, Bun, Node/npm and registry access; run alone"]
@@ -53,12 +69,18 @@ fn settings_button_updates_latest_and_restores_failed_update() {
     assert_eq!(provider_row.title(), "Custom provider");
     // The handler must decline updates while a response is active.
     let mut agent = AgentCoordinator::new(&state.borrow().store);
-    agent.is_running = true;
+    let project = root.clone();
+    agent.context_provider = Some(Box::new(move || crate::agent::AgentContextSnapshot {
+        project_root: Some(project.clone()), ..Default::default()
+    }));
+    agent.prepare();
     state.borrow_mut().agent = Some(agent);
+    wait_for_agent(&state);
+    state.borrow_mut().agent.as_mut().unwrap().is_running = true;
     button.emit_clicked();
     assert!(button.is_sensitive());
     assert_eq!(pi_installer::installed_version().as_deref(), Some(pi_installer::DESIRED_VERSION));
-    state.borrow_mut().agent = None;
+    state.borrow_mut().agent.as_mut().unwrap().is_running = false;
     button.emit_clicked();
     assert!(!button.is_sensitive());
     let context = glib::MainContext::default();
@@ -70,9 +92,12 @@ fn settings_button_updates_latest_and_restores_failed_update() {
     assert!(button.is_sensitive(), "Update blocked the UI or did not finish");
     assert_eq!(pi_installer::installed_version().as_deref(), Some(latest.as_str()), "{}", status.subtitle().unwrap_or_default());
     assert!(status.subtitle().unwrap().contains(&latest));
+    wait_for_agent(&state);
+    state.borrow_mut().agent.as_mut().unwrap().shutdown();
     println!("PASS actual Settings button updated via Bun to {latest}");
     window.close();
     parent.close();
+    std::thread::sleep(Duration::from_millis(300));
     // Exercise Node/npm too, including the Windows npm.cmd installation route.
     let mut node_tools = tools.clone();
     node_tools.bun = None;
