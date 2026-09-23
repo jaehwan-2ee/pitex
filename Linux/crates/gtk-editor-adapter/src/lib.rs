@@ -246,6 +246,9 @@ impl GtkEditorAdapter {
     }
 
     /// `refreshFromSession()` — pull the latest snapshot and apply it.
+    /// Submit is synchronous here (the session applies on the calling
+    /// thread), so unlike the macOS async path this can never land while a
+    /// change is in flight — no `needsRefresh` coalescing is needed.
     pub fn refresh_from_session(&self) {
         let snapshot = self.session.snapshot();
         self.apply(snapshot);
@@ -254,6 +257,7 @@ impl GtkEditorAdapter {
     fn install_change_hook(&self) {
         let session = self.session.clone();
         let shared = self.shared.clone();
+        let view = self.view.clone();
         self.buffer.connect_changed(move |buffer| {
             if shared.suppress_change.get() {
                 return;
@@ -261,7 +265,7 @@ impl GtkEditorAdapter {
             let (start, end) = buffer.bounds();
             let text = buffer.text(&start, &end, false).to_string();
             *shared.desired_text.borrow_mut() = text;
-            Self::submit_pending_change(session.as_ref(), shared.clone(), buffer);
+            Self::submit_pending_change(session.as_ref(), shared.clone(), buffer, &view);
         });
     }
 
@@ -272,6 +276,7 @@ impl GtkEditorAdapter {
         session: &dyn SessionClient,
         shared: Rc<Shared>,
         buffer: &sourceview5::Buffer,
+        view: &sourceview5::View,
     ) {
         if shared.is_submitting.get()
             || *shared.desired_text.borrow() == shared.committed.borrow().text
@@ -279,77 +284,108 @@ impl GtkEditorAdapter {
             return;
         }
         shared.is_submitting.set(true);
-        let submitted_text = shared.desired_text.borrow().clone();
-        let mutation = DocumentMutation::between(
-            &shared.committed.borrow().text, &submitted_text, shared.committed.borrow().revision,
-        );
-        let result = session.submit(&mutation);
-        match result {
-            DocumentMutationResult::Applied(snapshot) => {
-                let was_same = *shared.desired_text.borrow() == submitted_text;
-                if was_same && snapshot.text != submitted_text {
-                    Self::apply_snapshot(shared.clone(), buffer, snapshot);
-                } else {
-                    shared.committed.replace(snapshot);
-                }
+        // `commitSave`/`recordExternalChange`/`recordSaveConflict` bump the
+        // revision without touching the text (autosave, pre-build persist,
+        // pre-agent persist all do this while the user keeps typing). When
+        // the session rejects a stale base but its text still equals ours,
+        // rebase the same pending change onto the new revision and resubmit
+        // — the keystroke survives.
+        let mut attempts = 0;
+        loop {
+            let submitted_text = shared.desired_text.borrow().clone();
+            let (base_text, base_revision) = {
+                let committed = shared.committed.borrow();
+                (committed.text.clone(), committed.revision)
+            };
+            if submitted_text == base_text {
+                break;
             }
-            DocumentMutationResult::Rejected { current } => {
-                Self::apply_snapshot(shared.clone(), buffer, current);
+            let mutation = DocumentMutation::between(&base_text, &submitted_text, base_revision);
+            match session.submit(&mutation) {
+                DocumentMutationResult::Applied(snapshot) => {
+                    let was_same = *shared.desired_text.borrow() == submitted_text;
+                    if was_same && snapshot.text != submitted_text {
+                        Self::apply_snapshot(&shared, buffer, Some(view), snapshot);
+                    } else {
+                        shared.committed.replace(snapshot);
+                    }
+                    break;
+                }
+                DocumentMutationResult::Rejected { current } => {
+                    if current.text == shared.committed.borrow().text && attempts < 3 {
+                        shared.committed.replace(current);
+                        attempts += 1;
+                        continue;
+                    }
+                    // ponytail: the in-flight edit is dropped when the
+                    // session text really diverged (concurrent external or
+                    // agent write); a 3-way rebase is the upgrade path.
+                    Self::apply_snapshot(&shared, buffer, Some(view), current);
+                    break;
+                }
             }
         }
         shared.is_submitting.set(false);
-        Self::submit_pending_change(session, shared, buffer);
+        Self::submit_pending_change(session, shared, buffer, view);
     }
 
-    /// `apply(_:)` for the submit path — pushes the session snapshot into the
-    /// buffer with the change hook suppressed, preserving a clamped selection.
+    /// `apply(_:)` — push a snapshot into the buffer with the change hook
+    /// suppressed. Only the differing middle range is replaced (common
+    /// prefix/suffix survive), so the GTK selection marks shift themselves.
+    /// `begin_irreversible_action` clears the undo history — the safe call:
+    /// entries recorded against the pre-replacement text would restore
+    /// stale ranges after an external edit.
     fn apply_snapshot(
-        shared: Rc<Shared>,
+        shared: &Rc<Shared>,
         buffer: &sourceview5::Buffer,
+        view: Option<&sourceview5::View>,
         snapshot: DocumentSnapshot,
     ) {
         let (s, e) = buffer.bounds();
         let current = buffer.text(&s, &e, false).to_string();
         *shared.desired_text.borrow_mut() = snapshot.text.clone();
         if current != snapshot.text {
+            // Discard an in-flight IM composition first — replacing storage
+            // under marked text makes the input method re-commit its preedit
+            // at a stale range, duplicating it.
+            if shared.has_preedit.get() {
+                if let Some(view) = view {
+                    view.reset_im_context();
+                }
+            }
             shared.suppress_change.set(true);
             shared.decorations.borrow_mut().take();
             buffer.begin_irreversible_action();
-            buffer.set_text(&snapshot.text);
+            // `DocumentMutation::between` hands back the UTF-16 span that
+            // differs; the buffer edits just that range.
+            let mutation = DocumentMutation::between(&current, &snapshot.text, 0);
+            let start_char =
+                utf16_offset_to_char_offset(&current, mutation.range.location.max(0) as usize);
+            let end_char = utf16_offset_to_char_offset(
+                &current,
+                (mutation.range.location + mutation.range.length).max(0) as usize,
+            );
+            if mutation.range.length > 0 {
+                let mut start = buffer.iter_at_offset(start_char as i32);
+                let mut end = buffer.iter_at_offset(end_char as i32);
+                buffer.delete(&mut start, &mut end);
+            }
+            if !mutation.replacement.is_empty() {
+                let mut at = buffer.iter_at_offset(start_char as i32);
+                buffer.insert(&mut at, &mutation.replacement);
+            }
             buffer.end_irreversible_action();
             shared.suppress_change.set(false);
         }
         // Move (not clone) the snapshot into committed — nothing observes
-        // it between the set_text above and here on the same thread.
+        // it between the edits above and here on the same thread.
         shared.committed.replace(snapshot);
     }
 
     /// `apply(_:)` — push a snapshot into the buffer, preserving a clamped
     /// selection like the Swift implementation.
     pub fn apply(&self, snapshot: DocumentSnapshot) {
-        let text_before = self.text();
-        *self.shared.desired_text.borrow_mut() = snapshot.text.clone();
-        if text_before == snapshot.text {
-            self.shared.committed.replace(snapshot);
-            return;
-        }
-        let previous = self.selected_range();
-        self.shared.suppress_change.set(true);
-        self.shared.decorations.borrow_mut().take();
-        self.buffer.begin_irreversible_action();
-        self.buffer.set_text(&snapshot.text);
-        self.buffer.end_irreversible_action();
-        let maximum = snapshot.text.encode_utf16().count() as i64;
-        let location = previous.location.min(maximum);
-        let length = previous.length.min(maximum - location);
-        let start_char = utf16_offset_to_char_offset(&snapshot.text, location as usize);
-        let end_char =
-            utf16_offset_to_char_offset(&snapshot.text, (location + length) as usize);
-        let start = self.buffer.iter_at_offset(start_char as i32);
-        let end = self.buffer.iter_at_offset(end_char as i32);
-        self.buffer.select_range(&start, &end);
-        self.shared.suppress_change.set(false);
-        self.shared.committed.replace(snapshot);
+        Self::apply_snapshot(&self.shared, &self.buffer, Some(&self.view), snapshot);
     }
 
     /// Session-owned undo, matching `sessionUndoManager` + `allowsUndo`.

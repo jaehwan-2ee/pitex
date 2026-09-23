@@ -245,11 +245,100 @@ final class EditorMacAdapterLayoutTests: XCTestCase {
     }
 }
 
+/// Stale-base-revision regressions: commitSave/recordExternalChange/
+/// resolveConflict bump the session revision without the adapter knowing
+/// (they run before every build and agent run), so the next native edit
+/// used to be rejected and the whole string replaced — losing the
+/// keystroke, moving the caret, and doubling live IME compositions.
+final class EditorMacAdapterRebaseTests: XCTestCase {
+    /// The submit path is an async Task — give it a beat to drain.
+    private func settle() async throws {
+        try await Task.sleep(for: .milliseconds(300))
+    }
+
+    @MainActor
+    private func mounted(_ adapter: EditorMacAdapter) -> (NSWindow, NSTextView) {
+        _ = NSApplication.shared
+        let view = adapter.textView
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        scroll.documentView = view
+        let window = NSWindow(contentRect: scroll.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = scroll
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(view)
+        return (window, view)
+    }
+
+    @MainActor
+    func testTextNeutralRevisionBumpKeepsTheKeystrokeAndCaret() async throws {
+        let session = EditableDocumentSession(text: "ab")
+        let adapter = try await EditorMacAdapter.make(session: session)
+        let (window, view) = mounted(adapter)
+        defer { window.orderOut(nil) }
+        await session.bumpRevision() // save before a build/agent run
+        view.setSelectedRange(NSRange(location: 1, length: 0))
+        view.insertText("%", replacementRange: NSRange(location: 1, length: 0))
+        try await settle()
+        XCTAssertEqual(adapter.text, "a%b")
+        XCTAssertEqual(await session.snapshot().text, "a%b")
+        XCTAssertEqual(view.selectedRange().location, 2)
+    }
+
+    @MainActor
+    func testRepeatedBumpsBetweenKeystrokesKeepEveryCharacter() async throws {
+        let session = EditableDocumentSession(text: "")
+        let adapter = try await EditorMacAdapter.make(session: session)
+        let (window, view) = mounted(adapter)
+        defer { window.orderOut(nil) }
+        for (index, character) in ["a", "%", "b"].enumerated() {
+            await session.bumpRevision()
+            view.setSelectedRange(NSRange(location: index, length: 0))
+            view.insertText(character, replacementRange: NSRange(location: index, length: 0))
+            try await settle()
+        }
+        XCTAssertEqual(adapter.text, "a%b")
+        XCTAssertEqual(await session.snapshot().text, "a%b")
+        XCTAssertEqual(view.selectedRange().location, 3)
+    }
+
+    @MainActor
+    func testExternalApplyDiscardsMarkedTextSoCompositionCannotDuplicate() async throws {
+        let session = EditableDocumentSession(text: "")
+        let adapter = try await EditorMacAdapter.make(session: session)
+        let (window, view) = mounted(adapter)
+        defer { window.orderOut(nil) }
+        view.setMarkedText("ㅎ", selectedRange: NSRange(location: 0, length: 1),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(view.hasMarkedText())
+        // Let the composition's own submit drain — otherwise the refresh is
+        // deferred by the in-flight submit and hasMarkedText stays true.
+        try await settle()
+        await session.replaceText("x")     // external change under composition
+        await adapter.refreshFromSession()
+        XCTAssertFalse(view.hasMarkedText())
+        view.setSelectedRange(NSRange(location: view.string.utf16.count, length: 0))
+        view.insertText("한", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await settle()
+        XCTAssertEqual(adapter.text.filter { $0 == "한" }.count, 1)
+    }
+}
+
 private actor EditableDocumentSession: DocumentSessionPort {
     private var current: DocumentSnapshot
     init(text: String = "a👩b") { current = DocumentSnapshot(revision: 0, text: text) }
     var mutations: [DocumentMutation] = []
     func snapshot() async -> DocumentSnapshot { current }
+    /// A commitSave/recordExternalChange-shaped bump: revision advances
+    /// while the text is untouched — exactly what the app does before
+    /// every build and agent run.
+    func bumpRevision() {
+        current = DocumentSnapshot(revision: current.revision + 1, text: current.text)
+    }
+    /// An external/conflict-resolution replacement applied straight to the
+    /// session, bypassing the adapter.
+    func replaceText(_ text: String) {
+        current = DocumentSnapshot(revision: current.revision + 1, text: text)
+    }
     func submit(_ mutation: DocumentMutation) async throws -> DocumentMutationResult {
         guard mutation.baseRevision == current.revision else { return .rejected(current: current) }
         mutations.append(mutation)

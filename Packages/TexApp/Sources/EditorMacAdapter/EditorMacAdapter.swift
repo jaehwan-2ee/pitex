@@ -154,8 +154,48 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         return EditorMacAdapter(session: session, snapshot: snapshot)
     }
 
+    private var needsRefresh = false
+
+    /// An async refresh can land while a submit is in flight — applying it
+    /// then would clobber the pending keystroke, so it is deferred until
+    /// the submit Task drains. The `isSubmitting` check runs AFTER the
+    /// snapshot fetch: a keystroke during the await starts a submit, and
+    /// the just-fetched (already stale) snapshot must not clobber it.
+    /// `desiredText != committed.text` covers the same window before the
+    /// submit Task has even started.
     public func refreshFromSession() async {
-        apply(await session.snapshot())
+        let snapshot = await session.snapshot()
+        if isSubmitting || desiredText != committed.text { needsRefresh = true; return }
+        apply(snapshot)
+    }
+
+    /// Scrolls so the 0-based source line sits at the viewport top — the
+    /// preview→editor half of Markdown scroll sync.
+    public func scrollToLine(_ line: Int) {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer,
+              let scrollView = textView.enclosingScrollView else { return }
+        let text = textView.string as NSString
+        var index = 0
+        var current = 0
+        while current < line, index < text.length {
+            let next = NSMaxRange(text.lineRange(for: NSRange(location: index, length: 0)))
+            guard next > index else { break }
+            index = next
+            current += 1
+        }
+        layoutManager.ensureLayout(for: textContainer)
+        let point: NSPoint
+        if index < text.length {
+            let glyph = layoutManager.glyphIndexForCharacter(at: index)
+            let rect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1),
+                                                  in: textContainer)
+            point = NSPoint(x: 0, y: rect.minY + textView.textContainerOrigin.y)
+        } else {
+            point = NSPoint(x: 0, y: scrollView.documentView?.frame.maxY ?? 0)
+        }
+        scrollView.contentView.scroll(to: point)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     /// A newly activated document may not be mounted by SwiftUI yet.
@@ -254,7 +294,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         guard !isSubmitting, desiredText != committed.text else { return }
         isSubmitting = true
         let submittedText = desiredText
-        let mutation = pendingNativeMutation ?? DocumentMutation(
+        var mutation = pendingNativeMutation ?? DocumentMutation(
             baseRevision: committed.revision,
             range: DocumentTextRange(location: 0, length: committed.text.utf16.count),
             replacement: submittedText
@@ -263,48 +303,120 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         let session = self.session
 
         Task { @MainActor [weak self, session] in
-            do {
-                let result = try await session.submit(mutation)
-                guard let self else { return }
-                switch result {
-                case let .applied(snapshot):
-                    committed = snapshot
-                    if desiredText == submittedText, snapshot.text != submittedText {
-                        apply(snapshot)
+            guard let self else { return }
+            // commitSave/recordExternalChange/resolveConflict advance the
+            // revision without touching text — app-side code calls them
+            // before every build and agent run, so rejections on a stale
+            // base are the common path. While the session text still equals
+            // the committed text the pending edit rebases cleanly; a truly
+            // diverged session falls back to applying it, which drops the
+            // in-flight keystroke. ponytail: a 3-way rebase is the upgrade
+            // path if diverged-session conflicts ever become common.
+            var attempts = 0
+            while true {
+                do {
+                    switch try await session.submit(mutation) {
+                    case let .applied(snapshot):
+                        committed = snapshot
+                        if desiredText == submittedText, snapshot.text != submittedText {
+                            apply(snapshot)
+                        }
+                    case let .rejected(current):
+                        if current.text == committed.text, attempts < 3 {
+                            committed = current
+                            mutation = DocumentMutation(
+                                baseRevision: current.revision,
+                                range: mutation.range,
+                                replacement: mutation.replacement
+                            )
+                            attempts += 1
+                            continue
+                        }
+                        apply(current)
                     }
-                case let .rejected(current):
-                    apply(current)
+                } catch {
+                    apply(await session.snapshot())
                 }
-            } catch {
-                guard let self else { return }
-                apply(await session.snapshot())
+                break
             }
-            self?.isSubmitting = false
-            self?.submitPendingChangeIfNeeded()
+            isSubmitting = false
+            submitPendingChangeIfNeeded()
+            if needsRefresh, !isSubmitting {
+                needsRefresh = false
+                await refreshFromSession()
+            }
         }
     }
 
+    /// Applies a session snapshot by replacing only the differing middle
+    /// range: AppKit's own range tracking keeps the caret anchored, and a
+    /// live IME composition is discarded first so it cannot re-commit into
+    /// the shifted text and double its syllables.
     private func apply(_ snapshot: DocumentSnapshot) {
         pendingNativeMutation = nil
         committed = snapshot
         desiredText = snapshot.text
         guard textView.string != snapshot.text else { return }
 
-        let previousSelection = textView.selectedRange()
+        // The flag goes up before discarding the composition — a delegate
+        // callback out of discardMarkedText/unmarkText must not start a
+        // submit mid-apply.
         isApplyingSessionSnapshot = true
-        // A session-applied snapshot is not a user edit — registering it
-        // would push a whole-document undo entry (and, on AppKit, reset
-        // the coalesced typing history around it).
-        sessionTextView.sessionUndoManager.disableUndoRegistration()
+        if textView.hasMarkedText() {
+            textView.inputContext?.discardMarkedText()
+            textView.unmarkText()
+        }
+        let (range, replacement) = Self.differingRange(from: textView.string, to: snapshot.text)
+        let selection = textView.selectedRange()
         sessionTextView.findController?.finder.noteClientStringWillChange()
-        textView.string = snapshot.text
+        // A session-applied snapshot is not a user edit — registering it
+        // would push an undo entry (and, on AppKit, reset the coalesced
+        // typing history around it).
+        sessionTextView.sessionUndoManager.disableUndoRegistration()
+        textView.textStorage?.beginEditing()
+        textView.textStorage?.replaceCharacters(in: range, with: replacement)
+        textView.textStorage?.endEditing()
         sessionTextView.sessionUndoManager.enableUndoRegistration()
-        let maximum = snapshot.text.utf16.count
-        let location = min(previousSelection.location, maximum)
-        let length = min(previousSelection.length, maximum - location)
-        textView.setSelectedRange(NSRange(location: location, length: length))
+        // Undo entries recorded against the pre-replacement text restore
+        // stale ranges after an external edit — the history restarts here.
+        sessionTextView.sessionUndoManager.removeAllActions()
         isApplyingSessionSnapshot = false
+        textView.setSelectedRange(Self.map(selection, over: range, replacementLength: replacement.utf16.count))
         sessionTextView.findController?.contentDidChange()
+    }
+
+    /// Common-prefix/suffix shrink of a full-text replacement, in UTF-16
+    /// units (NSTextStorage coordinates); a surrogate pair is never split.
+    static func differingRange(from old: String, to new: String) -> (range: NSRange, replacement: String) {
+        let oldUnits = Array(old.utf16)
+        let newUnits = Array(new.utf16)
+        var prefix = 0
+        while prefix < oldUnits.count, prefix < newUnits.count,
+              oldUnits[prefix] == newUnits[prefix] { prefix += 1 }
+        if prefix > 0, prefix < oldUnits.count, UTF16.isLeadSurrogate(oldUnits[prefix - 1]) {
+            prefix -= 1
+        }
+        var suffix = 0
+        while suffix < oldUnits.count - prefix, suffix < newUnits.count - prefix,
+              oldUnits[oldUnits.count - 1 - suffix] == newUnits[newUnits.count - 1 - suffix] { suffix += 1 }
+        if suffix > 0, UTF16.isLeadSurrogate(oldUnits[oldUnits.count - suffix - 1]) {
+            suffix -= 1
+        }
+        let range = NSRange(location: prefix, length: oldUnits.count - prefix - suffix)
+        return (range, String(decoding: newUnits[prefix ..< newUnits.count - suffix], as: UTF16.self))
+    }
+
+    /// Maps a UTF-16 selection across a replaceCharacters edit: before the
+    /// range unchanged, past it shifted by the length delta, overlapping it
+    /// clamped onto the end of the replacement.
+    static func map(_ selection: NSRange, over edit: NSRange, replacementLength: Int) -> NSRange {
+        func map(_ offset: Int) -> Int {
+            if offset <= edit.location { return offset }
+            if offset >= NSMaxRange(edit) { return offset + replacementLength - edit.length }
+            return edit.location + replacementLength
+        }
+        let start = map(selection.location)
+        return NSRange(location: start, length: map(NSMaxRange(selection)) - start)
     }
 }
 
