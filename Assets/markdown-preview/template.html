@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- ponytail: CSP hash + nav policy instead of a sanitizer; add DOMPurify if
+     the page ever gets a privileged JS bridge beyond scroll sync -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'sha256-@@CSP_HASH@@'; style-src 'unsafe-inline'; font-src data:; img-src file: data: https:">
+<base id="preview-base" href="file:///">
+<style>@@CSS@@</style>
+</head>
+<body>
+<main id="content"></main>
+<script>@@SCRIPT@@</script>
+</body>
+</html>

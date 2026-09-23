@@ -56,6 +56,34 @@ Jump to a task's source, add or rename tasks, mark them done, or delete them.
 Browse LaTeX symbols by category from the editor's symbols button. Select a
 glyph to insert its LaTeX command at the caret; hover to see the command.
 
+### Markdown preview
+
+`.md` and `.markdown` files open in the same editor, and the inspector
+shows a live rendered preview instead of the PDF column — including
+KaTeX math (`$…$`, `$$…$$`, `\[…\]`, `\(…\)`). On macOS and Linux Pitex
+also registers as an "Open With" handler for Markdown files.
+
+- **Live or on save** — the preview refreshes as you type; turn off
+  *Settings → Markdown → Live preview* to render only when the document
+  is saved.
+- **Scroll sync** — scrolling the editor or the preview keeps the other
+  at the same source line (*Settings → Markdown → Sync scrolling*).
+- **Preview theme** — *Match app* follows the app appearance, or force
+  *Light* / *Dark* (*Settings → Markdown → Preview theme*); font size is
+  adjustable there too.
+- **Raw HTML, no scripts** — inline HTML renders, but a strict
+  content-security policy and navigation lockdown keep embedded scripts,
+  event handlers, and `javascript:` links from executing.
+- **Links** — `http(s)`/`mailto` links open in the browser; relative file
+  links open in the default app. Executable files are refused, missing
+  files ignored, and other schemes blocked.
+
+Settings live under **Settings → Markdown** (right after the renamed
+**TeX Compile** tab). On Linux the preview needs WebKitGTK 6.0
+(`libwebkitgtk-6.0-4`, pulled in by the deb's dependencies). The Ubuntu
+22.04 and Windows builds don't include the preview yet — they show a
+"not available in this build" note instead.
+
 ### Forward / Inverse SyncTeX
 
 Source and PDF stay locked together:
@@ -72,7 +100,7 @@ Source and PDF stay locked together:
 
 | Action | macOS | Linux |
 |---|---|---|
-| Build / cancel build | `⌘B` / `⌘.` | `Ctrl+B` / `Ctrl+.` |
+| Build / cancel build | `⌘B` or `⇧↩` (in editor) / `⌘.` | `Ctrl+B` or `Shift+Enter` (in editor) / `Ctrl+.` |
 | Run custom command | `⌃⌘B` | `Ctrl+Alt+B` |
 | Pin build target | `⌘P` | `Ctrl+P` |
 | Send selection to assistant | `⌘⇧A` | `Ctrl+Shift+A` |

@@ -12,6 +12,13 @@ struct EditorContainerView: NSViewRepresentable {
     var completion: GhostCompletionCoordinator?
     /// Fired when the user Cmd-clicks a location: (line, column), 1-based.
     var onSyncRequest: ((Int, Int) -> Void)?
+    /// Fired on Shift+Return inside the editor — wired to the same build
+    /// command ⌘B runs.
+    var onBuildRequest: (() -> Void)?
+    /// Markdown preview scroll sync — the editor reports its top visible
+    /// source line through it and takes preview-driven scrolls from it.
+    /// Nil outside Markdown documents.
+    var scrollSync: MarkdownScrollSync?
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = adapter.textView
@@ -112,6 +119,36 @@ struct EditorContainerView: NSViewRepresentable {
             }
             return consumed ? nil : event
         }
+
+        // ⇧↩ builds while this editor has focus — a keyDown monitor scoped
+        // to the text view keeps it editor-only: the assistant composer,
+        // find bar and dialogs keep their plain Shift+Return, and an active
+        // IME composition always sees the key first.
+        context.coordinator.buildMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown
+        ) { [weak coordinator = context.coordinator] event in
+            let consumed = MainActor.assumeIsolated {
+                coordinator?.handleBuildKey(event) ?? false
+            }
+            return consumed ? nil : event
+        }
+
+        // Editor→preview scroll sync rides the same bounds notification the
+        // gutter and minimap already observe — no second scroll hook.
+        context.coordinator.scrollSync = scrollSync
+        scrollSync?.scrollEditorToLine = { [weak adapter] line in
+            adapter?.scrollToLine(line)
+        }
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView,
+            queue: .main
+        ) { [weak coordinator = context.coordinator, weak textView] _ in
+            MainActor.assumeIsolated {
+                coordinator?.reportTopLine(textView)
+            }
+        }
         context.coordinator.textView = textView
 
         context.coordinator.lastAppearanceKey = appearanceKey
@@ -126,6 +163,13 @@ struct EditorContainerView: NSViewRepresentable {
         if let monitor = coordinator.ghostMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        if let monitor = coordinator.buildMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let observer = coordinator.scrollObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        coordinator.scrollSync?.scrollEditorToLine = nil
         if coordinator.completion?.overlay === coordinator.ghost {
             coordinator.completion?.overlay = nil
         }
@@ -138,6 +182,11 @@ struct EditorContainerView: NSViewRepresentable {
         // WorkspaceView keys this view by adapter identity, keeping the
         // document, overlays and their notification observers together.
         context.coordinator.onSyncRequest = onSyncRequest
+        context.coordinator.onBuildRequest = onBuildRequest
+        context.coordinator.scrollSync = scrollSync
+        scrollSync?.scrollEditorToLine = { [weak adapter] line in
+            adapter?.scrollToLine(line)
+        }
         context.coordinator.foldEngine?.isEnabled = foldingEnabled
         context.coordinator.minimap?.isHidden = !minimapVisible
         // `completion` is a value input — if it arrived after makeNSView
@@ -188,8 +237,12 @@ struct EditorContainerView: NSViewRepresentable {
         var bracketMatcher: BracketMatcher?
         var syncMonitor: Any?
         var ghostMonitor: Any?
+        var buildMonitor: Any?
+        var scrollSync: MarkdownScrollSync?
+        var scrollObserver: NSObjectProtocol?
         var completion: GhostCompletionCoordinator?
         var onSyncRequest: ((Int, Int) -> Void)?
+        var onBuildRequest: (() -> Void)?
         var lastAppearanceKey: AppearanceKey?
 
         /// Tab/Esc while a ghost is showing — the Copilot-style accept and
@@ -215,6 +268,46 @@ struct EditorContainerView: NSViewRepresentable {
             default:
                 return false
             }
+        }
+
+        /// ⇧↩ / ⇧⌅ while this text view is first responder runs the build
+        /// command — the same action ⌘B dispatches. Marked text means an
+        /// input method owns the key; any extra modifier (⌃⌥⌘) keeps its
+        /// existing meaning, and Caps Lock does not count as a chord.
+        func handleBuildKey(_ event: NSEvent) -> Bool {
+            guard let textView, !textView.hasMarkedText(),
+                  event.window === textView.window,
+                  textView.window?.firstResponder === textView,
+                  let onBuildRequest
+            else { return false }
+            let modifiers = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .subtracting(.capsLock)
+            guard modifiers == .shift,
+                  event.keyCode == 36 || event.keyCode == 76 // Return, keypad Enter
+            else { return false }
+            onBuildRequest()
+            return true
+        }
+
+        /// Editor→preview half of scroll sync: the top visible source line
+        /// (0-based) goes to the Markdown web view, which interpolates it
+        /// over its `data-line` marks.
+        func reportTopLine(_ textView: NSTextView?) {
+            guard let textView, let scrollSync,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+            layoutManager.ensureLayout(for: textContainer)
+            let origin = NSPoint(
+                x: 0,
+                y: textView.visibleRect.minY - textView.textContainerOrigin.y
+            )
+            guard layoutManager.numberOfGlyphs > 0 else { return }
+            let glyph = layoutManager.glyphIndex(for: origin, in: textContainer)
+            guard glyph < layoutManager.numberOfGlyphs else { return }
+            let character = layoutManager.characterIndexForGlyph(at: glyph)
+            let (line, _) = Self.lineAndColumn(for: character, in: textView.string as NSString)
+            scrollSync.editorScrolled(to: line - 1)
         }
 
         /// Cmd+click inside this editor fires forward SyncTeX and reports the

@@ -48,6 +48,7 @@
 		10000000000000000000001C /* ProjectFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000010 /* ProjectFeature */; };
 		10000000000000000000001D /* PDFFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000011 /* PDFFeature */; };
 		100000000000000000000041 /* PitexIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000041 /* PitexIcon.icon */; };
+		100000000000000000000042 /* markdown-preview.html in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000042 /* markdown-preview.html */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -85,6 +86,7 @@
 		200000000000000000000032 /* UpdateSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateSupport.swift; sourceTree = "<group>"; };
 		200000000000000000000033 /* SubscriptionUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionUsage.swift; sourceTree = "<group>"; };
 		200000000000000000000041 /* PitexIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PitexIcon.icon; sourceTree = "<group>"; };
+		200000000000000000000042 /* markdown-preview.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "markdown-preview.html"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -193,6 +195,7 @@
 				20000000000000000000000C /* Assets.xcassets */,
 				200000000000000000000041 /* PitexIcon.icon */,
 				200000000000000000000030 /* PitexAgent */,
+				200000000000000000000042 /* markdown-preview.html */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -291,6 +294,7 @@
 				100000000000000000000007 /* Assets.xcassets in Resources */,
 				100000000000000000000041 /* PitexIcon.icon in Resources */,
 				100000000000000000000009 /* PitexAgent in Resources */,
+				100000000000000000000042 /* markdown-preview.html in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

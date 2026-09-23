@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "ソースを表示";
 "preview.open_external" = "デフォルトのPDFビューアで開く";
 "preview.download" = "PDFのコピーを保存";
+"preview.markdown.unavailable" = "このビルドではMarkdownプレビューを利用できません。";
+"preview.markdown.blocked_link" = "Pitexはプレビューから実行ファイルを開きません。";
 
 "assistant.title" = "アシスタント";
 "assistant.sign_in" = "サインイン";
@@ -216,7 +218,8 @@
 "preset.latexmk" = "latexmk";
 "preset.tectonic" = "tectonic";
 
-"settings.tab.compile" = "コンパイル";
+"settings.tab.compile" = "TeX コンパイル";
+"settings.tab.markdown" = "Markdown";
 "settings.tab.editor" = "エディタ";
 "settings.tab.appearance" = "外観";
 "settings.tab.ai" = "AI";
@@ -244,6 +247,15 @@
 "settings.compile.fallback_help" = "ビルドコマンド欄が空のときに使用。上のシェル承認が必要です。";
 "settings.compile.make_default_editor" = ".tex ファイルに使用";
 "settings.compile.make_default_note" = "Pitex を既定の .tex エディタとして登録します（ダブルクリックで開く）。";
+"settings.markdown.live_preview" = "ライブプレビュー";
+"settings.markdown.live_preview_note" = "入力中にプレビューを更新します。オフの場合は保存時に更新されます。";
+"settings.markdown.sync_scroll" = "スクロールを同期";
+"settings.markdown.sync_scroll_note" = "エディタとプレビューを同じ位置にスクロールします。";
+"settings.markdown.theme" = "プレビューテーマ";
+"settings.markdown.theme.system" = "アプリに合わせる";
+"settings.markdown.theme.light" = "ライト";
+"settings.markdown.theme.dark" = "ダーク";
+"settings.markdown.font_size" = "プレビューのフォントサイズ";
 "settings.editor.autosave" = "自動保存";
 "settings.editor.autosave_delay" = "自動保存の遅延";
 "settings.editor.delay_2" = "2 秒";

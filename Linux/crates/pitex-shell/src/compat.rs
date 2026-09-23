@@ -98,6 +98,8 @@ pub fn pick_source_file(
         let filter = gtk4::FileFilter::new();
         filter.add_suffix("tex");
         filter.add_suffix("bib");
+        filter.add_suffix("md");
+        filter.add_suffix("markdown");
         let filters = gtk4::gio::ListStore::new::<gtk4::FileFilter>();
         filters.append(&filter);
         dialog.set_filters(Some(&filters));
@@ -117,6 +119,8 @@ pub fn pick_source_file(
         let filter = gtk4::FileFilter::new();
         filter.add_pattern("*.tex");
         filter.add_pattern("*.bib");
+        filter.add_pattern("*.md");
+        filter.add_pattern("*.markdown");
         dialog.add_filter(&filter);
         dialog.connect_response(move |d, response| {
             if response == gtk4::ResponseType::Accept {

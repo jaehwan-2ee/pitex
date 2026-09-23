@@ -16,6 +16,7 @@ pub mod git;
 pub mod git_diff;
 mod git_list;
 pub mod l10n;
+pub mod markdown_preview;
 pub mod model;
 pub mod panes;
 pub mod pdf;

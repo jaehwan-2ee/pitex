@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "显示源代码";
 "preview.open_external" = "在默认 PDF 查看器中打开";
 "preview.download" = "保存 PDF 副本";
+"preview.markdown.unavailable" = "此构建不提供 Markdown 预览。";
+"preview.markdown.blocked_link" = "Pitex 不会从预览中打开可执行文件。";
 
 "assistant.title" = "助手";
 "assistant.sign_in" = "登录";
@@ -216,7 +218,8 @@
 "preset.latexmk" = "latexmk";
 "preset.tectonic" = "tectonic";
 
-"settings.tab.compile" = "编译";
+"settings.tab.compile" = "TeX 编译";
+"settings.tab.markdown" = "Markdown";
 "settings.tab.editor" = "编辑器";
 "settings.tab.appearance" = "外观";
 "settings.tab.ai" = "AI";
@@ -244,6 +247,15 @@
 "settings.compile.fallback_help" = "当构建命令字段为空时使用。需要上方对 Shell 的批准。";
 "settings.compile.make_default_editor" = "用于 .tex 文件";
 "settings.compile.make_default_note" = "将 Pitex 注册为 .tex 文件的默认应用（双击在此打开）。";
+"settings.markdown.live_preview" = "实时预览";
+"settings.markdown.live_preview_note" = "输入时更新预览。关闭后,预览将在保存时更新。";
+"settings.markdown.sync_scroll" = "同步滚动";
+"settings.markdown.sync_scroll_note" = "让编辑器和预览滚动到同一位置。";
+"settings.markdown.theme" = "预览主题";
+"settings.markdown.theme.system" = "跟随应用";
+"settings.markdown.theme.light" = "浅色";
+"settings.markdown.theme.dark" = "深色";
+"settings.markdown.font_size" = "预览字号";
 "settings.editor.autosave" = "自动保存";
 "settings.editor.autosave_delay" = "自动保存延迟";
 "settings.editor.delay_2" = "2 秒";

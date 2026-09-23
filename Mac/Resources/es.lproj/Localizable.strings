@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "Mostrar fuente";
 "preview.open_external" = "Abrir en el visor de PDF predeterminado";
 "preview.download" = "Guardar una copia del PDF";
+"preview.markdown.unavailable" = "La vista previa de Markdown no está disponible en esta compilación.";
+"preview.markdown.blocked_link" = "Pitex no abrirá archivos ejecutables desde la vista previa.";
 
 "assistant.title" = "Asistente";
 "assistant.sign_in" = "Iniciar sesión";
@@ -216,7 +218,8 @@
 "preset.latexmk" = "latexmk";
 "preset.tectonic" = "tectonic";
 
-"settings.tab.compile" = "Compilación";
+"settings.tab.compile" = "Compilación TeX";
+"settings.tab.markdown" = "Markdown";
 "settings.tab.editor" = "Editor";
 "settings.tab.appearance" = "Apariencia";
 "settings.tab.ai" = "AI";
@@ -244,6 +247,15 @@
 "settings.compile.fallback_help" = "Se usa cuando el campo de comando de compilación está vacío. Requiere la aprobación del shell anterior.";
 "settings.compile.make_default_editor" = "Usar para archivos .tex";
 "settings.compile.make_default_note" = "Registra Pitex como la app predeterminada para archivos .tex (doble clic para abrir aquí).";
+"settings.markdown.live_preview" = "Vista previa en vivo";
+"settings.markdown.live_preview_note" = "Actualiza la vista previa mientras escribes. Desactivada, la vista previa se actualiza al guardar.";
+"settings.markdown.sync_scroll" = "Desplazamiento sincronizado";
+"settings.markdown.sync_scroll_note" = "Mantiene el editor y la vista previa desplazados al mismo lugar.";
+"settings.markdown.theme" = "Tema de la vista previa";
+"settings.markdown.theme.system" = "Como la app";
+"settings.markdown.theme.light" = "Claro";
+"settings.markdown.theme.dark" = "Oscuro";
+"settings.markdown.font_size" = "Tamaño de letra de la vista previa";
 "settings.editor.autosave" = "Guardado automático";
 "settings.editor.autosave_delay" = "Retraso del guardado automático";
 "settings.editor.delay_2" = "2 segundos";

@@ -7,4 +7,4 @@ Icon=dev.pitex.app
 Terminal=false
 Categories=Development;TextEditor;
 StartupNotify=true
-MimeType=text/x-tex;text/x-bib;
+MimeType=text/x-tex;text/x-bib;text/markdown;

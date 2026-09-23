@@ -1,0 +1,9 @@
+markdown-it           15.0.2  MIT  https://github.com/markdown-it/markdown-it
+katex                 0.18.7  MIT  https://github.com/KaTeX/KaTeX
+markdown-it-texmath   1.0.0   MIT  https://github.com/goessner/markdown-it-texmath
+
+Vendored from the npm registry tarballs. markdown-it uses its browser UMD
+bundle (dist/browser/markdown-it.umd.min.js, renamed markdown-it.min.js);
+KaTeX ships only its .woff2 fonts — katex.min.css also lists .woff/.ttf
+sources, which the CSP blocks and browsers never reach after the woff2
+data: URI loads. Each directory contains its LICENSE file.

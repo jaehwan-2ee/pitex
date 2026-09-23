@@ -59,10 +59,15 @@ final class SyntaxHighlighter {
     private weak var adapter: EditorMacAdapter?
     private var pendingTask: Task<Void, Never>?
     private var dialect: TeXDialect = .latex
+    /// Markdown is rendered by the preview, not the LaTeX lexer — `.md` /
+    /// `.markdown` documents keep plain body color in the editor.
+    private var enabled = true
 
     func attach(to adapter: EditorMacAdapter, fileExtension: String) {
         self.adapter = adapter
-        dialect = fileExtension.lowercased() == "bib" ? .bibtex : .latex
+        let ext = fileExtension.lowercased()
+        enabled = ext != "md" && ext != "markdown"
+        dialect = ext == "bib" ? .bibtex : .latex
         adapter.onTextDidChange = { [weak self] in
             self?.scheduleHighlight()
         }
@@ -85,7 +90,7 @@ final class SyntaxHighlighter {
     }
 
     func highlightNow() {
-        guard let textView = adapter?.textView, let storage = textView.textStorage else { return }
+        guard enabled, let textView = adapter?.textView, let storage = textView.textStorage else { return }
         // NSTextView bridges an NSString: UTF-8 offsets otherwise walk from
         // the beginning for every token, making even small documents quadratic.
         var text = textView.string

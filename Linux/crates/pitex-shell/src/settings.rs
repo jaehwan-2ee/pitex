@@ -286,6 +286,44 @@ impl SettingsStore {
     pub fn set_default_custom_command(&mut self, v: &str) {
         self.prefs.set("project.defaultCustomCommand", v);
     }
+    /// `pitex.pref.markdown.livePreview` — render on every edit, default on.
+    /// Off renders on activation and after save instead.
+    pub fn markdown_live_preview(&self) -> bool {
+        self.prefs.bool("pitex.pref.markdown.livePreview").unwrap_or(true)
+    }
+    pub fn set_markdown_live_preview(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.markdown.livePreview", v);
+    }
+    /// `pitex.pref.markdown.syncScroll` — editor↔preview scroll sync,
+    /// default on.
+    pub fn markdown_sync_scroll(&self) -> bool {
+        self.prefs.bool("pitex.pref.markdown.syncScroll").unwrap_or(true)
+    }
+    pub fn set_markdown_sync_scroll(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.markdown.syncScroll", v);
+    }
+    /// `pitex.pref.markdown.theme` — "system" | "light" | "dark"; missing
+    /// or unknown values resolve to "system".
+    pub fn markdown_theme(&self) -> &'static str {
+        match self.prefs.string("pitex.pref.markdown.theme").as_deref() {
+            Some("light") => "light",
+            Some("dark") => "dark",
+            _ => "system",
+        }
+    }
+    pub fn set_markdown_theme(&mut self, v: &str) {
+        self.prefs.set("pitex.pref.markdown.theme", v);
+    }
+    /// `pitex.pref.markdown.fontSize` — preview root size, 10…28, default 16.
+    pub fn markdown_font_size(&self) -> f64 {
+        self.prefs
+            .double("pitex.pref.markdown.fontSize")
+            .unwrap_or(16.0)
+            .clamp(10.0, 28.0)
+    }
+    pub fn set_markdown_font_size(&mut self, v: f64) {
+        self.prefs.set("pitex.pref.markdown.fontSize", v);
+    }
 
     pub fn update_settings(&mut self, next: PersistedSettings) {
         self.settings = next;
@@ -875,6 +913,45 @@ mod tests {
         });
         assert!(store.inverse_sync_highlight());
         assert!(store.forward_sync_highlight());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `pitex.pref.markdown.*` — live preview + sync scroll default on,
+    /// font size clamps to 10…28, and an unknown theme falls back to
+    /// "system".
+    #[test]
+    fn markdown_preferences_defaults_persist_and_fallback() {
+        let path = std::env::temp_dir().join(format!(
+            "pitex-prefs-markdown-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut store = SettingsStore::new(Preferences {
+            values: BTreeMap::new(),
+            path: path.clone(),
+        });
+        assert!(store.markdown_live_preview());
+        assert!(store.markdown_sync_scroll());
+        assert_eq!(store.markdown_font_size(), 16.0);
+        assert_eq!(store.markdown_theme(), "system");
+        store.set_markdown_live_preview(false);
+        store.set_markdown_sync_scroll(false);
+        store.set_markdown_font_size(99.0);
+        store.set_markdown_theme("dark");
+        // A fresh store over the same file sees the persisted values.
+        let values: BTreeMap<String, serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let mut store = SettingsStore::new(Preferences {
+            values,
+            path: path.clone(),
+        });
+        assert!(!store.markdown_live_preview());
+        assert!(!store.markdown_sync_scroll());
+        assert_eq!(store.markdown_font_size(), 28.0);
+        assert_eq!(store.markdown_theme(), "dark");
+        // An unknown stored theme resolves to "system".
+        store.set_markdown_theme("sepia");
+        assert_eq!(store.markdown_theme(), "system");
         let _ = std::fs::remove_file(&path);
     }
 

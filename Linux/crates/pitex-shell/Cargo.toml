@@ -31,6 +31,7 @@ sourceview5.workspace = true
 libc.workspace = true
 linux-platform = { path = "../linux-platform" }
 vte4 = { workspace = true, optional = true }
+webkit6 = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-platform = { path = "../../../Windows/crates/windows-platform" }
@@ -40,8 +41,11 @@ windows-platform = { path = "../../../Windows/crates/windows-platform" }
 # compatibility variant. Ubuntu 24.04+ and Windows keep the modern API level.
 # The `vte` feature (embedded VTE terminal) exists only on Unix — Windows
 # builds use `modern-gtk` without it and take the external-terminal fallback,
-# like the Ubuntu 22.04 build.
+# like the Ubuntu 22.04 build. `markdown-preview` (WebKitGTK 6.0) is wired the
+# same way: on for Unix desktop builds, off on Ubuntu 22.04 and Windows,
+# where the preview pane shows an unavailability page instead.
 [features]
-default = ["modern-gtk", "vte"]
+default = ["modern-gtk", "vte", "markdown-preview"]
 modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
 vte = ["dep:vte4"]
+markdown-preview = ["dep:webkit6"]

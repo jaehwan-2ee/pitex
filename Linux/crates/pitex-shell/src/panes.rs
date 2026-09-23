@@ -1314,11 +1314,13 @@ fn attach_files_dialog(button: &gtk4::Button, on_paths: impl Fn(Vec<String>) + '
 
 // ─── PDF preview column ─────────────────────────────────────────────────────
 
-/// `Preview.preview`: SyncTeX status row, toolbar, page view.
+/// `Preview.preview`: SyncTeX status row, toolbar, page view. The whole
+/// column swaps for the Markdown preview while a Markdown document is
+/// active (`refresh_pdf_ui` toggles the two children).
 pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
     let lang = state.borrow().language;
     let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    a11y(&root, "pitex.inspector", "preview.title");
+    ui.pdf_column.replace(Some(root.clone()));
 
     // SyncTeX status header.
     let status = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -1519,13 +1521,20 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     scroll.set_visible(false);
     nav.set_visible(false);
     toolbar.set_visible(false);
-    root.upcast()
+    let markdown = state.borrow().markdown.widget.clone();
+    markdown.set_visible(false);
+    let outer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    a11y(&outer, "pitex.inspector", "preview.title");
+    outer.append(&root);
+    outer.append(&markdown);
+    outer.upcast()
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
-/// `SettingsView` — an `adw::PreferencesWindow` with the four panes
-/// (Compile / Editor / Appearance / AI) replacing the capsule tab strip.
+/// `SettingsView` — an `adw::PreferencesWindow` with the six panes
+/// (TeX Compile / Markdown / Editor / Appearance / AI / Updates) replacing
+/// the capsule tab strip.
 pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     let (lang, store_settings) = {
         let s = state.borrow();
@@ -1736,6 +1745,82 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     default_group.add(&make_default);
     compile.add(&default_group);
     window.add(&compile);
+
+    // ── Markdown ──
+    let markdown = adw::PreferencesPage::new();
+    markdown.set_title(&tr(lang, "settings.tab.markdown"));
+    markdown.set_icon_name(Some("text-x-generic-symbolic"));
+    let preview_group = adw::PreferencesGroup::new();
+    // The `markdownTab` order — Live preview, Sync scrolling, Preview
+    // theme, Preview font size.
+    let (live_row, live) = compat::switch_row(&tr(lang, "settings.markdown.live_preview"));
+    live_row.set_subtitle(&tr(lang, "settings.markdown.live_preview_note"));
+    live.set_active(state.borrow().store.markdown_live_preview());
+    {
+        let state = state.clone();
+        live.connect_active_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_markdown_live_preview(r.is_active());
+                s.render_markdown_now();
+            }
+        });
+    }
+    preview_group.add(&live_row);
+    let (sync_row, sync) = compat::switch_row(&tr(lang, "settings.markdown.sync_scroll"));
+    sync_row.set_subtitle(&tr(lang, "settings.markdown.sync_scroll_note"));
+    sync.set_active(state.borrow().store.markdown_sync_scroll());
+    {
+        let state = state.clone();
+        sync.connect_active_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_markdown_sync_scroll(r.is_active());
+            }
+        });
+    }
+    preview_group.add(&sync_row);
+    let theme = adw::ComboRow::new();
+    theme.set_title(&tr(lang, "settings.markdown.theme"));
+    let theme_items = [
+        tr(lang, "settings.markdown.theme.system"),
+        tr(lang, "settings.markdown.theme.light"),
+        tr(lang, "settings.markdown.theme.dark"),
+    ];
+    let theme_strs: Vec<&str> = theme_items.iter().map(String::as_str).collect();
+    theme.set_model(Some(&gtk4::StringList::new(&theme_strs)));
+    theme.set_selected(match state.borrow().store.markdown_theme() {
+        "light" => 1,
+        "dark" => 2,
+        _ => 0,
+    });
+    {
+        let state = state.clone();
+        theme.connect_selected_notify(move |r| {
+            let v = ["system", "light", "dark"]
+                .get(r.selected() as usize)
+                .copied()
+                .unwrap_or("system");
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_markdown_theme(v);
+                s.render_markdown_now();
+            }
+        });
+    }
+    preview_group.add(&theme);
+    let (size_row, size) =
+        compat::spin_row(&tr(lang, "settings.markdown.font_size"), 10.0, 28.0, 1.0);
+    size.set_value(state.borrow().store.markdown_font_size());
+    {
+        let state = state.clone();
+        size.connect_value_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_markdown_font_size(r.value());
+                s.render_markdown_now();
+            }
+        });
+    }
+    preview_group.add(&size_row);
+    markdown.add(&preview_group);
+    window.add(&markdown);
 
     // ── Editor ──
     let editor = adw::PreferencesPage::new();

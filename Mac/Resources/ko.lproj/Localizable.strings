@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "소스 보기";
 "preview.open_external" = "기본 PDF 뷰어에서 열기";
 "preview.download" = "PDF 사본 저장";
+"preview.markdown.unavailable" = "이 빌드에서는 Markdown 미리보기를 사용할 수 없습니다.";
+"preview.markdown.blocked_link" = "Pitex는 미리보기에서 실행 파일을 열지 않습니다.";
 
 "assistant.title" = "어시스턴트";
 "assistant.sign_in" = "로그인";
@@ -216,7 +218,8 @@
 "preset.latexmk" = "latexmk";
 "preset.tectonic" = "tectonic";
 
-"settings.tab.compile" = "컴파일";
+"settings.tab.compile" = "TeX 컴파일";
+"settings.tab.markdown" = "Markdown";
 "settings.tab.editor" = "편집기";
 "settings.tab.appearance" = "외관";
 "settings.tab.ai" = "AI";
@@ -244,6 +247,15 @@
 "settings.compile.fallback_help" = "빌드 명령 필드가 비어 있을 때 사용됩니다. 위의 셸 승인이 필요합니다.";
 "settings.compile.make_default_editor" = ".tex 파일에 사용";
 "settings.compile.make_default_note" = "Pitex를 기본 .tex 편집기로 등록합니다 (더블 클릭으로 열기).";
+"settings.markdown.live_preview" = "실시간 미리보기";
+"settings.markdown.live_preview_note" = "입력하는 동안 미리보기를 업데이트합니다. 끄면 저장할 때 미리보기가 업데이트됩니다.";
+"settings.markdown.sync_scroll" = "스크롤 동기화";
+"settings.markdown.sync_scroll_note" = "편집기와 미리보기를 같은 위치로 스크롤합니다.";
+"settings.markdown.theme" = "미리보기 테마";
+"settings.markdown.theme.system" = "앱과 동일";
+"settings.markdown.theme.light" = "라이트";
+"settings.markdown.theme.dark" = "다크";
+"settings.markdown.font_size" = "미리보기 글꼴 크기";
 "settings.editor.autosave" = "자동 저장";
 "settings.editor.autosave_delay" = "자동 저장 지연";
 "settings.editor.delay_2" = "2초";

@@ -7,6 +7,7 @@
   "libadwaita",
   "sourceview5",
   "vte4",
+  "webkit6",
   "gdk4",
   "gsk4",
   "pango",

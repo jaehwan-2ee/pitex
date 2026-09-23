@@ -345,7 +345,11 @@ struct WorkspaceView: View {
                 completion: workspace.completion,
                 onSyncRequest: { line, column in
                     Task { await workspace.syncForward(line: line, column: column) }
-                }
+                },
+                onBuildRequest: {
+                    Task { await workspace.startBuild() }
+                },
+                scrollSync: workspace.activeDocumentIsMarkdown ? workspace.markdownScrollSync : nil
             )
                 .id(ObjectIdentifier(environment.editor))
                 .accessibilityIdentifier("pitex.editor")

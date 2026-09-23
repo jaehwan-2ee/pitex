@@ -153,6 +153,9 @@ final class WorkspaceModel: ObservableObject {
     }
     @Published private(set) var openDocuments: [URL] = []
     @Published private(set) var activeDocumentURL: URL?
+    /// Editor↔preview scroll channel for the Markdown web view — created
+    /// once per workspace so the editor and inspector sides meet.
+    let markdownScrollSync = MarkdownScrollSync()
     @Published private(set) var environment: AppEnvironment? {
         didSet { observeEditorSelection() }
     }
@@ -298,7 +301,8 @@ final class WorkspaceModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [UTType(filenameExtension: "tex"), UTType(filenameExtension: "bib")].compactMap { $0 }
+        panel.allowedContentTypes = ["tex", "bib", "md", "markdown"]
+            .compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await open(url) }
     }
@@ -353,7 +357,8 @@ final class WorkspaceModel: ObservableObject {
         guard let snapshot = documentSnapshot else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = activeDocumentURL?.lastPathComponent ?? "document.tex"
-        panel.allowedContentTypes = [UTType(filenameExtension: "tex")].compactMap { $0 }
+        panel.allowedContentTypes = ["tex", "bib", "md", "markdown"]
+            .compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try snapshot.text.write(to: url, atomically: true, encoding: .utf8)
@@ -1828,13 +1833,22 @@ final class WorkspaceModel: ObservableObject {
     /// project tree lists. Build artifacts (aux/log/out/…/synctex.gz) stay
     /// hidden by omission; .pdf stays in because papers use PDF figures.
     nonisolated static let projectFileExtensions: Set<String> = [
-        "tex", "bib",
+        "tex", "bib", "md", "markdown",
         "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff", "bmp", "webp",
     ]
 
     /// Text files the editor can activate — figure rows open externally.
     nonisolated static func isSourceFile(_ url: URL) -> Bool {
-        ["tex", "bib"].contains(url.pathExtension.lowercased())
+        ["tex", "bib", "md", "markdown"].contains(url.pathExtension.lowercased())
+    }
+
+    /// `.md` / `.markdown` get the live preview instead of the PDF column.
+    nonisolated static func isMarkdown(_ url: URL) -> Bool {
+        ["md", "markdown"].contains(url.pathExtension.lowercased())
+    }
+
+    var activeDocumentIsMarkdown: Bool {
+        activeDocumentURL.map(Self.isMarkdown) ?? false
     }
 
     nonisolated static func discoverTexFiles(

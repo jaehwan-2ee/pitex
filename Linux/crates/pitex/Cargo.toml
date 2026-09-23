@@ -16,8 +16,9 @@ path = "src/main.rs"
 pitex-shell = { path = "../pitex-shell", default-features = false }
 
 [features]
-default = ["modern-gtk"]
+default = ["modern-gtk", "markdown-preview"]
 modern-gtk = ["pitex-shell/modern-gtk"]
+markdown-preview = ["pitex-shell/markdown-preview"]
 
 # Debian package — `cargo deb -p pitex` builds the Ubuntu 24.04+ variant
 # (GTK 4.10+/libadwaita 1.4+/VTE embedded terminal). `$auto` resolves the

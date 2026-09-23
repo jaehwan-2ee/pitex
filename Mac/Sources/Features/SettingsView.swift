@@ -73,6 +73,22 @@ final class SettingsStore: ObservableObject {
     @Published var autoInstallUpdates: Bool {
         didSet { UserDefaults.standard.set(autoInstallUpdates, forKey: "pitex.pref.update.autoInstall") }
     }
+    /// Render the Markdown preview on every edit — off keeps the last render.
+    @Published var markdownLivePreview: Bool {
+        didSet { UserDefaults.standard.set(markdownLivePreview, forKey: "pitex.pref.markdown.livePreview") }
+    }
+    /// Keep the editor and the Markdown preview scrolled to the same place.
+    @Published var markdownSyncScroll: Bool {
+        didSet { UserDefaults.standard.set(markdownSyncScroll, forKey: "pitex.pref.markdown.syncScroll") }
+    }
+    /// `system` | `light` | `dark` — unknown values resolve to `system`.
+    @Published var markdownTheme: String {
+        didSet { UserDefaults.standard.set(markdownTheme, forKey: "pitex.pref.markdown.theme") }
+    }
+    /// Preview root font size, clamped 10…28.
+    @Published var markdownFontSize: Double {
+        didSet { UserDefaults.standard.set(markdownFontSize, forKey: "pitex.pref.markdown.fontSize") }
+    }
     private static let settingsKey = "dev.pitex.settings"
 
     init() {
@@ -96,6 +112,10 @@ final class SettingsStore: ObservableObject {
         defaultBuildCommand = "xelatex -interaction=nonstopmode -synctex=1 {file}"
         defaultCustomCommand = ""
         autoInstallUpdates = false
+        markdownLivePreview = true
+        markdownSyncScroll = true
+        markdownTheme = "system"
+        markdownFontSize = 16
         reload()
     }
 
@@ -126,6 +146,18 @@ final class SettingsStore: ObservableObject {
         defaultBuildCommand = defaults.string(forKey: "project.defaultBuildCommand") ?? "xelatex -interaction=nonstopmode -synctex=1 {file}"
         defaultCustomCommand = defaults.string(forKey: "project.defaultCustomCommand") ?? ""
         autoInstallUpdates = defaults.bool(forKey: "pitex.pref.update.autoInstall")
+        markdownLivePreview = defaults.object(forKey: "pitex.pref.markdown.livePreview") as? Bool ?? true
+        markdownSyncScroll = defaults.object(forKey: "pitex.pref.markdown.syncScroll") as? Bool ?? true
+        markdownTheme = Self.markdownThemeValue(defaults.string(forKey: "pitex.pref.markdown.theme"))
+        markdownFontSize = min(max(defaults.object(forKey: "pitex.pref.markdown.fontSize") as? Double ?? 16, 10), 28)
+    }
+
+    /// Missing or unknown `pitex.pref.markdown.theme` resolves to `system`.
+    static func markdownThemeValue(_ stored: String?) -> String {
+        switch stored {
+        case "light", "dark": stored!
+        default: "system"
+        }
     }
 
     func update(_ transform: (PersistedSettings) throws -> PersistedSettings) rethrows {
@@ -180,6 +212,7 @@ private var buildCommandPresets: [(label: LocalizedStringKey, command: String)] 
 /// comfortable spacing above the content).
 private enum SettingsTab: String, CaseIterable, Identifiable {
     case compile
+    case markdown
     case editor
     case appearance
     case ai
@@ -190,6 +223,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     var titleKey: LocalizedStringKey {
         switch self {
         case .compile: "settings.tab.compile"
+        case .markdown: "settings.tab.markdown"
         case .editor: "settings.tab.editor"
         case .appearance: "settings.tab.appearance"
         case .ai: "settings.tab.ai"
@@ -200,6 +234,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .compile: "hammer"
+        case .markdown: "doc.richtext"
         case .editor: "textformat"
         case .appearance: "paintpalette"
         case .ai: "wand.and.stars"
@@ -236,6 +271,7 @@ struct SettingsView: View {
             Group {
                 switch selectedTab {
                 case .compile: compileTab
+                case .markdown: markdownTab
                 case .editor: editorTab
                 case .appearance: appearanceTab
                 case .ai: aiTab
@@ -334,6 +370,41 @@ struct SettingsView: View {
                 Text("settings.compile.make_default_note")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding(8)
+    }
+
+    // MARK: - Markdown
+
+    /// Live preview, Sync scrolling, Preview theme, Preview font size —
+    /// the same four rows and order as the Linux Markdown page.
+    private var markdownTab: some View {
+        Form {
+            Section {
+                Toggle("settings.markdown.live_preview", isOn: $store.markdownLivePreview)
+                Text("settings.markdown.live_preview_note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("settings.markdown.sync_scroll", isOn: $store.markdownSyncScroll)
+                Text("settings.markdown.sync_scroll_note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("settings.markdown.theme") {
+                    Picker("", selection: $store.markdownTheme) {
+                        Text("settings.markdown.theme.system").tag("system")
+                        Text("settings.markdown.theme.light").tag("light")
+                        Text("settings.markdown.theme.dark").tag("dark")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Stepper(
+                    "\(String(localized: "settings.markdown.font_size")): \(Int(store.markdownFontSize))",
+                    value: $store.markdownFontSize,
+                    in: 10...28
+                )
             }
         }
         .formStyle(.grouped)

@@ -131,7 +131,7 @@ export async function validateXcodeproj({ root = DEFAULT_ROOT } = {}) {
     // directory tree verbatim — they carry no resource-file extension.
     const type = refTypes.get(reference) ?? '';
     const isFolderReference = type === 'folder' || type.startsWith('folder.');
-    if (!path || (!isFolderReference && !['.xcassets','.strings','.storyboard','.xib','.png','.jpg','.jpeg','.pdf','.json'].includes(extname(path).toLowerCase()))) add(violations, 'RESOURCE_TYPE', 'Mac/Pitex.xcodeproj/project.pbxproj', `${path ?? buildId} is not an approved original-resource type`);
+    if (!path || (!isFolderReference && !['.xcassets','.strings','.storyboard','.xib','.png','.jpg','.jpeg','.pdf','.json','.html'].includes(extname(path).toLowerCase()))) add(violations, 'RESOURCE_TYPE', 'Mac/Pitex.xcodeproj/project.pbxproj', `${path ?? buildId} is not an approved original-resource type`);
     if (path && isFolderReference && /ReferenceEvidence|reference[-_ ]?(?:capture|download|asset)|extracted[-_ ]asset/i.test(path)) add(violations, 'REFERENCE_RESOURCE', 'Mac/Pitex.xcodeproj/project.pbxproj', `${path} is not an original product resource`);
   }
   for (const file of await filesBelow(join(root, 'Mac', 'Sources'), '.swift')) {

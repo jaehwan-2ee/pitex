@@ -39,6 +39,7 @@ gtk4 = { version = "0.8" }
 libadwaita = { version = "0.6", package = "libadwaita" }
 sourceview5 = "0.8"
 vte4 = "0.7"
+webkit6 = "0.3"
 url = "=2.5.8"
 uuid = { version = "=1.10.0", features = ["v4"] }
 

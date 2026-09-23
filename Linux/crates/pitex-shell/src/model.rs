@@ -2054,14 +2054,33 @@ impl WorkspaceModel {
         active_is_tex || self.todo_append_target().is_some()
     }
 
-    /// `isSourceFile` — .tex/.bib activate in the editor; every other
-    /// discovered extension is a figure that opens externally.
+    /// `isSourceFile` — .tex/.bib/.md/.markdown activate in the editor;
+    /// every other discovered extension is a figure that opens externally.
     pub fn is_source_file(url: &Path) -> bool {
         url.extension()
             .and_then(|e| e.to_str())
             .map(|e| {
-                e.eq_ignore_ascii_case("tex") || e.eq_ignore_ascii_case("bib")
+                e.eq_ignore_ascii_case("tex")
+                    || e.eq_ignore_ascii_case("bib")
+                    || Self::is_markdown(url)
             })
+            .unwrap_or(false)
+    }
+
+    /// `.md`/`.markdown` — the one Markdown predicate every feature branch
+    /// goes through (`isMarkdown` on macOS).
+    pub fn is_markdown(url: &Path) -> bool {
+        url.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
+            .unwrap_or(false)
+    }
+
+    /// Active document is Markdown — drives the inspector's preview swap.
+    pub fn active_is_markdown(&self) -> bool {
+        self.active_document_url
+            .as_ref()
+            .map(|u| Self::is_markdown(u))
             .unwrap_or(false)
     }
 
@@ -3383,8 +3402,9 @@ impl WorkspaceModel {
 /// `projectFileExtensions` — everything `discoverTexFiles` lists: sources
 /// plus the figure formats LaTeX documents include. Build artifacts stay
 /// excluded except .pdf, which figures legitimately use.
-const PROJECT_FILE_EXTENSIONS: [&str; 13] = [
-    "tex", "bib", "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff", "bmp", "webp",
+const PROJECT_FILE_EXTENSIONS: [&str; 15] = [
+    "tex", "bib", "md", "markdown", "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff",
+    "bmp", "webp",
 ];
 
 /// `standardizedFileURL` + `resolvingSymlinksInPath`: canonicalize when the

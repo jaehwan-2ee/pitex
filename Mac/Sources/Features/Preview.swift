@@ -1,12 +1,17 @@
 import PDFKit
 import SwiftUI
 import SyncTeXCore
+import TexDomain
+import WebKit
 
 /// Right-hand inspector column: the PDF preview only. The assistant moved
 /// into the bottom console so both can stay visible at once.
 struct Preview: View {
     @ObservedObject var workspace: WorkspaceModel
     @ObservedObject private var settings: SettingsStore
+    /// Observed so a light/dark flip re-renders the Markdown preview when
+    /// its theme is "Match app".
+    @ObservedObject private var appearance = AppearanceSettings.shared
 
     init(workspace: WorkspaceModel) {
         self.workspace = workspace
@@ -19,10 +24,45 @@ struct Preview: View {
             .accessibilityIdentifier("pitex.inspector")
     }
 
+    /// `.md` / `.markdown` documents swap the PDF column for the live
+    /// Markdown rendering; everything else keeps the SyncTeX/PDF stack.
+    private var activeIsMarkdown: Bool {
+        workspace.activeDocumentIsMarkdown
+    }
+
     // MARK: - Preview
 
     @ViewBuilder
     private var preview: some View {
+        if activeIsMarkdown, let url = workspace.activeDocumentURL {
+            MarkdownPreviewView(
+                documentURL: url,
+                text: workspace.documentSnapshot?.text ?? "",
+                fontSize: settings.markdownFontSize,
+                dark: MarkdownLinkPolicy.previewIsDark(
+                    theme: settings.markdownTheme,
+                    appIsDark: appearance.effectiveDark
+                ),
+                livePreview: settings.markdownLivePreview,
+                syncScroll: settings.markdownSyncScroll,
+                documentClean: workspace.documentSnapshot?.saveState == .clean,
+                sync: workspace.markdownScrollSync,
+                onBlockedLink: {
+                    workspace.agent?.statusMessage = String(localized: "preview.markdown.blocked_link")
+                }
+            )
+            // A new documentURL rebuilds the web view; text/settings edits
+            // flow through updateNSView.
+            .id(url)
+            .frame(maxHeight: .infinity)
+            .accessibilityIdentifier("pitex.preview.markdown")
+        } else {
+            pdfPreview
+        }
+    }
+
+    @ViewBuilder
+    private var pdfPreview: some View {
         VStack(spacing: 0) {
             syncTeXStatus
             Divider()
@@ -301,4 +341,203 @@ private struct PDFDocumentView: NSViewRepresentable {
 
 extension Notification.Name {
     static let syncTeXHighlightRequested = Notification.Name("pitex.synctex.highlight")
+}
+
+// ─── Markdown preview ────────────────────────────────────────────────────────
+
+/// Editor↔preview scroll-sync channel shared by `EditorContainerView`
+/// (reports the editor's top line, scrolls on preview reports) and the
+/// Markdown web view. The JS side suppresses its own echo after
+/// `pitexScrollToLine`; `editorQuietUntil` mutes the reverse echo.
+@MainActor
+final class MarkdownScrollSync {
+    /// Editor → preview: called with the 0-based top visible source line.
+    var onEditorTopLine: ((Int) -> Void)?
+    /// Preview → editor: scrolls the editor so `line` sits at the top.
+    var scrollEditorToLine: ((Int) -> Void)?
+    private var editorQuietUntil = Date.distantPast
+
+    func editorScrolled(to line: Int) {
+        guard Date() >= editorQuietUntil else { return }
+        onEditorTopLine?(line)
+    }
+
+    func previewScrolled(to line: Int) {
+        editorQuietUntil = Date().addingTimeInterval(0.12)
+        scrollEditorToLine?(line)
+    }
+}
+
+/// WKWebView host for the shared `markdown-preview.html` renderer — one
+/// load at mount, then full-document `pitexRender` pushes. The page CSP
+/// (sha256 script hash, no unsafe-inline) plus the strict navigation
+/// policy below keep `html: true` raw HTML inert: injected scripts never
+/// run, and only the initial load is allowed to navigate.
+private struct MarkdownPreviewView: NSViewRepresentable {
+    let documentURL: URL
+    let text: String
+    var fontSize: Double
+    var dark: Bool
+    var livePreview: Bool
+    var syncScroll: Bool
+    var documentClean: Bool
+    var sync: MarkdownScrollSync
+    var onBlockedLink: () -> Void
+
+    func makeNSView(context: Context) -> WKWebView {
+        let content = WKUserContentController()
+        // The content controller retains its handlers — proxy weakly.
+        content.add(WeakScriptMessageHandler(context.coordinator), name: "pitexScroll")
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = content
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = context.coordinator
+        context.coordinator.webView = view
+        context.coordinator.sync = sync
+        if let page = Bundle.main.url(forResource: "markdown-preview", withExtension: "html") {
+            // The page lives inside the bundle, so the granted read scope
+            // must cover both it and the document — `/` does, and the app is
+            // unsandboxed anyway. The CSP hash still pins scripts to our
+            // bundle; images/relative links (`../figures/x.png`) resolve
+            // anywhere on disk, link clicks route through the policy.
+            view.loadFileURL(page, allowingReadAccessTo: URL(fileURLWithPath: "/"))
+            context.coordinator.resourceURL = page
+        }
+        sync.onEditorTopLine = { [weak coordinator = context.coordinator] line in
+            coordinator?.scrollPreview(to: line)
+        }
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.onBlockedLink = onBlockedLink
+        context.coordinator.syncScroll = syncScroll
+        // A document switch renders immediately; edits debounce. With live
+        // preview off only a clean (saved) document or a settings flip
+        // (theme/font size — the last two key parts) re-renders.
+        let switched = context.coordinator.renderedURL != documentURL
+        let settingsChanged = context.coordinator.renderedFontSize != fontSize
+            || context.coordinator.renderedDark != dark
+        guard switched || documentClean || livePreview || settingsChanged else { return }
+        context.coordinator.scheduleRender(
+            text: text, url: documentURL, fontSize: fontSize, dark: dark,
+            immediate: switched || settingsChanged
+        )
+    }
+
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.renderTask?.cancel()
+        coordinator.sync?.onEditorTopLine = nil
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        weak var webView: WKWebView?
+        var sync: MarkdownScrollSync?
+        var onBlockedLink: (() -> Void)?
+        var syncScroll = true
+        var resourceURL: URL?
+        var renderedURL: URL?
+        /// Settings half of the render key — a flip re-renders even while
+        /// live preview is off.
+        var renderedFontSize: Double?
+        var renderedDark: Bool?
+        var renderTask: Task<Void, Never>?
+        private var loaded = false
+        private var queuedScript: String?
+
+        func scheduleRender(text: String, url: URL, fontSize: Double, dark: Bool, immediate: Bool) {
+            renderTask?.cancel()
+            renderTask = Task { @MainActor [weak self] in
+                if !immediate {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard !Task.isCancelled else { return }
+                }
+                self?.render(text: text, url: url, fontSize: fontSize, dark: dark)
+            }
+        }
+
+        func render(text: String, url: URL, fontSize: Double, dark: Bool) {
+            renderedURL = url
+            renderedFontSize = fontSize
+            renderedDark = dark
+            // The document's directory as a file:// base so relative image
+            // and link URLs resolve before the navigation policy sees them.
+            let base = url.deletingLastPathComponent().absoluteString
+            let payload: [String: Any] = [
+                "text": text,
+                "baseHref": base,
+                "fontSize": fontSize,
+                "dark": dark,
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: payload),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            let script = "pitexRender(\(json))"
+            guard loaded else {
+                queuedScript = script
+                return
+            }
+            webView?.evaluateJavaScript(script, completionHandler: nil)
+        }
+
+        func scrollPreview(to line: Int) {
+            guard syncScroll, loaded else { return }
+            webView?.evaluateJavaScript("pitexScrollToLine(\(line))", completionHandler: nil)
+        }
+
+        // MARK: WKScriptMessageHandler — the page reports a user scroll.
+
+        func userContentController(
+            _ controller: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard syncScroll, let line = (message.body as? NSNumber)?.intValue else { return }
+            sync?.previewScrolled(to: line)
+        }
+
+        // MARK: WKNavigationDelegate — only the initial load navigates.
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
+            if !loaded, navigationAction.request.url == resourceURL {
+                return .allow
+            }
+            if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url {
+                switch MarkdownLinkPolicy.action(for: url) {
+                case .openExternal(let url), .openFile(let url):
+                    NSWorkspace.shared.open(url)
+                case .refuse:
+                    onBlockedLink?()
+                case .ignore:
+                    break
+                }
+            }
+            return .cancel
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            loaded = true
+            if let script = queuedScript {
+                queuedScript = nil
+                webView.evaluateJavaScript(script, completionHandler: nil)
+            }
+        }
+    }
+}
+
+/// `WKScriptMessageHandler` retains its target — bounce through a weak box
+/// so the coordinator can die with the view.
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+    init(_ target: WKScriptMessageHandler) { self.target = target }
+    func userContentController(
+        _ controller: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        target?.userContentController(controller, didReceive: message)
+    }
 }

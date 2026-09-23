@@ -31,6 +31,7 @@ use language_core::{DeterministicTeXLexer, TeXDialect};
 use crate::agent::{AgentCoordinator, AgentSelectionAttachment};
 use crate::ghost_completion::{CompletionContext, GhostCompletionCoordinator};
 use crate::l10n::{resolve_language, tr, tr1};
+use crate::markdown_preview::MarkdownPreview;
 use crate::model::{
     ConsoleSection, DocumentTodoItem, GitRefresh, SidebarSection, TodoLineEdit,
     WorkspaceBuildState, WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
@@ -109,6 +110,9 @@ pub struct UiHandles {
     pub issues_list: RefCell<Option<gtk4::ListBox>>,
     pub issue_filter: RefCell<Option<gtk4::DropDown>>,
     pub build_log_view: RefCell<Option<gtk4::TextView>>,
+    /// The `build_preview_pane` column holding the SyncTeX/PDF widgets —
+    /// swapped for the Markdown preview while a Markdown document is active.
+    pub pdf_column: RefCell<Option<gtk4::Box>>,
     pub pdf_toolbar: RefCell<Option<gtk4::Box>>,
     pub pdf_name_label: RefCell<Option<gtk4::Label>>,
     pub pdf_picture: RefCell<Option<gtk4::Picture>>,
@@ -193,6 +197,9 @@ pub struct AppState {
     pub appearance: AppearanceSettings,
     pub agent: Option<AgentCoordinator>,
     pub language: &'static str,
+    /// The inspector's Markdown preview (lazy WebKitGTK page, or the
+    /// unavailable status page without the feature) — one per window.
+    pub markdown: MarkdownPreview,
     pub terminal_running: bool,
     pub editor: Option<Rc<GtkEditorAdapter>>,
     search: Option<crate::search::EditorSearch>,
@@ -303,12 +310,14 @@ impl AppState {
         model.set_event_sink(tx.clone());
         model.load_recents(&store);
         let appearance = AppearanceSettings::new(store.prefs());
+        let language = resolve_language(appearance.language);
         let mut state = Self {
             model,
             store,
             appearance,
             agent: None,
-            language: "en",
+            language,
+            markdown: MarkdownPreview::new(language),
             terminal_running: false,
             editor: None,
             search: None,
@@ -739,7 +748,13 @@ impl AppState {
         let Some(editor) = &self.editor else { return };
         let Some(snapshot) = &self.model.document_snapshot else { return };
         let dialect = dialect_for(self.model.active_document_url.as_deref());
-        let tokens = DeterministicTeXLexer::tokenize(&snapshot.text, dialect);
+        // Markdown gets no lexer — the LaTeX tokenizer would grey out
+        // everything after a `%`.
+        let tokens = if self.model.active_is_markdown() {
+            Vec::new()
+        } else {
+            DeterministicTeXLexer::tokenize(&snapshot.text, dialect)
+        };
         if let Some(fold) = &self.fold { fold.recompute_with_tokens(&snapshot.text, &tokens); }
         let decorations = tokens
             .into_iter()
@@ -1026,6 +1041,39 @@ impl AppState {
                 });
             });
         });
+
+        // Editor→preview scroll sync rides the view's `vadjustment` — the
+        // same scroll observation the minimap uses.
+        if let Some(adjustment) = editor.view().vadjustment() {
+            adjustment.connect_value_changed(|_| {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(st) = state.try_borrow() {
+                            st.markdown_editor_scrolled();
+                        }
+                    }
+                });
+            });
+        }
+
+        // ⇧↩ = `win.build` while the source editor has focus — an
+        // EventControllerKey on the view so the composer, terminal, search
+        // and settings keep their plain Shift+Return.
+        install_build_key(
+            editor.view(),
+            Rc::new({
+                let editor = editor.clone();
+                move || editor.has_marked_text()
+            }),
+            Rc::new({
+                let view = editor.view().downgrade();
+                move || {
+                    if let Some(view) = view.upgrade() {
+                        let _ = view.activate_action("win.build", None);
+                    }
+                }
+            }),
+        );
     }
 
     /// After any text-affecting change: footer, save button, structure lists.
@@ -1042,6 +1090,7 @@ impl AppState {
         // `restoreBuiltPreview` may have swapped the bound PDF alongside the
         // document change (main document vs. chapter/bibliography target).
         self.refresh_pdf_ui();
+        self.schedule_markdown_render();
     }
 
     /// The visible `editor_stack` child — a `gitDiff` session covers the
@@ -1557,9 +1606,13 @@ impl AppState {
     /// error dialog (`MessageDialog` — `AlertDialog` needs GTK 4.10).
     #[allow(deprecated)]
     pub fn open_external(&self, url: &Path) {
-        let uri = gio::File::for_path(url).uri();
+        self.open_external_uri(&gio::File::for_path(url).uri());
+    }
+
+    /// `NSWorkspace.shared.open` — any URI, with the same error dialog.
+    pub fn open_external_uri(&self, uri: &str) {
         if let Err(e) =
-            gio::AppInfo::launch_default_for_uri(&uri, gio::AppLaunchContext::NONE)
+            gio::AppInfo::launch_default_for_uri(uri, gio::AppLaunchContext::NONE)
         {
             let window = UI.with(|ui| ui.window.borrow().clone());
             let dialog = gtk4::MessageDialog::new(
@@ -2961,6 +3014,15 @@ impl AppState {
                 });
             }
         }
+        // Markdown documents swap the whole PDF column for the web preview;
+        // the hidden PDF children keep their per-state visibility.
+        let markdown_active = self.model.active_is_markdown();
+        UI.with(|ui| {
+            if let Some(pdf) = ui.pdf_column.borrow().as_ref() {
+                pdf.set_visible(!markdown_active);
+            }
+            self.markdown.widget.set_visible(markdown_active);
+        });
         self.refresh_synctex_status();
     }
 
@@ -2979,6 +3041,113 @@ impl AppState {
                 label.set_text(&detail);
             }
         });
+    }
+
+    // ── refresh: markdown preview ──────────────────────────────────────────
+
+    /// Per-edit hub for the Markdown preview — activation and saves render
+    /// immediately, live-preview edits debounce ~150ms, live-off edits wait
+    /// for the save. No-op while a non-Markdown document is active.
+    fn schedule_markdown_render(&self) {
+        let Some(url) = self.model.active_document_url.clone() else { return };
+        if !WorkspaceModel::is_markdown(&url) {
+            self.markdown.cancel_render();
+            return;
+        }
+        let clean = self
+            .model
+            .document_snapshot
+            .as_ref()
+            .map(|s| s.save_state == DocumentSaveState::Clean)
+            .unwrap_or(false);
+        if self.markdown.rendered_url().as_ref() != Some(&url) || clean {
+            self.markdown.cancel_render();
+            self.render_markdown_now();
+        } else if self.store.markdown_live_preview() {
+            self.markdown.schedule_render();
+        }
+    }
+
+    /// Push the current snapshot into the preview — the key dedupe inside
+    /// `MarkdownPreview::render` keeps no-change calls cheap.
+    pub fn render_markdown_now(&self) {
+        let (Some(url), Some(snapshot)) = (
+            self.model.active_document_url.as_ref(),
+            self.model.document_snapshot.as_ref(),
+        ) else {
+            return;
+        };
+        if !WorkspaceModel::is_markdown(url) {
+            return;
+        }
+        self.markdown.render(
+            url,
+            snapshot.revision,
+            &snapshot.text,
+            self.store.markdown_font_size(),
+            self.markdown_dark(),
+        );
+    }
+
+    /// `pitex.pref.markdown.theme` — "system" follows the app's effective
+    /// appearance; light/dark pin the page.
+    fn markdown_dark(&self) -> bool {
+        crate::markdown_preview::markdown_preview_dark(
+            self.store.markdown_theme(),
+            self.appearance.resolved_dark.get(),
+        )
+    }
+
+    /// Editor→preview scroll sync — rides the view's `vadjustment`, the
+    /// same scroll observation the minimap uses. Loop-guarded on both ends.
+    fn markdown_editor_scrolled(&self) {
+        if !self.model.active_is_markdown()
+            || !self.store.markdown_sync_scroll()
+            || !self.model.inspector_visible
+            || self.markdown.editor_scroll_suppressed()
+        {
+            return;
+        }
+        let Some(editor) = &self.editor else { return };
+        let rect = editor.view().visible_rect();
+        let (iter, _) = editor.view().line_at_y(rect.y());
+        self.markdown.scroll_to_line(iter.line());
+    }
+
+    /// Preview→editor scroll sync — lands the reported source line at the
+    /// top of the viewport; the programmatic scroll's vadjustment echo is
+    /// muted via `begin_programmatic_editor_scroll`.
+    pub fn scroll_editor_to_line(&self, line: f64) {
+        if !self.model.active_is_markdown()
+            || !self.store.markdown_sync_scroll()
+            || !self.model.inspector_visible
+        {
+            return;
+        }
+        let Some(editor) = &self.editor else { return };
+        let buffer = editor.buffer();
+        if buffer.line_count() <= 0 {
+            return;
+        }
+        self.markdown.begin_programmatic_editor_scroll();
+        let line = (line.max(0.0) as i32).min(buffer.line_count() - 1);
+        if let Some(mut iter) = buffer.iter_at_line(line) {
+            editor.view().scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+        }
+    }
+
+    /// `preview_link_action` routing — the WebKit navigation policy hands
+    /// every clicked URL here; only External/OpenFile ever reach the OS.
+    pub fn open_preview_link(&self, uri: &str) {
+        use crate::markdown_preview::PreviewLinkAction;
+        match crate::markdown_preview::preview_link_action(uri) {
+            PreviewLinkAction::External(uri) => self.open_external_uri(&uri),
+            PreviewLinkAction::OpenFile(path) => self.open_external(&path),
+            PreviewLinkAction::Refuse => {
+                self.toast(&tr(self.language, "preview.markdown.blocked_link"));
+            }
+            PreviewLinkAction::Ignore => {}
+        }
     }
 
     // ── refresh: assistant ─────────────────────────────────────────────────
@@ -3833,6 +4002,55 @@ fn dialect_for(url: Option<&Path>) -> TeXDialect {
     }
 }
 
+/// Only bare Shift+Return/KP_Enter triggers a build — any other modifier
+/// set keeps its existing behaviour, and Caps Lock must not block it.
+pub fn shift_return_is_build(key: gdk::Key, state: gdk::ModifierType) -> bool {
+    let mods = state
+        & (gdk::ModifierType::SHIFT_MASK
+            | gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SUPER_MASK
+            | gdk::ModifierType::HYPER_MASK
+            | gdk::ModifierType::META_MASK);
+    matches!(key, gdk::Key::Return | gdk::Key::KP_Enter)
+        && mods == gdk::ModifierType::SHIFT_MASK
+}
+
+/// Shift+Return in the editor runs the build — an `EventControllerKey` on
+/// the source view, not an app accel, so it exists only while the editor
+/// has focus. `has_marked_text` skips while an IM is composing (the IM
+/// context also consumes its own keypresses first), and the completion
+/// popup keeps Return-accept while it is visible.
+pub fn install_build_key(
+    view: &sourceview5::View,
+    has_marked_text: Rc<dyn Fn() -> bool>,
+    build: Rc<dyn Fn()>,
+) -> gtk4::EventControllerKey {
+    let popup_visible = Rc::new(Cell::new(false));
+    {
+        let flag = popup_visible.clone();
+        view.completion().connect_show(move |_| flag.set(true));
+    }
+    {
+        let flag = popup_visible.clone();
+        view.completion().connect_hide(move |_| flag.set(false));
+    }
+    let keys = gtk4::EventControllerKey::new();
+    keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    keys.connect_key_pressed(move |_, key, _code, state| {
+        if !shift_return_is_build(key, state)
+            || has_marked_text()
+            || popup_visible.get()
+        {
+            return glib::Propagation::Proceed;
+        }
+        build();
+        glib::Propagation::Stop
+    });
+    view.add_controller(keys.clone().upcast::<gtk4::EventController>());
+    keys
+}
+
 fn token_kinds() -> Vec<language_core::LanguageTokenKind> {
     use language_core::LanguageTokenKind as K;
     vec![
@@ -4574,6 +4792,8 @@ fn build_chrome(
             let Ok(s) = state.try_borrow() else { return };
             s.apply_theme();
             s.rehighlight();
+            // A `system` Markdown theme tracks the app appearance.
+            s.render_markdown_now();
         });
     }
     state.borrow_mut().refresh_phase();
@@ -5646,3 +5866,30 @@ for line in sys.stdin:
 #[cfg(test)]
 #[path = "../tests/support/agent_update_settings.rs"]
 mod agent_update_tests;
+
+#[cfg(test)]
+mod build_key_tests {
+    use super::*;
+
+    #[test]
+    fn only_bare_shift_return_is_build() {
+        let shift = gdk::ModifierType::SHIFT_MASK;
+        assert!(shift_return_is_build(gdk::Key::Return, shift));
+        assert!(shift_return_is_build(gdk::Key::KP_Enter, shift));
+        assert!(shift_return_is_build(
+            gdk::Key::Return,
+            shift | gdk::ModifierType::LOCK_MASK,
+        ));
+        for extra in [
+            gdk::ModifierType::CONTROL_MASK,
+            gdk::ModifierType::ALT_MASK,
+            gdk::ModifierType::SUPER_MASK,
+            gdk::ModifierType::HYPER_MASK,
+            gdk::ModifierType::META_MASK,
+        ] {
+            assert!(!shift_return_is_build(gdk::Key::Return, shift | extra));
+        }
+        assert!(!shift_return_is_build(gdk::Key::Return, gdk::ModifierType::empty()));
+        assert!(!shift_return_is_build(gdk::Key::a, shift));
+    }
+}

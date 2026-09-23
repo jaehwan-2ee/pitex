@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "Show Source";
 "preview.open_external" = "Open in Default PDF Viewer";
 "preview.download" = "Save a Copy of the PDF";
+"preview.markdown.unavailable" = "Markdown preview isn't available in this build.";
+"preview.markdown.blocked_link" = "Pitex won't open executable files from the preview.";
 
 "assistant.title" = "Assistant";
 "assistant.sign_in" = "Sign In";
@@ -216,7 +218,8 @@
 "preset.latexmk" = "latexmk";
 "preset.tectonic" = "tectonic";
 
-"settings.tab.compile" = "Compile";
+"settings.tab.compile" = "TeX Compile";
+"settings.tab.markdown" = "Markdown";
 "settings.tab.editor" = "Editor";
 "settings.tab.appearance" = "Appearance";
 "settings.tab.ai" = "AI";
@@ -244,6 +247,15 @@
 "settings.compile.fallback_help" = "Used when the build-command field is empty. Requires the shell approval above.";
 "settings.compile.make_default_editor" = "Use for .tex Files";
 "settings.compile.make_default_note" = "Registers Pitex as the default app for .tex files (double-click opens here).";
+"settings.markdown.live_preview" = "Live preview";
+"settings.markdown.live_preview_note" = "Update the preview while typing. When off, the preview updates when you save.";
+"settings.markdown.sync_scroll" = "Sync scrolling";
+"settings.markdown.sync_scroll_note" = "Keep the editor and the preview scrolled to the same place.";
+"settings.markdown.theme" = "Preview theme";
+"settings.markdown.theme.system" = "Match app";
+"settings.markdown.theme.light" = "Light";
+"settings.markdown.theme.dark" = "Dark";
+"settings.markdown.font_size" = "Preview font size";
 "settings.editor.autosave" = "Auto Save";
 "settings.editor.autosave_delay" = "Auto Save Delay";
 "settings.editor.delay_2" = "2 seconds";

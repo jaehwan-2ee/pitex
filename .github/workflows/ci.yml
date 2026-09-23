@@ -31,6 +31,7 @@ jobs:
       - run: node Tools/verify-target-dag.mjs
       - run: node Tools/verify-rust-dag.mjs
       - run: node Tools/validate-xcodeproj.mjs
+      - run: node Tools/check-markdown-preview.mjs
       - run: node Tools/generate-sbom.mjs
       - run: node Tools/verify-release-surface.mjs
 
@@ -84,7 +85,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-            libvte-2.91-gtk4-dev libpoppler-glib-dev xvfb gdb dbus-x11
+            libvte-2.91-gtk4-dev libpoppler-glib-dev libwebkitgtk-6.0-dev \
+            xvfb gdb dbus-x11
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -101,6 +103,9 @@ jobs:
         working-directory: Linux
       - name: Native GTK editing and PDF worker checks
         run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
+        working-directory: Linux
+      - name: Stale-revision rebase and caret regressions
+        run: xvfb-run -a cargo test -p pitex-shell --test editor_rebase -- --ignored
         working-directory: Linux
       - name: Full window startup and small project check
         run: |

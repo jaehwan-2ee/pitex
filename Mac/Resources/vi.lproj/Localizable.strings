@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "Hiển thị mã nguồn";
 "preview.open_external" = "Mở trong trình xem PDF mặc định";
 "preview.download" = "Lưu một bản sao PDF";
+"preview.markdown.unavailable" = "Bản dựng này không có xem trước Markdown.";
+"preview.markdown.blocked_link" = "Pitex sẽ không mở tệp thực thi từ bản xem trước.";
 
 "assistant.title" = "Trợ lý";
 "assistant.sign_in" = "Đăng nhập";
@@ -216,7 +218,8 @@
 "preset.latexmk" = "latexmk";
 "preset.tectonic" = "tectonic";
 
-"settings.tab.compile" = "Biên dịch";
+"settings.tab.compile" = "Biên dịch TeX";
+"settings.tab.markdown" = "Markdown";
 "settings.tab.editor" = "Trình chỉnh sửa";
 "settings.tab.appearance" = "Giao diện";
 "settings.tab.ai" = "AI";
@@ -244,6 +247,15 @@
 "settings.compile.fallback_help" = "Dùng khi trường lệnh biên dịch trống. Yêu cầu xác nhận shell ở trên.";
 "settings.compile.make_default_editor" = "Dùng cho tệp .tex";
 "settings.compile.make_default_note" = "Đăng ký Pitex làm ứng dụng mặc định cho tệp .tex (nhấp đúp để mở tại đây).";
+"settings.markdown.live_preview" = "Xem trước trực tiếp";
+"settings.markdown.live_preview_note" = "Cập nhật bản xem trước khi bạn gõ. Khi tắt, bản xem trước cập nhật khi lưu.";
+"settings.markdown.sync_scroll" = "Đồng bộ cuộn";
+"settings.markdown.sync_scroll_note" = "Giữ trình soạn thảo và bản xem trước cuộn đến cùng một vị trí.";
+"settings.markdown.theme" = "Chủ đề xem trước";
+"settings.markdown.theme.system" = "Theo ứng dụng";
+"settings.markdown.theme.light" = "Sáng";
+"settings.markdown.theme.dark" = "Tối";
+"settings.markdown.font_size" = "Cỡ chữ xem trước";
 "settings.editor.autosave" = "Tự động lưu";
 "settings.editor.autosave_delay" = "Độ trễ tự động lưu";
 "settings.editor.delay_2" = "2 giây";

@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "Показать источник";
 "preview.open_external" = "Открыть в программе просмотра PDF по умолчанию";
 "preview.download" = "Сохранить копию PDF";
+"preview.markdown.unavailable" = "В этой сборке просмотр Markdown недоступен.";
+"preview.markdown.blocked_link" = "Pitex не открывает исполняемые файлы из просмотра.";
 
 "assistant.title" = "Ассистент";
 "assistant.sign_in" = "Войти";
@@ -216,7 +218,8 @@
 "preset.latexmk" = "latexmk";
 "preset.tectonic" = "tectonic";
 
-"settings.tab.compile" = "Компиляция";
+"settings.tab.compile" = "Компиляция TeX";
+"settings.tab.markdown" = "Markdown";
 "settings.tab.editor" = "Редактор";
 "settings.tab.appearance" = "Внешний вид";
 "settings.tab.ai" = "AI";
@@ -244,6 +247,15 @@
 "settings.compile.fallback_help" = "Используется, когда поле команды сборки пусто. Требует одобрения оболочки выше.";
 "settings.compile.make_default_editor" = "Использовать для файлов .tex";
 "settings.compile.make_default_note" = "Регистрирует Pitex как приложение по умолчанию для файлов .tex (двойной щелчок открывает здесь).";
+"settings.markdown.live_preview" = "Просмотр в реальном времени";
+"settings.markdown.live_preview_note" = "Обновлять просмотр во время ввода. Когда выключено, просмотр обновляется при сохранении.";
+"settings.markdown.sync_scroll" = "Синхронная прокрутка";
+"settings.markdown.sync_scroll_note" = "Редактор и просмотр прокручиваются вместе к одному месту.";
+"settings.markdown.theme" = "Тема просмотра";
+"settings.markdown.theme.system" = "Как в приложении";
+"settings.markdown.theme.light" = "Светлая";
+"settings.markdown.theme.dark" = "Тёмная";
+"settings.markdown.font_size" = "Размер шрифта просмотра";
 "settings.editor.autosave" = "Автосохранение";
 "settings.editor.autosave_delay" = "Задержка автосохранения";
 "settings.editor.delay_2" = "2 секунды";

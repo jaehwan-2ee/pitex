@@ -358,7 +358,8 @@ impl LinuxDefaultEditorRegistration {
     const DESKTOP_ID: &'static str = "dev.pitex.app.desktop";
     /// Declared content types — the desktop entry's MimeType list, matching
     /// the bundle's document type declarations.
-    const DECLARED_TYPES: &'static [&'static str] = &["text/x-tex", "text/x-bib"];
+    const DECLARED_TYPES: &'static [&'static str] =
+        &["text/x-tex", "text/x-bib", "text/markdown"];
 
     /// Registers the app as the default handler for every declared type.
     pub fn register_as_default() -> Result<(), PlatformPortError> {
