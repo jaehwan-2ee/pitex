@@ -122,7 +122,10 @@ actor NativeDocumentSessionPort: AppPorts.DocumentSessionPort {
               range.length <= source.length - range.location else {
             return .rejected(current: .init(revision: current.revision, text: current.text))
         }
-        let replacement = source.replacingCharacters(in: range, with: mutation.replacement)
+        // replacingCharacters bridges an NSString; making the result a
+        // native string keeps equality and hashing off the slow foreign path.
+        var replacement = source.replacingCharacters(in: range, with: mutation.replacement)
+        replacement.makeContiguousUTF8()
         do {
             let updated = try await session.apply(
                 .replaceText(replacement),

@@ -67,13 +67,15 @@ jobs:
         run: swift test --package-path Packages/TexApp --build-system native
       - name: Git and subprocess regression checks
         run: |
-          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests'
+          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests|DiskContentHashTests'
           python3 Tools/check-git-performance.py
           python3 Tools/check-ime-completion.py
       - name: Native highlighting checks
         run: python3 Tools/check-highlighting-performance.py
       - name: Minimap and completion checks
         run: python3 Tools/check-editor-performance.py
+      - name: Fold layout checks
+        run: python3 Tools/check-fold-layout.py
 
   rust:
     name: Rust workspace

@@ -53,6 +53,12 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
         }
     }
     nonisolated(unsafe) private var observer: NSObjectProtocol?
+    nonisolated(unsafe) private var editObserver: NSObjectProtocol?
+    /// Lowest UTF-16 offset of any character edit since the last applyFolds
+    /// (post-edit coordinates). When the hidden line set is unchanged the
+    /// text before the line containing it is untouched, so layout can be
+    /// invalidated from that line instead of the document start.
+    private var minEditLocation: Int?
     /// Recompute after a typing pause, sharing the highlighter cadence.
     private var recomputeTask: Task<Void, Never>?
 
@@ -74,6 +80,21 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
                 }
             }
         }
+        if let storage = textView.textStorage {
+            editObserver = NotificationCenter.default.addObserver(
+                forName: NSTextStorage.didProcessEditingNotification,
+                object: storage,
+                queue: .main
+            ) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let storage = note.object as? NSTextStorage,
+                          storage.editedMask.contains(.editedCharacters) else { return }
+                    let location = storage.editedRange.location
+                    self.minEditLocation = min(self.minEditLocation ?? location, location)
+                }
+            }
+        }
         recompute()
     }
 
@@ -82,6 +103,9 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
         recomputeTask = nil
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
+        if let editObserver { NotificationCenter.default.removeObserver(editObserver) }
+        editObserver = nil
+        minEditLocation = nil
         // Unhide everything before relinquishing the delegate so no stale
         // zero-height fragments remain.
         if let layoutManager = textView?.layoutManager {
@@ -277,6 +301,7 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
 
     /// Re-derives the hidden line set and glyph visibility from `regions`.
     private func applyFolds() {
+        defer { minEditLocation = nil }
         guard let textView, let layoutManager = textView.layoutManager,
               let container = textView.textContainer else { return }
         var lines = IndexSet()
@@ -293,12 +318,27 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
             }
         }
         if lines == hiddenLines && lines.isEmpty { return }
+        // Same hidden set, edits only moved offsets: text before the line
+        // holding the first edit is untouched and the delegate answers
+        // identically there, so invalidation can start at that line. Every
+        // other case (fold toggles, isEnabled flips, no tracked edit) keeps
+        // the full-document invalidation.
+        var invalidationStart = 0
+        if lines == hiddenLines, let edit = minEditLocation, !lineStarts.isEmpty {
+            var lo = 0, hi = lineStarts.count - 1
+            while lo < hi {
+                let mid = (lo + hi + 1) / 2
+                if lineStarts[mid] <= edit { lo = mid } else { hi = mid - 1 }
+            }
+            invalidationStart = lineStarts[lo]
+        }
         hiddenLines = lines
         layoutState = LayoutState(lineStarts: lineStarts, hiddenLines: lines)
         // Rebuild layout so the delegate's zero-height fragments apply, then
         // mark the hidden glyphs not-shown so they do not paint.
+        let length = (textView.string as NSString).length
         layoutManager.invalidateLayout(
-            forCharacterRange: NSRange(location: 0, length: (textView.string as NSString).length),
+            forCharacterRange: NSRange(location: invalidationStart, length: max(length - invalidationStart, 0)),
             actualCharacterRange: nil
         )
         layoutManager.ensureLayout(for: container)
@@ -365,9 +405,11 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
 }
 
 /// Paints the reference editor's translucent wash behind the bracket at the
-/// cursor and its match. Uses the `.backgroundColor` attribute, which the
-/// syntax highlighter never touches (it only rewrites `.foregroundColor`), so
-/// highlight passes do not erase the match.
+/// cursor and its match. Uses layout-manager temporary attributes: the same
+/// `.backgroundColor` wash without an NSTextStorage edit, so caret moves don't
+/// post didProcessEditing (minimap rebuild, glyph/layout invalidation) and can
+/// never disturb FoldEngine's not-shown flags. The syntax highlighter only
+/// rewrites `.foregroundColor`, so highlight passes do not erase the match.
 @MainActor
 final class BracketMatcher {
     private weak var adapter: EditorMacAdapter?
@@ -476,23 +518,21 @@ final class BracketMatcher {
     }
 
     private func paint(_ ranges: [NSRange]) {
-        guard let storage = adapter?.textView.textStorage else { return }
+        guard let layoutManager = adapter?.textView.layoutManager else { return }
         let color = AppearanceSettings.shared.color(for: .bracketMatch)
-        storage.beginEditing()
         for range in ranges {
-            storage.addAttribute(.backgroundColor, value: color, range: range)
+            layoutManager.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
         }
-        storage.endEditing()
         appliedRanges = ranges
     }
 
     private func clear() {
-        guard let storage = adapter?.textView.textStorage, !appliedRanges.isEmpty else { return }
-        storage.beginEditing()
-        for range in appliedRanges where NSMaxRange(range) <= storage.length {
-            storage.removeAttribute(.backgroundColor, range: range)
+        guard let textView = adapter?.textView, let layoutManager = textView.layoutManager,
+              !appliedRanges.isEmpty else { return }
+        let length = (textView.string as NSString).length
+        for range in appliedRanges where NSMaxRange(range) <= length {
+            layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
         }
-        storage.endEditing()
         appliedRanges = []
     }
 }

@@ -15,8 +15,9 @@ final class EditorAnalysis {
         return value
     }
     private weak var storage: NSTextStorage?
-    private var cachedTokens: [LanguageToken]?
-    private var dialect: TeXDialect?
+    /// Per dialect: .bib files are lexed as .bibtex by the highlighter and
+    /// .latex by FoldEngine — a single-slot cache thrashed between the two.
+    private var cachedTokens: [TeXDialect: [LanguageToken]] = [:]
     private var cachedStarts: [Int]?
     nonisolated(unsafe) private var observer: NSObjectProtocol?
 
@@ -27,7 +28,7 @@ final class EditorAnalysis {
             MainActor.assumeIsolated {
                 guard let storage = self?.storage,
                       storage.editedMask.contains(.editedCharacters) else { return }
-                self?.cachedTokens = nil
+                self?.cachedTokens.removeAll()
                 self?.cachedStarts = nil
             }
         }
@@ -35,11 +36,10 @@ final class EditorAnalysis {
     deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
 
     func tokens(for dialect: TeXDialect) -> [LanguageToken] {
-        if cachedTokens == nil || self.dialect != dialect {
-            cachedTokens = DeterministicTeXLexer.tokenize(storage?.string ?? "", dialect: dialect)
-            self.dialect = dialect
-        }
-        return cachedTokens ?? []
+        if let tokens = cachedTokens[dialect] { return tokens }
+        let tokens = DeterministicTeXLexer.tokenize(storage?.string ?? "", dialect: dialect)
+        cachedTokens[dialect] = tokens
+        return tokens
     }
     var lineStarts: [Int] {
         if let cachedStarts { return cachedStarts }
@@ -123,19 +123,9 @@ final class SyntaxHighlighter {
         let mathColor = appearance.color(for: .math)
         let punctuationColor = appearance.color(for: .lineNumbers)
 
-        // TextKit shifts attributes with edits. Keep correct runs intact
-        // instead of clearing and repainting the whole document each time.
-        func applyColor(_ color: NSColor, from start: Int, to end: Int) {
-            guard end > start else { return }
-            var changed: [NSRange] = []
-            storage.enumerateAttribute(.foregroundColor,
-                in: NSRange(location: start, length: end - start),
-                options: .longestEffectiveRangeNotRequired) { current, range, _ in
-                if current as? NSColor != color { changed.append(range) }
-            }
-            for range in changed { storage.addAttribute(.foregroundColor, value: color, range: range) }
-        }
-        storage.beginEditing()
+        // Build the desired color runs in one pass — gaps get body color,
+        // tokens their role color. Lexer ranges are ordered and disjoint.
+        var desired: [(range: NSRange, color: NSColor)] = []
         var paintedThrough = 0
         for token in tokens {
             let color: NSColor
@@ -146,17 +136,52 @@ final class SyntaxHighlighter {
             case .bibEntryMarker, .environmentName: color = environmentColor
             case .math: color = mathColor
             case .punctuation: color = punctuationColor
-            case .whitespace, .text: continue // Coalesced into the gaps below.
+            case .whitespace, .text: continue // Coalesced into the gaps.
             }
             guard let start16 = utf16Offset(forUTF8: token.range.utf8Offset),
                   let end16 = utf16Offset(forUTF8: token.range.endUTF8Offset),
                   end16 >= start16
             else { continue }
-            applyColor(bodyColor, from: paintedThrough, to: start16)
-            applyColor(color, from: start16, to: end16)
+            if start16 > paintedThrough {
+                desired.append((NSRange(location: paintedThrough, length: start16 - paintedThrough), bodyColor))
+            }
+            if end16 > start16 {
+                desired.append((NSRange(location: start16, length: end16 - start16), color))
+            }
             paintedThrough = end16
         }
-        applyColor(bodyColor, from: paintedThrough, to: fullRange.length)
+        if paintedThrough < fullRange.length {
+            desired.append((NSRange(location: paintedThrough, length: fullRange.length - paintedThrough), bodyColor))
+        }
+
+        // TextKit shifts attributes with edits. Keep correct runs intact:
+        // enumerate the current colors once and write only where a desired
+        // run disagrees — the same writes per-token enumerations produced,
+        // without two AppKit calls per token.
+        var current: [(range: NSRange, color: NSColor?)] = []
+        storage.enumerateAttribute(.foregroundColor, in: fullRange,
+            options: .longestEffectiveRangeNotRequired) { value, range, _ in
+            current.append((range, value as? NSColor))
+        }
+        var changes: [(range: NSRange, color: NSColor)] = []
+        var cursor = 0
+        for run in desired {
+            while cursor < current.count, NSMaxRange(current[cursor].range) <= run.range.location {
+                cursor += 1
+            }
+            var index = cursor
+            while index < current.count, current[index].range.location < NSMaxRange(run.range) {
+                if current[index].color != run.color {
+                    let overlap = NSIntersectionRange(current[index].range, run.range)
+                    if overlap.length > 0 { changes.append((overlap, run.color)) }
+                }
+                index += 1
+            }
+        }
+        storage.beginEditing()
+        for change in changes {
+            storage.addAttribute(.foregroundColor, value: change.color, range: change.range)
+        }
         storage.endEditing()
     }
 

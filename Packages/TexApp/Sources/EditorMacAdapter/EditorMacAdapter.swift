@@ -169,6 +169,12 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         apply(snapshot)
     }
 
+    /// Line-start table for `scrollToLine` under NSString `lineRange`
+    /// semantics (CR, CRLF and U+2028/2029 are breaks, unlike the editor's
+    /// "\n"-only line map). Rebuilt lazily; dropped on every text change —
+    /// including session applies, which bypass textDidChange.
+    private var scrollLineStarts: [Int]?
+
     /// Scrolls so the 0-based source line sits at the viewport top — the
     /// preview→editor half of Markdown scroll sync.
     public func scrollToLine(_ line: Int) {
@@ -176,14 +182,8 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
               let textContainer = textView.textContainer,
               let scrollView = textView.enclosingScrollView else { return }
         let text = textView.string as NSString
-        var index = 0
-        var current = 0
-        while current < line, index < text.length {
-            let next = NSMaxRange(text.lineRange(for: NSRange(location: index, length: 0)))
-            guard next > index else { break }
-            index = next
-            current += 1
-        }
+        if scrollLineStarts == nil { scrollLineStarts = Self.computeScrollLineStarts(text) }
+        let index = Self.scrollTargetIndex(forLine: line, starts: scrollLineStarts ?? [0])
         layoutManager.ensureLayout(for: textContainer)
         let point: NSPoint
         if index < text.length {
@@ -196,6 +196,27 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         }
         scrollView.contentView.scroll(to: point)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    /// Every line's UTF-16 start under `lineRange` semantics; the walk the
+    /// old scrollToLine repeated from 0 on every preview scroll message.
+    static func computeScrollLineStarts(_ text: NSString) -> [Int] {
+        var starts = [0]
+        var index = 0
+        while index < text.length {
+            let next = NSMaxRange(text.lineRange(for: NSRange(location: index, length: 0)))
+            guard next > index else { break }
+            starts.append(next)
+            index = next
+        }
+        return starts
+    }
+
+    /// The UTF-16 offset `scrollToLine` targets for 0-based `line`: its line
+    /// start, or the last line's start when `line` runs past the end — the
+    /// old walk stopped at the same place.
+    static func scrollTargetIndex(forLine line: Int, starts: [Int]) -> Int {
+        starts[min(max(line, 0), starts.count - 1)]
     }
 
     /// A newly activated document may not be mounted by SwiftUI yet.
@@ -235,7 +256,12 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
 
     public func textDidChange(_ notification: Notification) {
         guard !isApplyingSessionSnapshot else { return }
-        desiredText = textView.string
+        // The text view bridges an NSString; a native copy keeps equality
+        // and hashing off the slow foreign path on every keystroke.
+        var text = textView.string
+        text.makeContiguousUTF8()
+        desiredText = text
+        scrollLineStarts = nil
         sessionTextView.findController?.contentDidChange()
         onTextDidChange?()
         scheduleCompletionTrigger()
@@ -358,6 +384,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         desiredText = snapshot.text
         guard textView.string != snapshot.text else { return }
 
+        scrollLineStarts = nil
         // The flag goes up before discarding the composition — a delegate
         // callback out of discardMarkedText/unmarkText must not start a
         // submit mid-apply.
