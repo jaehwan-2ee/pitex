@@ -1,0 +1,27 @@
+Linux/crates/pitex/Cargo.toml
+  s_61259ddb619c79::t_952cf58d6696d0 3
+Mac/Config/Info.plist
+  s_61259ddb619c79::t_952cf58d6696d0 20,22
+Windows/crates/pitex-windows/Cargo.toml
+  s_61259ddb619c79::t_952cf58d6696d0 3
+Linux/Cargo.lock
+  s_61259ddb619c79::t_45301cfb6b808b 777
+Windows/Cargo.lock
+  s_61259ddb619c79::t_196053b296cec4 869
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7b3399f27467a0aa379cbad74d3623564d553ce",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
