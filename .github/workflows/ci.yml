@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Run the full matrix (Windows included) on a branch without a PR:
+  # gh workflow run CI --ref <branch>
+  workflow_dispatch:
 
 jobs:
   updates:
