@@ -1017,7 +1017,7 @@ impl AppState {
                 let line = iter.line() as usize + 1;
                 let mut start = iter;
                 start.set_line_offset(0);
-                let col_text = view.buffer().text(&start, &iter, false);
+                let col_text = view.buffer().text(&start, &iter, true);
                 let column = crate::model::utf16_len(col_text.as_str());
                 STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {

@@ -303,7 +303,7 @@ impl FoldEngine {
 
     fn buffer_text(&self) -> String {
         let (s, e) = self.buffer.bounds();
-        self.buffer.text(&s, &e, false).to_string()
+        self.buffer.text(&s, &e, true).to_string()
     }
 
     fn is_folded(&self, line: usize) -> bool {

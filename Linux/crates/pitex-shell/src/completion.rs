@@ -101,7 +101,7 @@ mod provider_imp {
             let (_begin, end) = context.bounds()?;
             let buffer = context.buffer()?;
             let start = buffer.start_iter();
-            let before = buffer.text(&start, &end, false);
+            let before = buffer.text(&start, &end, true);
             let caret_utf16 = before.encode_utf16().count();
             let ctx = CompletionContextDetector::context(&before, caret_utf16)?;
             let candidates = self.candidates.borrow();
@@ -205,7 +205,7 @@ mod provider_imp {
             let Some(buffer) = context.buffer() else { return };
             let Some(proposal) = proposal.downcast_ref::<TexProposal>() else { return };
             let start = buffer.start_iter();
-            let before = buffer.text(&start, &end, false);
+            let before = buffer.text(&start, &end, true);
             let caret_utf16 = before.encode_utf16().count();
             if let Some(ctx) = CompletionContextDetector::context(&before, caret_utf16) {
                 let char_offset = gtk_editor_adapter::utf16_offset_to_char_offset(

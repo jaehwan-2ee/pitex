@@ -81,6 +81,29 @@ fn native_edits_highlighting_and_pdf_worker() {
     paint_and_check();
     assert_eq!(adapter.text(), snapshot.borrow().text);
 
+    // Folded lines carry an `invisible` tag, which GTK's text reads drop
+    // unless asked to include hidden chars. Typing below a fold, the caret
+    // offset and a session-side apply must all still see the whole document.
+    let fold = gtk4::TextTag::new(Some("pitex.fold.hidden"));
+    fold.set_invisible(true);
+    buffer.tag_table().add(&fold);
+    let before = adapter.text();
+    let second_line = before.find('\n').unwrap() + 1;
+    let hidden_start = before[..second_line].chars().count() as i32;
+    let hidden_end = hidden_start + before[second_line..].find('\n').map(|n| before[second_line..second_line + n + 1].chars().count()).unwrap() as i32;
+    buffer.apply_tag(&fold, &buffer.iter_at_offset(hidden_start), &buffer.iter_at_offset(hidden_end));
+    let mut end = buffer.end_iter();
+    buffer.insert(&mut end, "typed");
+    assert_eq!(snapshot.borrow().text, format!("{before}typed"), "typing dropped the folded text");
+    buffer.place_cursor(&buffer.end_iter());
+    assert_eq!(adapter.selected_range().location as usize, snapshot.borrow().text.encode_utf16().count());
+    let mut external = snapshot.borrow().clone();
+    external.text.push_str(" more");
+    external.revision += 1;
+    adapter.apply(external.clone());
+    assert_eq!(adapter.text(), external.text, "apply() diffed against the visible text only");
+    buffer.remove_tag(&fold, &buffer.start_iter(), &buffer.end_iter());
+
     let (sender, receiver) = mpsc::channel();
     let renderer = PdfRenderer::new(sender);
     let pdf: Arc<[u8]> = sample_pdf().into();

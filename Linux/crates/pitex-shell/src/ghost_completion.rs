@@ -305,7 +305,7 @@ impl GhostCompletionCoordinator {
         }
         let iter = buffer.iter_at_mark(&buffer.get_insert());
         let (buf_start, buf_end) = buffer.bounds();
-        let text = buffer.text(&buf_start, &buf_end, false).to_string();
+        let text = buffer.text(&buf_start, &buf_end, true).to_string();
         let caret = iter.offset().max(0) as usize;
         *self.staged_prompt.borrow_mut() = Some(Self::prompt(&context.file_name, &text, caret));
         if self

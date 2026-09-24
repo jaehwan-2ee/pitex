@@ -155,7 +155,7 @@ impl GtkEditorAdapter {
     /// `textView.string` — authoritative text.
     pub fn text(&self) -> String {
         let (start, end) = self.buffer.bounds();
-        self.buffer.text(&start, &end, false).to_string()
+        self.buffer.text(&start, &end, true).to_string()
     }
 
     /// `textView.selectedRange()` in UTF-16 units.
@@ -170,7 +170,7 @@ impl GtkEditorAdapter {
                 (cursor, cursor)
             });
         let buf_start = self.buffer.start_iter();
-        let text = self.buffer.text(&buf_start, &end, false).to_string();
+        let text = self.buffer.text(&buf_start, &end, true).to_string();
         let location = char_offset_to_utf16(&text, start.offset() as usize);
         let end_utf16 = char_offset_to_utf16(&text, end.offset() as usize);
         EditorTextRange {
@@ -263,7 +263,7 @@ impl GtkEditorAdapter {
                 return;
             }
             let (start, end) = buffer.bounds();
-            let text = buffer.text(&start, &end, false).to_string();
+            let text = buffer.text(&start, &end, true).to_string();
             *shared.desired_text.borrow_mut() = text;
             Self::submit_pending_change(session.as_ref(), shared.clone(), buffer, &view);
         });
@@ -342,7 +342,7 @@ impl GtkEditorAdapter {
         snapshot: DocumentSnapshot,
     ) {
         let (s, e) = buffer.bounds();
-        let current = buffer.text(&s, &e, false).to_string();
+        let current = buffer.text(&s, &e, true).to_string();
         *shared.desired_text.borrow_mut() = snapshot.text.clone();
         if current != snapshot.text {
             // Discard an in-flight IM composition first — replacing storage
