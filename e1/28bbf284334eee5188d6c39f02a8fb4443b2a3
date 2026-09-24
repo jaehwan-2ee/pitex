@@ -1,0 +1,43 @@
+.github/workflows/ci.yml
+  s_61259ddb619c79::t_7ea44c550a0226 141-142,148-153,157,160,163,170,214-216
+.github/workflows/release.yml
+  s_61259ddb619c79::t_eeec1ef906284d 74
+Linux/crates/pitex-shell/Cargo.toml
+  s_61259ddb619c79::t_c1991949a1af4a 46-48
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_4d2c5a5b67b3a3 4792-4793,4921-4922,5132,5139-5147,6522-6525
+Linux/crates/pitex-shell/src/compat.rs
+  s_61259ddb619c79::t_dc4f2d96553b81 613-615,618,621-622,629,632,634,641,649-650,658-659,664,668,672-673,675,683-684,690-693,696,699-700,709,712,714-716,723,731-732,740-741,746,750,754-755,757,765-766
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  s_61259ddb619c79::t_af3af05984e3d3 4-6,297-303
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_15d7d62051fe81 1844-1847
+Linux/crates/pitex-shell/src/synctex.rs
+  s_61259ddb619c79::t_168b0026e1b430 66-70,73-74,83-89,514-515,620,623-649,652-653,659-660
+Linux/crates/pitex-shell/src/window_ipc.rs
+  s_61259ddb619c79::t_4c278fd511f2ae 2-14,20-24,29-47,52,59,69,76,81-85,92,98,100-104,106,123,131-420
+Linux/crates/pitex-shell/tests/support/parity_shots.rs
+  s_61259ddb619c79::t_f2a5411b641dcb 1-295
+Linux/crates/pitex/Cargo.toml
+  s_61259ddb619c79::t_54789a159b0bf3 53,57
+Windows/Cargo.lock
+  s_61259ddb619c79::t_877bee3039e226 377-380,852,863,981-993
+Windows/crates/windows-platform/src/lib.rs
+  s_61259ddb619c79::t_0b2dd8a6910833 355-357,361-389,392,396-401,415-434,441-451
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e128bbf284334eee5188d6c39f02a8fb4443b2a3",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
