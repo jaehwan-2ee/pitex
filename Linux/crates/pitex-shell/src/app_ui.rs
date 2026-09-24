@@ -55,7 +55,6 @@ where
 }
 
 /// The workspace window — dialogs and sheets attach to it.
-#[cfg(unix)]
 pub(crate) fn main_window() -> Option<gtk4::Window> {
     UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.clone().upcast()))
 }
@@ -91,11 +90,8 @@ pub struct UiHandles {
     pub window_title: RefCell<Option<adw::WindowTitle>>,
     /// `remoteConflicts` section — banner under the document conflict
     /// banner, one row per file changed on both sides.
-    #[cfg(unix)]
     pub remote_conflict_banner: RefCell<Option<gtk4::Box>>,
-    #[cfg(unix)]
     pub remote_conflict_title: RefCell<Option<gtk4::Label>>,
-    #[cfg(unix)]
     pub remote_conflict_rows: RefCell<Option<gtk4::Box>>,
     pub sidebar_stack: RefCell<Option<gtk4::Stack>>,
     pub sidebar_section_dropdown: RefCell<Option<gtk4::DropDown>>,
@@ -322,7 +318,6 @@ pub struct AppState {
     pub git_branch_updating: Cell<bool>,
     /// `remotePushTask` cancellation — each save-debounced upload bumps
     /// the generation; a stale timer drops out without pushing.
-    #[cfg(unix)]
     pub remote_push_generation: Rc<Cell<u64>>,
 }
 
@@ -396,7 +391,6 @@ impl AppState {
             git_pending_discard: None,
             git_branch_updating: Cell::new(false),
             git_diff_seq: Cell::new(0),
-            #[cfg(unix)]
             remote_push_generation: Rc::new(Cell::new(0)),
         };
         state.wire_model_callbacks();
@@ -467,7 +461,6 @@ impl AppState {
         self.model.on_autosave_schedule = Some(Box::new(move || flag.set(true)));
         // `schedulePush` — a save debounces the mirror upload by 400 ms;
         // each new save cancels the pending timer, never a live transfer.
-        #[cfg(unix)]
         {
             let generation = self.remote_push_generation.clone();
             self.model.on_remote_push_schedule = Some(Box::new(move || {
@@ -1498,7 +1491,6 @@ impl AppState {
         vbox.append(&file_btn);
         vbox.append(&folder_btn);
         // "Open via SSH…" — the third open path in the macOS Open menu.
-        #[cfg(unix)]
         {
             let ssh_btn = gtk4::Button::with_label(&tr(self.language, "command.open_via_ssh"));
             ssh_btn.set_has_frame(false);
@@ -2299,7 +2291,6 @@ impl AppState {
                 window.set_title(Some(&title));
                 if let Some(title_widget) = ui.window_title.borrow().as_ref() {
                     title_widget.set_title(&title);
-                    #[cfg(unix)]
                     title_widget.set_subtitle(&self.model.remote_status_text(self.language));
                 }
             }
@@ -2314,13 +2305,7 @@ impl AppState {
                     for (i, url) in self.model.recent_documents.iter().enumerate() {
                         // `recentTitle(for:)` — a mirror's label names its
                         // device; anything else shows the folder name.
-                        #[cfg(unix)]
                         let label = WorkspaceModel::recent_title(self.language, url);
-                        #[cfg(not(unix))]
-                        let label = url
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| url.display().to_string());
                         recents.append(
                             Some(&label),
                             Some(&format!("win.openrecent({i})")),
@@ -2335,7 +2320,6 @@ impl AppState {
                         &recents,
                     );
                 }
-                #[cfg(unix)]
                 {
                     menu.append(
                         Some(&tr(self.language, "command.open_via_ssh")),
@@ -2796,13 +2780,11 @@ impl AppState {
 
     /// "Open via SSH…" — the menu/welcome entry point
     /// (`presentOpenViaSSH`); the sheet needs the window to attach to.
-    #[cfg(unix)]
     pub fn present_open_via_ssh(&mut self) {
         crate::ssh_ui::present_open_via_ssh(self.language);
     }
 
     /// "Sync with Remote Device" — `await pushRemote(); await pullRemote()`.
-    #[cfg(unix)]
     pub fn sync_remote_action(&mut self) {
         self.model.sync_remote_now();
         self.refresh_remote_status();
@@ -2810,7 +2792,6 @@ impl AppState {
 
     /// The WindowTitle subtitle + remote conflict banner after any remote
     /// status or conflict change.
-    #[cfg(unix)]
     pub fn refresh_remote_status(&self) {
         let subtitle = self.model.remote_status_text(self.language);
         UI.with(|ui| {
@@ -2823,7 +2804,6 @@ impl AppState {
 
     /// `remoteConflicts` section — one row per file changed both here and
     /// on the device; each row resolves that file either way on a worker.
-    #[cfg(unix)]
     fn refresh_remote_conflict_banner(&self) {
         UI.with(|ui| {
             let banner_cell = ui.remote_conflict_banner.borrow();
@@ -3843,7 +3823,6 @@ impl AppState {
                     self.shutdown_agent();
                     let message = match e {
                         crate::model::OpenFailure::Error(message) => message,
-                        #[cfg(unix)]
                         crate::model::OpenFailure::RemoteOpen { device, error } => {
                             crate::l10n::trn(
                                 self.language,
@@ -3970,18 +3949,15 @@ impl AppState {
                 }
                 self.refresh_after_document_change();
                 // `agentActivityDidFinish` — agent edits upload too.
-                #[cfg(unix)]
                 {
                     self.model.push_remote();
                     self.refresh_remote_status();
                 }
             }
-            #[cfg(unix)]
             WorkspaceMessage::RemotePushFinished { root, result } => {
                 self.model.apply_remote_push(&root, result);
                 self.refresh_remote_status();
             }
-            #[cfg(unix)]
             WorkspaceMessage::RemotePullFinished { root, result } => {
                 if self.model.apply_remote_pull(&root, result) {
                     // `pullRemote` — adopt the downloaded bytes like a disk
@@ -3995,7 +3971,6 @@ impl AppState {
                 }
                 self.refresh_remote_status();
             }
-            #[cfg(unix)]
             WorkspaceMessage::RemoteResolveFinished {
                 root,
                 keep_local,
@@ -4011,7 +3986,6 @@ impl AppState {
                 }
                 self.refresh_remote_status();
             }
-            #[cfg(unix)]
             WorkspaceMessage::RemoteBuildPrepFailed(problem) => {
                 // `prepareRemoteBuild` — the build ends before the executor
                 // ran; the message lands in the log console.
@@ -4147,7 +4121,6 @@ thread_local! {
 /// One firing of the debounced remote push (`schedulePush`): uploads when
 /// the generation is still current. A state already borrowed at fire time
 /// re-queues on idle — the push must happen, never be dropped.
-#[cfg(unix)]
 fn remote_push_attempt(expected: u64) {
     let retry = STATE.with(|slot| {
         let slot = slot.borrow();
@@ -4782,8 +4755,8 @@ pub fn run(app_version: &str) -> i32 {
         .application_id(APP_ID)
         .flags(flags)
         .build();
-    #[cfg(unix)]
     app.connect_shutdown(|_| {
+        #[cfg(unix)]
         crate::window_ipc::stop();
         // Quitting right after a save must not cut the write short.
         STATE.with(|slot| {
@@ -5297,7 +5270,6 @@ fn build_chrome(
     window.add_action(&clearrecents_action);
     // "Open via SSH…" / "Sync with Remote Device" — the remote-session
     // entries in the "+" menu (File menu on macOS).
-    #[cfg(unix)]
     {
         let openssh_action = gio::SimpleAction::new("openssh", None);
         {
@@ -5386,7 +5358,6 @@ fn build_chrome(
     }
     // Window came forward: pull when the last pull is over a minute old
     // (`pullRemoteIfStale` on `.onChange(of: scenePhase)`).
-    #[cfg(unix)]
     {
         let state = state.clone();
         window.connect_notify_local(Some("is-active"), move |window, _| {
@@ -5447,7 +5418,6 @@ fn empty_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
     welcome.set_halign(gtk4::Align::Center);
     welcome.append(&button);
     // The welcome screen's second entry point (macOS "Open via SSH…").
-    #[cfg(unix)]
     {
         let ssh_button = gtk4::Button::with_label(&tr(lang, "command.open_via_ssh"));
         ssh_button.add_css_class("pill");
@@ -5956,7 +5926,6 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
 
     // Remote conflict banner — files changed both here and on the device,
     // resolved per file (`remoteConflicts` in the macOS workspace).
-    #[cfg(unix)]
     {
         let remote_banner = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         remote_banner.set_margin_start(9);

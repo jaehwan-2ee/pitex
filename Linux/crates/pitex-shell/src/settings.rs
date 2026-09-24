@@ -347,7 +347,6 @@ impl SettingsStore {
 
     /// `pitex.pref.ssh.connections` — the devices "Open via SSH" offers;
     /// the JSON schema matches what the macOS SettingsStore writes.
-    #[cfg(unix)]
     pub fn ssh_connections(&self) -> Vec<remote_core::SshConnection> {
         self.prefs
             .get("pitex.pref.ssh.connections")
@@ -355,7 +354,6 @@ impl SettingsStore {
             .unwrap_or_default()
     }
 
-    #[cfg(unix)]
     pub fn set_ssh_connections(&mut self, connections: &[remote_core::SshConnection]) {
         if let Ok(value) = serde_json::to_value(connections) {
             self.prefs.set("pitex.pref.ssh.connections", value);
@@ -364,12 +362,10 @@ impl SettingsStore {
 
     /// `pitex.pref.ssh.lastConnection` — the device "Open via SSH"
     /// preselects (a connection `id`, a UUID string like macOS stores).
-    #[cfg(unix)]
     pub fn last_ssh_connection(&self) -> Option<String> {
         self.prefs.string("pitex.pref.ssh.lastConnection")
     }
 
-    #[cfg(unix)]
     pub fn set_last_ssh_connection(&mut self, id: &str) {
         self.prefs.set("pitex.pref.ssh.lastConnection", id);
     }

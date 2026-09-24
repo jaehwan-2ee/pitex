@@ -23,11 +23,15 @@ where
         .into_iter()
         .map(|a| OsString::from(a.as_ref()))
         .collect();
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(dir)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut command = Command::new("git");
+    command.args(&args).current_dir(dir);
+    // The pane polls every few seconds — no console window per call.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = command.output().map_err(|e| e.to_string())?;
     if ok.contains(&output.status.code().unwrap_or(-1)) {
         Ok(String::from_utf8(output.stdout)
             .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))

@@ -7,9 +7,15 @@
 
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
+
+/// `pitex.exe` is a GUI-subsystem app — a console child spawned without
+/// `CREATE_NO_WINDOW` pops a console window per call. The child still gets
+/// a hidden console, and GUI children (explorer) simply ignore it.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 use app_ports::{
     FileAccessLease, FileCapability, FileCapabilityAccess, LogLevel, LogRecord, PDFCoordinateSpace,
@@ -200,6 +206,7 @@ impl app_ports::ProcessExecuting for WindowsProcessExecutor {
         };
 
         let mut command = std::process::Command::new(executable);
+        command.creation_flags(CREATE_NO_WINDOW);
         command.args(&request.arguments);
         if request.environment.is_empty() {
             command.envs(std::env::vars());
@@ -271,6 +278,7 @@ impl app_ports::ProcessExecuting for WindowsProcessExecutor {
                 // `taskkill` is detached so it never touches `child`'s mutex.
                 let _ = std::process::Command::new("taskkill")
                     .args(["/PID", &process.pid.to_string(), "/T", "/F"])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
@@ -333,6 +341,7 @@ impl app_ports::WorkspaceOpening for WindowsWorkspaceOpener {
 /// Spawn a detached child and reap it on a background thread — a dropped
 /// `std::process::Child` leaves the handle open until exit.
 fn spawn_reaped(command: &mut std::process::Command) -> std::io::Result<()> {
+    command.creation_flags(CREATE_NO_WINDOW);
     let mut child = command.spawn()?;
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -379,6 +388,7 @@ impl WindowsDefaultEditorRegistration {
     fn reg_add(key: &str, data: &str) {
         let _ = std::process::Command::new("reg")
             .args(["add", key, "/ve", "/d", data, "/f"])
+            .creation_flags(CREATE_NO_WINDOW)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

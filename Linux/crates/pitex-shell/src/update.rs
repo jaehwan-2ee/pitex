@@ -41,11 +41,19 @@ pub enum InstallOutcome {
 }
 
 fn curl(arguments: &[&str], timeout_secs: u64) -> Result<Vec<u8>, String> {
-    let output = Command::new("curl")
+    let mut command = Command::new("curl");
+    command
         .arg("--max-time")
         .arg(timeout_secs.to_string())
         .args(arguments)
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    // A background download must not pop a console window on Windows.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = command
         .output()
         .map_err(|e| format!("curl could not be started: {e}"))?;
     if !output.status.success() {
@@ -286,34 +294,38 @@ fn install_setup(setup: &Path) -> Result<InstallOutcome, String> {
 /// root, and relaunches it.
 #[cfg(windows)]
 fn install_zip(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, String> {
+    use std::os::windows::process::CommandExt;
     let staging = downloaded
         .parent()
         .map(|p| p.join(format!("extract-{}", crate::model::uuid_v4())))
         .ok_or_else(|| "The download path is invalid.".to_string())?;
     std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     // bsdtar (System32, Win10 1803+) reads zips natively; Expand-Archive is
-    // the guaranteed fallback.
-    let extracted = Command::new("tar")
+    // the guaranteed fallback. Both are console tools — no window.
+    let mut untar = Command::new("tar");
+    untar
         .args(["-xf", &downloaded.to_string_lossy()])
         .current_dir(&staging)
         .stdin(std::process::Stdio::null())
+        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let mut expand = Command::new("powershell");
+    expand
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "Expand-Archive -Force -LiteralPath {} -DestinationPath {}",
+                powershell_quote(&downloaded.to_string_lossy()),
+                powershell_quote(&staging.to_string_lossy())
+            ),
+        ])
+        .stdin(std::process::Stdio::null())
+        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let extracted = untar
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-        || Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!(
-                    "Expand-Archive -Force -LiteralPath {} -DestinationPath {}",
-                    powershell_quote(&downloaded.to_string_lossy()),
-                    powershell_quote(&staging.to_string_lossy())
-                ),
-            ])
-            .stdin(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        || expand.status().map(|s| s.success()).unwrap_or(false);
     if !extracted || !staging.join("pitex").is_dir() {
         return Err(format!("Could not extract {}", info.asset_name));
     }

@@ -47,7 +47,6 @@ pub struct WorkspaceBuildExecutor {
 
 struct WorkspaceExecutorShared {
     local: StreamingBuildExecutor,
-    #[cfg(unix)]
     remote: std::sync::Mutex<Option<Arc<remote_core::RemoteBuildExecutor>>>,
 }
 
@@ -56,14 +55,12 @@ impl WorkspaceBuildExecutor {
         Self {
             shared: Arc::new(WorkspaceExecutorShared {
                 local: StreamingBuildExecutor::default(),
-                #[cfg(unix)]
                 remote: std::sync::Mutex::new(None),
             }),
         }
     }
 
     /// `use(_:)` — installs the remote executor for the open session.
-    #[cfg(unix)]
     pub fn use_remote(&self, remote: Option<Arc<remote_core::RemoteBuildExecutor>>) {
         *self
             .shared
@@ -72,7 +69,6 @@ impl WorkspaceBuildExecutor {
             .unwrap_or_else(|e| e.into_inner()) = remote;
     }
 
-    #[cfg(unix)]
     fn remote(&self) -> Option<Arc<remote_core::RemoteBuildExecutor>> {
         self.shared
             .remote
@@ -94,7 +90,6 @@ impl build_core::BuildProcessExecuting for WorkspaceBuildExecutor {
         request: &build_core::BuildProcessRequest,
         output: &mut (dyn FnMut(build_core::BuildProcessOutput) + Send),
     ) -> Result<build_core::BuildProcessResult, build_core::BuildProcessExecutorError> {
-        #[cfg(unix)]
         if let Some(remote) = self.remote() {
             return remote.execute(request, output);
         }
@@ -102,7 +97,6 @@ impl build_core::BuildProcessExecuting for WorkspaceBuildExecutor {
     }
 
     fn cancel(&self, build_id: &build_core::BuildID) {
-        #[cfg(unix)]
         if let Some(remote) = self.remote() {
             remote.cancel(build_id);
         }
@@ -276,20 +270,17 @@ pub enum WorkspaceMessage {
     /// A `pushRemote` worker finished — the new conflict list or the
     /// failure. `root` identifies the mirror so a stale result cannot
     /// land on a session opened after it.
-    #[cfg(unix)]
     RemotePushFinished {
         root: PathBuf,
         result: Result<Vec<String>, String>,
     },
     /// A `pullRemote` worker finished — conflicts plus whether the local
     /// tree changed (sessions then adopt the new bytes like a disk edit).
-    #[cfg(unix)]
     RemotePullFinished {
         root: PathBuf,
         result: Result<remote_core::SyncReport, String>,
     },
     /// `resolveRemoteConflict` finished — the remaining conflict paths.
-    #[cfg(unix)]
     RemoteResolveFinished {
         root: PathBuf,
         keep_local: bool,
@@ -297,7 +288,6 @@ pub enum WorkspaceMessage {
     },
     /// `prepareRemoteBuild` failed — the build stops before the executor
     /// ran (upload error, or files changed on both sides).
-    #[cfg(unix)]
     RemoteBuildPrepFailed(String),
     ActivateFinished(Result<ActivatedDocument, String>),
     AgentActivityFinished,
@@ -405,7 +395,6 @@ impl SessionWrites {
         // A remote project's sync never replaces this file between the
         // disk check and the rename — the gate ticket makes the
         // check-and-write one step (`MirrorWrites` in RemoteSupport.swift).
-        #[cfg(unix)]
         let _write_gate = remote_core::MirrorWrites::shared().ticket();
         let snapshot = session.snapshot();
         let wanted = if resolving {
@@ -480,13 +469,9 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::BindingRefreshed(_) => write!(f, "BindingRefreshed"),
             Self::DiskChanged(p) => write!(f, "DiskChanged({p:?})"),
             Self::OpenFinished(_) => write!(f, "OpenFinished"),
-            #[cfg(unix)]
             Self::RemotePushFinished { .. } => write!(f, "RemotePushFinished"),
-            #[cfg(unix)]
             Self::RemotePullFinished { .. } => write!(f, "RemotePullFinished"),
-            #[cfg(unix)]
             Self::RemoteResolveFinished { .. } => write!(f, "RemoteResolveFinished"),
-            #[cfg(unix)]
             Self::RemoteBuildPrepFailed(_) => write!(f, "RemoteBuildPrepFailed"),
             Self::ActivateFinished(_) => write!(f, "ActivateFinished"),
             Self::AgentActivityFinished => write!(f, "AgentActivityFinished"),
@@ -504,7 +489,6 @@ impl std::fmt::Debug for WorkspaceMessage {
 /// window's language.
 pub enum OpenFailure {
     Error(String),
-    #[cfg(unix)]
     RemoteOpen { device: String, error: String },
 }
 impl From<WorkspaceOpenError> for OpenFailure {
@@ -534,7 +518,6 @@ pub struct OpenedProject {
     pub built_pdf: Option<Vec<u8>>,
     /// `beginRemoteSession`'s workspace — `Some` when `selected` lies in
     /// a remote mirror and the device answered (or a cache exists).
-    #[cfg(unix)]
     pub remote: Option<Box<crate::remote::RemoteWorkspace>>,
 }
 /// Payload for `activate` completed off-thread — same off-thread contract
@@ -995,7 +978,6 @@ pub struct WorkspaceModel {
     pub workspace_executor: WorkspaceBuildExecutor,
     /// `remote` — the SSH session while a remote (mirrored) project is
     /// open (`RemoteWorkspace` in RemoteSupport.swift).
-    #[cfg(unix)]
     pub remote: Option<crate::remote::RemoteWorkspace>,
     /// `buildCancelRequested` — Cancel pressed while a remote build was
     /// still in its upload/prep phase (nothing to cancel yet). Shared
@@ -1106,7 +1088,6 @@ pub struct WorkspaceModel {
     pub on_terminal_send: Option<Box<dyn FnMut(String)>>,
     /// `schedulePush` — a save landed in a remote mirror; the UI schedules
     /// the debounced upload (glib owns the timer).
-    #[cfg(unix)]
     pub on_remote_push_schedule: Option<Box<dyn FnMut()>>,
 }
 
@@ -1137,7 +1118,6 @@ impl WorkspaceModel {
             registry: std::sync::Arc::new(DocumentSessionRegistry::new()),
             build_orchestrator: Arc::new(BuildOrchestrator::new(workspace_executor.clone())),
             workspace_executor,
-            #[cfg(unix)]
             remote: None,
             build_cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             synctex_runner: Arc::new(SyncTeXRunner::new()),
@@ -1197,7 +1177,6 @@ impl WorkspaceModel {
             on_selection_attachment: None,
             on_terminal_feed: None,
             on_terminal_send: None,
-            #[cfg(unix)]
             on_remote_push_schedule: None,
         }
     }
@@ -1295,7 +1274,6 @@ impl WorkspaceModel {
     ) -> Result<OpenedProject, OpenFailure> {
         // A remote project's mirror is refreshed from the device before any
         // file is read; an unreachable device with nothing cached fails here.
-        #[cfg(unix)]
         let remote = match crate::remote::begin_remote_session(selected) {
             crate::remote::RemoteOpen::NotRemote => None,
             crate::remote::RemoteOpen::Failed { device, error } => {
@@ -1366,14 +1344,12 @@ impl WorkspaceModel {
             files,
             initial_url,
             session,
-            #[cfg(unix)]
             remote,
         })
     }
 
     /// Main-thread completion of `open`.
     pub fn apply_open(&mut self, store: &mut SettingsStore, opened: OpenedProject) {
-        #[cfg(unix)]
         if let Some(workspace) = opened.remote {
             // `remote = workspace; buildExecutor.use(workspace.executor)`.
             self.workspace_executor.use_remote(Some(workspace.executor.clone()));
@@ -1570,7 +1546,6 @@ impl WorkspaceModel {
         }
         match result {
             SaveResult::Saved | SaveResult::Skipped => {
-                #[cfg(unix)]
                 if result == SaveResult::Saved && self.remote.is_some() {
                     // `schedulePush` — the debounced upload; the UI owns
                     // the timer.
@@ -1670,7 +1645,6 @@ impl WorkspaceModel {
     /// unreachable device cannot freeze the window for seconds. The
     /// shared engine serializes it with any later open of the same
     /// mirror; only `connect_shutdown`'s `flushRemote` bounds it on quit.
-    #[cfg(unix)]
     fn end_remote_session(&mut self) {
         let Some(remote) = self.remote.take() else { return };
         let sync = remote.sync.clone();
@@ -1683,7 +1657,6 @@ impl WorkspaceModel {
     /// `flushRemote` — the final push, bounded so an unreachable device
     /// cannot hold the window or the app (unsent edits stay in the mirror
     /// and go up on the next open).
-    #[cfg(unix)]
     pub fn flush_remote(&mut self, timeout: std::time::Duration) {
         let Some(remote) = &self.remote else { return };
         let sync = remote.sync.clone();
@@ -1711,7 +1684,6 @@ impl WorkspaceModel {
     /// `pushRemote` — upload local edits (after saves, agent runs and
     /// before builds). Runs on a worker; the result lands through
     /// `RemotePushFinished`.
-    #[cfg(unix)]
     pub fn push_remote(&mut self) {
         let Some(remote) = self.remote.as_mut() else { return };
         remote.status = crate::remote::RemoteStatus::Syncing;
@@ -1730,7 +1702,6 @@ impl WorkspaceModel {
     /// `pullRemote` — bring down changes made on the device; the dispatch
     /// then adopts them in open documents (clean ones reload, dirty ones
     /// flag a conflict).
-    #[cfg(unix)]
     pub fn pull_remote(&mut self) {
         let Some(remote) = self.remote.as_mut() else { return };
         remote.status = crate::remote::RemoteStatus::Syncing;
@@ -1748,7 +1719,6 @@ impl WorkspaceModel {
 
     /// Window came forward: pull when the last pull is over a minute old
     /// (`pullRemoteIfStale`).
-    #[cfg(unix)]
     pub fn pull_remote_if_stale(&mut self) {
         let stale = self
             .remote
@@ -1766,7 +1736,6 @@ impl WorkspaceModel {
     }
 
     /// "Sync with Remote Device" — `await pushRemote(); await pullRemote()`.
-    #[cfg(unix)]
     pub fn sync_remote_now(&mut self) {
         let Some(remote) = self.remote.as_mut() else { return };
         remote.status = crate::remote::RemoteStatus::Syncing;
@@ -1786,7 +1755,6 @@ impl WorkspaceModel {
     }
 
     /// `resolveRemoteConflict` — settle one conflicting file either way.
-    #[cfg(unix)]
     pub fn resolve_remote_conflict(&mut self, path: String, keep_local: bool) {
         let Some(remote) = self.remote.as_mut() else { return };
         remote.status = crate::remote::RemoteStatus::Syncing;
@@ -1805,7 +1773,6 @@ impl WorkspaceModel {
 
     /// Applies a finished push — ignores results from a session that
     /// already closed.
-    #[cfg(unix)]
     pub fn apply_remote_push(&mut self, root: &Path, result: Result<Vec<String>, String>) {
         let Some(remote) = self.remote.as_mut() else { return };
         if remote.sync.mirror.directory != root {
@@ -1822,7 +1789,6 @@ impl WorkspaceModel {
 
     /// Applies a finished pull — returns `changedLocally` so the dispatch
     /// can adopt the new bytes in open sessions.
-    #[cfg(unix)]
     pub fn apply_remote_pull(
         &mut self,
         root: &Path,
@@ -1848,7 +1814,6 @@ impl WorkspaceModel {
 
     /// Applies a finished conflict resolution — returns true when the
     /// local copy changed (`keep_local: false` adopts the remote bytes).
-    #[cfg(unix)]
     pub fn apply_remote_resolve(
         &mut self,
         root: &Path,
@@ -1873,7 +1838,6 @@ impl WorkspaceModel {
     }
 
     /// `remote.statusText` — the window-title subtitle.
-    #[cfg(unix)]
     pub fn remote_status_text(&self, language: &str) -> String {
         self.remote
             .as_ref()
@@ -1882,7 +1846,6 @@ impl WorkspaceModel {
     }
 
     /// `recentTitle(for:)` — a mirror's Open Recent label names its device.
-    #[cfg(unix)]
     pub fn recent_title(language: &str, url: &Path) -> String {
         crate::remote::recent_title(language, url)
     }
@@ -1938,7 +1901,6 @@ impl WorkspaceModel {
         // remote project uploads them before its mirror is let go.
         self.wait_for_pending_writes();
         self.writes.own().clear();
-        #[cfg(unix)]
         self.end_remote_session();
         // Release the capability lease first — `endAccess(capabilityLease)`.
         if let Some(lease) = self.capability_lease.take() {
@@ -1994,7 +1956,6 @@ impl WorkspaceModel {
         // the ticket ends with the write so `activate_document` can take
         // its own later.
         let written = {
-            #[cfg(unix)]
             let _write_gate = remote_core::MirrorWrites::shared().ticket();
             let mut index = 1;
             let mut url = root.join("untitled.tex");
@@ -2025,7 +1986,6 @@ impl WorkspaceModel {
     pub fn save_as(&mut self, url: PathBuf, sink: Sender<WorkspaceMessage>) {
         let Some(snapshot) = self.document_snapshot.clone() else { return };
         {
-            #[cfg(unix)]
             let _write_gate = remote_core::MirrorWrites::shared().ticket();
             if let Err(e) = std::fs::write(&url, &snapshot.text) {
                 self.phase = WorkspacePhase::Failed(e.to_string());
@@ -2517,7 +2477,6 @@ impl WorkspaceModel {
         // Read-check-write as one step against a remote sync commit —
         // released before `process_disk_change`, which may write itself.
         let outcome = {
-            #[cfg(unix)]
             let _write_gate = remote_core::MirrorWrites::shared().ticket();
             let Ok(disk) = Self::read_exact_utf8(&item.url) else { return };
             let Some((range, replacement)) = Self::todo_transform_for(&disk, item, &edit) else {
@@ -2643,7 +2602,6 @@ impl WorkspaceModel {
             return;
         }
         let outcome = {
-            #[cfg(unix)]
             let _write_gate = remote_core::MirrorWrites::shared().ticket();
             let Ok(disk) = Self::read_exact_utf8(&target) else { return };
             let mut new_text = disk.clone();
@@ -3426,7 +3384,6 @@ impl WorkspaceModel {
             .collect();
         // `prepareRemoteBuild(outputs: generated.sorted(), required: pdf)`
         // — computed now; `generated` is consumed by `BuildTarget::new`.
-        #[cfg(unix)]
         let generated_sorted: Vec<String> = {
             let mut sorted: Vec<String> = generated.iter().cloned().collect();
             sorted.sort();
@@ -3515,7 +3472,6 @@ impl WorkspaceModel {
         let orchestrator = self.build_orchestrator.clone();
         // A remote project compiles on its device: pending edits go up
         // first, and the executor brings these outputs back afterwards.
-        #[cfg(unix)]
         let remote_build = self.remote.as_ref().map(|r| {
             (
                 r.sync.clone(),
@@ -3528,7 +3484,6 @@ impl WorkspaceModel {
         if let Some(sink) = self.sink() {
             let handler_sink = sink.clone();
             std::thread::spawn(move || {
-                #[cfg(unix)]
                 if let Some((sync, executor, mirror_root)) = remote_build {
                     // `prepareRemoteBuild` — the upload first, then tell the
                     // executor which outputs to bring back.

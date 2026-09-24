@@ -1,16 +1,20 @@
 //! Port of `Packages/TexCore/Tests/TexCoreTests/RemoteCoreTests.swift`,
-//! plus the golden remote-script fixture check shared with Swift.
-#![cfg(unix)]
+//! plus the golden remote-script fixture check shared with Swift. Runs on
+//! Windows too; the POSIX-shell pieces (a local /bin/sh, a live sshd) stay
+//! `cfg(unix)`, and the Windows-only checks are `windows_tests` in lib.rs.
 
 use remote_core::remote_scripts;
 use remote_core::{
-    CancelScope, MirrorWriteGate, RemoteBuildExecutor, RemoteDirectoryListing, RemoteFileState,
-    RemoteMirror, RemoteProject, RemoteSync, RemoteSyncRules, SshClient, SshConfigParser,
-    SshConnection, SshHostEntry, SyncPlanner,
+    RemoteDirectoryListing, RemoteFileState, RemoteMirror, RemoteProject, RemoteSyncRules,
+    SshClient, SshConfigParser, SshConnection, SshHostEntry, SyncPlanner,
 };
+#[cfg(unix)]
+use remote_core::{MirrorWriteGate, RemoteBuildExecutor, RemoteSync};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command;
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 
 /// A unique directory under the system temp folder, removed on drop.
@@ -54,18 +58,22 @@ fn write(path: &Path, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
+#[cfg(unix)]
 fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+#[cfg(unix)]
 fn sha(text: &str) -> String {
     remote_core::sha256_hex(text.as_bytes())
 }
 
+#[cfg(unix)]
 #[derive(Default)]
 struct RecordingGate {
     events: Mutex<Vec<String>>,
 }
+#[cfg(unix)]
 impl MirrorWriteGate for RecordingGate {
     fn begin_sync_commit(&self) {
         self.events.lock().unwrap().push("begin".into());
@@ -199,6 +207,7 @@ fn arguments_quote_the_script_and_keep_destination_after_double_dash() {
         .is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn control_directory_is_short_private_and_owned() {
     use std::os::unix::fs::PermissionsExt;
@@ -335,6 +344,8 @@ fn pull_plan_never_overwrites_local_edits() {
     assert_eq!(plan.conflicts, ["bothEdit", "goneEdited", "newClash"]);
 }
 
+/// `/bin/sh -n` syntax-checks each script — POSIX only.
+#[cfg(unix)]
 #[test]
 fn remote_scripts_are_valid_single_line_sh() {
     for script in [
@@ -381,6 +392,7 @@ fn remote_scripts_match_golden_fixtures() {
 
 /// Runs a remote script with the local /bin/sh, as the device would.
 /// PITEX_TEST_SH tries another shell.
+#[cfg(unix)]
 fn run_script(script: &str, root: &Path, input: &[u8]) -> String {
     let shell = std::env::var("PITEX_TEST_SH").unwrap_or_else(|_| "/bin/sh".to_string());
     let mut child = Command::new(shell)
@@ -403,6 +415,7 @@ fn run_script(script: &str, root: &Path, input: &[u8]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+#[cfg(unix)]
 #[test]
 fn commit_upload_and_probe_scripts_decide_per_file() {
     let base = TempDir::new("script");
@@ -511,6 +524,7 @@ fn commit_upload_and_probe_scripts_decide_per_file() {
 }
 
 /// All files under `dir` as root-relative paths (the leftovers check).
+#[cfg(unix)]
 fn walk(dir: &Path) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -575,7 +589,10 @@ fn mirror_is_found_again_from_any_path_inside() {
 
 /// Configure with PITEX_TEST_SSH_DESTINATION (+ _PORT, _KEY, _KNOWN_HOSTS).
 /// The "remote" is expected to share this filesystem (localhost), so the
-/// test edits remote files directly.
+/// test edits remote files directly. Unix-only: the remote side assumes a
+/// POSIX filesystem (symlinks, modes), which a Windows CI sshd would not
+/// give it.
+#[cfg(unix)]
 fn live_client() -> Option<SshClient> {
     let destination = std::env::var("PITEX_TEST_SSH_DESTINATION").ok()?;
     let mut extra: Vec<String> = Vec::new();
@@ -592,6 +609,7 @@ fn live_client() -> Option<SshClient> {
     Some(client)
 }
 
+#[cfg(unix)]
 #[test]
 fn live_sync_round_trip() {
     let Some(client) = live_client() else {
@@ -749,6 +767,7 @@ fn live_sync_round_trip() {
     assert_eq!(*gate.events.lock().unwrap(), vec!["begin", "end"]);
 }
 
+#[cfg(unix)]
 #[test]
 fn live_remote_build_streams_output_and_fetches_artifacts() {
     let Some(client) = live_client() else {

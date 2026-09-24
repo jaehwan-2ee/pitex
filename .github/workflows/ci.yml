@@ -198,6 +198,9 @@ jobs:
         working-directory: Windows
       - run: cargo build -p pitex-windows
         working-directory: Windows
+      - name: Remote sync core (OpenSSH/bsdtar path logic)
+        run: cargo test -p remote-core
+        working-directory: Windows
       - name: Native Windows Agent update (Bun and npm)
         timeout-minutes: 10
         run: cargo test -p pitex-shell --lib agent_update_tests -- --ignored --nocapture --test-threads=1

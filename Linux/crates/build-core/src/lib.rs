@@ -10,9 +10,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// `pitex` is a GUI-subsystem app on Windows — a console child spawned
+/// without `CREATE_NO_WINDOW` pops a console window per call (a 4 s git
+/// poll, every engine launch…). The child still gets a hidden console.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 // ===========================================================================
 // BuildCore.swift
@@ -1159,6 +1167,7 @@ fn process_group_exists(pid: i32) -> bool {
 fn process_group_exists(pid: i32) -> bool {
     std::process::Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
         .output()
         .map(|out| {
@@ -1191,6 +1200,7 @@ fn kill_group(pid: i32) {
 fn terminate_group(pid: i32) {
     let _ = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T"])
+        .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1201,6 +1211,7 @@ fn terminate_group(pid: i32) {
 fn kill_group(pid: i32) {
     let _ = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1586,6 +1597,7 @@ fn spawn(
         }
     };
     command
+        .creation_flags(CREATE_NO_WINDOW)
         .current_dir(directory)
         .env_clear()
         .envs(environment)
@@ -1664,7 +1676,6 @@ fn read_fd_into(
     channel: ProcessOutputChannel,
     sequencer: &OutputSequencer,
 ) -> Vec<u8> {
-    use std::io::Read;
     let mut collected = Vec::new();
     let mut buffer = [0u8; 4096];
     loop {
@@ -2852,8 +2863,9 @@ impl StreamingBuildExecutor {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
-        #[cfg(unix)]
-        extra.push("/usr/local/bin".to_string());
+        if cfg!(unix) {
+            extra.push("/usr/local/bin".to_string());
+        }
         if extra.is_empty() {
             overrides.insert("PATH".to_string(), path);
         } else {

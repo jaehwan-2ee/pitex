@@ -23,13 +23,13 @@ build-feature = { path = "../build-feature" }
 pdf-feature = { path = "../pdf-feature" }
 settings-feature = { path = "../settings-feature" }
 gtk-editor-adapter = { path = "../gtk-editor-adapter" }
+remote-core = { path = "../remote-core" }
 gtk4.workspace = true
 libadwaita.workspace = true
 sourceview5.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
-remote-core = { path = "../remote-core" }
 linux-platform = { path = "../linux-platform" }
 vte4 = { workspace = true, optional = true }
 webkit6 = { workspace = true, optional = true }

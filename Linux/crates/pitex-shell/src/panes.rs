@@ -2628,7 +2628,6 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
 
     // ── SSH ──
     // `SSHSettingsPane` — the devices "Open via SSH" can open folders on.
-    #[cfg(unix)]
     {
         let ssh_page = adw::PreferencesPage::new();
         ssh_page.set_title(&tr(lang, "settings.tab.ssh"));

@@ -1,8 +1,8 @@
 //! SSH remote editing: `~/.ssh/config` parsing, the `ssh` client wrapper,
 //! mirror bookkeeping and the three-way sync engine, plus the remote build
-//! executor. Port of `Packages/TexCore/Sources/RemoteCore`. Unix-only —
-//! the crate is empty on Windows, which keeps `pitex-shell` portable.
-#![cfg(unix)]
+//! executor. Port of `Packages/TexCore/Sources/RemoteCore`. Portable —
+//! Windows uses the bundled OpenSSH `ssh.exe` (no ControlMaster) and the
+//! bundled bsdtar `tar.exe`; the device-side sh scripts are unchanged.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -77,9 +77,10 @@ impl SshHostEntry {
 pub enum SshConfigParser {}
 
 impl SshConfigParser {
-    /// `~/.ssh/config` of the current user.
+    /// `~/.ssh/config` of the current user (`%USERPROFILE%\.ssh\config`
+    /// on Windows).
     pub fn default_config_path() -> PathBuf {
-        home_dir().join(".ssh/config")
+        home_dir().join(".ssh").join("config")
     }
 
     /// Hosts from `path`, following `Include` like ssh does (relative paths
@@ -249,12 +250,9 @@ impl SshConfigParser {
     /// `*`/`?` glob in the last component matches files in that directory.
     pub fn expand_include(argument: &str) -> Vec<PathBuf> {
         let home = home_dir();
-        let mut path = argument.to_string();
-        if let Some(rest) = path.strip_prefix("~/") {
-            path = format!("{}/{rest}", home.display());
-        }
-        if !path.starts_with('/') {
-            path = format!("{}/.ssh/{path}", home.display());
+        let mut path = expand_tilde(argument);
+        if !Path::new(&path).is_absolute() {
+            path = home.join(".ssh").join(&path).to_string_lossy().into_owned();
         }
         let url = PathBuf::from(&path);
         let pattern = url
@@ -431,8 +429,9 @@ impl SshConnection {
     }
 }
 
-/// `NSString.expandingTildeInPath`: `~`/`~/x` resolve to the user's home,
-/// `~name` to that user's home (unchanged when the name is unknown).
+/// `NSString.expandingTildeInPath`: `~`/`~/x` resolve to the user's home
+/// (`%USERPROFILE%` on Windows), `~name` to that user's home — Unix only,
+/// and unchanged when the name is unknown.
 fn expand_tilde(path: &str) -> String {
     if path == "~" {
         return home_dir().to_string_lossy().into_owned();
@@ -440,6 +439,7 @@ fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         return home_dir().join(rest).to_string_lossy().into_owned();
     }
+    #[cfg(unix)]
     if path.starts_with('~') {
         let (name, rest) = match path[1..].find('/') {
             Some(slash) => (&path[1..1 + slash], &path[1 + slash..]),
@@ -504,12 +504,83 @@ impl SshCommandResult {
 }
 
 /// Writing to a pipe whose reader exited raises SIGPIPE, which would kill
-/// the app; ignore it so the write fails with EPIPE instead.
+/// the app; ignore it so the write fails with EPIPE instead. Windows has
+/// no SIGPIPE — a closed pipe is already a plain write error there.
+#[cfg(unix)]
 fn ignore_sigpipe() {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     });
+}
+
+#[cfg(windows)]
+fn ignore_sigpipe() {}
+
+/// Exit code for a finished child, mapping a Unix signal to `128 + signal`.
+#[cfg(unix)]
+fn exit_code(status: std::process::ExitStatus) -> i32 {
+    status.code().unwrap_or_else(|| {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal().map(|signal| 128 + signal).unwrap_or(1)
+    })
+}
+
+/// A Windows process always reports an exit code, even when killed.
+#[cfg(windows)]
+fn exit_code(status: std::process::ExitStatus) -> i32 {
+    status.code().unwrap_or(1)
+}
+
+/// The ssh client binary: `/usr/bin/ssh` on Unix; on Windows the bundled
+/// OpenSSH client under %SystemRoot%, else `ssh.exe` resolved on PATH.
+#[cfg(unix)]
+fn default_ssh_executable() -> PathBuf {
+    PathBuf::from("/usr/bin/ssh")
+}
+
+#[cfg(windows)]
+fn default_ssh_executable() -> PathBuf {
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let bundled = Path::new(&root).join("System32").join("OpenSSH").join("ssh.exe");
+        if bundled.is_file() {
+            return bundled;
+        }
+    }
+    PathBuf::from("ssh.exe")
+}
+
+/// The local tar for (un)packing transfers: `/usr/bin/tar` on Unix;
+/// Windows 10+ ships bsdtar as `%SystemRoot%\System32\tar.exe` (else
+/// `tar.exe` on PATH).
+#[cfg(unix)]
+fn local_tar() -> PathBuf {
+    PathBuf::from("/usr/bin/tar")
+}
+
+#[cfg(windows)]
+fn local_tar() -> PathBuf {
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let bundled = Path::new(&root).join("System32").join("tar.exe");
+        if bundled.is_file() {
+            return bundled;
+        }
+    }
+    PathBuf::from("tar.exe")
+}
+
+/// `pitex` is a GUI-subsystem app on Windows — a console child spawned
+/// without `CREATE_NO_WINDOW` pops a console window per call (every ssh
+/// and tar invocation would). The child still gets a hidden console, so
+/// `ssh -tt` keeps working. No-op elsewhere.
+fn hide_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    #[cfg(not(windows))]
+    let _ = command;
 }
 
 /// `ProcessPipe.run`: input, stdout and stderr are pumped on separate
@@ -548,6 +619,7 @@ fn run_process(
         command.stdout(Stdio::piped());
     }
     command.stderr(Stdio::piped());
+    hide_console_window(&mut command);
     let mut child = command.spawn().map_err(|_| {
         SshError::Connection(format!("{} could not be started.", executable.display()))
     })?;
@@ -576,15 +648,7 @@ fn run_process(
             data
         })
     });
-    let status = child
-        .wait()
-        .map(|s| {
-            s.code().unwrap_or_else(|| {
-                use std::os::unix::process::ExitStatusExt;
-                s.signal().map(|signal| 128 + signal).unwrap_or(1)
-            })
-        })
-        .unwrap_or(1);
+    let status = child.wait().map(exit_code).unwrap_or(1);
     if let Some(writer) = input_writer {
         let _ = writer.join();
     }
@@ -655,7 +719,7 @@ impl SshClient {
     pub fn new(connection: SshConnection) -> Self {
         Self {
             connection,
-            ssh_executable: PathBuf::from("/usr/bin/ssh"),
+            ssh_executable: default_ssh_executable(),
             control_directory: Self::default_control_directory(),
             extra_arguments: Vec::new(),
         }
@@ -665,6 +729,7 @@ impl SshClient {
     /// unset (`TMPDIR`/`std::env::temp_dir` can be long, and a socket path
     /// is the directory + `/` + the 40-hex `%C` + ssh's 17-character
     /// temporary suffix under a 104-byte cap).
+    #[cfg(unix)]
     pub fn default_control_directory() -> Option<PathBuf> {
         if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
             if !runtime.is_empty() {
@@ -676,11 +741,18 @@ impl SshClient {
         })))
     }
 
+    /// Win32-OpenSSH has no ControlMaster multiplexing.
+    #[cfg(windows)]
+    pub fn default_control_directory() -> Option<PathBuf> {
+        None
+    }
+
     /// `directory` when multiplexing through it is safe: short enough for
     /// the socket path, and a real directory owned by this user with no
     /// group or other access — in shared /tmp anything else could let
     /// another user plant a control socket. Created on first use; None
     /// means plain connections.
+    #[cfg(unix)]
     pub fn usable_control_directory(directory: &Path) -> Option<PathBuf> {
         use std::os::unix::ffi::OsStrExt;
         use std::os::unix::fs::MetadataExt;
@@ -728,6 +800,9 @@ impl SshClient {
             "-o".to_string(),
             "ServerAliveInterval=15".to_string(),
         ];
+        // Win32-OpenSSH has no ControlMaster multiplexing — every call is
+        // its own connection there.
+        #[cfg(unix)]
         if let Some(control_directory) = &self.control_directory {
             if let Some(directory) = Self::usable_control_directory(control_directory) {
                 argv.extend([
@@ -818,6 +893,7 @@ impl SshClient {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        hide_console_window(&mut command);
         let child = {
             let mut slot = lock(&cancel.child);
             if cancel.is_cancelled() {
@@ -864,15 +940,7 @@ impl SshClient {
         for reader in readers {
             let _ = reader.join();
         }
-        let status = lock(&child)
-            .wait()
-            .map(|s| {
-                s.code().unwrap_or_else(|| {
-                    use std::os::unix::process::ExitStatusExt;
-                    s.signal().map(|signal| 128 + signal).unwrap_or(1)
-                })
-            })
-            .unwrap_or(1);
+        let status = lock(&child).wait().map(exit_code).unwrap_or(1);
         *lock(&cancel.child) = None;
         if cancel.is_cancelled() {
             return Err(SshError::Cancelled);
@@ -1020,12 +1088,16 @@ impl RemoteMirror {
         self.work_dir().join("staging")
     }
 
-    /// `~/.local/share/pitex/Remote`.
+    /// `~/.local/share/pitex/Remote` on Unix; on Windows
+    /// `%LOCALAPPDATA%\pitex\Remote` — mirrors stay machine-local, never
+    /// roaming.
     pub fn default_store() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| home_dir().join(".local/share"))
-            .join("pitex")
-            .join("Remote")
+        #[cfg(windows)]
+        let base = dirs::data_local_dir()
+            .unwrap_or_else(|| home_dir().join("AppData").join("Local"));
+        #[cfg(not(windows))]
+        let base = dirs::data_dir().unwrap_or_else(|| home_dir().join(".local/share"));
+        base.join("pitex").join("Remote")
     }
 
     /// The mirror for `project`, created (with its metadata) on first use.
@@ -1132,13 +1204,13 @@ fn standardize(path: &Path) -> PathBuf {
 /// exists, append and standardize whatever does not.
 fn resolved(path: &Path) -> PathBuf {
     if let Ok(canonical) = std::fs::canonicalize(path) {
-        return canonical;
+        return deverbatim(canonical);
     }
     let mut prefix = path.to_path_buf();
     let mut rest: Vec<std::ffi::OsString> = Vec::new();
     loop {
         if let Ok(canonical) = std::fs::canonicalize(&prefix) {
-            let mut out = canonical;
+            let mut out = deverbatim(canonical);
             for component in rest.iter().rev() {
                 out.push(component);
             }
@@ -1152,6 +1224,28 @@ fn resolved(path: &Path) -> PathBuf {
             None => return standardize(path),
         }
     }
+}
+
+/// Windows `canonicalize` yields verbatim `\\?\C:\…` paths; re-express
+/// plain disk paths without the verbatim prefix so a canonical path
+/// compares equal to the same path spelled lexically. `\\?\UNC\…` shares
+/// are kept verbatim — they have no plain spelling. (The shell's
+/// `deverbatim` in model.rs does the same for its own paths.)
+#[cfg(windows)]
+fn deverbatim(path: PathBuf) -> PathBuf {
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        if let std::path::Prefix::VerbatimDisk(letter) = prefix.kind() {
+            let mut out = PathBuf::from(format!("{}:", letter as char));
+            out.extend(path.components().skip(1));
+            return out;
+        }
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn deverbatim(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// Which files are mirrored, applied identically on both sides: VCS and
@@ -1195,6 +1289,59 @@ impl RemoteSyncRules {
                 && component != ".."
                 && !component.chars().any(|c| c.is_control())
         })
+    }
+
+    /// Windows-only: a path the local filesystem can actually hold — every
+    /// component clear of reserved device names (the part before any
+    /// extension counts, so `aux.tex` is still AUX), trailing dots/spaces
+    /// and `< > : " | ? *`. A remote file failing this is a per-file
+    /// failure, never a write under a mangled name. Unix accepts all of
+    /// these, so there is no such check there.
+    #[cfg(windows)]
+    pub fn is_supported_local_path(path: &str) -> bool {
+        path.split('/').all(Self::is_supported_local_component)
+    }
+
+    #[cfg(windows)]
+    fn is_supported_local_component(name: &str) -> bool {
+        if name.ends_with('.') || name.ends_with(' ') {
+            return false;
+        }
+        if name.chars().any(|c| "<>:\"|?*".contains(c)) {
+            return false;
+        }
+        let base = &name[..name.find('.').unwrap_or(name.len())];
+        let upper = base.to_uppercase();
+        !matches!(
+            upper.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+                | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8"
+                | "COM9" | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7"
+                | "LPT8" | "LPT9"
+        )
+    }
+
+    /// Windows-only: groups of distinct paths that fold to the same local
+    /// file under the filesystem's case-insensitivity — `Main.tex` and
+    /// `main.tex` cannot both exist in the mirror, so writing one would
+    /// clobber the other. Each group is sorted; groups are sorted too.
+    #[cfg(windows)]
+    pub fn case_clashing_groups<'a>(paths: impl Iterator<Item = &'a String>) -> Vec<Vec<String>> {
+        let mut by_fold: HashMap<String, HashSet<&String>> = HashMap::new();
+        for path in paths {
+            by_fold.entry(path.to_uppercase()).or_default().insert(path);
+        }
+        let mut groups: Vec<Vec<String>> = by_fold
+            .into_values()
+            .filter(|group| group.len() > 1)
+            .map(|group| {
+                let mut group: Vec<String> = group.into_iter().cloned().collect();
+                group.sort();
+                group
+            })
+            .collect();
+        groups.sort();
+        groups
     }
 }
 
@@ -1577,6 +1724,12 @@ struct SyncInner {
     /// Paths changed on both sides, kept here so every window sharing the
     /// engine sees one list, and entries leave it once the sides agree.
     conflicts: BTreeSet<String>,
+    /// Windows: remote paths folding onto a same-named sibling under the
+    /// filesystem's case-insensitivity. Refreshed every pull; `resolve`
+    /// and `fetch` refuse them so a sync never writes one over the other.
+    /// Never conflicts — they can never be settled by picking a side.
+    #[cfg(windows)]
+    clashing: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -1620,6 +1773,8 @@ impl RemoteSync {
             inner: Mutex::new(SyncInner {
                 manifest,
                 conflicts: BTreeSet::new(),
+                #[cfg(windows)]
+                clashing: HashSet::new(),
             }),
             local_cache: Mutex::new(HashMap::new()),
         }
@@ -1692,6 +1847,47 @@ impl RemoteSync {
             }
         }
         let plan = SyncPlanner::pull(&remote, &inner.manifest, &local);
+        // Windows: remote paths the mirror cannot hold (reserved names,
+        // trailing dots/spaces) are per-file failures, and paths colliding
+        // under case folding are per-file failures too — never conflicts:
+        // "Take Remote" on one would download it over the other. The
+        // keyspace is remote ∪ manifest ∪ conflicts so a case-only rename
+        // on the device (manifest `Main.tex`, remote `main.tex`) is also
+        // caught — deleting `Main.tex` would remove the file `main.tex`
+        // was just written to.
+        #[cfg(windows)]
+        let (plan, blocked): (PullPlan, Vec<String>) = {
+            let mut plan = plan;
+            let groups = RemoteSyncRules::case_clashing_groups(
+                remote
+                    .keys()
+                    .chain(inner.manifest.keys())
+                    .chain(inner.conflicts.iter()),
+            );
+            let clashing: HashSet<String> = groups.iter().flatten().cloned().collect();
+            inner.clashing = clashing.clone();
+            plan.download.retain(|p| !clashing.contains(p));
+            plan.adopt.retain(|p, _| !clashing.contains(p));
+            plan.conflicts.retain(|p| !clashing.contains(p));
+            plan.delete.retain(|p| !clashing.contains(p));
+            inner.conflicts.retain(|p| !clashing.contains(p));
+            let (supported, unsupported): (Vec<String>, Vec<String>) = plan
+                .download
+                .drain(..)
+                .partition(|p| RemoteSyncRules::is_supported_local_path(p));
+            plan.download = supported;
+            let mut blocked: Vec<String> = groups
+                .iter()
+                .map(|group| {
+                    format!(
+                        "{} (differ only in letter case; Windows can't hold both)",
+                        group.join(" and ")
+                    )
+                })
+                .collect();
+            blocked.extend(unsupported);
+            (plan, blocked)
+        };
         let mut report = SyncReport::default();
         // Sides that agree again (even back on the old baseline) are settled.
         let settled: Vec<String> = inner
@@ -1767,6 +1963,8 @@ impl RemoteSync {
             sync.save_manifest(inner)
         })?;
         report.conflicts = inner.conflicts.iter().cloned().collect();
+        #[cfg(windows)]
+        failed.extend(blocked);
         if !failed.is_empty() {
             return Err(SshError::Remote {
                 status: -1,
@@ -1850,6 +2048,16 @@ impl RemoteSync {
             .filter(|path| RemoteSyncRules::is_safe_relative_path(path))
             .cloned()
             .collect();
+        // Windows: names the mirror cannot hold, or ones folding onto a
+        // sibling remote path, are skipped — a fetched output must never
+        // land on another file's directory entry.
+        #[cfg(windows)]
+        let safe: Vec<String> = safe
+            .into_iter()
+            .filter(|path| {
+                RemoteSyncRules::is_supported_local_path(path) && !inner.clashing.contains(path)
+            })
+            .collect();
         if safe.is_empty() {
             return Ok(Vec::new());
         }
@@ -1878,6 +2086,27 @@ impl RemoteSync {
     pub fn resolve(&self, path: &str, keep_local: bool) -> Result<Vec<String>, SshError> {
         if !RemoteSyncRules::is_safe_relative_path(path) {
             return Ok(lock(&self.inner).conflicts.iter().cloned().collect());
+        }
+        // Windows: a name the mirror cannot hold, or one folding onto a
+        // remote sibling, can never be settled by picking a side — refuse
+        // before any remote call writes or deletes a local file.
+        #[cfg(windows)]
+        {
+            let problem = {
+                let inner = lock(&self.inner);
+                if !RemoteSyncRules::is_supported_local_path(path) {
+                    Some(format!("{path} is not a name Windows can hold."))
+                } else if inner.clashing.contains(path) {
+                    Some(format!(
+                        "{path} differs only in letter case from another remote file; Windows can't hold both."
+                    ))
+                } else {
+                    None
+                }
+            };
+            if let Some(message) = problem {
+                return Err(SshError::Remote { status: -1, message });
+            }
         }
         // The local version the user chose against — taken before queueing
         // behind another transfer, so a save made meanwhile is not lost.
@@ -1988,8 +2217,10 @@ impl RemoteSync {
 
     /// The remote counterpart of a local path inside the mirror.
     pub fn remote_path(&self, url: &Path) -> Option<String> {
-        let root = standardize(&self.mirror.root());
-        let path = standardize(url);
+        // Compare like with like: `canonicalize`/`resolved` can leave a
+        // verbatim `\\?\` root, which a plain local path never starts with.
+        let root = deverbatim(standardize(&self.mirror.root()));
+        let path = deverbatim(standardize(url));
         if path == root {
             return Some(self.remote_root().to_string());
         }
@@ -1997,10 +2228,16 @@ impl RemoteSync {
         if rest.as_os_str().is_empty() {
             return None;
         }
+        // The remote path is `/`-separated on every platform.
+        let relative = rest
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         Some(format!(
             "{}/{}",
             self.remote_root().trim_end_matches('/'),
-            rest.to_string_lossy()
+            relative
         ))
     }
 
@@ -2029,10 +2266,11 @@ impl RemoteSync {
                     .unwrap_or_else(|| "Download failed.".to_string()),
             });
         }
-        // GNU tar refuses absolute and `..` members by default; only regular
-        // files at expected paths are taken from staging.
+        // GNU tar and Windows bsdtar both refuse absolute and `..` members
+        // by default; only regular files at expected paths are taken from
+        // staging.
         let untar = run_process(
-            Path::new("/usr/bin/tar"),
+            &local_tar(),
             &[
                 "-xf".to_string(),
                 archive.to_string_lossy().into_owned(),
@@ -2057,7 +2295,7 @@ impl RemoteSync {
             if !RemoteSyncRules::is_safe_relative_path(path) {
                 continue;
             }
-            let url = staging_root.join(path);
+            let url = join_relative(&staging_root, path);
             // A symlink anywhere on the way (a hostile archive's `dir ->
             // /home/me` followed by `dir/.ssh/id_ed25519`) would make the
             // move into the mirror pull an arbitrary local file along.
@@ -2103,11 +2341,13 @@ impl RemoteSync {
                 continue;
             }
             let Ok(bytes) = std::fs::read(&source) else { continue };
-            let copy = data.join(path);
+            let copy = join_relative(&data, path);
             if let Some(parent) = copy.parent() {
                 std::fs::create_dir_all(parent).map_err(remote_io)?;
             }
             std::fs::write(&copy, &bytes).map_err(remote_io)?;
+            // Permission bits travel on Unix; Windows has none to copy.
+            #[cfg(unix)]
             if let Ok(metadata) = std::fs::metadata(&source) {
                 let _ = std::fs::set_permissions(&copy, metadata.permissions());
             }
@@ -2126,7 +2366,7 @@ impl RemoteSync {
         members.extend(sorted.into_iter().map(|path| format!("data/{path}")));
         std::fs::write(&list, members.join("\u{0}").as_bytes()).map_err(remote_io)?;
         let pack = run_process(
-            Path::new("/usr/bin/tar"),
+            &local_tar(),
             &[
                 "-cf".to_string(),
                 archive.to_string_lossy().into_owned(),
@@ -2237,14 +2477,21 @@ impl RemoteSync {
         if !RemoteSyncRules::is_safe_relative_path(path) {
             return None;
         }
+        // A component Windows cannot hold fails the file outright — it is
+        // never written under a mangled name.
+        #[cfg(windows)]
+        if !RemoteSyncRules::is_supported_local_path(path) {
+            return None;
+        }
         let components: Vec<&str> = path.split('/').collect();
         let mut url = self.mirror.root();
         for component in &components[..components.len() - 1] {
             url.push(component);
-            // symlink_metadata does not follow a symlink.
+            // symlink_metadata does not follow a symlink — and on Windows
+            // a junction is a directory reparse point, also refused.
             match std::fs::symlink_metadata(&url) {
                 Ok(metadata) => {
-                    if !metadata.is_dir() {
+                    if !metadata.is_dir() || is_reparse_point(&metadata) {
                         return None;
                     }
                 }
@@ -2300,10 +2547,11 @@ impl RemoteSync {
                 if RemoteSyncRules::is_excluded(&name) {
                     continue;
                 }
-                // symlink_metadata: a symlinked directory is neither
-                // descended nor hashed, like FileManager's enumerator.
+                // symlink_metadata: a symlinked (or, on Windows, junctioned
+                // — any reparse point) directory is neither descended nor
+                // hashed, like FileManager's enumerator.
                 let Ok(metadata) = std::fs::symlink_metadata(&url) else { continue };
-                if metadata.is_dir() {
+                if metadata.is_dir() && !is_reparse_point(&metadata) {
                     stack.push(url);
                     continue;
                 }
@@ -2311,9 +2559,16 @@ impl RemoteSync {
                     continue;
                 }
                 let Ok(relative) = url.strip_prefix(&root) else { continue };
-                let Some(path) = relative.to_str().map(|s| s.to_string()) else {
+                // Manifest keys are `/`-separated on every platform; a
+                // non-UTF-8 component skips the file like `to_str` did.
+                let Some(components) = relative
+                    .components()
+                    .map(|c| c.as_os_str().to_str())
+                    .collect::<Option<Vec<_>>>()
+                else {
                     continue;
                 };
+                let path = components.join("/");
                 if let Some(hash) = self.local_hash(&path) {
                     hashes.insert(path, hash);
                 }
@@ -2370,17 +2625,46 @@ fn item_exists(url: &Path) -> bool {
     std::fs::symlink_metadata(url).is_ok()
 }
 
-/// A regular file itself, not a symlink to one.
+/// `base` + a `/`-separated mirror-relative path, component by component —
+/// never by string splicing.
+fn join_relative(base: &Path, path: &str) -> PathBuf {
+    let mut out = base.to_path_buf();
+    for component in path.split('/') {
+        out.push(component);
+    }
+    out
+}
+
+/// Windows reparse points (junctions, symlinks, OneDrive placeholders…)
+/// route a write outside the mirror like a symlink does; Unix needs no
+/// check — `symlink_metadata` already reports a symlink as neither dir
+/// nor file.
+#[cfg(windows)]
+fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    // FILE_ATTRIBUTE_REPARSE_POINT
+    metadata.file_attributes() & 0x400 != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// A regular file itself, not a symlink — or any Windows reparse point —
+/// to one.
 fn is_regular_file(url: &Path) -> bool {
     std::fs::symlink_metadata(url)
-        .map(|m| m.is_file())
+        .map(|m| m.is_file() && !is_reparse_point(&m))
         .unwrap_or(false)
 }
 
 /// `resolvingSymlinksInPath() == standardizedFileURL` — every component
 /// must be real, so a staged file pulled along a symlink never escapes.
 fn is_free_of_symlinks(url: &Path) -> bool {
-    std::fs::canonicalize(url).map(|c| c == standardize(url)).unwrap_or(false)
+    std::fs::canonicalize(url)
+        .map(|c| deverbatim(c) == deverbatim(standardize(url)))
+        .unwrap_or(false)
 }
 
 struct RemoveOnDrop(PathBuf);
@@ -2684,5 +2968,193 @@ impl MirrorWriteGate for MirrorWrites {
         let mut state = lock(&self.state);
         state.committing = false;
         self.changed.notify_all();
+    }
+}
+
+// ─── Windows local-side tests ────────────────────────────────────────────────
+
+/// The Windows pieces — ssh argv without ControlMaster, verbatim `\\?\`
+/// paths, unholdable names, case-fold collisions, junctions — live beside
+/// the code so they can reach the private helpers.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// A unique directory under the system temp folder, removed on drop.
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            Self(std::env::temp_dir().join(format!(
+                "pitex-win-{tag}-{}-{nanos}",
+                std::process::id()
+            )))
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A prepared mirror and its sync engine (the client never runs).
+    fn mirror(tag: &str) -> (TempDir, RemoteSync) {
+        let store = TempDir::new(tag);
+        std::fs::create_dir_all(store.path()).unwrap();
+        let project = RemoteProject::new(
+            SshConnection::new("win", "host", None, None, None),
+            "/srv/proj",
+        );
+        let mirror = RemoteMirror::prepare(project, store.path()).unwrap();
+        let client = SshClient::new(mirror.project.connection.clone());
+        (store, RemoteSync::new(mirror, client, None))
+    }
+
+    #[test]
+    fn ssh_arguments_carry_no_control_master() {
+        let mut client =
+            SshClient::new(SshConnection::new("w", "host", None, None, None));
+        client.control_directory = Some(std::env::temp_dir());
+        let argv = client.arguments("true", &[], false).unwrap();
+        for flag in ["ControlMaster", "ControlPath", "ControlPersist"] {
+            assert!(
+                !argv.iter().any(|a| a.contains(flag)),
+                "{flag} in {argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn verbatim_prefixed_paths_still_resolve() {
+        let (store, sync) = mirror("verbatim");
+        // `canonicalize` spells the root verbatim on Windows; the mirror is
+        // still found and still judged link-free from that spelling.
+        let verbatim = std::fs::canonicalize(sync.mirror.root()).unwrap();
+        assert!(
+            matches!(
+                verbatim.components().next(),
+                Some(Component::Prefix(prefix))
+                    if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
+            ),
+            "{verbatim:?} is not a verbatim disk path"
+        );
+        let inside = verbatim.join("a.tex");
+        std::fs::write(&inside, "x").unwrap();
+        assert_eq!(
+            RemoteMirror::containing(&inside, store.path()).map(|m| m.project),
+            Some(sync.mirror.project.clone())
+        );
+        assert!(is_free_of_symlinks(&inside));
+        assert_eq!(sync.remote_path(&inside).as_deref(), Some("/srv/proj/a.tex"));
+    }
+
+    #[test]
+    fn names_windows_cannot_hold_fail_per_file() {
+        for path in [
+            "NUL",
+            "aux.tex",
+            "con.txt",
+            "lpt1",
+            "COM9.tex",
+            "name.",
+            "name ",
+            "a?b",
+            "dir/x:y",
+            "dir/CON/f.tex",
+        ] {
+            assert!(
+                !RemoteSyncRules::is_supported_local_path(path),
+                "{path} must be refused"
+            );
+        }
+        for path in ["main.tex", "auxiliary.tex", "conversions/x", "file .tex"] {
+            assert!(
+                RemoteSyncRules::is_supported_local_path(path),
+                "{path} must be allowed"
+            );
+        }
+        // …and no mirror path is ever produced for them.
+        let (_store, sync) = mirror("names");
+        assert!(sync.contained_url("aux.tex", true).is_none());
+        assert!(sync.contained_url("dir/NUL.tex", true).is_none());
+    }
+
+    #[test]
+    fn remote_paths_colliding_on_case_are_reported() {
+        let remote = ["Main.tex", "main.TEX", "sub/A.tex", "sub/b.tex"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            RemoteSyncRules::case_clashing_groups(remote.iter()),
+            vec![vec!["Main.tex".to_string(), "main.TEX".to_string()]]
+        );
+        // A parent that differs only in case folds the file too.
+        let remote = ["Sub/a.tex", "sub/a.tex"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            RemoteSyncRules::case_clashing_groups(remote.iter()).len(),
+            1,
+            "the clashing pair is reported, not silently merged"
+        );
+    }
+
+    #[test]
+    fn resolve_refuses_clashing_and_unsupported_names() {
+        let (_store, sync) = mirror("resolve");
+        {
+            let mut inner = lock(&sync.inner);
+            inner.clashing = ["Main.tex", "main.tex"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+        }
+        // Refusal comes before any ssh call, so a dead connection is fine.
+        let err = sync.resolve("main.tex", false).unwrap_err().to_string();
+        assert!(err.contains("letter case"), "{err}");
+        let err = sync.resolve("main.tex", true).unwrap_err().to_string();
+        assert!(err.contains("letter case"), "{err}");
+        let err = sync.resolve("aux.tex", false).unwrap_err().to_string();
+        assert!(err.contains("Windows can"), "{err}");
+    }
+
+    #[test]
+    fn junctions_count_as_links() {
+        let outside = TempDir::new("outside");
+        std::fs::create_dir_all(outside.path()).unwrap();
+        std::fs::write(outside.path().join("escaped.tex"), "x").unwrap();
+        let (_store, sync) = mirror("junction");
+        let link = sync.mirror.root().join("link");
+        // `mklink /J` (a junction) needs no privilege; a directory symlink
+        // does — try both, skip if neither is permitted.
+        let made = std::os::windows::fs::symlink_dir(outside.path(), &link).is_ok()
+            || Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&link)
+                .arg(outside.path())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+        if !made {
+            eprintln!("skipped: creating a junction or symlink not permitted");
+            return;
+        }
+        assert!(
+            sync.contained_url("link/inside.tex", true).is_none(),
+            "a junctioned directory must not redirect a write"
+        );
+        assert!(!is_free_of_symlinks(&link.join("inside.tex")));
+        assert!(
+            !sync.local_hashes().contains_key("link/escaped.tex"),
+            "the local scan neither descends nor hashes a junction"
+        );
     }
 }
