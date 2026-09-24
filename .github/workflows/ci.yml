@@ -67,7 +67,7 @@ jobs:
         run: swift test --package-path Packages/TexApp --build-system native
       - name: Git and subprocess regression checks
         run: |
-          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests|DiskContentHashTests'
+          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|ProcessRunnerTests|DiskContentHashTests|RemoteCoreTests'
           python3 Tools/check-git-performance.py
           python3 Tools/check-ime-completion.py
       - name: Native highlighting checks

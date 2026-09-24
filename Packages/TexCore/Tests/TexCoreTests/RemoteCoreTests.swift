@@ -86,6 +86,23 @@ final class RemoteCoreTests: XCTestCase {
 
     // MARK: - hashing, parsing, planning
 
+    func testControlDirectoryIsShortPrivateAndOwned() throws {
+        let fileManager = FileManager.default
+        // Room for "/<40 hex>.<16 chars>" under macOS's 104-byte socket limit.
+        XCTAssertLessThan(try XCTUnwrap(SSHClient.defaultControlDirectory).path.utf8.count + 58, 104)
+        let directory = URL(fileURLWithPath: "/tmp/pitex-cd-\(UUID().uuidString.prefix(8))")
+        let link = URL(fileURLWithPath: "/tmp/pitex-cl-\(UUID().uuidString.prefix(8))")
+        defer { try? fileManager.removeItem(at: directory); try? fileManager.removeItem(at: link) }
+        XCTAssertEqual(SSHClient.usableControlDirectory(directory), directory, "created private on first use")
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        XCTAssertNil(SSHClient.usableControlDirectory(directory), "group/other access disables multiplexing")
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        try fileManager.createSymbolicLink(at: link, withDestinationURL: directory)
+        XCTAssertNil(SSHClient.usableControlDirectory(link), "a symlink is not trusted")
+        XCTAssertNil(SSHClient.usableControlDirectory(URL(fileURLWithPath: "/tmp/" + String(repeating: "x", count: 60))),
+                     "too long for a socket path")
+    }
+
     func testSHA256MatchesKnownVectors() {
         XCTAssertEqual(SHA256.hex(Data()), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         XCTAssertEqual(SHA256.hex(Data("abc".utf8)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
@@ -259,7 +276,7 @@ final class RemoteCoreTests: XCTestCase {
         if let known = environment["PITEX_TEST_SSH_KNOWN_HOSTS"] { extra += ["-o", "UserKnownHostsFile=\(known)"] }
         let port = environment["PITEX_TEST_SSH_PORT"].flatMap(Int.init)
         return SSHClient(connection: SSHConnection(name: "test", destination: destination, port: port),
-                         controlDirectory: nil, extraArguments: extra)
+                         extraArguments: extra)
     }
 
     func testLiveSyncRoundTrip() async throws {

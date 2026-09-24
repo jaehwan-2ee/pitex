@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// A saved device the user can open folders on — an `~/.ssh/config` alias
 /// (ssh resolves HostName/User/Port/keys itself) or a manually entered host.
@@ -125,20 +130,39 @@ public struct SSHClient: Sendable {
         self.extraArguments = extraArguments
     }
 
-    /// Short path: unix sockets are limited to ~104 bytes on macOS.
+    /// `/tmp/pitex-ssh-<uid>`. The per-user temporary folder on macOS
+    /// (`/var/folders/…/T/`) is too long: a socket path is this directory,
+    /// `/`, the 40-hex `%C` and ssh's 17-character temporary suffix, and
+    /// macOS caps it at 104 bytes.
     public static var defaultControlDirectory: URL? {
-        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pitex-ssh", isDirectory: true)
+        URL(fileURLWithPath: "/tmp/pitex-ssh-\(getuid())", isDirectory: true)
+    }
+
+    /// `directory` when multiplexing through it is safe: short enough for
+    /// the socket path, and a real directory owned by this user with no
+    /// group or other access — in shared /tmp anything else could let
+    /// another user plant a control socket. Created on first use; nil
+    /// means plain connections.
+    static func usableControlDirectory(_ directory: URL) -> URL? {
+        guard directory.path.utf8.count + 1 + 40 + 17 < 104 else { return nil }
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: false,
+                                         attributes: [.posixPermissions: 0o700])
+        // attributesOfItem describes a symlink itself, not its target.
+        guard let attributes = try? fileManager.attributesOfItem(atPath: directory.path),
+              attributes[.type] as? FileAttributeType == .typeDirectory,
+              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
+              let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue, mode & 0o077 == 0 else { return nil }
+        return directory
     }
 
     /// Full ssh argv for `script` with positional `arguments`.
     func arguments(script: String, arguments scriptArguments: [String], tty: Bool) throws -> [String] {
         if let problem = connection.validationError { throw SSHError.invalidConnection(problem) }
         var argv = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15"]
-        if let controlDirectory {
-            try? FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true,
-                                                     attributes: [.posixPermissions: 0o700])
+        if let controlDirectory, let directory = Self.usableControlDirectory(controlDirectory) {
             argv += ["-o", "ControlMaster=auto",
-                     "-o", "ControlPath=\(controlDirectory.path)/%C",
+                     "-o", "ControlPath=\(directory.path)/%C",
                      "-o", "ControlPersist=300"]
         }
         argv += tty ? ["-tt"] : ["-T"]
