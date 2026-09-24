@@ -486,6 +486,24 @@ extension WorkspaceModel {
         pendingLogText = ""
         pendingBuildIssues = []
         buildIssues = []
+        // A remote project compiles on its device: pending edits go up
+        // first, and the executor brings these outputs back afterwards.
+        buildCancelRequested = false
+        if remote != nil {
+            if let problem = await prepareRemoteBuild(outputs: generated.sorted(), required: outputPDF) {
+                buildState = .failed(problem)
+                buildLogText = problem
+                consoleSection = .log
+                bottomPanelVisible = true
+                activeBuildID = nil
+                return
+            }
+            guard !buildCancelRequested else {
+                buildState = .failed("Build cancelled.")
+                activeBuildID = nil
+                return
+            }
+        }
         let orchestrator = buildOrchestrator
         do {
             let outcome = try await orchestrator.build(id: buildID) { [weak self] event in
@@ -520,6 +538,9 @@ extension WorkspaceModel {
     }
 
     func cancelBuild() async {
+        // A remote build may still be uploading, with nothing running yet
+        // for the orchestrator to cancel.
+        if isBuilding { buildCancelRequested = true }
         try? await buildOrchestrator.cancel()
     }
 

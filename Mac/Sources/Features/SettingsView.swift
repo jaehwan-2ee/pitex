@@ -1,5 +1,6 @@
 import AppKit
 import CoreServices
+import RemoteCore
 import SettingsFeature
 import SwiftUI
 import UniformTypeIdentifiers
@@ -93,6 +94,18 @@ final class SettingsStore: ObservableObject {
     @Published var markdownFontSize: Double {
         didSet { UserDefaults.standard.set(markdownFontSize, forKey: "pitex.pref.markdown.fontSize") }
     }
+    /// Devices for "Open via SSH" (Settings → SSH).
+    @Published var sshConnections: [SSHConnection] {
+        didSet {
+            if let data = try? JSONEncoder().encode(sshConnections) {
+                UserDefaults.standard.set(data, forKey: "pitex.pref.ssh.connections")
+            }
+        }
+    }
+    /// The device "Open via SSH" preselects.
+    @Published var lastSSHConnectionID: UUID? {
+        didSet { UserDefaults.standard.set(lastSSHConnectionID?.uuidString, forKey: "pitex.pref.ssh.lastConnection") }
+    }
     private static let settingsKey = "dev.pitex.settings"
 
     init() {
@@ -120,6 +133,8 @@ final class SettingsStore: ObservableObject {
         markdownSyncScroll = true
         markdownTheme = "system"
         markdownFontSize = 16
+        sshConnections = []
+        lastSSHConnectionID = nil
         reload()
     }
 
@@ -154,6 +169,9 @@ final class SettingsStore: ObservableObject {
         markdownSyncScroll = defaults.object(forKey: "pitex.pref.markdown.syncScroll") as? Bool ?? true
         markdownTheme = Self.markdownThemeValue(defaults.string(forKey: "pitex.pref.markdown.theme"))
         markdownFontSize = min(max(defaults.object(forKey: "pitex.pref.markdown.fontSize") as? Double ?? 16, 10), 28)
+        sshConnections = defaults.data(forKey: "pitex.pref.ssh.connections")
+            .flatMap { try? JSONDecoder().decode([SSHConnection].self, from: $0) } ?? []
+        lastSSHConnectionID = defaults.string(forKey: "pitex.pref.ssh.lastConnection").flatMap(UUID.init(uuidString:))
     }
 
     /// Missing or unknown `pitex.pref.markdown.theme` resolves to `system`.
@@ -220,6 +238,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case editor
     case appearance
     case ai
+    case ssh
     case general
 
     var id: Self { self }
@@ -231,6 +250,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .editor: "settings.tab.editor"
         case .appearance: "settings.tab.appearance"
         case .ai: "settings.tab.ai"
+        case .ssh: "settings.tab.ssh"
         case .general: "settings.tab.general"
         }
     }
@@ -242,6 +262,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .editor: "textformat"
         case .appearance: "paintpalette"
         case .ai: "wand.and.stars"
+        case .ssh: "network"
         case .general: "gearshape"
         }
     }
@@ -279,6 +300,7 @@ struct SettingsView: View {
                 case .editor: editorTab
                 case .appearance: appearanceTab
                 case .ai: aiTab
+                case .ssh: SSHSettingsPane(store: store)
                 case .general: generalTab
                 }
             }
@@ -291,9 +313,9 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        // Wide enough for all six tabs on one line in every locale (Russian
-        // and Vietnamese titles are the longest).
-        .frame(minWidth: 780, minHeight: 560)
+        // Wide enough for all seven tabs on one line in every locale
+        // (Russian and Vietnamese titles are the longest).
+        .frame(minWidth: 900, minHeight: 560)
     }
 
     /// Segmented capsule strip matching the reference settings window.

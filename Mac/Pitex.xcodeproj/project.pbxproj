@@ -42,6 +42,9 @@
 		100000000000000000000017 /* LanguageCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000B /* LanguageCore */; };
 		100000000000000000000018 /* BuildCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000C /* BuildCore */; };
 		100000000000000000000029 /* GitCore in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000012 /* GitCore */; };
+		100000000000000000000043 /* RemoteCore in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000013 /* RemoteCore */; };
+		100000000000000000000044 /* RemoteSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000043 /* RemoteSupport.swift */; };
+		100000000000000000000045 /* SSHViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000044 /* SSHViews.swift */; };
 		100000000000000000000019 /* SyncTeXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000D /* SyncTeXCore */; };
 		10000000000000000000001A /* AICore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000E /* AICore */; };
 		10000000000000000000001B /* EditorFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000F /* EditorFeature */; };
@@ -85,6 +88,8 @@
 		200000000000000000000031 /* AgentPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanel.swift; sourceTree = "<group>"; };
 		200000000000000000000032 /* UpdateSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateSupport.swift; sourceTree = "<group>"; };
 		200000000000000000000033 /* SubscriptionUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionUsage.swift; sourceTree = "<group>"; };
+		200000000000000000000043 /* RemoteSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSupport.swift; sourceTree = "<group>"; };
+		200000000000000000000044 /* SSHViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHViews.swift; sourceTree = "<group>"; };
 		200000000000000000000041 /* PitexIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PitexIcon.icon; sourceTree = "<group>"; };
 		200000000000000000000042 /* markdown-preview.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "markdown-preview.html"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -111,6 +116,7 @@
 				100000000000000000000019 /* SyncTeXCore in Frameworks */,
 				10000000000000000000001A /* AICore in Frameworks */,
 				100000000000000000000029 /* GitCore in Frameworks */,
+				100000000000000000000043 /* RemoteCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -183,6 +189,8 @@
 				20000000000000000000000F /* SyntaxHighlighting.swift */,
 				200000000000000000000031 /* AgentPanel.swift */,
 				200000000000000000000032 /* UpdateSupport.swift */,
+				200000000000000000000043 /* RemoteSupport.swift */,
+				200000000000000000000044 /* SSHViews.swift */,
 				200000000000000000000033 /* SubscriptionUsage.swift */,
 			);
 			path = Features;
@@ -234,6 +242,7 @@
 				300000000000000000000010 /* ProjectFeature */,
 				300000000000000000000011 /* PDFFeature */,
 				300000000000000000000012 /* GitCore */,
+				300000000000000000000013 /* RemoteCore */,
 			);
 			productName = Pitex;
 			productReference = 200000000000000000000005 /* Pitex.app */;
@@ -325,6 +334,8 @@
 				100000000000000000000026 /* AgentPanel.swift in Sources */,
 				100000000000000000000027 /* UpdateSupport.swift in Sources */,
 				100000000000000000000028 /* SubscriptionUsage.swift in Sources */,
+				100000000000000000000044 /* RemoteSupport.swift in Sources */,
+				100000000000000000000045 /* SSHViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -509,6 +520,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
 			productName = GitCore;
+		};
+		300000000000000000000013 /* RemoteCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000001 /* XCLocalSwiftPackageReference "../../Packages/TexCore" */;
+			productName = RemoteCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

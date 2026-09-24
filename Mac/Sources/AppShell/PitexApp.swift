@@ -11,6 +11,7 @@ import LanguageCore
 import MacPlatform
 import ProjectCore
 import ProjectFeature
+import RemoteCore
 import SyncTeXCore
 import SwiftUI
 import TexDomain
@@ -147,7 +148,7 @@ actor NativeDocumentSessionPort: AppPorts.DocumentSessionPort {
 
 @MainActor
 final class WorkspaceModel: ObservableObject {
-    @Published private(set) var phase: WorkspacePhase = .noProject
+    @Published internal(set) var phase: WorkspacePhase = .noProject
     @Published private(set) var projectURL: URL? {
         didSet { rebuildProjectTree() }
     }
@@ -187,7 +188,16 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var wordCount = 0
     let registry = DocumentSessionRegistry()
     let settings = SettingsStore.shared
-    let buildOrchestrator = BuildOrchestrator(executor: StreamingBuildExecutor())
+    /// Local builds, or the device's while a remote project is open.
+    let buildExecutor: WorkspaceBuildExecutor
+    let buildOrchestrator: BuildOrchestrator
+    /// Set while the project is a folder on another device (Open via SSH).
+    @Published var remote: RemoteWorkspace?
+    @Published var showingOpenViaSSH = false
+    var remotePushTask: Task<Void, Never>?
+    /// Cancel pressed before the orchestrator started (a remote build
+    /// uploads the edits first).
+    var buildCancelRequested = false
     let syncTeXRunner = SyncTeXRunner()
     let highlighter = SyntaxHighlighter()
     private(set) var agent: AgentCoordinator?
@@ -285,7 +295,12 @@ final class WorkspaceModel: ObservableObject {
     private var lastOwnWrite: [URL: DiskContentHash] = [:]
     private var selectionObserver: NSObjectProtocol?
 
-    init() { loadRecents() }
+    init() {
+        let executor = WorkspaceBuildExecutor()
+        buildExecutor = executor
+        buildOrchestrator = BuildOrchestrator(executor: executor)
+        loadRecents()
+    }
 
     var hasProject: Bool { projectURL != nil }
 
@@ -384,15 +399,21 @@ final class WorkspaceModel: ObservableObject {
     /// opens it. Without a project this is a no-op.
     func createDocument() async {
         guard let root = projectURL else { return }
+        // Name choice and write as one step against a remote sync commit.
+        await MirrorWrites.shared.enter()
         var index = 1
         var url = root.appendingPathComponent("untitled.tex")
         while FileManager.default.fileExists(atPath: url.path) {
             index += 1
             url = root.appendingPathComponent("untitled-\(index).tex")
         }
-        do {
+        let written = Result {
             try "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n"
                 .write(to: url, atomically: true, encoding: .utf8)
+        }
+        MirrorWrites.shared.leave()
+        do {
+            try written.get()
             if !projectFiles.contains(url) {
                 projectFiles.append(url)
                 projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
@@ -413,7 +434,10 @@ final class WorkspaceModel: ObservableObject {
             .compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try snapshot.text.write(to: url, atomically: true, encoding: .utf8)
+            await MirrorWrites.shared.enter()
+            let written = Result { try snapshot.text.write(to: url, atomically: true, encoding: .utf8) }
+            MirrorWrites.shared.leave()
+            try written.get()
             if let root = projectURL,
                (try? Self.relativePath(for: url, root: root)) != nil {
                 if !projectFiles.contains(url) {
@@ -462,6 +486,9 @@ final class WorkspaceModel: ObservableObject {
         let generation = await close()
         guard documentLoadGeneration == generation else { return }
         phase = .loading(selectedURL)
+        // A remote project's mirror is refreshed from the device before any
+        // file is read; an unreachable device with nothing cached fails here.
+        guard await beginRemoteSession(for: selectedURL), documentLoadGeneration == generation else { return }
         do {
             let (root, files, initialURL, initialText) = try await Task.detached(priority: .userInitiated) {
                 let values = try selectedURL.resourceValues(forKeys: [.isDirectoryKey])
@@ -563,6 +590,7 @@ final class WorkspaceModel: ObservableObject {
             }
             coordinator.agentActivityDidFinish = { [weak self] in
                 await self?.refreshAfterAgentActivity()
+                await self?.pushRemote()
             }
             coordinator.attachActiveDocument = settings.aiAttachDefault
             coordinator.preferredModelID = settings.aiDefaultModel
@@ -708,6 +736,10 @@ final class WorkspaceModel: ObservableObject {
         let task = Task { @MainActor [weak self] in
             defer { self?.pendingWriteCount -= 1 }
             _ = await previous?.value
+            // A remote project's sync never replaces this file between the
+            // disk check below and the rename.
+            await MirrorWrites.shared.enter()
+            defer { MirrorWrites.shared.leave() }
             var snapshot = await session.snapshot()
             guard shouldWrite(snapshot) else {
                 return SessionWriteResult(kind: .skipped, snapshot: snapshot)
@@ -788,6 +820,7 @@ final class WorkspaceModel: ObservableObject {
         switch result.kind {
         case .saved:
             refreshGit()
+            schedulePush()
         case .saveConflict:
             syncTeXState = .stale("The source changed on disk; SyncTeX locations may be stale.")
         case .skipped:
@@ -893,9 +926,11 @@ final class WorkspaceModel: ObservableObject {
         for url in fileWatchers.keys { stopWatcher(for: url) }
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
-        // In-flight saves finish before their sessions are torn down.
+        // In-flight saves finish before their sessions are torn down, and a
+        // remote project uploads them before its mirror is let go.
         await waitForPendingWrites()
         lastOwnWrite.removeAll()
+        await endRemoteSession()
         agent?.shutdown()
         agent?.stopConfigWatcher()
         completion?.shutdown()
@@ -1378,7 +1413,7 @@ final class WorkspaceModel: ObservableObject {
     /// After an agent run completes: adopt its edits into any session whose
     /// disk file changed while clean, and pick up source files the agent
     /// created so they appear in the project outline.
-    private func refreshAfterAgentActivity() async {
+    func refreshAfterAgentActivity() async {
         guard let root = projectURL else { return }
         for session in registeredSessions {
             let url = root.appendingPathComponent(session.path.rawValue)
@@ -1663,17 +1698,23 @@ final class WorkspaceModel: ObservableObject {
         guard let root = projectURL,
               let relative = try? Self.relativePath(for: url, root: root) else { return }
         if await !todoSessionIsClean(relative: relative) { return }
-        guard let diskText = try? Self.readExactUTF8(url) else { return }
-        let nsText = diskText as NSString
-        guard let bounds = Self.todoLineBounds(nsText, line: line),
-              let replacement = Self.applyTodoEdit(edit, content: bounds.content, terminator: bounds.terminator) else { return }
-        let updated = nsText.replacingCharacters(in: bounds.range, with: replacement)
-        let outcome = FoundationAtomicDocumentStore().save(
-            text: updated,
-            to: url,
-            expectedBaselineHash: .hashing(diskText)
-        )
-        guard case .saved = outcome else { return }
+        var saved = false
+        do {
+            // Read-check-write as one step against a remote sync commit.
+            await MirrorWrites.shared.enter()
+            defer { MirrorWrites.shared.leave() }
+            guard let diskText = try? Self.readExactUTF8(url) else { return }
+            let nsText = diskText as NSString
+            guard let bounds = Self.todoLineBounds(nsText, line: line),
+                  let replacement = Self.applyTodoEdit(edit, content: bounds.content, terminator: bounds.terminator) else { return }
+            let updated = nsText.replacingCharacters(in: bounds.range, with: replacement)
+            if case .saved = FoundationAtomicDocumentStore().save(
+                text: updated,
+                to: url,
+                expectedBaselineHash: .hashing(diskText)
+            ) { saved = true }
+        }
+        guard saved else { return }
         await processDiskChange(url)
         refreshTodos()
     }
@@ -1684,14 +1725,19 @@ final class WorkspaceModel: ObservableObject {
         guard let root = projectURL,
               let relative = try? Self.relativePath(for: url, root: root) else { return }
         if await !todoSessionIsClean(relative: relative) { return }
-        guard let diskText = try? Self.readExactUTF8(url) else { return }
-        let separator = diskText.isEmpty || diskText.hasSuffix("\n") ? "" : "\n"
-        let outcome = FoundationAtomicDocumentStore().save(
-            text: diskText + separator + "% TODO: \n",
-            to: url,
-            expectedBaselineHash: .hashing(diskText)
-        )
-        guard case .saved = outcome else { return }
+        var saved = false
+        do {
+            await MirrorWrites.shared.enter()
+            defer { MirrorWrites.shared.leave() }
+            guard let diskText = try? Self.readExactUTF8(url) else { return }
+            let separator = diskText.isEmpty || diskText.hasSuffix("\n") ? "" : "\n"
+            if case .saved = FoundationAtomicDocumentStore().save(
+                text: diskText + separator + "% TODO: \n",
+                to: url,
+                expectedBaselineHash: .hashing(diskText)
+            ) { saved = true }
+        }
+        guard saved else { return }
         await processDiskChange(url)
         refreshTodos()
     }
@@ -2147,10 +2193,20 @@ struct AppCommands: Commands {
             if !workspace.recentDocuments.isEmpty {
                 Menu("command.open_recent") {
                     ForEach(workspace.recentDocuments, id: \.self) { url in
-                        Button(url.lastPathComponent) { WorkspaceWindows.route(url, from: workspace) }
+                        Button(WorkspaceModel.recentTitle(for: url)) { WorkspaceWindows.route(url, from: workspace) }
                     }
                     Divider()
                     Button("command.clear_recents") { workspace.clearRecents() }
+                }
+            }
+            Button("command.open_via_ssh") { workspace.presentOpenViaSSH() }
+                .accessibilityIdentifier("pitex.command.openViaSSH")
+            if workspace.remote != nil {
+                Button("command.sync_remote") {
+                    Task {
+                        await workspace.pushRemote()
+                        await workspace.pullRemote()
+                    }
                 }
             }
             Divider()
@@ -2279,12 +2335,14 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     /// writes queued, termination defers until they have finished on disk.
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard WorkspaceWindows.live.contains(where: { $0.hasPendingWrites }) else {
+        guard WorkspaceWindows.live.contains(where: { $0.hasPendingWrites || $0.remote != nil }) else {
             return .terminateNow
         }
         Task { @MainActor in
             for workspace in WorkspaceWindows.live {
                 await workspace.waitForPendingWrites()
+                // Saved edits of a remote project go up to the device too.
+                await workspace.flushRemote()
             }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
@@ -2335,8 +2393,19 @@ private struct WorkspaceWindow: View {
             .background(WindowReader { workspace.window = $0 })
             .focusedSceneObject(workspace)
             .navigationTitle(workspace.projectURL?.lastPathComponent ?? "Pitex")
+            .navigationSubtitle(workspace.remote?.statusText ?? "")
             .sheet(isPresented: $workspace.showingSettings) {
                 SettingsView(store: workspace.settings, workspace: workspace)
+            }
+            .sheet(isPresented: $workspace.showingOpenViaSSH) {
+                OpenViaSSHSheet(workspace: workspace, store: workspace.settings)
+            }
+            // Coming back to a remote project's window picks up edits made
+            // on the device meanwhile.
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+                if let window = workspace.window, (note.object as? NSWindow) === window {
+                    workspace.pullRemoteIfStale()
+                }
             }
             .onAppear {
                 WorkspaceWindows.register(workspace, openWindow: openWindow)

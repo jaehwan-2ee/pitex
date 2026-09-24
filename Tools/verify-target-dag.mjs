@@ -103,8 +103,8 @@ export async function verifyTargetDag({ root = DEFAULT_ROOT } = {}) {
     return report(violations, [relative(root, dagPath)]);
   }
   const names = Object.keys(dag.targets ?? {}).sort();
-  const required = ['TexDomain','ProjectCore','DocumentSessionCore','LanguageCore','BuildCore','SyncTeXCore','AICore','GitCore','ParityKit','AppPorts','ProjectFeature','EditorFeature','EditorMacAdapter','BuildFeature','PDFFeature','SettingsFeature','MacPlatform','AppShell'].sort();
-  if (JSON.stringify(names) !== JSON.stringify(required)) add(violations, 'DAG_TARGET_SET', 'Tools/target-dag.json', 'target set does not exactly match the approved 18 targets');
+  const required = ['TexDomain','ProjectCore','DocumentSessionCore','LanguageCore','BuildCore','SyncTeXCore','AICore','GitCore','RemoteCore','ParityKit','AppPorts','ProjectFeature','EditorFeature','EditorMacAdapter','BuildFeature','PDFFeature','SettingsFeature','MacPlatform','AppShell'].sort();
+  if (JSON.stringify(names) !== JSON.stringify(required)) add(violations, 'DAG_TARGET_SET', 'Tools/target-dag.json', 'target set does not exactly match the approved 19 targets');
   if (dag.compositionRoot !== 'AppShell') add(violations, 'COMPOSITION_ROOT', 'Tools/target-dag.json', 'AppShell must be the sole configured composition root');
   const configured = new Map(names.map((name) => [name, dag.targets[name]?.dependencies ?? []]));
   for (const [name, deps] of configured) {

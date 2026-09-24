@@ -52,6 +52,8 @@ struct WorkspaceView: View {
             Button("workspace.open_project") { workspace.presentOpenPanel() }
                 .keyboardShortcut("o")
                 .accessibilityIdentifier("pitex.open")
+            Button("command.open_via_ssh") { workspace.presentOpenViaSSH() }
+                .accessibilityIdentifier("pitex.openViaSSH")
         }
         .frame(minWidth: 560, minHeight: 360)
         .accessibilityIdentifier("pitex.noProject")
@@ -129,6 +131,7 @@ struct WorkspaceView: View {
             Divider()
             editorHeader
             conflictBanner
+            remoteConflictBanner
             // VSplitView gives the console's top edge a draggable divider,
             // like the outer HSplitView does for the side panes.
             VSplitView {
@@ -184,12 +187,13 @@ struct WorkspaceView: View {
                     Divider()
                     Menu("command.open_recent") {
                         ForEach(workspace.recentDocuments, id: \.self) { url in
-                            Button(url.lastPathComponent) { Task { await workspace.open(url) } }
+                            Button(WorkspaceModel.recentTitle(for: url)) { Task { await workspace.open(url) } }
                         }
                         Divider()
                         Button("command.clear_recents") { workspace.clearRecents() }
                     }
                 }
+                Button("command.open_via_ssh") { workspace.presentOpenViaSSH() }
             } label: {
                 Image(systemName: "plus")
             }
@@ -332,6 +336,40 @@ struct WorkspaceView: View {
             .padding(9)
             .background(.orange.opacity(0.12))
             .accessibilityIdentifier("pitex.conflict")
+        }
+    }
+
+    /// Files changed both here and on the SSH device since the last sync;
+    /// neither side is overwritten until the user picks one per file.
+    @ViewBuilder
+    private var remoteConflictBanner: some View {
+        if let remote = workspace.remote, !remote.conflicts.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(verbatim: String(format: String(localized: "remote.conflict.title"), remote.deviceName))
+                        .font(.callout.weight(.semibold))
+                }
+                ForEach(remote.conflicts, id: \.self) { path in
+                    HStack(spacing: 8) {
+                        Text(verbatim: path)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button("remote.conflict.take_remote") {
+                            Task { await workspace.resolveRemoteConflict(path, keepLocal: false) }
+                        }
+                        Button("remote.conflict.keep_mine") {
+                            Task { await workspace.resolveRemoteConflict(path, keepLocal: true) }
+                        }
+                    }
+                }
+            }
+            .foregroundStyle(.orange)
+            .padding(9)
+            .background(.orange.opacity(0.12))
+            .accessibilityIdentifier("pitex.remoteConflict")
         }
     }
 
