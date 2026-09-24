@@ -54,6 +54,12 @@ where
     widget.update_property(&[gtk4::accessible::Property::Label(&tr(lang, label_key))]);
 }
 
+/// The workspace window — dialogs and sheets attach to it.
+#[cfg(unix)]
+pub(crate) fn main_window() -> Option<gtk4::Window> {
+    UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.clone().upcast()))
+}
+
 /// Every widget the refresh logic touches, in one place (SwiftUI's
 /// `@Published` surface replaced by explicit handle updates).
 #[derive(Default)]
@@ -81,6 +87,16 @@ pub struct UiHandles {
     pub disk_status: RefCell<Option<gtk4::Button>>,
     pub conflict_banner: RefCell<Option<gtk4::Box>>,
     pub conflict_label: RefCell<Option<gtk4::Label>>,
+    /// WindowTitle in the header — its subtitle carries the remote status.
+    pub window_title: RefCell<Option<adw::WindowTitle>>,
+    /// `remoteConflicts` section — banner under the document conflict
+    /// banner, one row per file changed on both sides.
+    #[cfg(unix)]
+    pub remote_conflict_banner: RefCell<Option<gtk4::Box>>,
+    #[cfg(unix)]
+    pub remote_conflict_title: RefCell<Option<gtk4::Label>>,
+    #[cfg(unix)]
+    pub remote_conflict_rows: RefCell<Option<gtk4::Box>>,
     pub sidebar_stack: RefCell<Option<gtk4::Stack>>,
     pub sidebar_section_dropdown: RefCell<Option<gtk4::DropDown>>,
     pub outline_list: RefCell<Option<gtk4::ListBox>>,
@@ -304,6 +320,10 @@ pub struct AppState {
     /// re-splices the model — otherwise the programmatic selection would
     /// read as a user branch switch.
     pub git_branch_updating: Cell<bool>,
+    /// `remotePushTask` cancellation — each save-debounced upload bumps
+    /// the generation; a stale timer drops out without pushing.
+    #[cfg(unix)]
+    pub remote_push_generation: Rc<Cell<u64>>,
 }
 
 impl AppState {
@@ -376,6 +396,8 @@ impl AppState {
             git_pending_discard: None,
             git_branch_updating: Cell::new(false),
             git_diff_seq: Cell::new(0),
+            #[cfg(unix)]
+            remote_push_generation: Rc::new(Cell::new(0)),
         };
         state.wire_model_callbacks();
         // `completion.contextProvider` — reads live workspace state
@@ -443,6 +465,19 @@ impl AppState {
         self.model.on_active_document_changed = Some(Box::new(move || flag.set(true)));
         let flag = self.autosave_flag.clone();
         self.model.on_autosave_schedule = Some(Box::new(move || flag.set(true)));
+        // `schedulePush` — a save debounces the mirror upload by 400 ms;
+        // each new save cancels the pending timer, never a live transfer.
+        #[cfg(unix)]
+        {
+            let generation = self.remote_push_generation.clone();
+            self.model.on_remote_push_schedule = Some(Box::new(move || {
+                generation.set(generation.get() + 1);
+                let expected = generation.get();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                    remote_push_attempt(expected);
+                });
+            }));
+        }
     }
 
     /// Consume queued side effects written by model callbacks. Runs at the
@@ -1462,6 +1497,20 @@ impl AppState {
         });
         vbox.append(&file_btn);
         vbox.append(&folder_btn);
+        // "Open via SSH…" — the third open path in the macOS Open menu.
+        #[cfg(unix)]
+        {
+            let ssh_btn = gtk4::Button::with_label(&tr(self.language, "command.open_via_ssh"));
+            ssh_btn.set_has_frame(false);
+            a11y(&ssh_btn, "pitex.command.openViaSSH", "command.open_via_ssh");
+            let lang = self.language;
+            let menu_state = menu.clone();
+            ssh_btn.connect_clicked(move |_| {
+                menu_state.popdown();
+                crate::ssh_ui::present_open_via_ssh(lang);
+            });
+            vbox.append(&ssh_btn);
+        }
         menu.set_child(Some(&vbox));
         menu.set_parent(&anchor);
         menu.popup();
@@ -1600,7 +1649,7 @@ impl AppState {
     // ── build / terminal actions ───────────────────────────────────────────
 
     pub fn start_build_action(&mut self) {
-        self.model.start_build(&self.store);
+        self.model.start_build(&self.store, self.language);
         self.refresh_build_ui();
     }
 
@@ -2248,6 +2297,11 @@ impl AppState {
                     .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
                     .unwrap_or_else(|| tr(self.language, "app.name"));
                 window.set_title(Some(&title));
+                if let Some(title_widget) = ui.window_title.borrow().as_ref() {
+                    title_widget.set_title(&title);
+                    #[cfg(unix)]
+                    title_widget.set_subtitle(&self.model.remote_status_text(self.language));
+                }
             }
             // Rebuild the "+" menu — the Open Recent section follows the
             // model's `recent_documents` like the macOS File menu submenu.
@@ -2258,6 +2312,11 @@ impl AppState {
                 if !self.model.recent_documents.is_empty() {
                     let recents = gio::Menu::new();
                     for (i, url) in self.model.recent_documents.iter().enumerate() {
+                        // `recentTitle(for:)` — a mirror's label names its
+                        // device; anything else shows the folder name.
+                        #[cfg(unix)]
+                        let label = WorkspaceModel::recent_title(self.language, url);
+                        #[cfg(not(unix))]
                         let label = url
                             .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
@@ -2275,6 +2334,19 @@ impl AppState {
                         Some(&tr(self.language, "command.open_recent")),
                         &recents,
                     );
+                }
+                #[cfg(unix)]
+                {
+                    menu.append(
+                        Some(&tr(self.language, "command.open_via_ssh")),
+                        Some("win.openssh"),
+                    );
+                    if self.model.remote.is_some() {
+                        menu.append(
+                            Some(&tr(self.language, "command.sync_remote")),
+                            Some("win.syncremote"),
+                        );
+                    }
                 }
                 let tail = gio::Menu::new();
                 tail.append(
@@ -2717,6 +2789,104 @@ impl AppState {
                     ));
                 }
             }
+        });
+    }
+
+    // ── remote session UI (RemoteSupport.swift) ───────────────────────────
+
+    /// "Open via SSH…" — the menu/welcome entry point
+    /// (`presentOpenViaSSH`); the sheet needs the window to attach to.
+    #[cfg(unix)]
+    pub fn present_open_via_ssh(&mut self) {
+        crate::ssh_ui::present_open_via_ssh(self.language);
+    }
+
+    /// "Sync with Remote Device" — `await pushRemote(); await pullRemote()`.
+    #[cfg(unix)]
+    pub fn sync_remote_action(&mut self) {
+        self.model.sync_remote_now();
+        self.refresh_remote_status();
+    }
+
+    /// The WindowTitle subtitle + remote conflict banner after any remote
+    /// status or conflict change.
+    #[cfg(unix)]
+    pub fn refresh_remote_status(&self) {
+        let subtitle = self.model.remote_status_text(self.language);
+        UI.with(|ui| {
+            if let Some(title) = ui.window_title.borrow().as_ref() {
+                title.set_subtitle(&subtitle);
+            }
+        });
+        self.refresh_remote_conflict_banner();
+    }
+
+    /// `remoteConflicts` section — one row per file changed both here and
+    /// on the device; each row resolves that file either way on a worker.
+    #[cfg(unix)]
+    fn refresh_remote_conflict_banner(&self) {
+        UI.with(|ui| {
+            let banner_cell = ui.remote_conflict_banner.borrow();
+            let Some(banner) = banner_cell.as_ref() else { return };
+            let Some(remote) = self.model.remote.as_ref() else {
+                banner.set_visible(false);
+                return;
+            };
+            if let Some(title) = ui.remote_conflict_title.borrow().as_ref() {
+                title.set_text(&crate::l10n::trn(
+                    self.language,
+                    "remote.conflict.title",
+                    &[remote.device_name()],
+                ));
+            }
+            if let Some(rows) = ui.remote_conflict_rows.borrow().as_ref() {
+                while let Some(child) = rows.first_child() {
+                    rows.remove(&child);
+                }
+                for path in &remote.conflicts {
+                    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+                    row.set_margin_start(24);
+                    let name = gtk4::Label::new(Some(path));
+                    name.set_xalign(0.0);
+                    name.set_hexpand(true);
+                    name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+                    row.append(&name);
+                    let take_remote = gtk4::Button::with_label(&tr(
+                        self.language,
+                        "remote.conflict.take_remote",
+                    ));
+                    take_remote.add_css_class("flat");
+                    {
+                        let path = path.clone();
+                        take_remote.connect_clicked(move |_| {
+                            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                                let mut st = state.borrow_mut();
+                                st.model.resolve_remote_conflict(path.clone(), false);
+                                st.refresh_remote_status();
+                            }
+                        });
+                    }
+                    row.append(&take_remote);
+                    let keep_mine = gtk4::Button::with_label(&tr(
+                        self.language,
+                        "remote.conflict.keep_mine",
+                    ));
+                    keep_mine.add_css_class("flat");
+                    {
+                        let path = path.clone();
+                        keep_mine.connect_clicked(move |_| {
+                            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                                let mut st = state.borrow_mut();
+                                st.model.resolve_remote_conflict(path.clone(), true);
+                                st.refresh_remote_status();
+                            }
+                        });
+                    }
+                    row.append(&keep_mine);
+                    rows.append(&row);
+                }
+            }
+            banner.set_visible(!remote.conflicts.is_empty());
         });
     }
 
@@ -3671,7 +3841,18 @@ impl AppState {
                     // `open()`'s catch runs `await close()` — including the
                     // agent shutdown — before surfacing the failure.
                     self.shutdown_agent();
-                    self.model.open_failed(e);
+                    let message = match e {
+                        crate::model::OpenFailure::Error(message) => message,
+                        #[cfg(unix)]
+                        crate::model::OpenFailure::RemoteOpen { device, error } => {
+                            crate::l10n::trn(
+                                self.language,
+                                "remote.error.open",
+                                &[&device, &error],
+                            )
+                        }
+                    };
+                    self.model.open_failed(message);
                     self.refresh_phase();
                 }
             },
@@ -3788,6 +3969,59 @@ impl AppState {
                     editor.refresh_from_session();
                 }
                 self.refresh_after_document_change();
+                // `agentActivityDidFinish` — agent edits upload too.
+                #[cfg(unix)]
+                {
+                    self.model.push_remote();
+                    self.refresh_remote_status();
+                }
+            }
+            #[cfg(unix)]
+            WorkspaceMessage::RemotePushFinished { root, result } => {
+                self.model.apply_remote_push(&root, result);
+                self.refresh_remote_status();
+            }
+            #[cfg(unix)]
+            WorkspaceMessage::RemotePullFinished { root, result } => {
+                if self.model.apply_remote_pull(&root, result) {
+                    // `pullRemote` — adopt the downloaded bytes like a disk
+                    // change in every open session.
+                    let confirm = self.store.confirm_overwrite();
+                    self.model.refresh_after_agent_activity(confirm);
+                    if let Some(editor) = &self.editor {
+                        editor.refresh_from_session();
+                    }
+                    self.refresh_after_document_change();
+                }
+                self.refresh_remote_status();
+            }
+            #[cfg(unix)]
+            WorkspaceMessage::RemoteResolveFinished {
+                root,
+                keep_local,
+                result,
+            } => {
+                if self.model.apply_remote_resolve(&root, keep_local, result) {
+                    let confirm = self.store.confirm_overwrite();
+                    self.model.refresh_after_agent_activity(confirm);
+                    if let Some(editor) = &self.editor {
+                        editor.refresh_from_session();
+                    }
+                    self.refresh_after_document_change();
+                }
+                self.refresh_remote_status();
+            }
+            #[cfg(unix)]
+            WorkspaceMessage::RemoteBuildPrepFailed(problem) => {
+                // `prepareRemoteBuild` — the build ends before the executor
+                // ran; the message lands in the log console.
+                self.model.active_build_id = None;
+                self.model.build_state = WorkspaceBuildState::Failed(problem.clone());
+                self.model.build_log_text = problem;
+                self.model.console_section = ConsoleSection::Log;
+                self.model.bottom_panel_visible = true;
+                self.refresh_build_ui();
+                self.refresh_console_visibility();
             }
             WorkspaceMessage::GitRefreshed(result) => {
                 self.git_refresh_pending.set(false);
@@ -3908,6 +4142,25 @@ thread_local! {
     static SCHEME_PATH_ADDED: Cell<bool> = const { Cell::new(false) };
     /// A selection-sync idle is queued (caret moves set two marks).
     static SELECTION_SYNC_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// One firing of the debounced remote push (`schedulePush`): uploads when
+/// the generation is still current. A state already borrowed at fire time
+/// re-queues on idle — the push must happen, never be dropped.
+#[cfg(unix)]
+fn remote_push_attempt(expected: u64) {
+    let retry = STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else { return false };
+        let Ok(mut st) = state.try_borrow_mut() else { return true };
+        if st.remote_push_generation.get() != expected { return false; }
+        st.model.push_remote();
+        st.refresh_remote_status();
+        false
+    });
+    if retry {
+        glib::idle_add_local_once(move || remote_push_attempt(expected));
+    }
 }
 
 /// Per-edit analysis passes (highlight, fold, sidebar structure) wait for a
@@ -4537,6 +4790,8 @@ pub fn run(app_version: &str) -> i32 {
             if let Some(state) = slot.borrow().as_ref() {
                 if let Ok(mut st) = state.try_borrow_mut() {
                     st.model.wait_for_pending_writes();
+                    // `flushRemote` on terminate — the last upload, bounded.
+                    st.model.flush_remote(std::time::Duration::from_secs(10));
                 }
             }
         });
@@ -4670,6 +4925,11 @@ fn build_chrome(
     // `set_titlebar`), which is what gives Windows its min/max/close buttons.
     let toolbar_view = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let header = adw::HeaderBar::new();
+    // WindowTitle's subtitle line carries the remote status (macOS shows
+    // the same text in the title bar accessory).
+    let window_title = adw::WindowTitle::new(&tr(lang, "app.name"), "");
+    header.set_title_widget(Some(&window_title));
+    ui.window_title.replace(Some(window_title.clone()));
 
     // Navigation side: sidebar toggle.
     let sidebar_toggle = gtk4::Button::from_icon_name("sidebar-show-symbolic");
@@ -5035,6 +5295,27 @@ fn build_chrome(
             .connect_activate(move |_, _| state.borrow_mut().clear_recents_action());
     }
     window.add_action(&clearrecents_action);
+    // "Open via SSH…" / "Sync with Remote Device" — the remote-session
+    // entries in the "+" menu (File menu on macOS).
+    #[cfg(unix)]
+    {
+        let openssh_action = gio::SimpleAction::new("openssh", None);
+        {
+            let state = state.clone();
+            openssh_action.connect_activate(move |_, _| {
+                state.borrow_mut().present_open_via_ssh();
+            });
+        }
+        window.add_action(&openssh_action);
+        let syncremote_action = gio::SimpleAction::new("syncremote", None);
+        {
+            let state = state.clone();
+            syncremote_action.connect_activate(move |_, _| {
+                state.borrow_mut().sync_remote_action();
+            });
+        }
+        window.add_action(&syncremote_action);
+    }
 
     // Wait off-thread; idle applications no longer poll empty channels.
     std::thread::spawn(move || {
@@ -5103,6 +5384,18 @@ fn build_chrome(
             s.render_markdown_now();
         });
     }
+    // Window came forward: pull when the last pull is over a minute old
+    // (`pullRemoteIfStale` on `.onChange(of: scenePhase)`).
+    #[cfg(unix)]
+    {
+        let state = state.clone();
+        window.connect_notify_local(Some("is-active"), move |window, _| {
+            if !window.is_active() { return; }
+            let Ok(mut st) = state.try_borrow_mut() else { return };
+            st.model.pull_remote_if_stale();
+            st.refresh_remote_status();
+        });
+    }
     state.borrow_mut().refresh_phase();
     window.present();
 
@@ -5150,7 +5443,20 @@ fn empty_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
             state.borrow().present_open(Some(b.upcast_ref()));
         });
     }
-    page.set_child(Some(&button));
+    let welcome = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    welcome.set_halign(gtk4::Align::Center);
+    welcome.append(&button);
+    // The welcome screen's second entry point (macOS "Open via SSH…").
+    #[cfg(unix)]
+    {
+        let ssh_button = gtk4::Button::with_label(&tr(lang, "command.open_via_ssh"));
+        ssh_button.add_css_class("pill");
+        ssh_button.set_halign(gtk4::Align::Center);
+        a11y(&ssh_button, "pitex.openViaSSH", "command.open_via_ssh");
+        ssh_button.connect_clicked(move |_| crate::ssh_ui::present_open_via_ssh(lang));
+        welcome.append(&ssh_button);
+    }
+    page.set_child(Some(&welcome));
     ui.status_page.replace(Some(page.clone()));
     page.upcast()
 }
@@ -5647,6 +5953,33 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     banner.append(&keep_mine);
     ui.conflict_banner.replace(Some(banner.clone()));
     root.append(&banner);
+
+    // Remote conflict banner — files changed both here and on the device,
+    // resolved per file (`remoteConflicts` in the macOS workspace).
+    #[cfg(unix)]
+    {
+        let remote_banner = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        remote_banner.set_margin_start(9);
+        remote_banner.set_margin_end(9);
+        remote_banner.set_margin_top(4);
+        remote_banner.set_margin_bottom(4);
+        remote_banner.add_css_class("warning");
+        remote_banner.set_visible(false);
+        a11y(&remote_banner, "pitex.remoteConflict", "remote.conflict.title");
+        let head = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        head.append(&gtk4::Image::from_icon_name("network-server-symbolic"));
+        let remote_title = gtk4::Label::new(None);
+        remote_title.set_xalign(0.0);
+        remote_title.add_css_class("heading");
+        head.append(&remote_title);
+        remote_banner.append(&head);
+        let remote_rows = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        remote_banner.append(&remote_rows);
+        ui.remote_conflict_banner.replace(Some(remote_banner.clone()));
+        ui.remote_conflict_title.replace(Some(remote_title));
+        ui.remote_conflict_rows.replace(Some(remote_rows));
+        root.append(&remote_banner);
+    }
 
     // Custom-shell authority warning.
     let shell_warn = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);

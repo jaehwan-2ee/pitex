@@ -408,7 +408,7 @@
 "settings.ssh.connections" = "Conexiones SSH";
 "settings.ssh.empty" = "Aún no hay dispositivos. Añade un host de tu configuración SSH o introdúcelo manualmente.";
 "settings.ssh.add" = "Añadir conexión SSH…";
-"settings.ssh.note" = "Pitex se conecta con tus claves SSH y ~/.ssh/config (incluidos ssh-agent y el Llavero); no admite solicitudes de contraseña. Una carpeta remota se edita en una copia local que se sincroniza al abrir, guardar y compilar, y las compilaciones se ejecutan en el dispositivo remoto.";
+"settings.ssh.note" = "Pitex se conecta con tus claves SSH y ~/.ssh/config (incluido ssh-agent); no admite solicitudes de contraseña. Una carpeta remota se edita en una copia local que se sincroniza al abrir, guardar y compilar, y las compilaciones se ejecutan en el dispositivo remoto.";
 "settings.ssh.test" = "Probar";
 "settings.ssh.remove" = "Eliminar";
 "settings.ssh.test_tex" = "Conectado — latexmk: %@";
@@ -434,7 +434,7 @@
 "ssh.open.choose" = "Elegir carpeta";
 "ssh.open.change" = "Cambiar…";
 "ssh.open.no_connections" = "Aún no hay dispositivos SSH configurados.";
-"ssh.open.note" = "Los archivos se copian a este Mac para editarlos y se sincronizan de vuelta con el dispositivo; la compilación se ejecuta en el dispositivo.";
+"ssh.open.note" = "Los archivos se copian a este ordenador para editarlos y se sincronizan de vuelta con el dispositivo; la compilación se ejecuta en el dispositivo.";
 "ssh.open.cancel" = "Cancelar";
 "ssh.open.confirm" = "Abrir";
 "ssh.browse.title" = "Elegir una carpeta remota";

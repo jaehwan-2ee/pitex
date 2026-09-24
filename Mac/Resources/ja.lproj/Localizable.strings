@@ -409,7 +409,7 @@
 "settings.ssh.connections" = "SSH接続";
 "settings.ssh.empty" = "デバイスがまだありません。SSH設定からホストを追加するか、手動で入力してください。";
 "settings.ssh.add" = "SSH接続を追加…";
-"settings.ssh.note" = "PitexはSSHキーと~/.ssh/config(ssh-agentとキーチェーンを含む)で接続します。パスワード入力には対応していません。リモートフォルダはローカルのコピーで編集され、開く・保存・ビルドの際に同期されます。ビルドはリモートデバイスで実行されます。";
+"settings.ssh.note" = "PitexはSSHキーと~/.ssh/config(ssh-agentを含む)で接続します。パスワード入力には対応していません。リモートフォルダはローカルのコピーで編集され、開く・保存・ビルドの際に同期されます。ビルドはリモートデバイスで実行されます。";
 "settings.ssh.test" = "テスト";
 "settings.ssh.remove" = "削除";
 "settings.ssh.test_tex" = "接続済み — latexmk: %@";
@@ -435,7 +435,7 @@
 "ssh.open.choose" = "フォルダを選択";
 "ssh.open.change" = "変更…";
 "ssh.open.no_connections" = "SSHデバイスがまだ設定されていません。";
-"ssh.open.note" = "ファイルはこのMacにコピーして編集され、デバイスに同期されます。コンパイルはデバイスで実行されます。";
+"ssh.open.note" = "ファイルはこのコンピュータにコピーして編集され、デバイスに同期されます。コンパイルはデバイスで実行されます。";
 "ssh.open.cancel" = "キャンセル";
 "ssh.open.confirm" = "開く";
 "ssh.browse.title" = "リモートフォルダを選択";
@@ -449,9 +449,9 @@
 "remote.status.offline" = "%@ · オフライン — 再接続時に同期します";
 "remote.status.conflicts" = "%1$@ · 確認が必要なファイル %2$ld 件";
 "remote.error.open" = "%1$@のフォルダを開けませんでした: %2$@";
-"remote.build.conflicts" = "ビルドする前に、このMacとデバイスの両方で変更されたファイルを解決してください: %@";
+"remote.build.conflicts" = "ビルドする前に、このコンピュータとデバイスの両方で変更されたファイルを解決してください: %@";
 "remote.build.upload_failed" = "編集内容をアップロードできず、デバイスで古い版がビルドされるため中止しました: %@";
 "remote.recent_title" = "%1$@ (%2$@)";
-"remote.conflict.title" = "このMacと%@の両方で変更されたファイル";
+"remote.conflict.title" = "このコンピュータと%@の両方で変更されたファイル";
 "remote.conflict.take_remote" = "リモート版を使用";
 "remote.conflict.keep_mine" = "自分の版を保持";

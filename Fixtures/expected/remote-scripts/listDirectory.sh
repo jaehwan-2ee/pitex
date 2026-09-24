@@ -1,0 +1,1 @@
+if [ -n "$1" ]; then cd -- "$1" || exit 3; else cd || exit 3; fi; pwd -P; for f in *; do [ -e "$f" ] || continue; if [ -d "$f" ]; then printf 'D/%s\n' "$f"; else printf 'F/%s\n' "$f"; fi; done

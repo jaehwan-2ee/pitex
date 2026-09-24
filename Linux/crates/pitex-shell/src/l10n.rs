@@ -145,9 +145,64 @@ pub fn tr1(language: &str, key: &str, arg: &str) -> String {
         .replacen("%u", arg, 1)
 }
 
+/// `String(format:localized:, args)` — substitution like the macOS
+/// format strings, in one pass so substituted text is never re-scanned:
+/// `%N$@`/`%N$ld`/`%N$d`/`%N$u` take `args[N-1]`, bare `%@`/`%ld`/`%d`/`%u`
+/// take the next sequential argument, `%%` is a literal percent.
+pub fn trn(language: &str, key: &str, args: &[&str]) -> String {
+    substitute_args(&tr(language, key), args)
+}
+
+fn substitute_args(template: &str, args: &[&str]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    let mut next = 0usize;
+    'scan: while let Some(pos) = rest.find('%') {
+        out.push_str(&rest[..pos]);
+        let spec = &rest[pos + 1..];
+        if spec.starts_with('%') {
+            out.push('%');
+            rest = &spec[1..];
+            continue;
+        }
+        // `%N$kind` — the digits before `$` pick args[N-1].
+        if let Some(dollar) = spec
+            .find('$')
+            .filter(|d| !spec[..*d].is_empty() && spec[..*d].chars().all(|c| c.is_ascii_digit()))
+        {
+            if let Ok(n) = spec[..dollar].parse::<usize>() {
+                if n >= 1 && n <= args.len() {
+                    for kind in ["@", "ld", "d", "u"] {
+                        if spec[dollar + 1..].starts_with(kind) {
+                            out.push_str(args[n - 1]);
+                            rest = &spec[dollar + 1 + kind.len()..];
+                            continue 'scan;
+                        }
+                    }
+                }
+            }
+        }
+        for kind in ["@", "ld", "d", "u"] {
+            if spec.starts_with(kind) {
+                if next < args.len() {
+                    out.push_str(args[next]);
+                    next += 1;
+                }
+                rest = &spec[kind.len()..];
+                continue 'scan;
+            }
+        }
+        // Not a specifier — a literal percent.
+        out.push('%');
+        rest = spec;
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_strings;
+    use super::{parse_strings, substitute_args};
 
     #[test]
     fn parses_unicode_escapes() {
@@ -168,5 +223,30 @@ mod tests {
     fn parses_standard_escapes() {
         let m = parse_strings("\"k\" = \"a\\nb\\t\\\"q\\\"\\\\\";");
         assert_eq!(m.get("k").map(String::as_str), Some("a\nb\t\"q\"\\"));
+    }
+
+    #[test]
+    fn substitute_never_rescans_arguments() {
+        // An argument that itself looks like a specifier stays text.
+        assert_eq!(
+            substitute_args("a %@ b", &["%2$@ inside %@"]),
+            "a %2$@ inside %@ b"
+        );
+        assert_eq!(
+            substitute_args("%1$@ / %2$@", &["%@", "tail %1$ld"]),
+            "%@ / tail %1$ld"
+        );
+    }
+
+    #[test]
+    fn substitute_indexed_and_sequential_and_percent() {
+        assert_eq!(
+            substitute_args("%2$@ then %@ of %1$ld", &["7", "dev"]),
+            "dev then 7 of 7"
+        );
+        assert_eq!(substitute_args("%d+%u=%ld", &["1", "2", "3"]), "1+2=3");
+        assert_eq!(substitute_args("100%% done %@", &["x"]), "100% done x");
+        // Unknown or out-of-range specifiers stay literal.
+        assert_eq!(substitute_args("%9$@ %x %", &["a"]), "%9$@ %x %");
     }
 }

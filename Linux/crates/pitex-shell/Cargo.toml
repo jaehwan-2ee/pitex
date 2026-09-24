@@ -29,6 +29,7 @@ sourceview5.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+remote-core = { path = "../remote-core" }
 linux-platform = { path = "../linux-platform" }
 vte4 = { workspace = true, optional = true }
 webkit6 = { workspace = true, optional = true }

@@ -20,7 +20,11 @@ pub mod markdown_preview;
 pub mod model;
 pub mod panes;
 pub mod pdf;
+#[cfg(unix)]
+pub mod remote;
 mod search;
+#[cfg(unix)]
+mod ssh_ui;
 pub mod settings;
 pub mod synctex;
 pub mod update;

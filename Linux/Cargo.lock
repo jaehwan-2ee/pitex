@@ -801,6 +801,7 @@ dependencies = [
  "project-core",
  "project-feature",
  "regex",
+ "remote-core",
  "serde",
  "serde_json",
  "settings-feature",
@@ -903,6 +904,19 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "remote-core"
+version = "0.0.0"
+dependencies = [
+ "build-core",
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "tex-domain",
+ "uuid",
+]
 
 [[package]]
 name = "rustc_version"

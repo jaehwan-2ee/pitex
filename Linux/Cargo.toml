@@ -16,6 +16,7 @@ members = [
     "crates/build-feature",
     "crates/pdf-feature",
     "crates/settings-feature",
+    "crates/remote-core",
     "crates/linux-platform",
     "crates/gtk-editor-adapter",
     "crates/pitex-shell",

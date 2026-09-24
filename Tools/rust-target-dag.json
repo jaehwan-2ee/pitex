@@ -36,6 +36,7 @@
   "build-feature": "BuildFeature",
   "pdf-feature": "PDFFeature",
   "settings-feature": "SettingsFeature",
+  "remote-core": "RemoteCore",
   "gtk-editor-adapter": "EditorMacAdapter",
   "linux-platform": "MacPlatform",
   "pitex-shell": "AppShell",
@@ -130,6 +131,12 @@
     "app-ports"
    ]
   },
+  "remote-core": {
+   "dependencies": [
+    "build-core",
+    "tex-domain"
+   ]
+  },
   "gtk-editor-adapter": {
    "dependencies": [
     "editor-feature",
@@ -157,6 +164,7 @@
     "build-feature",
     "pdf-feature",
     "settings-feature",
+    "remote-core",
     "linux-platform",
     "gtk-editor-adapter"
    ]

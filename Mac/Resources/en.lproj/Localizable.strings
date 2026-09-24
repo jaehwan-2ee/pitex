@@ -408,7 +408,7 @@
 "settings.ssh.connections" = "SSH Connections";
 "settings.ssh.empty" = "No devices yet. Add a host from your SSH config or enter one manually.";
 "settings.ssh.add" = "Add SSH Connection…";
-"settings.ssh.note" = "Pitex connects with your SSH keys and ~/.ssh/config (ssh-agent and Keychain included); password prompts are not supported. A remote folder is edited in a local copy that syncs on open, save and build, and builds run on the remote device.";
+"settings.ssh.note" = "Pitex connects with your SSH keys and ~/.ssh/config (ssh-agent included); password prompts are not supported. A remote folder is edited in a local copy that syncs on open, save and build, and builds run on the remote device.";
 "settings.ssh.test" = "Test";
 "settings.ssh.remove" = "Remove";
 "settings.ssh.test_tex" = "Connected — latexmk: %@";
@@ -434,7 +434,7 @@
 "ssh.open.choose" = "Choose Folder";
 "ssh.open.change" = "Change…";
 "ssh.open.no_connections" = "No SSH devices are set up yet.";
-"ssh.open.note" = "Files are copied to this Mac for editing and synced back to the device; compiling runs on the device.";
+"ssh.open.note" = "Files are copied to this computer for editing and synced back to the device; compiling runs on the device.";
 "ssh.open.cancel" = "Cancel";
 "ssh.open.confirm" = "Open";
 "ssh.browse.title" = "Choose a Remote Folder";

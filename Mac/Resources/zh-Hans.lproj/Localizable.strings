@@ -408,7 +408,7 @@
 "settings.ssh.connections" = "SSH 连接";
 "settings.ssh.empty" = "还没有设备。可从 SSH 配置添加主机,或手动输入。";
 "settings.ssh.add" = "添加 SSH 连接…";
-"settings.ssh.note" = "Pitex 使用你的 SSH 密钥和 ~/.ssh/config(包括 ssh-agent 和钥匙串)连接,不支持密码提示。远程文件夹在本地副本中编辑,在打开、保存和构建时同步,构建在远程设备上运行。";
+"settings.ssh.note" = "Pitex 使用你的 SSH 密钥和 ~/.ssh/config(包括 ssh-agent)连接,不支持密码提示。远程文件夹在本地副本中编辑,在打开、保存和构建时同步,构建在远程设备上运行。";
 "settings.ssh.test" = "测试";
 "settings.ssh.remove" = "移除";
 "settings.ssh.test_tex" = "已连接 — latexmk:%@";
@@ -434,7 +434,7 @@
 "ssh.open.choose" = "选择文件夹";
 "ssh.open.change" = "更改…";
 "ssh.open.no_connections" = "尚未设置 SSH 设备。";
-"ssh.open.note" = "文件会复制到这台 Mac 上编辑并同步回设备;编译在设备上运行。";
+"ssh.open.note" = "文件会复制到这台电脑上编辑并同步回设备;编译在设备上运行。";
 "ssh.open.cancel" = "取消";
 "ssh.open.confirm" = "打开";
 "ssh.browse.title" = "选择远程文件夹";

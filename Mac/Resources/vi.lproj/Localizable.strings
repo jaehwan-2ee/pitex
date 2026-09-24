@@ -408,7 +408,7 @@
 "settings.ssh.connections" = "Kết nối SSH";
 "settings.ssh.empty" = "Chưa có thiết bị. Thêm máy chủ từ cấu hình SSH hoặc nhập thủ công.";
 "settings.ssh.add" = "Thêm kết nối SSH…";
-"settings.ssh.note" = "Pitex kết nối bằng khóa SSH và ~/.ssh/config của bạn (gồm ssh-agent và Chuỗi khóa); không hỗ trợ nhập mật khẩu. Thư mục từ xa được sửa trên bản sao cục bộ, đồng bộ khi mở, lưu và biên dịch; việc biên dịch chạy trên thiết bị từ xa.";
+"settings.ssh.note" = "Pitex kết nối bằng khóa SSH và ~/.ssh/config của bạn (gồm ssh-agent); không hỗ trợ nhập mật khẩu. Thư mục từ xa được sửa trên bản sao cục bộ, đồng bộ khi mở, lưu và biên dịch; việc biên dịch chạy trên thiết bị từ xa.";
 "settings.ssh.test" = "Kiểm tra";
 "settings.ssh.remove" = "Xóa";
 "settings.ssh.test_tex" = "Đã kết nối — latexmk: %@";
@@ -434,7 +434,7 @@
 "ssh.open.choose" = "Chọn thư mục";
 "ssh.open.change" = "Đổi…";
 "ssh.open.no_connections" = "Chưa thiết lập thiết bị SSH nào.";
-"ssh.open.note" = "Tệp được sao chép về máy Mac này để chỉnh sửa và đồng bộ lại lên thiết bị; việc biên dịch chạy trên thiết bị.";
+"ssh.open.note" = "Tệp được sao chép về máy tính này để chỉnh sửa và đồng bộ lại lên thiết bị; việc biên dịch chạy trên thiết bị.";
 "ssh.open.cancel" = "Hủy";
 "ssh.open.confirm" = "Mở";
 "ssh.browse.title" = "Chọn thư mục từ xa";

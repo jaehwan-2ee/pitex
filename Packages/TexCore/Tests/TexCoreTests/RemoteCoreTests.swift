@@ -159,6 +159,31 @@ final class RemoteCoreTests: XCTestCase {
         }
     }
 
+    /// The scripts on this platform must be byte-identical to the ones the
+    /// Rust port emits — `remote-core`'s tests read the same fixtures.
+    func testRemoteScriptsMatchGoldenFixtures() throws {
+        // This file is at Packages/TexCore/Tests/TexCoreTests/ — the
+        // repository root is five levels up.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtures = root.appendingPathComponent("Fixtures/expected/remote-scripts")
+        for (name, script) in [
+            ("hashTree.sh", RemoteScripts.hashTree),
+            ("probe.sh", RemoteScripts.probe),
+            ("commitUpload.sh", RemoteScripts.commitUpload),
+            ("tarOut.sh", RemoteScripts.tarOut),
+            ("listDirectory.sh", RemoteScripts.listDirectory),
+            ("loginExec.sh", RemoteScripts.loginExec),
+        ] {
+            let fixture = try Data(contentsOf: fixtures.appendingPathComponent(name))
+            XCTAssertEqual(
+                Data(script.utf8), fixture,
+                "\(name) must match the fixture shared with the Rust port")
+        }
+    }
+
     /// Runs a remote script with the local /bin/sh, as the device would.
     private func runScript(_ script: String, in root: URL, input: Data) throws -> String {
         let process = Process()

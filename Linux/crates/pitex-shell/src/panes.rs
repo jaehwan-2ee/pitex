@@ -2626,6 +2626,196 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     }
     window.add(&ai);
 
+    // ── SSH ──
+    // `SSHSettingsPane` — the devices "Open via SSH" can open folders on.
+    #[cfg(unix)]
+    {
+        let ssh_page = adw::PreferencesPage::new();
+        ssh_page.set_title(&tr(lang, "settings.tab.ssh"));
+        ssh_page.set_icon_name(Some("network-workgroup-symbolic"));
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&tr(lang, "settings.ssh.connections"));
+        group.set_description(Some(&tr(lang, "settings.ssh.note")));
+        ssh_page.add(&group);
+
+        // The rows rebuild whenever the store's connection list changes —
+        // the SwiftUI `ForEach(store.sshConnections)` redraw. Rows added to
+        // a PreferencesGroup are reparented into its internal listbox, so
+        // removals must go through the exact widgets `add()` saw.
+        let rows: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+        let rebuild: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+        *rebuild.borrow_mut() = Some({
+            let group = group.clone();
+            let window = window.clone();
+            let state = state.clone();
+            let rebuild = rebuild.clone();
+            let rows = rows.clone();
+            Rc::new(move || {
+                // Drop every row the last pass added.
+                for row in rows.borrow_mut().drain(..) {
+                    group.remove(&row);
+                }
+                let connections = state.borrow().store.ssh_connections();
+                if connections.is_empty() {
+                    let empty = adw::ActionRow::new();
+                    empty.set_title(&tr(lang, "settings.ssh.empty"));
+                    empty.set_selectable(false);
+                    group.add(&empty);
+                    rows.borrow_mut().push(empty.upcast());
+                }
+                for connection in &connections {
+                    // The check result is a line under the user@host:port
+                    // summary like the Swift `checks[id]` text — not a
+                    // suffix, so only the Test and trash buttons sit right.
+                    // A PreferencesRow keeps the card styling an ActionRow
+                    // would lose inside a plain wrapper box.
+                    let row = adw::PreferencesRow::new();
+                    a11y(&row, "pitex.settings.ssh.connection", "settings.ssh.connections");
+                    let content = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+                    content.set_margin_start(12);
+                    content.set_margin_end(12);
+                    content.set_margin_top(8);
+                    content.set_margin_bottom(8);
+                    let text_col = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+                    text_col.set_hexpand(true);
+                    text_col.set_valign(gtk4::Align::Center);
+                    let title = gtk4::Label::new(Some(&connection.name));
+                    title.set_xalign(0.0);
+                    let subtitle =
+                        gtk4::Label::new(Some(&crate::remote::connection_summary(connection)));
+                    subtitle.set_xalign(0.0);
+                    subtitle.add_css_class("dim-label");
+                    let status_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+                    status_box.set_margin_top(2);
+                    status_box.set_visible(false);
+                    let status_icon = gtk4::Image::new();
+                    status_icon.set_pixel_size(14);
+                    status_icon.set_valign(gtk4::Align::Start);
+                    let status = gtk4::Label::new(None);
+                    status.set_xalign(0.0);
+                    status.add_css_class("caption");
+                    status.set_wrap(true);
+                    status.set_lines(3);
+                    status.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                    status_box.append(&status_icon);
+                    status_box.append(&status);
+                    text_col.append(&title);
+                    text_col.append(&subtitle);
+                    text_col.append(&status_box);
+                    content.append(&text_col);
+                    let spinner = gtk4::Spinner::new();
+                    spinner.set_visible(false);
+                    spinner.set_valign(gtk4::Align::Center);
+                    content.append(&spinner);
+                    let test = gtk4::Button::with_label(&tr(lang, "settings.ssh.test"));
+                    test.set_valign(gtk4::Align::Center);
+                    {
+                        let connection = connection.clone();
+                        let spinner = spinner.clone();
+                        let button = test.clone();
+                        let test_c = test.clone();
+                        let status_box_c = status_box.clone();
+                        let status_icon_c = status_icon.clone();
+                        let status_c = status.clone();
+                        button.connect_clicked(move |_| {
+                            // `test(_:)` — `check()` then `which("latexmk")`
+                            // off the GTK thread; the result lands via
+                            // `MainContext::invoke` inside `test_connection`.
+                            spinner.set_visible(true);
+                            spinner.start();
+                            test_c.set_sensitive(false);
+                            let status_box = status_box_c.clone();
+                            let status_icon = status_icon_c.clone();
+                            let status = status_c.clone();
+                            let spinner = spinner.clone();
+                            let test = test_c.clone();
+                            crate::ssh_ui::test_connection(
+                                connection.clone(),
+                                lang,
+                                Rc::new(move |result| {
+                                    spinner.stop();
+                                    spinner.set_visible(false);
+                                    test.set_sensitive(true);
+                                    status_box.set_visible(true);
+                                    match result {
+                                        Ok(text) => {
+                                            status_icon.set_icon_name(Some(
+                                                "emblem-ok-symbolic",
+                                            ));
+                                            status_icon.remove_css_class("error");
+                                            status_icon.add_css_class("success");
+                                            status.set_text(&text);
+                                        }
+                                        Err(error) => {
+                                            status_icon.set_icon_name(Some(
+                                                "dialog-error-symbolic",
+                                            ));
+                                            status_icon.remove_css_class("success");
+                                            status_icon.add_css_class("error");
+                                            status.set_text(&error);
+                                        }
+                                    }
+                                }),
+                            );
+                        });
+                    }
+                    content.append(&test);
+                    let remove = gtk4::Button::from_icon_name("user-trash-symbolic");
+                    remove.add_css_class("flat");
+                    remove.set_valign(gtk4::Align::Center);
+                    crate::compat::initial_tooltip(&remove, &tr(lang, "settings.ssh.remove"));
+                    {
+                        let state = state.clone();
+                        let rebuild = rebuild.clone();
+                        let id = connection.id.clone();
+                        remove.connect_clicked(move |_| {
+                            if let Ok(mut s) = state.try_borrow_mut() {
+                                let mut connections = s.store.ssh_connections();
+                                connections.retain(|c| c.id != id);
+                                s.store.set_ssh_connections(&connections);
+                            }
+                            if let Some(run) = rebuild.borrow().as_ref() {
+                                run();
+                            }
+                        });
+                    }
+                    content.append(&remove);
+                    row.set_child(Some(&content));
+                    group.add(&row);
+                    rows.borrow_mut().push(row.upcast());
+                }
+                let add_row = adw::ActionRow::new();
+                let add = gtk4::Button::with_label(&tr(lang, "settings.ssh.add"));
+                a11y(&add, "pitex.settings.ssh.add", "settings.ssh.add");
+                {
+                    let window = window.clone();
+                    let rebuild = rebuild.clone();
+                    add.connect_clicked(move |_| {
+                        let parent = window.clone().upcast::<gtk4::Window>();
+                        let rebuild = rebuild.clone();
+                        crate::ssh_ui::present_add_connection(
+                            &parent,
+                            lang,
+                            Rc::new(move |_| {
+                                if let Some(run) = rebuild.borrow().as_ref() {
+                                    run();
+                                }
+                            }),
+                        );
+                    });
+                }
+                add_row.add_suffix(&add);
+                add_row.set_selectable(false);
+                group.add(&add_row);
+                rows.borrow_mut().push(add_row.upcast());
+            })
+        });
+        if let Some(run) = rebuild.borrow().as_ref() {
+            run();
+        }
+        window.add(&ssh_page);
+    }
+
     // ── General ──
     // Settings backup (export/import — the file moves between macOS and
     // Linux/Windows unchanged) plus the update controls. Check GitHub

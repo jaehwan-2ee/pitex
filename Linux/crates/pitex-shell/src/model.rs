@@ -36,6 +36,80 @@ use tex_domain::StableDocumentID;
 use crate::settings::SettingsStore;
 use crate::synctex::{SyncTeXBinding, SyncTeXRunner};
 
+/// `WorkspaceBuildExecutor` (RemoteSupport.swift) — routes each build to
+/// this computer or, while a remote project is open, to the device. The
+/// model and its `BuildOrchestrator` hold clones sharing one state, so the
+/// session can swap executors without touching the orchestrator.
+#[derive(Clone)]
+pub struct WorkspaceBuildExecutor {
+    shared: Arc<WorkspaceExecutorShared>,
+}
+
+struct WorkspaceExecutorShared {
+    local: StreamingBuildExecutor,
+    #[cfg(unix)]
+    remote: std::sync::Mutex<Option<Arc<remote_core::RemoteBuildExecutor>>>,
+}
+
+impl WorkspaceBuildExecutor {
+    pub fn new() -> Self {
+        Self {
+            shared: Arc::new(WorkspaceExecutorShared {
+                local: StreamingBuildExecutor::default(),
+                #[cfg(unix)]
+                remote: std::sync::Mutex::new(None),
+            }),
+        }
+    }
+
+    /// `use(_:)` — installs the remote executor for the open session.
+    #[cfg(unix)]
+    pub fn use_remote(&self, remote: Option<Arc<remote_core::RemoteBuildExecutor>>) {
+        *self
+            .shared
+            .remote
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = remote;
+    }
+
+    #[cfg(unix)]
+    fn remote(&self) -> Option<Arc<remote_core::RemoteBuildExecutor>> {
+        self.shared
+            .remote
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+}
+
+impl Default for WorkspaceBuildExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl build_core::BuildProcessExecuting for WorkspaceBuildExecutor {
+    fn execute(
+        &self,
+        request: &build_core::BuildProcessRequest,
+        output: &mut (dyn FnMut(build_core::BuildProcessOutput) + Send),
+    ) -> Result<build_core::BuildProcessResult, build_core::BuildProcessExecutorError> {
+        #[cfg(unix)]
+        if let Some(remote) = self.remote() {
+            return remote.execute(request, output);
+        }
+        self.shared.local.execute(request, output)
+    }
+
+    fn cancel(&self, build_id: &build_core::BuildID) {
+        #[cfg(unix)]
+        if let Some(remote) = self.remote() {
+            remote.cancel(build_id);
+        }
+        self.shared.local.cancel(build_id);
+    }
+}
+
 // ─── State enums (verbatim port) ────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -198,7 +272,33 @@ pub enum WorkspaceMessage {
     BindingRefreshed(Result<SyncTeXBinding, String>),
     /// A watched file changed on disk (debounce handled by the UI monitor).
     DiskChanged(PathBuf),
-    OpenFinished(Result<OpenedProject, String>),
+    OpenFinished(Result<OpenedProject, OpenFailure>),
+    /// A `pushRemote` worker finished — the new conflict list or the
+    /// failure. `root` identifies the mirror so a stale result cannot
+    /// land on a session opened after it.
+    #[cfg(unix)]
+    RemotePushFinished {
+        root: PathBuf,
+        result: Result<Vec<String>, String>,
+    },
+    /// A `pullRemote` worker finished — conflicts plus whether the local
+    /// tree changed (sessions then adopt the new bytes like a disk edit).
+    #[cfg(unix)]
+    RemotePullFinished {
+        root: PathBuf,
+        result: Result<remote_core::SyncReport, String>,
+    },
+    /// `resolveRemoteConflict` finished — the remaining conflict paths.
+    #[cfg(unix)]
+    RemoteResolveFinished {
+        root: PathBuf,
+        keep_local: bool,
+        result: Result<Vec<String>, String>,
+    },
+    /// `prepareRemoteBuild` failed — the build stops before the executor
+    /// ran (upload error, or files changed on both sides).
+    #[cfg(unix)]
+    RemoteBuildPrepFailed(String),
     ActivateFinished(Result<ActivatedDocument, String>),
     AgentActivityFinished,
     /// Git Integration refresh — `Ok(None)` means the project is not a
@@ -302,6 +402,11 @@ impl SessionWrites {
             .or_default()
             .clone();
         let _serialized = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // A remote project's sync never replaces this file between the
+        // disk check and the rename — the gate ticket makes the
+        // check-and-write one step (`MirrorWrites` in RemoteSupport.swift).
+        #[cfg(unix)]
+        let _write_gate = remote_core::MirrorWrites::shared().ticket();
         let snapshot = session.snapshot();
         let wanted = if resolving {
             DocumentSaveState::Conflicted
@@ -375,6 +480,14 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::BindingRefreshed(_) => write!(f, "BindingRefreshed"),
             Self::DiskChanged(p) => write!(f, "DiskChanged({p:?})"),
             Self::OpenFinished(_) => write!(f, "OpenFinished"),
+            #[cfg(unix)]
+            Self::RemotePushFinished { .. } => write!(f, "RemotePushFinished"),
+            #[cfg(unix)]
+            Self::RemotePullFinished { .. } => write!(f, "RemotePullFinished"),
+            #[cfg(unix)]
+            Self::RemoteResolveFinished { .. } => write!(f, "RemoteResolveFinished"),
+            #[cfg(unix)]
+            Self::RemoteBuildPrepFailed(_) => write!(f, "RemoteBuildPrepFailed"),
             Self::ActivateFinished(_) => write!(f, "ActivateFinished"),
             Self::AgentActivityFinished => write!(f, "AgentActivityFinished"),
             Self::GitRefreshed(_) => write!(f, "GitRefreshed"),
@@ -386,7 +499,20 @@ impl std::fmt::Debug for WorkspaceMessage {
     }
 }
 
-/// Payload for `open` completed off-thread.
+/// Why `open` failed. `RemoteOpen` carries the device name and error
+/// separately so the dispatch can format `remote.error.open` with the
+/// window's language.
+pub enum OpenFailure {
+    Error(String),
+    #[cfg(unix)]
+    RemoteOpen { device: String, error: String },
+}
+impl From<WorkspaceOpenError> for OpenFailure {
+    fn from(e: WorkspaceOpenError) -> Self {
+        Self::Error(e.to_string())
+    }
+}
+
 /// Payload for `open` completed off-thread. Everything expensive —
 /// build-target resolution (lexes every project file), bibliography
 /// parsing, the built-PDF read — is computed on the worker so the main
@@ -406,6 +532,10 @@ pub struct OpenedProject {
     pub label_scan: LabelScanCache,
     /// Bytes of the resolved main's PDF when it exists on disk.
     pub built_pdf: Option<Vec<u8>>,
+    /// `beginRemoteSession`'s workspace — `Some` when `selected` lies in
+    /// a remote mirror and the device answered (or a cache exists).
+    #[cfg(unix)]
+    pub remote: Option<Box<crate::remote::RemoteWorkspace>>,
 }
 /// Payload for `activate` completed off-thread — same off-thread contract
 /// as `OpenedProject`.
@@ -859,7 +989,18 @@ pub struct WorkspaceModel {
     pub showing_settings: bool,
 
     pub registry: std::sync::Arc<DocumentSessionRegistry>,
-    pub build_orchestrator: Arc<BuildOrchestrator<StreamingBuildExecutor>>,
+    pub build_orchestrator: Arc<BuildOrchestrator<WorkspaceBuildExecutor>>,
+    /// Shares the executor inside `build_orchestrator` — `use_remote`
+    /// switches routing without rebuilding the orchestrator.
+    pub workspace_executor: WorkspaceBuildExecutor,
+    /// `remote` — the SSH session while a remote (mirrored) project is
+    /// open (`RemoteWorkspace` in RemoteSupport.swift).
+    #[cfg(unix)]
+    pub remote: Option<crate::remote::RemoteWorkspace>,
+    /// `buildCancelRequested` — Cancel pressed while a remote build was
+    /// still in its upload/prep phase (nothing to cancel yet). Shared
+    /// with the build thread so the flag lands mid-upload.
+    pub build_cancel_requested: Arc<std::sync::atomic::AtomicBool>,
     pub synctex_runner: Arc<SyncTeXRunner>,
     pub registered_sessions: Vec<DocumentSession>,
     pub active_build_id: Option<BuildID>,
@@ -963,12 +1104,17 @@ pub struct WorkspaceModel {
     pub on_terminal_feed: Option<Box<dyn FnMut(String)>>,
     /// Command line for the terminal (as if typed + Return).
     pub on_terminal_send: Option<Box<dyn FnMut(String)>>,
+    /// `schedulePush` — a save landed in a remote mirror; the UI schedules
+    /// the debounced upload (glib owns the timer).
+    #[cfg(unix)]
+    pub on_remote_push_schedule: Option<Box<dyn FnMut()>>,
 }
 
 impl WorkspaceModel {
     const RECENTS_KEY: &'static str = "pitex.pref.workspace.recentDocuments";
 
     pub fn new() -> Self {
+        let workspace_executor = WorkspaceBuildExecutor::new();
         Self {
             phase: WorkspacePhase::NoProject,
             project_url: None,
@@ -989,9 +1135,11 @@ impl WorkspaceModel {
             ),
             showing_settings: false,
             registry: std::sync::Arc::new(DocumentSessionRegistry::new()),
-            build_orchestrator: Arc::new(BuildOrchestrator::new(
-                StreamingBuildExecutor::default(),
-            )),
+            build_orchestrator: Arc::new(BuildOrchestrator::new(workspace_executor.clone())),
+            workspace_executor,
+            #[cfg(unix)]
+            remote: None,
+            build_cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             synctex_runner: Arc::new(SyncTeXRunner::new()),
             registered_sessions: Vec::new(),
             active_build_id: None,
@@ -1049,6 +1197,8 @@ impl WorkspaceModel {
             on_selection_attachment: None,
             on_terminal_feed: None,
             on_terminal_send: None,
+            #[cfg(unix)]
+            on_remote_push_schedule: None,
         }
     }
 
@@ -1135,16 +1285,24 @@ impl WorkspaceModel {
         let registry = self.registry.clone();
         std::thread::spawn(move || {
             let result = Self::open_worker(registry, &selected);
-            let _ = sink.send(WorkspaceMessage::OpenFinished(
-                result.map_err(|e| e.to_string()),
-            ));
+            let _ = sink.send(WorkspaceMessage::OpenFinished(result));
         });
     }
 
     fn open_worker(
         registry: std::sync::Arc<DocumentSessionRegistry>,
         selected: &Path,
-    ) -> Result<OpenedProject, WorkspaceOpenError> {
+    ) -> Result<OpenedProject, OpenFailure> {
+        // A remote project's mirror is refreshed from the device before any
+        // file is read; an unreachable device with nothing cached fails here.
+        #[cfg(unix)]
+        let remote = match crate::remote::begin_remote_session(selected) {
+            crate::remote::RemoteOpen::NotRemote => None,
+            crate::remote::RemoteOpen::Failed { device, error } => {
+                return Err(OpenFailure::RemoteOpen { device, error });
+            }
+            crate::remote::RemoteOpen::Ready(workspace) => Some(workspace),
+        };
         let is_directory = selected.is_dir();
         // A chapter opened directly still opens its owning project — the
         // resolver walks up for a proven include edge or a root directive.
@@ -1174,7 +1332,7 @@ impl WorkspaceModel {
             .map_err(|_| WorkspaceOpenError::UnreadableProject)?;
         let verified = Self::read_exact_utf8(&initial_url)?;
         if verified != initial_text {
-            return Err(WorkspaceOpenError::ChangedWhileOpening);
+            return Err(WorkspaceOpenError::ChangedWhileOpening.into());
         }
         let resolution = Self::resolve_build_target(
             Some(&initial_url),
@@ -1208,11 +1366,19 @@ impl WorkspaceModel {
             files,
             initial_url,
             session,
+            #[cfg(unix)]
+            remote,
         })
     }
 
     /// Main-thread completion of `open`.
     pub fn apply_open(&mut self, store: &mut SettingsStore, opened: OpenedProject) {
+        #[cfg(unix)]
+        if let Some(workspace) = opened.remote {
+            // `remote = workspace; buildExecutor.use(workspace.executor)`.
+            self.workspace_executor.use_remote(Some(workspace.executor.clone()));
+            self.remote = Some(*workspace);
+        }
         self.project_url = Some(opened.root.clone());
         self.project_files = opened.files;
         self.files_revision += 1;
@@ -1403,7 +1569,16 @@ impl WorkspaceModel {
             self.set_snapshot(session.snapshot());
         }
         match result {
-            SaveResult::Saved | SaveResult::Skipped => {}
+            SaveResult::Saved | SaveResult::Skipped => {
+                #[cfg(unix)]
+                if result == SaveResult::Saved && self.remote.is_some() {
+                    // `schedulePush` — the debounced upload; the UI owns
+                    // the timer.
+                    if let Some(cb) = &mut self.on_remote_push_schedule {
+                        cb();
+                    }
+                }
+            }
             SaveResult::Conflict => {
                 self.synctex_state = WorkspaceSyncTeXState::Stale(
                     "The source changed on disk; SyncTeX locations may be stale.".into(),
@@ -1488,6 +1663,230 @@ impl WorkspaceModel {
         }
     }
 
+    // ── Remote session (RemoteSupport.swift port) ────────────────────────
+
+    /// `endRemoteSession` — the last upload, then back to local builds.
+    /// Close is async like the macOS one: the push runs detached so an
+    /// unreachable device cannot freeze the window for seconds. The
+    /// shared engine serializes it with any later open of the same
+    /// mirror; only `connect_shutdown`'s `flushRemote` bounds it on quit.
+    #[cfg(unix)]
+    fn end_remote_session(&mut self) {
+        let Some(remote) = self.remote.take() else { return };
+        let sync = remote.sync.clone();
+        std::thread::spawn(move || {
+            let _ = sync.push();
+        });
+        self.workspace_executor.use_remote(None);
+    }
+
+    /// `flushRemote` — the final push, bounded so an unreachable device
+    /// cannot hold the window or the app (unsent edits stay in the mirror
+    /// and go up on the next open).
+    #[cfg(unix)]
+    pub fn flush_remote(&mut self, timeout: std::time::Duration) {
+        let Some(remote) = &self.remote else { return };
+        let sync = remote.sync.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done_tx.send(sync.push());
+        });
+        match done_rx.recv_timeout(timeout) {
+            Ok(Ok(report)) => {
+                if let Some(remote) = self.remote.as_mut() {
+                    remote.conflicts = report.conflicts;
+                    remote.status = crate::remote::RemoteStatus::Synced;
+                }
+            }
+            Ok(Err(error)) => {
+                if let Some(remote) = self.remote.as_mut() {
+                    remote.status =
+                        crate::remote::RemoteStatus::Offline(error.to_string());
+                }
+            }
+            Err(_) => {} // timed out — the worker finishes on its own
+        }
+    }
+
+    /// `pushRemote` — upload local edits (after saves, agent runs and
+    /// before builds). Runs on a worker; the result lands through
+    /// `RemotePushFinished`.
+    #[cfg(unix)]
+    pub fn push_remote(&mut self) {
+        let Some(remote) = self.remote.as_mut() else { return };
+        remote.status = crate::remote::RemoteStatus::Syncing;
+        let sync = remote.sync.clone();
+        let root = remote.sync.mirror.directory.clone();
+        if let Some(sink) = self.sink() {
+            std::thread::spawn(move || {
+                let _ = sink.send(WorkspaceMessage::RemotePushFinished {
+                    root,
+                    result: sync.push().map(|r| r.conflicts).map_err(|e| e.to_string()),
+                });
+            });
+        }
+    }
+
+    /// `pullRemote` — bring down changes made on the device; the dispatch
+    /// then adopts them in open documents (clean ones reload, dirty ones
+    /// flag a conflict).
+    #[cfg(unix)]
+    pub fn pull_remote(&mut self) {
+        let Some(remote) = self.remote.as_mut() else { return };
+        remote.status = crate::remote::RemoteStatus::Syncing;
+        let sync = remote.sync.clone();
+        let root = remote.sync.mirror.directory.clone();
+        if let Some(sink) = self.sink() {
+            std::thread::spawn(move || {
+                let _ = sink.send(WorkspaceMessage::RemotePullFinished {
+                    root,
+                    result: sync.pull().map_err(|e| e.to_string()),
+                });
+            });
+        }
+    }
+
+    /// Window came forward: pull when the last pull is over a minute old
+    /// (`pullRemoteIfStale`).
+    #[cfg(unix)]
+    pub fn pull_remote_if_stale(&mut self) {
+        let stale = self
+            .remote
+            .as_ref()
+            .map(|r| {
+                !matches!(r.status, crate::remote::RemoteStatus::Syncing)
+                    && r.last_pull
+                        .map(|t| t.elapsed() > std::time::Duration::from_secs(60))
+                        .unwrap_or(true)
+            })
+            .unwrap_or(false);
+        if stale {
+            self.pull_remote();
+        }
+    }
+
+    /// "Sync with Remote Device" — `await pushRemote(); await pullRemote()`.
+    #[cfg(unix)]
+    pub fn sync_remote_now(&mut self) {
+        let Some(remote) = self.remote.as_mut() else { return };
+        remote.status = crate::remote::RemoteStatus::Syncing;
+        let sync = remote.sync.clone();
+        let root = remote.sync.mirror.directory.clone();
+        let Some(sink) = self.sink() else { return };
+        std::thread::spawn(move || {
+            let _ = sink.send(WorkspaceMessage::RemotePushFinished {
+                root: root.clone(),
+                result: sync.push().map(|r| r.conflicts).map_err(|e| e.to_string()),
+            });
+            let _ = sink.send(WorkspaceMessage::RemotePullFinished {
+                root,
+                result: sync.pull().map_err(|e| e.to_string()),
+            });
+        });
+    }
+
+    /// `resolveRemoteConflict` — settle one conflicting file either way.
+    #[cfg(unix)]
+    pub fn resolve_remote_conflict(&mut self, path: String, keep_local: bool) {
+        let Some(remote) = self.remote.as_mut() else { return };
+        remote.status = crate::remote::RemoteStatus::Syncing;
+        let sync = remote.sync.clone();
+        let root = remote.sync.mirror.directory.clone();
+        if let Some(sink) = self.sink() {
+            std::thread::spawn(move || {
+                let _ = sink.send(WorkspaceMessage::RemoteResolveFinished {
+                    root,
+                    keep_local,
+                    result: sync.resolve(&path, keep_local).map_err(|e| e.to_string()),
+                });
+            });
+        }
+    }
+
+    /// Applies a finished push — ignores results from a session that
+    /// already closed.
+    #[cfg(unix)]
+    pub fn apply_remote_push(&mut self, root: &Path, result: Result<Vec<String>, String>) {
+        let Some(remote) = self.remote.as_mut() else { return };
+        if remote.sync.mirror.directory != root {
+            return;
+        }
+        match result {
+            Ok(conflicts) => {
+                remote.conflicts = conflicts;
+                remote.status = crate::remote::RemoteStatus::Synced;
+            }
+            Err(error) => remote.status = crate::remote::RemoteStatus::Offline(error),
+        }
+    }
+
+    /// Applies a finished pull — returns `changedLocally` so the dispatch
+    /// can adopt the new bytes in open sessions.
+    #[cfg(unix)]
+    pub fn apply_remote_pull(
+        &mut self,
+        root: &Path,
+        result: Result<remote_core::SyncReport, String>,
+    ) -> bool {
+        let Some(remote) = self.remote.as_mut() else { return false };
+        if remote.sync.mirror.directory != root {
+            return false;
+        }
+        match result {
+            Ok(report) => {
+                remote.conflicts = report.conflicts.clone();
+                remote.last_pull = Some(std::time::Instant::now());
+                remote.status = crate::remote::RemoteStatus::Synced;
+                report.changed_locally()
+            }
+            Err(error) => {
+                remote.status = crate::remote::RemoteStatus::Offline(error);
+                false
+            }
+        }
+    }
+
+    /// Applies a finished conflict resolution — returns true when the
+    /// local copy changed (`keep_local: false` adopts the remote bytes).
+    #[cfg(unix)]
+    pub fn apply_remote_resolve(
+        &mut self,
+        root: &Path,
+        keep_local: bool,
+        result: Result<Vec<String>, String>,
+    ) -> bool {
+        let Some(remote) = self.remote.as_mut() else { return false };
+        if remote.sync.mirror.directory != root {
+            return false;
+        }
+        match result {
+            Ok(remaining) => {
+                remote.conflicts = remaining;
+                remote.status = crate::remote::RemoteStatus::Synced;
+                !keep_local
+            }
+            Err(error) => {
+                remote.status = crate::remote::RemoteStatus::Offline(error);
+                false
+            }
+        }
+    }
+
+    /// `remote.statusText` — the window-title subtitle.
+    #[cfg(unix)]
+    pub fn remote_status_text(&self, language: &str) -> String {
+        self.remote
+            .as_ref()
+            .map(|remote| crate::remote::status_text(language, remote))
+            .unwrap_or_default()
+    }
+
+    /// `recentTitle(for:)` — a mirror's Open Recent label names its device.
+    #[cfg(unix)]
+    pub fn recent_title(language: &str, url: &Path) -> String {
+        crate::remote::recent_title(language, url)
+    }
+
     pub fn close_document(&mut self, url: &Path) {
         let Some(root) = self.project_url.clone() else { return };
         if let Some(index) = self.registered_sessions.iter().position(|s| {
@@ -1535,9 +1934,12 @@ impl WorkspaceModel {
     /// `close` — watchers/monitors are owned by the UI which unsubscribes
     /// first; the model clears all project state like the Swift method.
     pub fn close(&mut self) {
-        // In-flight saves land before their sessions go away.
+        // In-flight saves land before their sessions go away, and a
+        // remote project uploads them before its mirror is let go.
         self.wait_for_pending_writes();
         self.writes.own().clear();
+        #[cfg(unix)]
+        self.end_remote_session();
         // Release the capability lease first — `endAccess(capabilityLease)`.
         if let Some(lease) = self.capability_lease.take() {
             let _ = self.files.end_access(lease);
@@ -1588,17 +1990,26 @@ impl WorkspaceModel {
     /// File → New inside the open project.
     pub fn create_document(&mut self, sink: Sender<WorkspaceMessage>) {
         let Some(root) = self.project_url.clone() else { return };
-        let mut index = 1;
-        let mut url = root.join("untitled.tex");
-        while url.exists() {
-            index += 1;
-            url = root.join(format!("untitled-{index}.tex"));
-        }
-        match std::fs::write(
-            &url,
-            "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n",
-        ) {
-            Ok(()) => {
+        // Name choice and write as one step against a remote sync commit —
+        // the ticket ends with the write so `activate_document` can take
+        // its own later.
+        let written = {
+            #[cfg(unix)]
+            let _write_gate = remote_core::MirrorWrites::shared().ticket();
+            let mut index = 1;
+            let mut url = root.join("untitled.tex");
+            while url.exists() {
+                index += 1;
+                url = root.join(format!("untitled-{index}.tex"));
+            }
+            std::fs::write(
+                &url,
+                "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n",
+            )
+            .map(|()| url)
+        };
+        match written {
+            Ok(url) => {
                 if !self.project_files.contains(&url) {
                     self.project_files.push(url.clone());
                     sort_files(&mut self.project_files);
@@ -1613,9 +2024,13 @@ impl WorkspaceModel {
     /// File → Save As…
     pub fn save_as(&mut self, url: PathBuf, sink: Sender<WorkspaceMessage>) {
         let Some(snapshot) = self.document_snapshot.clone() else { return };
-        if let Err(e) = std::fs::write(&url, &snapshot.text) {
-            self.phase = WorkspacePhase::Failed(e.to_string());
-            return;
+        {
+            #[cfg(unix)]
+            let _write_gate = remote_core::MirrorWrites::shared().ticket();
+            if let Err(e) = std::fs::write(&url, &snapshot.text) {
+                self.phase = WorkspacePhase::Failed(e.to_string());
+                return;
+            }
         }
         if let Some(root) = self.project_url.clone() {
             if Self::relative_path(&url, &root).is_ok() {
@@ -2099,16 +2514,22 @@ impl WorkspaceModel {
         if self.todo_session_is_dirty(&item.url) {
             return;
         }
-        let Ok(disk) = Self::read_exact_utf8(&item.url) else { return };
-        let Some((range, replacement)) = Self::todo_transform_for(&disk, item, &edit) else {
-            return;
+        // Read-check-write as one step against a remote sync commit —
+        // released before `process_disk_change`, which may write itself.
+        let outcome = {
+            #[cfg(unix)]
+            let _write_gate = remote_core::MirrorWrites::shared().ticket();
+            let Ok(disk) = Self::read_exact_utf8(&item.url) else { return };
+            let Some((range, replacement)) = Self::todo_transform_for(&disk, item, &edit) else {
+                return;
+            };
+            let new_text = format!("{}{}{}", &disk[..range.start], replacement, &disk[range.end..]);
+            AtomicDocumentStore::new().save(
+                &new_text,
+                &item.url,
+                Some(DiskContentHash::hashing(&disk)),
+            )
         };
-        let new_text = format!("{}{}{}", &disk[..range.start], replacement, &disk[range.end..]);
-        let outcome = AtomicDocumentStore::new().save(
-            &new_text,
-            &item.url,
-            Some(DiskContentHash::hashing(&disk)),
-        );
         if matches!(outcome, DocumentSaveOutcome::Saved(_)) {
             self.process_disk_change(&item.url, true);
         }
@@ -2221,17 +2642,21 @@ impl WorkspaceModel {
         if self.todo_session_is_dirty(&target) {
             return;
         }
-        let Ok(disk) = Self::read_exact_utf8(&target) else { return };
-        let mut new_text = disk.clone();
-        if !new_text.is_empty() && !new_text.ends_with('\n') {
-            new_text.push('\n');
-        }
-        new_text.push_str("% TODO: \n");
-        let outcome = AtomicDocumentStore::new().save(
-            &new_text,
-            &target,
-            Some(DiskContentHash::hashing(&disk)),
-        );
+        let outcome = {
+            #[cfg(unix)]
+            let _write_gate = remote_core::MirrorWrites::shared().ticket();
+            let Ok(disk) = Self::read_exact_utf8(&target) else { return };
+            let mut new_text = disk.clone();
+            if !new_text.is_empty() && !new_text.ends_with('\n') {
+                new_text.push('\n');
+            }
+            new_text.push_str("% TODO: \n");
+            AtomicDocumentStore::new().save(
+                &new_text,
+                &target,
+                Some(DiskContentHash::hashing(&disk)),
+            )
+        };
         if matches!(outcome, DocumentSaveOutcome::Saved(_)) {
             self.process_disk_change(&target, true);
         }
@@ -2925,7 +3350,7 @@ impl WorkspaceModel {
     /// `startBuild` — verbatim port: main-document session adoption, persist
     /// dirty sessions before root discovery, generated-path declaration,
     /// pipeline selection.
-    pub fn start_build(&mut self, store: &SettingsStore) {
+    pub fn start_build(&mut self, store: &SettingsStore, language: &'static str) {
         if self.is_building() {
             return;
         }
@@ -2999,6 +3424,14 @@ impl WorkspaceModel {
             .iter()
             .map(|ext| format!("{stem}.{ext}"))
             .collect();
+        // `prepareRemoteBuild(outputs: generated.sorted(), required: pdf)`
+        // — computed now; `generated` is consumed by `BuildTarget::new`.
+        #[cfg(unix)]
+        let generated_sorted: Vec<String> = {
+            let mut sorted: Vec<String> = generated.iter().cloned().collect();
+            sorted.sort();
+            sorted
+        };
         let output_pdf = format!("{stem}.pdf");
         let target = match BuildTarget::new(
             &root,
@@ -3080,9 +3513,65 @@ impl WorkspaceModel {
         self.build_issues.clear();
 
         let orchestrator = self.build_orchestrator.clone();
+        // A remote project compiles on its device: pending edits go up
+        // first, and the executor brings these outputs back afterwards.
+        #[cfg(unix)]
+        let remote_build = self.remote.as_ref().map(|r| {
+            (
+                r.sync.clone(),
+                r.executor.clone(),
+                r.sync.mirror.directory.clone(),
+            )
+        });
+        let cancel_flag = self.build_cancel_requested.clone();
+        cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
         if let Some(sink) = self.sink() {
             let handler_sink = sink.clone();
             std::thread::spawn(move || {
+                #[cfg(unix)]
+                if let Some((sync, executor, mirror_root)) = remote_build {
+                    // `prepareRemoteBuild` — the upload first, then tell the
+                    // executor which outputs to bring back.
+                    let problem = match sync.push() {
+                        Ok(report) => {
+                            let _ = sink.send(WorkspaceMessage::RemotePushFinished {
+                                root: mirror_root.clone(),
+                                result: Ok(report.conflicts.clone()),
+                            });
+                            if report.conflicts.is_empty() {
+                                None
+                            } else {
+                                Some(crate::l10n::trn(
+                                    language,
+                                    "remote.build.conflicts",
+                                    &[&report.conflicts.join(", ")],
+                                ))
+                            }
+                        }
+                        Err(error) => {
+                            let _ = sink.send(WorkspaceMessage::RemotePushFinished {
+                                root: mirror_root,
+                                result: Err(error.to_string()),
+                            });
+                            Some(crate::l10n::trn(
+                                language,
+                                "remote.build.upload_failed",
+                                &[&error.to_string()],
+                            ))
+                        }
+                    };
+                    if let Some(problem) = problem {
+                        let _ = sink.send(WorkspaceMessage::RemoteBuildPrepFailed(problem));
+                        return;
+                    }
+                    executor.set_outputs(generated_sorted, Some(output_pdf.clone()));
+                    if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                        let _ = sink.send(WorkspaceMessage::RemoteBuildPrepFailed(
+                            "Build cancelled.".into(),
+                        ));
+                        return;
+                    }
+                }
                 let outcome = orchestrator.build(
                     build_id,
                     Arc::new(move |event| {
@@ -3173,6 +3662,12 @@ impl WorkspaceModel {
     }
 
     pub fn cancel_build(&mut self) {
+        // A remote build may still be uploading, with nothing running yet
+        // for the orchestrator to cancel.
+        if self.is_building() {
+            self.build_cancel_requested
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         let _ = self.build_orchestrator.cancel(2_000);
     }
 
