@@ -232,18 +232,14 @@ impl GhostCompletionCoordinator {
 
         // The label is fixed to the overlay, not the document — scrolling
         // re-anchors it to the caret's window position, like the fold chip
-        // layer's `queue_draw` on adjustment changes.
-        for adjustment in [view.hadjustment(), view.vadjustment()]
-            .into_iter()
-            .flatten()
-        {
-            let weak = Rc::downgrade(self);
-            adjustment.connect_value_changed(move |_| {
-                if let Some(engine) = weak.upgrade() {
-                    engine.reposition();
-                }
-            });
-        }
+        // layer's `queue_draw` on adjustment changes. Attached before the
+        // view enters the scroller, hence the helper.
+        let weak = Rc::downgrade(self);
+        crate::app_ui::on_view_scroll(&view, move || {
+            if let Some(engine) = weak.upgrade() {
+                engine.reposition();
+            }
+        });
     }
 
     /// Edits and caret moves both count as "the user kept typing": drop the

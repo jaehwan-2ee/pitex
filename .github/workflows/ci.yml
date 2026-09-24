@@ -103,6 +103,9 @@ jobs:
       - name: Search navigation and match counter
         run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
         working-directory: Linux
+      - name: Replaced editors release their buffer and state
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib editor_release_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
       - name: Native GTK editing and PDF worker checks
         run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
         working-directory: Linux
@@ -146,6 +149,9 @@ jobs:
         working-directory: Linux
       - name: Search navigation and match counter on GTK 4.6
         run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Replaced editors release their buffer and state on GTK 4.6
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features editor_release_tests -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Million-file Git pane on GTK 4.6
         timeout-minutes: 3

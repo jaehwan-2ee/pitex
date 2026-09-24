@@ -19,11 +19,15 @@ use std::rc::{Rc, Weak};
 use editor_feature::fold::{compute_line_starts, find_regions_with_tokens, FoldRegion};
 
 const FOLD_TAG: &str = "pitex.fold.hidden";
-const RECOMPUTE_DEBOUNCE_MS: u64 = 160;
+/// A beat after the highlight pass (`ANALYSIS_DEBOUNCE`), whose
+/// `recompute_with_tokens` normally lands first and cancels this one — the
+/// document is then lexed once per typing pause.
+const RECOMPUTE_DEBOUNCE: std::time::Duration =
+    crate::app_ui::ANALYSIS_DEBOUNCE.saturating_add(std::time::Duration::from_millis(100));
 
 /// The fold engine bound to one `sourceview5::View`/`Buffer` pair —
 /// `FoldEngine` + `FoldChipOverlayView` in one GTK-native unit. Recomputes
-/// on buffer changes (120ms debounce like `scheduleHighlight`), carries
+/// on buffer changes (debounced behind `scheduleHighlight`), carries
 /// folded state across recomputes by signature, and drives the gutter
 /// renderer + chip overlay. `Rc`-bound; never crosses threads.
 pub struct FoldEngine {
@@ -35,7 +39,7 @@ pub struct FoldEngine {
     hidden_lines: RefCell<HashSet<usize>>,
     header_lines: RefCell<HashSet<usize>>,
     enabled: Cell<bool>,
-    recompute_pending: Cell<bool>,
+    recompute_source: RefCell<Option<glib::SourceId>>,
     dialect: TeXDialect,
     /// Chip rects in overlay coordinates: (x, y, w, h, header_line) rebuilt
     /// each draw for hit-testing — `FoldChipOverlayView.chipRects`.
@@ -82,7 +86,7 @@ impl FoldEngine {
             hidden_lines: RefCell::new(HashSet::new()),
             header_lines: RefCell::new(HashSet::new()),
             enabled: Cell::new(enabled),
-            recompute_pending: Cell::new(false),
+            recompute_source: RefCell::new(None),
             dialect,
             chip_rects: RefCell::new(Vec::new()),
             chip_area,
@@ -189,29 +193,35 @@ impl FoldEngine {
 
         // The chip layer overlays the scroller (fixed to the visible area),
         // so scroll/zoom must redraw it — rects are recomputed per draw.
-        for adjustment in [self.view.hadjustment(), self.view.vadjustment()].into_iter().flatten() {
-            let weak = Rc::downgrade(self);
-            adjustment.connect_value_changed(move |_| {
-                if let Some(engine) = weak.upgrade() {
-                    engine.chip_area.queue_draw();
-                }
-            });
-        }
+        // Attached before the view enters the scroller, hence the helper.
+        let weak = Rc::downgrade(self);
+        crate::app_ui::on_view_scroll(&self.view, move || {
+            if let Some(engine) = weak.upgrade() {
+                engine.chip_area.queue_draw();
+            }
+        });
     }
 
     fn schedule_recompute(&self) {
-        if !self.enabled.get() || self.recompute_pending.replace(true) {
+        if !self.enabled.get() {
             return;
         }
+        self.cancel_scheduled_recompute();
         let weak = self.self_weak.borrow().clone();
-        glib::timeout_add_local_once(
-            std::time::Duration::from_millis(RECOMPUTE_DEBOUNCE_MS),
-            move || {
-                if let Some(engine) = weak.upgrade() {
-                    if engine.recompute_pending.replace(false) { engine.recompute(); }
-                }
-            },
-        );
+        let id = glib::timeout_add_local_once(RECOMPUTE_DEBOUNCE, move || {
+            if let Some(engine) = weak.upgrade() {
+                // Fired: forget the id before anything could remove it.
+                engine.recompute_source.borrow_mut().take();
+                engine.recompute();
+            }
+        });
+        *self.recompute_source.borrow_mut() = Some(id);
+    }
+
+    fn cancel_scheduled_recompute(&self) {
+        if let Some(id) = self.recompute_source.borrow_mut().take() {
+            id.remove();
+        }
     }
 
     /// `recompute()` — rescan regions, restore folded state by signature.
@@ -223,7 +233,7 @@ impl FoldEngine {
     }
 
     pub fn recompute_with_tokens(&self, text: &str, tokens: &[LanguageToken]) {
-        self.recompute_pending.set(false);
+        self.cancel_scheduled_recompute();
         if !self.enabled.get() { return; }
         let starts = compute_line_starts(&text);
         let previous: Vec<String> = self
@@ -255,8 +265,9 @@ impl FoldEngine {
         }
         let mut lines = HashSet::new();
         let mut header_lines = HashSet::new();
-        let text = self.buffer_text();
-        let total_chars = text.chars().count() as i32;
+        // Every fold tag was just removed, so the buffer's own count is the
+        // full text's — no document copy needed.
+        let total_chars = self.buffer.char_count();
         {
             let line_starts = self.line_starts.borrow();
             for region in self.regions.borrow().iter() {
@@ -301,6 +312,9 @@ impl FoldEngine {
         self.renderer.queue_draw();
     }
 
+    /// The whole document, folded (invisible) ranges included — excluding
+    /// them made `recompute` lex a text whose lines no longer matched the
+    /// buffer, misplacing every fold after the first hidden range.
     fn buffer_text(&self) -> String {
         let (s, e) = self.buffer.bounds();
         self.buffer.text(&s, &e, true).to_string()

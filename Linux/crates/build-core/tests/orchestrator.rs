@@ -325,6 +325,57 @@ fn successful_multi_pass_build_runs_in_order_and_publishes_ordered_logs() {
 }
 
 #[test]
+fn log_text_survives_utf8_sequences_split_across_chunks() {
+    let text = "한국어 로그 👩🏽‍💻 é\n";
+    let bytes = text.as_bytes();
+    let stdout_of = |chunks: Vec<BuildProcessOutput>| {
+        let fixture = Fixture::new(&[]);
+        let fake = Arc::new(FakeExecutor::new(vec![Behavior::Success {
+            chunks,
+            pdf: Some(b"pdf".to_vec()),
+        }]));
+        let orchestrator = BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake)));
+        orchestrator
+            .select(
+                fixture.target.clone(),
+                BuildPipeline::Stages(vec![BuildStagePlan { tool: BuildToolStage::Pdflatex }]),
+            )
+            .unwrap();
+        let events = EventRecorder::new();
+        orchestrator.build(BuildID::new("utf8").unwrap(), events.handler()).unwrap();
+        let sequences = events.log_sequences();
+        assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]), "{sequences:?}");
+        let stdout: String = events
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                BuildEvent::Log(entry) if entry.channel == BuildLogChannel::StandardOutput => {
+                    Some(entry.text.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        stdout
+    };
+    let raw = |channel, bytes: &[u8]| BuildProcessOutput { channel, bytes: bytes.to_vec() };
+    for split in 1..bytes.len() {
+        // A stderr chunk in between must not disturb stdout's carry.
+        let stdout = stdout_of(vec![
+            raw(BuildLogChannel::StandardOutput, &bytes[..split]),
+            raw(BuildLogChannel::StandardError, b"err\n"),
+            raw(BuildLogChannel::StandardOutput, &bytes[split..]),
+        ]);
+        assert_eq!(stdout, text, "split at byte {split}");
+    }
+    // A sequence still cut off when the process ends stays in the log,
+    // decoded lossily as before.
+    let cut = "a한".as_bytes();
+    assert_eq!(stdout_of(vec![raw(BuildLogChannel::StandardOutput, &cut[..3])]), "a\u{FFFD}");
+}
+
+#[test]
 fn tool_missing_fails_closed_without_trying_another_stage() {
     let fixture = Fixture::new(&[]);
     let fake = Arc::new(FakeExecutor::new(vec![Behavior::ToolMissing("xelatex".into())]));

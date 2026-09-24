@@ -129,9 +129,14 @@ impl GtkEditorAdapter {
         // `preedit-changed` fires with the current preedit string, empty
         // included (commit/cancel), on the view's IM context.
         {
-            let shared = shared.clone();
+            // Weak: GtkSourceView never finalizes a view with gutters, so a
+            // strong `Shared` here outlived every replaced editor — with its
+            // two document copies and the decoration snapshot.
+            let shared = Rc::downgrade(&shared);
             view.connect_preedit_changed(move |_, preedit| {
-                shared.has_preedit.set(!preedit.is_empty());
+                if let Some(shared) = shared.upgrade() {
+                    shared.has_preedit.set(!preedit.is_empty());
+                }
             });
         }
 
@@ -147,6 +152,14 @@ impl GtkEditorAdapter {
 
     pub fn view(&self) -> &sourceview5::View {
         &self.view
+    }
+
+    /// Dies with the adapter's shared state (document copies, decoration
+    /// snapshot) — lets tests prove nothing outlives a replaced editor.
+    #[doc(hidden)]
+    pub fn lifetime_probe(&self) -> std::rc::Weak<dyn std::any::Any> {
+        let shared: Rc<dyn std::any::Any> = self.shared.clone();
+        Rc::downgrade(&shared)
     }
     pub fn buffer(&self) -> &sourceview5::Buffer {
         &self.buffer
@@ -257,11 +270,14 @@ impl GtkEditorAdapter {
     fn install_change_hook(&self) {
         let session = self.session.clone();
         let shared = self.shared.clone();
-        let view = self.view.clone();
+        // Weak: the buffer owns this handler and the view owns the buffer,
+        // so a strong view here kept every replaced editor alive.
+        let view = self.view.downgrade();
         self.buffer.connect_changed(move |buffer| {
             if shared.suppress_change.get() {
                 return;
             }
+            let Some(view) = view.upgrade() else { return };
             let (start, end) = buffer.bounds();
             let text = buffer.text(&start, &end, true).to_string();
             *shared.desired_text.borrow_mut() = text;
@@ -402,12 +418,15 @@ impl GtkEditorAdapter {
 
     /// Applies syntax decorations as buffer `TextTag`s keyed by token kind.
     /// Range inputs are UTF-8 (language-core `SourceRange`), converted to char
-    /// offsets through the buffer text.
-    pub fn apply_decorations(&self, snapshot: &EditorDecorationSnapshot) {
-        if snapshot.document_revision != self.shared.committed.borrow().revision {
+    /// offsets through the committed text — the buffer holds exactly that
+    /// revision (checked below), so no document copy out of GTK is needed.
+    /// The snapshot is kept for the next diff, so it is taken by value.
+    pub fn apply_decorations(&self, snapshot: EditorDecorationSnapshot) {
+        let committed = self.shared.committed.borrow();
+        if snapshot.document_revision != committed.revision {
             return; // stale decoration revision — dropped, matching checked()
         }
-        let text = self.text();
+        let text = committed.text.as_str();
         let changed = self.shared.decorations.borrow().as_ref()
             .map(|(len, old)| snapshot.changed_tokens(old, text.len() as i64 - *len as i64))
             .unwrap_or(0..snapshot.decorations.len());
@@ -452,6 +471,8 @@ impl GtkEditorAdapter {
                 }
             }
         }
-        *self.shared.decorations.borrow_mut() = Some((text.len(), snapshot.clone()));
+        let length = text.len();
+        drop(committed);
+        *self.shared.decorations.borrow_mut() = Some((length, snapshot));
     }
 }

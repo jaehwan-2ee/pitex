@@ -105,6 +105,9 @@ pub enum DocumentSessionError {
         written: DiskContentHash,
     },
     RevisionExhausted,
+    /// `apply_text_neutral` was handed a mutation that changes the text or
+    /// the disk baseline.
+    NotTextNeutral,
 }
 
 impl fmt::Display for DocumentSessionError {
@@ -118,6 +121,7 @@ impl fmt::Display for DocumentSessionError {
                 write!(f, "saved content hash mismatch (expected {expected}, written {written})")
             }
             Self::RevisionExhausted => write!(f, "revision exhausted"),
+            Self::NotTextNeutral => write!(f, "mutation is not text-neutral"),
         }
     }
 }
@@ -187,6 +191,76 @@ impl DocumentSession {
         expected_revision: u64,
     ) -> Result<DocumentSnapshot, DocumentSessionError> {
         let mut inner = self.inner.lock().unwrap();
+        self.apply_locked(&mut inner, mutation, expected_revision)
+    }
+
+    /// Records a conflict at whatever revision the session is on — the
+    /// atomic form of `apply(mutation, current_revision)` for writes that
+    /// ran off the main thread: recording a conflict must not fail just
+    /// because an edit landed meanwhile. Only `RecordExternalChange` and
+    /// `RecordSaveConflict` are accepted.
+    pub fn apply_text_neutral(
+        &self,
+        mutation: DocumentMutation,
+    ) -> Result<DocumentSnapshot, DocumentSessionError> {
+        match mutation {
+            DocumentMutation::RecordExternalChange { .. }
+            | DocumentMutation::RecordSaveConflict { .. } => {}
+            _ => return Err(DocumentSessionError::NotTextNeutral),
+        }
+        let mut inner = self.inner.lock().unwrap();
+        let revision = inner.revision;
+        self.apply_locked(&mut inner, mutation, revision)
+    }
+
+    /// Commits a finished disk write atomically — `CommitSave` for writes
+    /// that ran off the main thread, where edits may land between the write
+    /// and its commit. `written_revision` is the revision whose text reached
+    /// the disk: equal to the current revision this is exactly
+    /// `CommitSave`; lower means the disk holds that older text, so its hash
+    /// becomes the baseline while the newer text stays (dirty); higher is a
+    /// caller error. A conflict recorded meanwhile wins and leaves the
+    /// session untouched — unless it is `resolving`, the conflict the write
+    /// was issued to resolve.
+    pub fn commit_written_save(
+        &self,
+        written_disk_hash: DiskContentHash,
+        written_revision: u64,
+        resolving: Option<DocumentConflict>,
+    ) -> Result<DocumentSnapshot, DocumentSessionError> {
+        let mut inner = self.inner.lock().unwrap();
+        if written_revision > inner.revision {
+            return Err(DocumentSessionError::StaleRevision {
+                expected: written_revision,
+                actual: inner.revision,
+            });
+        }
+        if written_revision == inner.revision {
+            let revision = inner.revision;
+            return self.apply_locked(
+                &mut inner,
+                DocumentMutation::CommitSave { written_disk_hash },
+                revision,
+            );
+        }
+        if inner.conflict.is_some() && inner.conflict != resolving {
+            return Ok(self.make_snapshot(&inner));
+        }
+        if inner.revision == u64::MAX {
+            return Err(DocumentSessionError::RevisionExhausted);
+        }
+        inner.disk_baseline_hash = written_disk_hash;
+        inner.conflict = None;
+        inner.revision += 1;
+        Ok(self.make_snapshot(&inner))
+    }
+
+    fn apply_locked(
+        &self,
+        inner: &mut SessionInner,
+        mutation: DocumentMutation,
+        expected_revision: u64,
+    ) -> Result<DocumentSnapshot, DocumentSessionError> {
         if expected_revision != inner.revision {
             return Err(DocumentSessionError::StaleRevision {
                 expected: expected_revision,
@@ -260,7 +334,7 @@ impl DocumentSession {
         }
 
         inner.revision += 1;
-        Ok(self.make_snapshot(&inner))
+        Ok(self.make_snapshot(inner))
     }
     fn make_snapshot(&self, inner: &SessionInner) -> DocumentSnapshot {
         let content_hash = inner.content_hash;

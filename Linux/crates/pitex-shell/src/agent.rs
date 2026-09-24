@@ -1176,6 +1176,10 @@ pub struct AgentCoordinator {
     /// Bumped on every mutation of UI-visible state; the panel rebuilds
     /// only when this changes instead of on every agent event.
     pub ui_revision: u64,
+    /// Set by the first `prepare()` — pi spawns lazily when the Assistant
+    /// is first shown, and restart/install hooks must not start it for a
+    /// window whose Assistant was never opened (macOS `wantsConnection`).
+    pub wants_connection: bool,
     pdf_text_cache: std::cell::RefCell<Option<(Arc<[u8]>, Option<String>)>>,
 
     /// Workspace hooks.
@@ -1227,6 +1231,7 @@ impl AgentCoordinator {
             suppressed_attachment: None,
             model_settings_request_id: None,
             ui_revision: 0,
+            wants_connection: false,
             pdf_text_cache: std::cell::RefCell::new(None),
             session_stats: None,
             commands: Vec::new(),
@@ -1260,6 +1265,11 @@ impl AgentCoordinator {
         if attachment == self.suppressed_attachment {
             return;
         }
+        // Unchanged (every caret move re-reports it): bumping ui_revision
+        // re-hashed the whole transcript and scrolled it to the bottom.
+        if self.suppressed_attachment.is_none() && attachment == self.selection_attachment {
+            return;
+        }
         self.suppressed_attachment = None;
         self.selection_attachment = attachment;
         self.ui_revision += 1;
@@ -1277,6 +1287,7 @@ impl AgentCoordinator {
     /// Idempotent startup — `prepare()`. Returns the spawn error if the
     /// process couldn't start; the UI calls this when the panel appears.
     pub fn prepare(&mut self) {
+        self.wants_connection = true;
         if matches!(self.connection, Connection::Connecting | Connection::Ready) {
             return;
         }
@@ -1408,7 +1419,9 @@ impl AgentCoordinator {
         self.intentional_stop = false;
         self.session_stats = None;
         self.commands.clear();
-        self.prepare();
+        if self.wants_connection {
+            self.prepare();
+        }
         self.ui_revision += 1;
     }
 

@@ -218,6 +218,11 @@ pub struct AppState {
     /// Last `AgentCoordinator::ui_revision` rendered by `refresh_assistant`
     /// — the transcript/picker rebuild is skipped while it matches.
     pub rendered_agent_revision: Cell<u64>,
+    /// When the transcript last re-rendered, and whether a deferred
+    /// re-render is queued — streaming bursts render at most every
+    /// `TRANSCRIPT_RENDER_INTERVAL`.
+    transcript_rendered_at: Cell<std::time::Instant>,
+    transcript_render_pending: Cell<bool>,
     /// Last AI font size applied to the transcript CSS — changes force a
     /// rebuild even when `ui_revision` is unchanged.
     pub rendered_ai_font_size: Cell<f64>,
@@ -228,13 +233,13 @@ pub struct AppState {
     rendered_issues_key: Cell<u64>,
     build_ui_pending: Cell<bool>,
     git_panel_was_visible: Cell<bool>,
+    /// Assistant pane shown on the last check — its first appearance
+    /// starts pi (`AgentPanel`'s `.task { prepare() }` on macOS).
+    assistant_was_visible: Cell<bool>,
     pub(crate) git_refresh_pending: Cell<bool>,
     pub(crate) git_refresh_root: RefCell<Option<PathBuf>>,
     /// `gitDiff` session counter — the `GitDiffLoaded` stale-result token.
     pub(crate) git_diff_seq: Cell<u64>,
-    /// Last `agent_context_key` pushed into `context_cell` — event dispatch
-    /// skips the clone-heavy rebuild while the key is unchanged.
-    pub last_context_key: Cell<u64>,
     /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
     /// capability lease like `capabilityBroker`, `workspace` opens externals).
     pub env: PlatformEnvironment,
@@ -242,11 +247,6 @@ pub struct AppState {
     /// tags by the updater.
     pub app_version: String,
     pub active_session: Option<DocumentSession>,
-    /// Debounce source for post-edit re-highlighting (120ms like Swift).
-    pub highlight_pending: Cell<bool>,
-    /// Debounce for the per-keystroke structure parse (outline/labels) —
-    /// same 120ms cadence as `highlight_pending`.
-    pub structure_pending: Cell<bool>,
     /// Last `structure_revision`/`files_revision` rendered by
     /// `refresh_sidebar` — the list/tree rebuilds are skipped while they
     /// match (this ran on every keystroke).
@@ -327,6 +327,8 @@ impl AppState {
             completion: GhostCompletionCoordinator::new(),
             fold_chip: RefCell::new(None),
             rendered_agent_revision: Cell::new(0),
+            transcript_rendered_at: Cell::new(std::time::Instant::now()),
+            transcript_render_pending: Cell::new(false),
             rendered_ai_font_size: Cell::new(0.0),
             rendered_transcript_keys: RefCell::new(Vec::new()),
             rendered_picker_key: Cell::new(0),
@@ -335,14 +337,12 @@ impl AppState {
             rendered_issues_key: Cell::new(0),
             build_ui_pending: Cell::new(false),
             git_panel_was_visible: Cell::new(false),
+            assistant_was_visible: Cell::new(false),
             git_refresh_pending: Cell::new(false),
             git_refresh_root: RefCell::new(None),
-            last_context_key: Cell::new(0),
             env: PlatformEnvironment::make("dev.pitex.app"),
             app_version,
             active_session: None,
-            highlight_pending: Cell::new(false),
-            structure_pending: Cell::new(false),
             rendered_structure_revision: Cell::new(0),
             rendered_pdf_key: Cell::new(0),
             displayed_pdf_key: Cell::new(0),
@@ -488,6 +488,7 @@ impl AppState {
         if self.autosave_flag.replace(false) {
             self.schedule_autosave();
         }
+        self.sync_assistant_visibility();
     }
 
     // ── helpers used by panes.rs ────────────────────────────────────────────
@@ -646,7 +647,16 @@ impl AppState {
         let prefs = self.store.prefs();
         let scheme_xml = style_scheme_xml(&self.appearance, prefs);
         if let Some(display) = gdk::Display::default() {
-            let provider = gtk4::CssProvider::new();
+            // One provider for the process, reloaded in place — adding a new
+            // one per call (every document switch) piled up providers that
+            // GTK re-matched on every style lookup.
+            let (provider, fresh) = THEME_PROVIDER.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                match slot.as_ref() {
+                    Some(provider) => (provider.clone(), false),
+                    None => (slot.insert(gtk4::CssProvider::new()).clone(), true),
+                }
+            });
             let bg = self.appearance.stored_hex(prefs, AppearanceColorRole::EditorBackground);
             let fg = self.appearance.stored_hex(prefs, AppearanceColorRole::BodyText);
             let family = if self.appearance.font_family.is_empty() {
@@ -671,26 +681,35 @@ impl AppState {
                  .pitex-diff-filehdr {{ background-color: alpha(currentColor, 0.08); border-radius: 0; }}
                  .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}"
             ));
-            gtk4::style_context_add_provider_for_display(
-                &display,
-                &provider,
-                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
-        let scheme_dir = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("pitex/schemes");
-        let _ = std::fs::create_dir_all(&scheme_dir);
-        let scheme_path = scheme_dir.join("pitex-theme.xml");
-        if std::fs::write(&scheme_path, scheme_xml).is_ok() {
-            let manager = sourceview5::StyleSchemeManager::default();
-            manager.append_search_path(&scheme_dir.to_string_lossy());
-            manager.force_rescan();
-            if let (Some(scheme), Some(editor)) =
-                (manager.scheme("pitex-dynamic"), &self.editor)
-            {
-                editor.buffer().set_style_scheme(Some(&scheme));
+            if fresh {
+                gtk4::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
             }
+        }
+        // Rewrite + rescan only when the generated scheme changed: the
+        // rescan re-reads every scheme file on the search path, and the
+        // path itself was appended again on each call.
+        let manager = sourceview5::StyleSchemeManager::default();
+        let changed = SCHEME_XML.with(|last| last.borrow().as_deref() != Some(scheme_xml.as_str()));
+        if changed {
+            let scheme_dir = dirs::cache_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("pitex/schemes");
+            let _ = std::fs::create_dir_all(&scheme_dir);
+            if std::fs::write(scheme_dir.join("pitex-theme.xml"), &scheme_xml).is_err() {
+                return;
+            }
+            if !SCHEME_PATH_ADDED.with(|added| added.replace(true)) {
+                manager.append_search_path(&scheme_dir.to_string_lossy());
+            }
+            manager.force_rescan();
+            SCHEME_XML.with(|last| *last.borrow_mut() = Some(scheme_xml));
+        }
+        if let (Some(scheme), Some(editor)) = (manager.scheme("pitex-dynamic"), &self.editor) {
+            editor.buffer().set_style_scheme(Some(&scheme));
         }
     }
 
@@ -708,7 +727,13 @@ impl AppState {
                     .appearance
                     .stored_hex(prefs, color_role_for(&kind));
                 if let Some((r, g, b, _a)) = crate::settings::parse_hex_color(&hex) {
-                    tag.set_foreground_rgba(Some(&gdk::RGBA::new(r as f32, g as f32, b as f32, 1.0)));
+                    // Runs after every highlight pass: re-setting an equal
+                    // color still emits `changed`, which makes GTK drop the
+                    // cached line layouts of the view and minimap.
+                    let color = gdk::RGBA::new(r as f32, g as f32, b as f32, 1.0);
+                    if !tag.is_foreground_set() || tag.foreground_rgba().as_ref() != Some(&color) {
+                        tag.set_foreground_rgba(Some(&color));
+                    }
                 }
             }
         }
@@ -765,15 +790,15 @@ impl AppState {
                 token_kind: t.kind,
             })
             .collect();
-        editor.apply_decorations(&editor_feature::EditorDecorationSnapshot::new(
+        editor.apply_decorations(editor_feature::EditorDecorationSnapshot::new(
             snapshot.revision,
             decorations,
         ));
         self.apply_tag_colors();
     }
 
-    /// Debounced variant — Swift's `scheduleHighlight` (~120ms), delivered
-    /// through `schedule_rehighlight`/`schedule_autosave` so the
+    /// Debounced variant — Swift's `scheduleHighlight` (`ANALYSIS_DEBOUNCE`),
+    /// delivered through `schedule_rehighlight`/`schedule_autosave` so the
     /// timer callbacks re-borrow `AppState` lazily.
 
     // ── document/session wiring ────────────────────────────────────────────
@@ -876,7 +901,6 @@ impl AppState {
                     let Ok(mut st) = state.try_borrow_mut() else { return };
                     st.model.save();
                     st.refresh_after_document_change();
-                    st.refresh_git();
                 }
             });
         });
@@ -973,7 +997,21 @@ impl AppState {
                 map.set_property("view", None::<sourceview5::View>);
             }
             if let Some(scroller) = ui.editor_scroller.borrow().as_ref() {
+                let previous = scroller
+                    .child()
+                    .and_then(|child| child.downcast::<sourceview5::View>().ok())
+                    .filter(|old| old != editor.view());
                 scroller.set_child(Some(editor.view()));
+                // GtkSourceView 5 never finalizes a view that has gutter
+                // renderers (line numbers, fold triangles) once it is
+                // unparented — the gutter keeps a reference to its view —
+                // so every replaced editor pinned its whole buffer (text,
+                // one tag per token, undo history), ~28 MB per switch for a
+                // 600 KB document. Detach the buffer; only the empty view
+                // shell stays behind.
+                if let Some(old) = previous {
+                    old.set_buffer(Some(&sourceview5::Buffer::new(None)));
+                }
             }
             if let Some(map) = &map {
                 map.set_view(editor.view());
@@ -995,12 +1033,15 @@ impl AppState {
         let Some(editor) = &self.editor else { return };
         let click = gtk4::GestureClick::new();
         click.set_button(1);
-        let view = editor.view().clone();
+        // Weak: the view owns this controller — a strong capture kept every
+        // replaced editor view (buffer, tags, undo history) alive.
+        let view = editor.view().downgrade();
         click.connect_pressed(move |gesture, _, x, y| {
             let state = gesture.current_event_state();
             if !state.contains(gdk::ModifierType::CONTROL_MASK) {
                 return;
             }
+            let Some(view) = view.upgrade() else { return };
             let (bx, by) = view.window_to_buffer_coords(
                 gtk4::TextWindowType::Widget,
                 x as i32,
@@ -1036,7 +1077,13 @@ impl AppState {
             if mark != &buffer.get_insert() && mark != &buffer.selection_bound() {
                 return;
             }
+            // One idle per burst: a caret move sets both marks, and each
+            // pass copies the text up to the caret for the UTF-16 offset.
+            if SELECTION_SYNC_PENDING.with(|pending| pending.replace(true)) {
+                return;
+            }
             glib::idle_add_local_once(|| {
+                SELECTION_SYNC_PENDING.with(|pending| pending.set(false));
                 STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
                         let Ok(mut st) = state.try_borrow_mut() else { return };
@@ -1056,19 +1103,18 @@ impl AppState {
             });
         });
 
-        // Editor→preview scroll sync rides the view's `vadjustment` — the
-        // same scroll observation the minimap uses.
-        if let Some(adjustment) = editor.view().vadjustment() {
-            adjustment.connect_value_changed(|_| {
-                STATE.with(|s| {
-                    if let Some(state) = s.borrow().as_ref() {
-                        if let Ok(st) = state.try_borrow() {
-                            st.markdown_editor_scrolled();
-                        }
+        // Editor→preview scroll sync rides the view's scroll adjustments —
+        // hooked through `on_view_scroll` so each document switch no longer
+        // stacks another handler on the scroller's adjustment.
+        on_view_scroll(editor.view(), || {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(st) = state.try_borrow() {
+                        st.markdown_editor_scrolled();
                     }
-                });
+                }
             });
-        }
+        });
 
         // ⇧↩ = `win.build` while the source editor has focus — an
         // EventControllerKey on the view so the composer, terminal, search
@@ -1076,8 +1122,10 @@ impl AppState {
         install_build_key(
             editor.view(),
             Rc::new({
-                let editor = editor.clone();
-                move || editor.has_marked_text()
+                // Weak for the same reason: the key controller lives on the
+                // adapter's own view.
+                let editor = Rc::downgrade(editor);
+                move || editor.upgrade().is_some_and(|editor| editor.has_marked_text())
             }),
             Rc::new({
                 let view = editor.view().downgrade();
@@ -1245,18 +1293,14 @@ impl AppState {
         });
     }
 
-    /// Coalesce typing bursts through the already-borrowed AppState. Trying
-    /// to borrow STATE again here always failed during snapshot submission,
-    /// leaving the pending flag unset and queuing one full pass per edit.
+    /// Re-highlight once typing pauses. The slot is a thread-local, not
+    /// AppState: this runs while STATE is already borrowed (snapshot
+    /// submission), so it must not borrow it again.
     fn schedule_rehighlight(&self) {
-        if self.highlight_pending.replace(true) {
-            return;
-        }
-        glib::timeout_add_local_once(Duration::from_millis(120), || {
+        restart_timer(&HIGHLIGHT_SOURCE, ANALYSIS_DEBOUNCE, || {
             STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     if let Ok(st) = state.try_borrow() {
-                        st.highlight_pending.set(false);
                         st.rehighlight();
                     }
                 }
@@ -1264,17 +1308,13 @@ impl AppState {
         });
     }
 
-    /// Debounced structure refresh — coalesces per-keystroke calls into one
-    /// parse+sidebar rebuild 120ms after the last edit.
+    /// Debounced structure refresh — one parse + sidebar rebuild once
+    /// typing pauses, on the same cadence as highlighting.
     fn schedule_structure_refresh(&self) {
-        if self.structure_pending.replace(true) {
-            return;
-        }
-        glib::timeout_add_local_once(Duration::from_millis(120), || {
+        restart_timer(&STRUCTURE_SOURCE, ANALYSIS_DEBOUNCE, || {
             STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     if let Ok(mut st) = state.try_borrow_mut() {
-                        st.structure_pending.set(false);
                         st.model.refresh_structure();
                         st.refresh_sidebar();
                         st.refresh_footer();
@@ -1427,10 +1467,11 @@ impl AppState {
         menu.popup();
     }
 
+    /// The write finishes off the main thread; `SaveFinished` refreshes
+    /// the document chrome and Git once it has landed.
     pub fn save_action(&mut self) {
         self.model.save();
         self.refresh_after_document_change();
-        self.refresh_git();
     }
 
     pub fn save_all_action(&mut self) {
@@ -1990,13 +2031,13 @@ impl AppState {
     // ── agent actions ─────────────────────────────────────────────────────
 
     pub fn ensure_agent(&mut self) {
-        // Refresh cached context before any agent call — the coordinator's
-        // provider reads this cell, so it must be current before `prepare()`.
-        let key = self.model.agent_context_key();
-        if self.agent.is_none() || self.last_context_key.get() != key {
+        // The coordinator reads this cell in `prepare()` (project root) and
+        // when sending (`send_agent_draft` refreshes it first), so it only
+        // has to follow the project here — rebuilding it (a copy of the
+        // whole document) on every keystroke and caret move was pure waste.
+        let root_changed = self.context_cell.borrow().project_root != self.model.project_url;
+        if self.agent.is_none() || root_changed {
             *self.context_cell.borrow_mut() = self.model.agent_context();
-            self.last_context_key.set(key);
-            self.model.sync_selection_attachment();
         }
         if self.agent.is_none() {
             let mut coordinator = AgentCoordinator::new(&self.store);
@@ -2022,12 +2063,29 @@ impl AppState {
             };
             coordinator.history_limit = self.store.chat_history_limit().max(0) as usize;
             self.agent = Some(coordinator);
-            // `coordinator.prepare()` (PitexApp.swift:413) — spawn the agent
-            // process eagerly when the coordinator is created, like `open()`
-            // does; idempotent and a no-op while a project root is absent.
-            if let Some(agent) = self.agent.as_mut() {
-                agent.prepare();
-            }
+            // pi is spawned lazily, when the Assistant pane first shows
+            // (`sync_assistant_visibility`) — like macOS since v1.8.3.
+        }
+    }
+
+    /// Starts pi the first time the Assistant pane is visible for an open
+    /// project. Only on the hidden→shown edge: `prepare()` re-runs
+    /// toolchain discovery while pi is missing, so calling it on every
+    /// refresh would respawn discovery continuously.
+    fn sync_assistant_visibility(&mut self) {
+        let visible = self.model.has_project()
+            && self.model.bottom_panel_visible
+            && self.model.console_section == ConsoleSection::Assistant;
+        if !visible {
+            self.assistant_was_visible.set(false);
+            return;
+        }
+        if self.assistant_was_visible.replace(true) {
+            return;
+        }
+        self.ensure_agent();
+        if let Some(agent) = self.agent.as_mut() {
+            agent.prepare();
         }
     }
 
@@ -2957,20 +3015,26 @@ impl AppState {
                 });
             }
             if let Some(view) = ui.build_log_view.borrow().as_ref() {
-                let text = if self.model.build_log_text.is_empty() {
-                    tr(self.language, "build.log_empty")
+                // Borrowed: this runs every 50 ms during a build, and
+                // cloning the whole log per tick was an O(log) copy.
+                let placeholder;
+                let text: &str = if self.model.build_log_text.is_empty() {
+                    placeholder = tr(self.language, "build.log_empty");
+                    &placeholder
                 } else {
-                    self.model.build_log_text.clone()
+                    &self.model.build_log_text
                 };
                 let buffer = view.buffer();
                 let mut previous = self.rendered_log.borrow_mut();
-                if *previous != text {
+                if previous.as_str() != text {
                     if let Some(added) = text.strip_prefix(previous.as_str()) {
                         buffer.insert(&mut buffer.end_iter(), added);
+                        previous.push_str(added);
                     } else {
-                        buffer.set_text(&text);
+                        buffer.set_text(text);
+                        previous.clear();
+                        previous.push_str(text);
                     }
-                    *previous = text;
                     let mut end = buffer.end_iter();
                     view.scroll_to_iter(&mut end, 0.0, false, 0.0, 1.0);
                 }
@@ -3208,8 +3272,27 @@ impl AppState {
 
     // ── refresh: assistant ─────────────────────────────────────────────────
 
+    /// Every RPC event wakes the UI, so a streaming reply re-rendered its
+    /// row (and re-hashed the transcript) per token. Renders now run at
+    /// most every `TRANSCRIPT_RENDER_INTERVAL` — the macOS delta batching —
+    /// and a throttled update schedules one deferred pass so the tail of a
+    /// reply is never left unrendered.
+    fn transcript_render_due(rendered_at: &Cell<std::time::Instant>, pending: &Cell<bool>) -> bool {
+        let now = std::time::Instant::now();
+        let next = rendered_at.get() + TRANSCRIPT_RENDER_INTERVAL;
+        if now >= next {
+            rendered_at.set(now);
+            return true;
+        }
+        if !pending.replace(true) {
+            schedule_transcript_render(next - now);
+        }
+        false
+    }
+
     pub fn refresh_assistant(&mut self) {
         self.ensure_agent();
+        self.sync_assistant_visibility();
         let lang = self.language;
         let agent = self.agent.as_mut().unwrap();
         UI.with(|ui| {
@@ -3218,7 +3301,10 @@ impl AppState {
             // widget tree every tick.
             let font_size = self.store.ai_font_size();
             let font_changed = font_size != self.rendered_ai_font_size.get();
-            let dirty = agent.ui_revision != self.rendered_agent_revision.get() || font_changed;
+            // A deferred pass (scheduled below) picks up whatever a
+            // throttled streaming update left unrendered.
+            let dirty = (agent.ui_revision != self.rendered_agent_revision.get() || font_changed)
+                && Self::transcript_render_due(&self.transcript_rendered_at, &self.transcript_render_pending);
             if std::mem::take(&mut agent.history_requested) {
                 if let Some(button) = ui.agent_history_button.borrow().clone() {
                     let sessions = agent.past_sessions.clone();
@@ -3690,6 +3776,11 @@ impl AppState {
                 // panel live like VSCode's filesystem watcher.
                 self.refresh_git();
             }
+            WorkspaceMessage::SaveFinished { path, result } => {
+                self.model.apply_save_finished(&path, result);
+                self.refresh_after_document_change();
+                self.refresh_git();
+            }
             WorkspaceMessage::AgentActivityFinished => {
                 let confirm = self.store.confirm_overwrite();
                 self.model.refresh_after_agent_activity(confirm);
@@ -3807,6 +3898,92 @@ thread_local! {
     static AUTOSAVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
     /// Resolved UI language for `a11y` — readable without borrowing state.
     static LANG: Cell<&'static str> = const { Cell::new("en") };
+    /// Pending post-edit re-highlight / structure-refresh sources.
+    static HIGHLIGHT_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    static STRUCTURE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// `apply_theme`'s single CSS provider, the last scheme XML it wrote,
+    /// and whether the scheme directory is on the manager's search path.
+    static THEME_PROVIDER: RefCell<Option<gtk4::CssProvider>> = const { RefCell::new(None) };
+    static SCHEME_XML: RefCell<Option<String>> = const { RefCell::new(None) };
+    static SCHEME_PATH_ADDED: Cell<bool> = const { Cell::new(false) };
+    /// A selection-sync idle is queued (caret moves set two marks).
+    static SELECTION_SYNC_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Per-edit analysis passes (highlight, fold, sidebar structure) wait for a
+/// typing pause of this long — the macOS `EditorTiming.analysisDebounce`.
+pub(crate) const ANALYSIS_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Runs `on_scroll` whenever `view` scrolls. A ScrolledWindow swaps its own
+/// adjustments into a child view (and fresh ones back in when the view
+/// leaves), so hooking `view.vadjustment()` before the view was parented
+/// listened to an orphaned pair. This follows the view's current
+/// adjustments and unhooks the previous ones, so nothing piles up on the
+/// scroller's long-lived adjustments across document switches.
+pub(crate) fn on_view_scroll(view: &sourceview5::View, on_scroll: impl Fn() + 'static) {
+    let on_scroll = Rc::new(on_scroll);
+    let hooks: Rc<RefCell<Vec<(gtk4::Adjustment, glib::SignalHandlerId)>>> = Rc::default();
+    let rehook = Rc::new(move |view: &sourceview5::View| {
+        for (adjustment, id) in hooks.borrow_mut().drain(..) {
+            adjustment.disconnect(id);
+        }
+        for adjustment in [view.hadjustment(), view.vadjustment()].into_iter().flatten() {
+            let on_scroll = on_scroll.clone();
+            let id = adjustment.connect_value_changed(move |_| on_scroll());
+            hooks.borrow_mut().push((adjustment, id));
+        }
+    });
+    rehook(view);
+    for property in ["hadjustment", "vadjustment"] {
+        let rehook = rehook.clone();
+        view.connect_notify_local(Some(property), move |view, _| rehook(view));
+    }
+}
+
+/// GTK 4.12's `GtkWindow:suspended` — the compositor has minimized or
+/// fully hidden the window. Looked up by name so the GTK 4.6/4.10 builds
+/// (no such property) simply never skip.
+fn window_suspended(window: &impl IsA<glib::Object>) -> bool {
+    window.find_property("suspended").is_some() && window.property::<bool>("suspended")
+}
+
+/// Minimum spacing between Assistant transcript re-renders.
+const TRANSCRIPT_RENDER_INTERVAL: Duration = Duration::from_millis(50);
+
+/// The deferred transcript pass; retries shortly if AppState is busy, so a
+/// throttled final update always lands.
+fn schedule_transcript_render(delay: Duration) {
+    glib::timeout_add_local_once(delay, || {
+        STATE.with(|slot| {
+            let Some(state) = slot.borrow().as_ref().cloned() else { return };
+            match state.try_borrow_mut() {
+                Ok(mut st) => {
+                    st.transcript_render_pending.set(false);
+                    st.refresh_assistant();
+                }
+                Err(_) => schedule_transcript_render(Duration::from_millis(16)),
+            };
+        });
+    });
+}
+
+/// Debounce on a thread-local source slot: every call restarts the delay.
+/// The fired source clears its slot first so it is never removed twice.
+fn restart_timer(
+    slot: &'static std::thread::LocalKey<RefCell<Option<glib::SourceId>>>,
+    delay: Duration,
+    fire: impl FnOnce() + 'static,
+) {
+    slot.with(|s| {
+        if let Some(id) = s.borrow_mut().take() {
+            id.remove();
+        }
+    });
+    let id = glib::timeout_add_local_once(delay, move || {
+        slot.with(|s| s.borrow_mut().take());
+        fire();
+    });
+    slot.with(|s| *s.borrow_mut() = Some(id));
 }
 
 pub(crate) fn wake_agent() {
@@ -4353,7 +4530,17 @@ pub fn run(app_version: &str) -> i32 {
         .flags(flags)
         .build();
     #[cfg(unix)]
-    app.connect_shutdown(|_| crate::window_ipc::stop());
+    app.connect_shutdown(|_| {
+        crate::window_ipc::stop();
+        // Quitting right after a save must not cut the write short.
+        STATE.with(|slot| {
+            if let Some(state) = slot.borrow().as_ref() {
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.model.wait_for_pending_writes();
+                }
+            }
+        });
+    });
     let version = app_version.to_string();
     {
         let version = version.clone();
@@ -4864,9 +5051,15 @@ fn build_chrome(
 
     // Git Integration — refresh while the pane is visible. VSCode watches
     // the worktree; a light 4s poll covers external `git` CLI changes too.
+    // A suspended window (minimized or fully hidden, GTK 4.12+) runs no git
+    // subprocesses and refreshes the moment it shows again.
     {
         let state = state.clone();
+        let window = window.downgrade();
         glib::timeout_add_local(Duration::from_secs(4), move || {
+            if window.upgrade().is_some_and(|window| window_suspended(&window)) {
+                return glib::ControlFlow::Continue;
+            }
             let Ok(s) = state.try_borrow_mut() else {
                 return glib::ControlFlow::Continue;
             };
@@ -4877,6 +5070,22 @@ fn build_chrome(
                 s.refresh_git();
             }
             glib::ControlFlow::Continue
+        });
+    }
+
+    if window.find_property("suspended").is_some() {
+        let state = state.clone();
+        window.connect_notify_local(Some("suspended"), move |window, _| {
+            if window_suspended(window) {
+                return;
+            }
+            let Ok(s) = state.try_borrow_mut() else { return };
+            if s.model.console_section == ConsoleSection::Git
+                && s.model.bottom_panel_visible
+                && !s.model.git_busy
+            {
+                s.refresh_git();
+            }
         });
     }
 
@@ -4908,7 +5117,10 @@ fn build_chrome(
                 if let Some(state) = s.borrow().as_ref() {
                     if let Ok(mut st) = state.try_borrow_mut() {
                         if st.agent.is_some() {
-                            if let Some(agent) = st.agent.as_mut() {
+                            // Only an Assistant that was already opened
+                            // (e.g. it found pi missing before this
+                            // install finished) reconnects here.
+                            if let Some(agent) = st.agent.as_mut().filter(|a| a.wants_connection) {
                                 agent.prepare();
                             }
                             st.refresh_assistant();
@@ -5780,6 +5992,14 @@ for line in sys.stdin:
             }
         });
         eprintln!("startup: opening small TeX file");
+        // pi starts lazily, when the Assistant pane first shows (like
+        // macOS) — show it the way a user opening the panel would, so the
+        // agent start is still covered by the no-blocking check.
+        {
+            let mut s = state.borrow_mut();
+            s.model.bottom_panel_visible = true;
+            s.model.console_section = ConsoleSection::Assistant;
+        }
         state.borrow_mut().open_selected(file);
         let context = glib::MainContext::default();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -5989,5 +6209,65 @@ mod build_key_tests {
         }
         assert!(!shift_return_is_build(gdk::Key::Return, gdk::ModifierType::empty()));
         assert!(!shift_return_is_build(gdk::Key::a, shift));
+    }
+}
+
+#[cfg(test)]
+mod editor_release_tests {
+    use super::*;
+
+    fn session(name: &str, text: &str) -> DocumentSession {
+        let file = project_core::ProjectFile {
+            document_id: tex_domain::StableDocumentID::new(name).unwrap(),
+            path: tex_domain::NormalizedRelativePath::new(&format!("{name}.tex")).unwrap(),
+        };
+        DocumentSession::new(&file, text.to_string(), None)
+    }
+
+    /// A document switch replaces the editor; the old adapter, fold engine
+    /// and buffer (text, one tag per token, undo history) must be freed.
+    #[test]
+    #[ignore = "requires a GTK display (use xvfb-run)"]
+    fn replaced_editor_is_released() {
+        adw::init().unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state = Rc::new(RefCell::new(AppState::new(
+            SettingsStore::new(Preferences::default()),
+            tx,
+            "test".into(),
+        )));
+        // The app parents each editor view into the scroller and swaps it
+        // out on the next switch; do the same so the release path runs.
+        UI.with(|ui| {
+            *ui.editor_scroller.borrow_mut() = Some(gtk4::ScrolledWindow::new());
+            *ui.minimap.borrow_mut() = Some(sourceview5::Map::new());
+            *ui.search_count.borrow_mut() = Some(gtk4::Label::new(None));
+            *ui.ghost_label.borrow_mut() = Some(gtk4::Label::new(None));
+            *ui.editor_overlay.borrow_mut() = Some(gtk4::Overlay::new());
+        });
+        let text = "\\section{A}\nSome $x$ text {with} \\cmd tokens.\n".repeat(200);
+        // A model snapshot makes `rehighlight` run, so the adapter holds a
+        // real decoration snapshot like it does in the app.
+        let first = session("first", &text);
+        state.borrow_mut().model.document_snapshot = Some(first.snapshot());
+        state.borrow_mut().attach_session(first);
+        let (adapter, shared, fold, buffer) = {
+            let st = state.borrow();
+            let editor = st.editor.as_ref().unwrap();
+            (Rc::downgrade(editor), editor.lifetime_probe(), Rc::downgrade(st.fold.as_ref().unwrap()), editor.buffer().downgrade())
+        };
+        state.borrow_mut().attach_session(session("second", &text));
+        let context = glib::MainContext::default();
+        for _ in 0..50 {
+            while context.pending() {
+                context.iteration(false);
+            }
+        }
+        assert!(adapter.upgrade().is_none(), "old editor adapter still alive");
+        assert!(shared.upgrade().is_none(), "old editor state (text copies, decorations) still alive");
+        assert!(fold.upgrade().is_none(), "old fold engine still alive");
+        // The view shell itself is pinned by GtkSourceView's gutter (see
+        // `rebind_editor_widget`); its buffer must not be.
+        assert!(buffer.upgrade().is_none(), "old editor buffer still alive");
     }
 }

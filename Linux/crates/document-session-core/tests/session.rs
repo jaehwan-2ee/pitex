@@ -263,3 +263,109 @@ fn partial_edits_preserve_unicode_revisions_and_conflicts() {
     }, 0).unwrap();
     assert_eq!(appended.text, "👩x!");
 }
+
+// Off-main saves: edits and conflicts may land between the write and its
+// commit (ports of the Swift commitSave(writtenRevision:resolving:) tests).
+
+fn dirty_session() -> (DocumentSession, DocumentSnapshot) {
+    let session = make_session("base");
+    let edited = session
+        .apply(DocumentMutation::ReplaceText("written".into()), 0)
+        .unwrap();
+    assert_eq!(edited.save_state, DocumentSaveState::Dirty);
+    (session, edited)
+}
+
+#[test]
+fn written_save_at_the_current_revision_is_commit_save() {
+    let (session, written) = dirty_session();
+    let committed = session
+        .commit_written_save(written.content_hash, written.revision, None)
+        .unwrap();
+    assert_eq!(committed.save_state, DocumentSaveState::Clean);
+    assert_eq!(committed.disk_baseline_hash, written.content_hash);
+    assert_eq!(committed.revision, written.revision + 1);
+    assert!(matches!(
+        session.commit_written_save(DiskContentHash::hashing("other"), committed.revision, None),
+        Err(DocumentSessionError::SavedContentHashMismatch { .. })
+    ));
+}
+
+#[test]
+fn edits_during_the_write_only_move_the_baseline() {
+    let (session, written) = dirty_session();
+    let newer = session
+        .apply(DocumentMutation::ReplaceText("written + typed".into()), written.revision)
+        .unwrap();
+    let committed = session
+        .commit_written_save(written.content_hash, written.revision, None)
+        .unwrap();
+    assert_eq!(committed.text, "written + typed");
+    assert_eq!(committed.content_hash, newer.content_hash);
+    assert_eq!(committed.disk_baseline_hash, written.content_hash);
+    assert_eq!(committed.save_state, DocumentSaveState::Dirty);
+    assert_eq!(committed.conflict, None);
+    assert_eq!(committed.revision, newer.revision + 1);
+
+    // The disk now holds the written text, so the next save of the newer
+    // text is a normal save — not a false conflict.
+    let root = temp_root();
+    let url = root.join("main.tex");
+    std::fs::write(&url, "written").unwrap();
+    match AtomicDocumentStore::new().save(&committed.text, &url, Some(committed.disk_baseline_hash)) {
+        DocumentSaveOutcome::Saved(_) => {}
+        other => panic!("expected a clean save, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_conflict_recorded_during_the_write_wins_unless_it_is_being_resolved() {
+    let (session, written) = dirty_session();
+    session
+        .apply(DocumentMutation::ReplaceText("typed".into()), written.revision)
+        .unwrap();
+    let conflicted = session
+        .apply_text_neutral(DocumentMutation::RecordExternalChange {
+            observed_disk_hash: DiskContentHash::hashing("external"),
+        })
+        .unwrap();
+    let untouched = session
+        .commit_written_save(written.content_hash, written.revision, None)
+        .unwrap();
+    assert_eq!(untouched, conflicted);
+
+    // The keep-mine path names the conflict it resolves: that one yields.
+    let resolved = session
+        .commit_written_save(written.content_hash, written.revision, conflicted.conflict)
+        .unwrap();
+    assert_eq!(resolved.conflict, None);
+    assert_eq!(resolved.disk_baseline_hash, written.content_hash);
+    assert_eq!(resolved.save_state, DocumentSaveState::Dirty);
+
+    assert!(matches!(
+        session.commit_written_save(written.content_hash, resolved.revision + 1, None),
+        Err(DocumentSessionError::StaleRevision { .. })
+    ));
+}
+
+#[test]
+fn text_neutral_mutations_apply_at_the_current_revision_only() {
+    let (session, written) = dirty_session();
+    session
+        .apply(DocumentMutation::ReplaceText("typed".into()), written.revision)
+        .unwrap();
+    let conflicted = session
+        .apply_text_neutral(DocumentMutation::RecordSaveConflict {
+            observed_disk_hash: DiskContentHash::hashing("disk"),
+        })
+        .unwrap();
+    assert_eq!(conflicted.save_state, DocumentSaveState::Conflicted);
+    for mutation in [
+        DocumentMutation::ReplaceText("x".into()),
+        DocumentMutation::CommitSave { written_disk_hash: conflicted.content_hash },
+        DocumentMutation::ResolveConflict { text: "x".into(), disk_baseline_hash: conflicted.content_hash },
+    ] {
+        assert_eq!(session.apply_text_neutral(mutation), Err(DocumentSessionError::NotTextNeutral));
+    }
+    assert_eq!(session.snapshot(), conflicted);
+}

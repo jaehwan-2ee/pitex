@@ -2073,6 +2073,9 @@ struct ActiveBuild {
     issues: Vec<BuildIssueRecord>,
     issue_keys: HashSet<IssueKey>,
     event_handler: EventHandler,
+    /// Bytes of a UTF-8 sequence cut off at the end of a pipe chunk, per
+    /// channel — decoded with the next chunk instead of as U+FFFD.
+    log_carry: HashMap<BuildLogChannel, Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -2094,6 +2097,26 @@ impl From<&BuildIssueRecord> for IssueKey {
             column: record.column,
         }
     }
+}
+
+/// Length of the longest prefix of `bytes` that does not end inside a
+/// UTF-8 sequence — only a truncated sequence at the very end is held
+/// back; invalid bytes elsewhere still decode to U+FFFD as before.
+fn utf8_complete_prefix(bytes: &[u8]) -> usize {
+    for back in 1..=bytes.len().min(3) {
+        let byte = bytes[bytes.len() - back];
+        if byte & 0xC0 == 0x80 {
+            continue; // continuation byte: keep looking for its lead
+        }
+        let needed = match byte {
+            0xF0..=0xF7 => 4,
+            0xE0..=0xEF => 3,
+            0xC0..=0xDF => 2,
+            _ => 1,
+        };
+        return if back < needed { bytes.len() - back } else { bytes.len() };
+    }
+    bytes.len()
 }
 
 struct OrchestratorState {
@@ -2200,6 +2223,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
                 issues: Vec::new(),
                 issue_keys: HashSet::new(),
                 event_handler,
+                log_carry: HashMap::new(),
             });
             state.log_sequence = 0;
             (target, pipeline)
@@ -2453,37 +2477,66 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
     fn receive(&self, output: BuildProcessOutput, id: &BuildID) {
         let (log, parsed) = {
             let mut state = self.state.lock().unwrap();
-            match state.active.as_ref() {
-                Some(active) if active.id == *id => {}
+            let active = match state.active.as_mut() {
+                Some(active) if active.id == *id => active,
                 _ => return,
-            }
-            let text = String::from_utf8_lossy(&output.bytes).into_owned();
-            let log = BuildLogEntry {
-                sequence: state.log_sequence,
-                channel: output.channel,
-                text,
             };
-            state.log_sequence += 1;
-            let parsed = state
-                .active
-                .as_mut()
-                .unwrap()
-                .parser
-                .consume_bytes(&output.bytes, output.channel);
+            // Pipes cut chunks at arbitrary bytes: a multi-byte character
+            // (Korean in xelatex/lualatex logs) split across two chunks
+            // used to show up as U+FFFD twice in the log view.
+            let carry = active.log_carry.entry(output.channel).or_default();
+            carry.extend_from_slice(&output.bytes);
+            let complete = utf8_complete_prefix(carry);
+            let text = String::from_utf8_lossy(&carry[..complete]).into_owned();
+            carry.drain(..complete);
+            let parsed = active.parser.consume_bytes(&output.bytes, output.channel);
+            let log = (!text.is_empty()).then(|| {
+                let log = BuildLogEntry {
+                    sequence: state.log_sequence,
+                    channel: output.channel,
+                    text,
+                };
+                state.log_sequence += 1;
+                log
+            });
             (log, parsed)
         };
-        self.emit(BuildEvent::Log(log));
+        if let Some(log) = log {
+            self.emit(BuildEvent::Log(log));
+        }
         self.emit_issues(parsed, id);
     }
 
     fn flush_parser(&self, id: &BuildID) {
-        let parsed = {
+        let (parsed, logs) = {
             let mut state = self.state.lock().unwrap();
-            match state.active.as_mut() {
-                Some(active) if active.id == *id => active.parser.finish(),
+            let active = match state.active.as_mut() {
+                Some(active) if active.id == *id => active,
                 _ => return,
-            }
+            };
+            let parsed = active.parser.finish();
+            // A sequence still incomplete when the process ended is kept in
+            // the log as-is (lossily), exactly as before.
+            let mut tails: Vec<(BuildLogChannel, String)> = active
+                .log_carry
+                .drain()
+                .filter(|(_, bytes)| !bytes.is_empty())
+                .map(|(channel, bytes)| (channel, String::from_utf8_lossy(&bytes).into_owned()))
+                .collect();
+            tails.sort_by_key(|(channel, _)| *channel as u8);
+            let logs: Vec<BuildLogEntry> = tails
+                .into_iter()
+                .map(|(channel, text)| {
+                    let log = BuildLogEntry { sequence: state.log_sequence, channel, text };
+                    state.log_sequence += 1;
+                    log
+                })
+                .collect();
+            (parsed, logs)
         };
+        for log in logs {
+            self.emit(BuildEvent::Log(log));
+        }
         self.emit_issues(parsed, id);
     }
 

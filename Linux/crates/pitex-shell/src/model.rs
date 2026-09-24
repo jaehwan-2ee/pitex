@@ -22,7 +22,7 @@ use build_core::{
 };
 use document_session_core::{
     AtomicDocumentStore, DiskContentHash, DocumentConflict, DocumentMutation, DocumentSaveOutcome,
-    DocumentSaveState, DocumentSession, DocumentSessionError, DocumentSessionRegistry,
+    DocumentSaveState, DocumentSession, DocumentSessionRegistry,
     DocumentSnapshot,
 };
 use git_core::{GitCommit, GitStatus};
@@ -184,6 +184,8 @@ impl std::fmt::Display for WorkspaceBuildError {
 /// Messages produced on background threads; the GTK layer drains them on the
 /// main loop and calls the matching `apply_*` method.
 pub enum WorkspaceMessage {
+    /// An off-main save of the session at `path` finished.
+    SaveFinished { path: NormalizedRelativePath, result: SaveResult },
     PdfLoaded { hash: u64, info: Option<crate::pdf::PdfInfo> },
     PdfRendered { key: u64, raster: crate::pdf::RenderedPage },
     BuildEvent(BuildEvent),
@@ -253,9 +255,117 @@ pub enum GitDiffSource {
     Commit(git_core::GitCommit),
     WorkingTree { staged: bool },
 }
+/// What one serialized session write did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveResult {
+    /// The session moved on while the write waited (already clean, or no
+    /// longer conflicted) — nothing was written.
+    Skipped,
+    Saved,
+    /// The disk no longer held the expected baseline; a save conflict was
+    /// recorded on the session.
+    Conflict,
+    PermissionFailure(String),
+    InterruptedWrite(String),
+    /// The write landed but the session refused the commit.
+    CommitFailed(String),
+}
+
+/// Per-file write serialization for off-main saves, plus own-write
+/// recognition for the file watcher — the macOS `pendingWrites` chain and
+/// `lastOwnWrite`. Shared between the model and its save workers.
+#[derive(Default)]
+struct SessionWrites {
+    locks: std::sync::Mutex<HashMap<NormalizedRelativePath, Arc<std::sync::Mutex<()>>>>,
+    /// Hash of the bytes each file's newest successful write put on disk.
+    own: std::sync::Mutex<HashMap<NormalizedRelativePath, DiskContentHash>>,
+}
+
+impl SessionWrites {
+    fn own(&self) -> std::sync::MutexGuard<'_, HashMap<NormalizedRelativePath, DiskContentHash>> {
+        self.own.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Writes `session` to `url` once the file's previous write — commit
+    /// included — has finished. The session is read after waiting, so a
+    /// queued save always writes the newest text with the baseline the
+    /// previous write left; the commit goes by the revision written, so
+    /// typing during the write cannot turn into a false conflict.
+    /// `resolving` is the keep-mine path: it writes a conflicted session
+    /// against the observed disk hash and clears that conflict.
+    fn write(&self, session: &DocumentSession, url: &Path, resolving: bool) -> SaveResult {
+        let lock = self
+            .locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(session.path().clone())
+            .or_default()
+            .clone();
+        let _serialized = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let snapshot = session.snapshot();
+        let wanted = if resolving {
+            DocumentSaveState::Conflicted
+        } else {
+            DocumentSaveState::Dirty
+        };
+        if snapshot.save_state != wanted {
+            return SaveResult::Skipped;
+        }
+        let baseline = match (&snapshot.conflict, resolving) {
+            (
+                Some(
+                    DocumentConflict::ExternalModification { observed_disk, .. }
+                    | DocumentConflict::SaveCollision { observed_disk, .. },
+                ),
+                true,
+            ) => *observed_disk,
+            _ => snapshot.disk_baseline_hash,
+        };
+        // Recorded before the rename so the watcher event it causes is
+        // recognized; restored if the disk never received these bytes.
+        let previous_own = self.own().insert(session.path().clone(), snapshot.content_hash);
+        let restore_own = || {
+            let mut own = self.own();
+            match previous_own {
+                Some(hash) => own.insert(session.path().clone(), hash),
+                None => own.remove(session.path()),
+            };
+        };
+        match AtomicDocumentStore::new().save(&snapshot.text, url, Some(baseline)) {
+            DocumentSaveOutcome::Saved(document) => {
+                let resolving = if resolving { snapshot.conflict } else { None };
+                match session.commit_written_save(document.hash, snapshot.revision, resolving) {
+                    Ok(_) => SaveResult::Saved,
+                    Err(e) => SaveResult::CommitFailed(e.to_string()),
+                }
+            }
+            DocumentSaveOutcome::StaleBaseline(conflict) => {
+                restore_own();
+                let observed = conflict
+                    .observed_disk
+                    .map(|d| d.hash)
+                    .unwrap_or_else(|| DiskContentHash::hashing(""));
+                let _ = session.apply_text_neutral(DocumentMutation::RecordSaveConflict {
+                    observed_disk_hash: observed,
+                });
+                SaveResult::Conflict
+            }
+            DocumentSaveOutcome::PermissionFailure { path } => {
+                restore_own();
+                SaveResult::PermissionFailure(path)
+            }
+            DocumentSaveOutcome::InterruptedWrite { path } => {
+                restore_own();
+                SaveResult::InterruptedWrite(path)
+            }
+        }
+    }
+}
+
 impl std::fmt::Debug for WorkspaceMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::SaveFinished { path, result } => write!(f, "SaveFinished({}, {result:?})", path.raw_value()),
             Self::PdfLoaded { .. } => write!(f, "PdfLoaded"),
             Self::PdfRendered { .. } => write!(f, "PdfRendered"),
             Self::BuildEvent(_) => write!(f, "BuildEvent"),
@@ -826,6 +936,10 @@ pub struct WorkspaceModel {
     pub editor_selection: (usize, usize),
 
     event_sink: Option<Sender<WorkspaceMessage>>,
+    /// Save serialization + own-write hashes shared with save workers.
+    writes: Arc<SessionWrites>,
+    /// Save workers still writing — `close()` and quit wait for them.
+    pending_writes: Vec<std::thread::JoinHandle<()>>,
     /// Jump-to-line requested by inverse sync while activation was in flight.
     pending_jump: Option<(usize, usize)>,
     did_restore_session: bool,
@@ -922,6 +1036,8 @@ impl WorkspaceModel {
             capability_lease: None,
             editor_selection: (0, 0),
             event_sink: None,
+            writes: Arc::default(),
+            pending_writes: Vec::new(),
             pending_jump: None,
             did_restore_session: false,
             on_snapshot_changed: None,
@@ -1243,7 +1359,7 @@ impl WorkspaceModel {
         }
         let (Some(url), Some(snapshot)) = (
             self.active_document_url.clone(),
-            self.document_snapshot.clone(),
+            self.document_snapshot.as_ref(),
         ) else {
             return;
         };
@@ -1255,54 +1371,62 @@ impl WorkspaceModel {
         else {
             return;
         };
-        let outcome = AtomicDocumentStore::new().save(
-            &snapshot.text,
-            &url,
-            Some(snapshot.disk_baseline_hash),
-        );
-        match outcome {
-            DocumentSaveOutcome::Saved(document) => {
-                match session.apply(
-                    DocumentMutation::CommitSave {
-                        written_disk_hash: document.hash,
-                    },
-                    snapshot.revision,
-                ) {
-                    Ok(saved) => self.set_snapshot(saved),
-                    Err(DocumentSessionError::StaleRevision { .. }) => {
-                        self.set_snapshot(session.snapshot())
-                    }
-                    Err(e) => self.phase = WorkspacePhase::Failed(e.to_string()),
-                }
+        let path = snapshot.path.clone();
+        let writes = self.writes.clone();
+        // The write (two fsyncs) runs off the main thread; the result comes
+        // back through `apply_save_finished`. Without an event loop (tests)
+        // it runs inline.
+        match self.sink() {
+            Some(sink) => {
+                self.pending_writes.retain(|handle| !handle.is_finished());
+                self.pending_writes.push(std::thread::spawn(move || {
+                    let result = writes.write(&session, &url, false);
+                    let _ = sink.send(WorkspaceMessage::SaveFinished { path, result });
+                }));
             }
-            DocumentSaveOutcome::StaleBaseline(conflict) => {
-                let observed = conflict
-                    .observed_disk
-                    .map(|d| d.hash)
-                    .unwrap_or_else(|| DiskContentHash::hashing(""));
-                match session.apply(
-                    DocumentMutation::RecordSaveConflict {
-                        observed_disk_hash: observed,
-                    },
-                    snapshot.revision,
-                ) {
-                    Ok(conflicted) => self.set_snapshot(conflicted),
-                    Err(_) => self.set_snapshot(session.snapshot()),
-                }
+            None => {
+                let result = writes.write(&session, &url, false);
+                self.apply_save_finished(&path, result);
+            }
+        }
+    }
+
+    /// Publishes a finished save: the session already holds the committed
+    /// state (edits typed during the write included), so the active
+    /// document simply re-reads it.
+    pub fn apply_save_finished(&mut self, path: &NormalizedRelativePath, result: SaveResult) {
+        let Some(session) = self.registered_sessions.iter().find(|s| s.path() == path).cloned()
+        else {
+            return;
+        };
+        if self.document_snapshot.as_ref().is_some_and(|s| &s.path == path) {
+            self.set_snapshot(session.snapshot());
+        }
+        match result {
+            SaveResult::Saved | SaveResult::Skipped => {}
+            SaveResult::Conflict => {
                 self.synctex_state = WorkspaceSyncTeXState::Stale(
                     "The source changed on disk; SyncTeX locations may be stale.".into(),
                 );
             }
-            DocumentSaveOutcome::PermissionFailure { path } => {
+            SaveResult::PermissionFailure(path) => {
                 self.phase = WorkspacePhase::Failed(
                     WorkspaceOpenError::SavePermissionDenied(path).to_string(),
                 )
             }
-            DocumentSaveOutcome::InterruptedWrite { path } => {
+            SaveResult::InterruptedWrite(path) => {
                 self.phase = WorkspacePhase::Failed(
                     WorkspaceOpenError::SaveInterrupted(path).to_string(),
                 )
             }
+            SaveResult::CommitFailed(reason) => self.phase = WorkspacePhase::Failed(reason),
+        }
+    }
+
+    /// Blocks until every save worker has finished writing and committing.
+    pub fn wait_for_pending_writes(&mut self) {
+        for handle in self.pending_writes.drain(..) {
+            let _ = handle.join();
         }
     }
 
@@ -1322,6 +1446,8 @@ impl WorkspaceModel {
             return;
         };
         if use_disk_version {
+            // The adopted disk text supersedes whatever this app last wrote.
+            self.writes.own().remove(&snapshot.path);
             match Self::read_exact_utf8(&url) {
                 Ok(disk_text) => match session.apply(
                     DocumentMutation::ResolveConflict {
@@ -1344,28 +1470,15 @@ impl WorkspaceModel {
                 }
             }
         } else {
-            let baseline = match &snapshot.conflict {
-                Some(
-                    DocumentConflict::ExternalModification { observed_disk, .. }
-                    | DocumentConflict::SaveCollision { observed_disk, .. },
-                ) => *observed_disk,
-                None => snapshot.disk_baseline_hash,
-            };
-            let outcome = AtomicDocumentStore::new().save(&snapshot.text, &url, Some(baseline));
-            match outcome {
-                DocumentSaveOutcome::Saved(document) => match session.apply(
-                    DocumentMutation::CommitSave {
-                        written_disk_hash: document.hash,
-                    },
-                    snapshot.revision,
-                ) {
-                    Ok(updated) => self.set_snapshot(updated),
-                    Err(e) => {
-                        self.phase = WorkspacePhase::Failed(format!(
-                            "The conflict could not be resolved: {e}"
-                        ))
-                    }
-                },
+            // Through the serialized writer: it waits for an in-flight save
+            // of this file and clears exactly the conflict it resolves.
+            match self.writes.write(&session, &url, true) {
+                SaveResult::Saved | SaveResult::Skipped => self.set_snapshot(session.snapshot()),
+                SaveResult::CommitFailed(e) => {
+                    self.phase = WorkspacePhase::Failed(format!(
+                        "The conflict could not be resolved: {e}"
+                    ))
+                }
                 _ => {
                     self.phase = WorkspacePhase::Failed(
                         "The conflicted file could not be written to disk.".into(),
@@ -1422,6 +1535,9 @@ impl WorkspaceModel {
     /// `close` — watchers/monitors are owned by the UI which unsubscribes
     /// first; the model clears all project state like the Swift method.
     pub fn close(&mut self) {
+        // In-flight saves land before their sessions go away.
+        self.wait_for_pending_writes();
+        self.writes.own().clear();
         // Release the capability lease first — `endAccess(capabilityLease)`.
         if let Some(lease) = self.capability_lease.take() {
             let _ = self.files.end_access(lease);
@@ -1588,6 +1704,17 @@ impl WorkspaceModel {
             return;
         };
         let observed_hash = DiskContentHash::hashing(&disk_text);
+        {
+            // Exactly the bytes our own last write put there (its commit
+            // owns the baseline, possibly still in flight) — not an external
+            // change. Anything else means the disk moved past that write, so
+            // the record goes: identical bytes arriving later are external.
+            let mut own = self.writes.own();
+            if own.get(&relative) == Some(&observed_hash) {
+                return;
+            }
+            own.remove(&relative);
+        }
         let snapshot = session.snapshot();
         if observed_hash == snapshot.disk_baseline_hash || snapshot.conflict.is_some() {
             return;
@@ -1605,11 +1732,10 @@ impl WorkspaceModel {
                     self.set_snapshot(updated);
                 }
             }
-        } else if let Ok(updated) = session.apply(
+        } else if let Ok(updated) = session.apply_text_neutral(
             DocumentMutation::RecordExternalChange {
                 observed_disk_hash: observed_hash,
             },
-            snapshot.revision,
         ) {
             if is_active {
                 self.set_snapshot(updated);
@@ -1637,34 +1763,24 @@ impl WorkspaceModel {
                 continue;
             }
             let file_url = root.join(snapshot.path.raw_value());
-            let outcome = AtomicDocumentStore::new().save(
-                &snapshot.text,
-                &file_url,
-                Some(snapshot.disk_baseline_hash),
-            );
-            match outcome {
-                DocumentSaveOutcome::Saved(document) => {
-                    let _ = session.apply(
-                        DocumentMutation::CommitSave {
-                            written_disk_hash: document.hash,
-                        },
-                        snapshot.revision,
-                    );
+            // Synchronous — builds and agent runs need the files on disk
+            // before they start — but serialized behind any in-flight save.
+            match self.writes.write(&session, &file_url, false) {
+                SaveResult::Saved | SaveResult::Skipped | SaveResult::CommitFailed(_) => {
+                    if session.snapshot().save_state == DocumentSaveState::Conflicted {
+                        return Some(format!(
+                            "The file {} has an unresolved external-change conflict. Resolve it before using the agent.",
+                            snapshot.path.raw_value()
+                        ));
+                    }
                 }
-                DocumentSaveOutcome::StaleBaseline(_) => {
-                    let disk = Self::read_exact_utf8(&file_url).unwrap_or_default();
-                    let _ = session.apply(
-                        DocumentMutation::RecordSaveConflict {
-                            observed_disk_hash: DiskContentHash::hashing(&disk),
-                        },
-                        snapshot.revision,
-                    );
+                SaveResult::Conflict => {
                     return Some(format!(
                         "The file {} changed on disk while preparing the agent. Resolve the conflict first.",
                         snapshot.path.raw_value()
                     ));
                 }
-                _ => {
+                SaveResult::PermissionFailure(_) | SaveResult::InterruptedWrite(_) => {
                     return Some(format!(
                         "The file {} could not be saved before running the agent.",
                         snapshot.path.raw_value()
@@ -2703,6 +2819,8 @@ impl WorkspaceModel {
         } else {
             Some(url)
         };
+        // The pin badge is part of the tree.
+        self.files_revision += 1;
         self.refresh_build_target();
         self.restore_built_preview();
     }
@@ -2736,6 +2854,7 @@ impl WorkspaceModel {
         &mut self,
         (result, children): (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
     ) {
+        let previous_target = self.automatic_build_target.clone();
         match result {
             Ok(target) => {
                 self.automatic_build_target = target;
@@ -2753,8 +2872,13 @@ impl WorkspaceModel {
                 self.build_target_message = Some(e.to_string());
             }
         }
+        // The project tree marks the build target and nests its children;
+        // every tab switch and build start resolves, so rebuild the tree
+        // (one widget + gesture per file) only when those actually moved.
+        if self.automatic_build_target != previous_target || self.project_children != children {
+            self.files_revision += 1;
+        }
         self.project_children = children;
-        self.files_revision += 1;
     }
 
     /// `refreshBuildTarget` — resolve the main document for the active
@@ -3192,26 +3316,6 @@ impl WorkspaceModel {
             context.pdf_path = self.latest_built_pdf_name.clone();
         }
         context
-    }
-
-    /// Cheap change key for `agent_context` — the 40ms poll skips the
-    /// clone-heavy rebuild while this matches (revision covers text edits,
-    /// selection covers the attachment, pdf name covers build state).
-    pub fn agent_context_key(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        self.project_url.hash(&mut h);
-        self.document_snapshot
-            .as_ref()
-            .map(|s| (s.revision, s.path.raw_value()))
-            .hash(&mut h);
-        self.editor_selection.hash(&mut h);
-        self.files_revision.hash(&mut h);
-        self.latest_built_pdf_name.hash(&mut h);
-        if let WorkspaceBuildState::Succeeded { hash, .. } = &self.build_state {
-            hash.hash(&mut h);
-        }
-        h.finish()
     }
 
     /// `syncSelectionAttachment` — mirrors the dragged range into the agent's

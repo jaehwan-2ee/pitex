@@ -47,7 +47,7 @@ fn native_edits_highlighting_and_pdf_worker() {
         let state = snapshot.borrow();
         let tokens = DeterministicTeXLexer::tokenize(&state.text, TeXDialect::Latex);
         let decorations = tokens.iter().map(|t| EditorDecoration { range: t.range, token_kind: t.kind.clone() }).collect();
-        adapter.apply_decorations(&EditorDecorationSnapshot::new(state.revision, decorations));
+        adapter.apply_decorations(EditorDecorationSnapshot::new(state.revision, decorations));
         for token in tokens {
             let start = token.range.utf8_offset as usize;
             let end = start + token.range.utf8_length as usize;
