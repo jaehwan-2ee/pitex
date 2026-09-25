@@ -123,6 +123,7 @@
 "sidebar.outline" = "Đề cương";
 "sidebar.labels" = "Nhãn";
 "sidebar.bibtex" = "BibTeX";
+"sidebar.workspace" = "Không gian làm việc";
 "sidebar.project" = "Dự án";
 "sidebar.left" = "Thanh bên trái";
 "sidebar.right" = "Thanh bên phải";

@@ -123,6 +123,7 @@
 "sidebar.outline" = "개요";
 "sidebar.labels" = "레이블";
 "sidebar.bibtex" = "BibTeX";
+"sidebar.workspace" = "작업 공간";
 "sidebar.project" = "프로젝트";
 "sidebar.left" = "왼쪽 사이드바";
 "sidebar.right" = "오른쪽 사이드바";

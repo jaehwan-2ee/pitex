@@ -124,6 +124,7 @@
 "sidebar.outline" = "大纲";
 "sidebar.labels" = "标签";
 "sidebar.bibtex" = "BibTeX";
+"sidebar.workspace" = "工作区";
 "sidebar.project" = "项目";
 "sidebar.left" = "左侧边栏";
 "sidebar.right" = "右侧边栏";

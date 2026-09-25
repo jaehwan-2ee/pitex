@@ -37,6 +37,13 @@ Key/agent authentication must already work without a password prompt.
   their folder, such as `manuscript.tex (4_journal)`, and bibliography/PDF
   associations follow the selected manuscript's path.
 
+The sidebar offers **Workspace / Project / TODOs**, with **Workspace** selected
+by default. Workspace preserves the opened folder's hierarchy and highlights
+the current file in place. Project shows the current manuscript's nested TeX,
+BibTeX, and figure dependencies, with its compiled PDF separated below; an
+active Markdown document appears as its own project. Switching tabs preserves
+Workspace folder expansion.
+
 Mirroring excludes VCS/dependency directories (including `.git`,
 `node_modules`, and `.venv`) and files of 50 MB or larger. Open projects
 inside the mirrored folder when asking the agent to read or edit files.

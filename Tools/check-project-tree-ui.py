@@ -16,10 +16,10 @@ check = r'''
 @main struct ProjectTreeCheck {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
-        let tree = nestProjectChildren(buildProjectFileTree(relativePaths: [
-            "manuscript.tex", "manuscript.bib", "ch1.tex", "ch2.tex",
+        let tree = buildProjectFileTree(relativePaths: [
+            "manuscript.tex", "manuscript.bib", "ch1.tex", "ch2.tex", "notes.md",
             "figures/a.pdf", "figures/b.pdf", "other_tex/ch3.tex", "other_tex/ch4.tex",
-        ]), main: "manuscript.tex", children: ["manuscript.bib", "ch1.tex", "ch2.tex"])
+        ])
         var selected = ""
         let host = NSHostingView(rootView: ProjectTreeRows(nodes: tree) { node in
             Button { selected = node.path } label: {
@@ -33,15 +33,15 @@ check = r'''
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }.buttonStyle(.plain)
-        }.padding(8).frame(width: 340, height: 380, alignment: .topLeading)
+        }.padding(8).frame(width: 340, height: 440, alignment: .topLeading)
             .background(Color(nsColor: .windowBackgroundColor)))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 380),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
         defer { window.orderOut(nil) }
         let names = ["manuscript.tex", "manuscript.bib", "ch1.tex", "ch2.tex",
-                     "figures", "a.pdf", "b.pdf", "other_tex", "ch3.tex", "ch4.tex"]
+                     "notes.md", "figures", "a.pdf", "b.pdf", "other_tex", "ch3.tex", "ch4.tex"]
         func snapshot(_ name: String) async throws -> [String: CGRect] {
             try await Task.sleep(for: .milliseconds(300))
             host.layoutSubtreeIfNeeded()
@@ -55,9 +55,12 @@ check = r'''
             try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
             var rows: [String: CGRect] = [:]
             for observation in request.results ?? [] {
-                let text = observation.topCandidates(1).first?.string ?? ""
-                for name in names where text.contains(name) {
-                    rows[name] = observation.boundingBox
+                guard let candidate = observation.topCandidates(1).first else { continue }
+                for name in names {
+                    if let range = candidate.string.range(of: name),
+                       let box = try candidate.boundingBox(for: range) {
+                        rows[name] = box.boundingBox
+                    }
                 }
             }
             return rows
@@ -72,30 +75,35 @@ check = r'''
                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
             }
         }
-        let sourceNames = ["manuscript.tex", "manuscript.bib", "ch1.tex", "ch2.tex"]
+        let sourceNames = ["ch1.tex", "ch2.tex", "manuscript.bib", "manuscript.tex", "notes.md"]
         func checkSources(_ rows: [String: CGRect]) {
             precondition(sourceNames.allSatisfy { rows[$0] != nil }, "Hidden source rows: \(rows)")
             for (parent, child) in zip(sourceNames, sourceNames.dropFirst()) {
                 precondition(rows[parent]!.midY > rows[child]!.midY, "Source order changed")
             }
             for child in sourceNames.dropFirst() {
-                precondition((rows[child]!.minX - rows["manuscript.tex"]!.minX) * 340 >= 20,
-                             "Dependencies must be indented: \(rows)")
+                precondition(abs(rows[child]!.minX - rows["ch1.tex"]!.minX) * 340 < 6,
+                             "Sibling files must stay at the same depth: \(rows)")
             }
         }
         let closed = try await snapshot("closed")
         checkSources(closed)
         precondition(closed["a.pdf"] == nil && closed["ch3.tex"] == nil)
-        click(closed["ch1.tex"]!)
-        precondition(selected == "ch1.tex", "File row did not activate")
+        for file in ["manuscript.tex", "manuscript.bib", "notes.md"] {
+            click(closed[file]!)
+            precondition(selected == file, "File row did not activate")
+            let after = try await snapshot(file)
+            checkSources(after)
+            precondition(after == closed, "Opening a file changed the tree layout")
+        }
         click(closed["figures"]!, disclosure: true)
         let figures = try await snapshot("figures")
         checkSources(figures)
         precondition(figures["a.pdf"] != nil && figures["b.pdf"] != nil && figures["ch3.tex"] == nil)
         precondition((figures["a.pdf"]!.minX - figures["figures"]!.minX) * 340 >= 16,
                      "Folder files must be indented: \(figures)")
-        precondition(abs(figures["a.pdf"]!.minX - figures["ch1.tex"]!.minX) * 340 < 3,
-                     "Files at the same depth must align")
+        precondition((figures["a.pdf"]!.minX - figures["ch1.tex"]!.minX) * 340 >= 20,
+                     "PDF must stay inside its folder")
         click(figures["other_tex"]!, disclosure: true)
         let expanded = try await snapshot("expanded")
         checkSources(expanded)
@@ -108,7 +116,7 @@ check = r'''
         click(collapsed["figures"]!)
         let byName = try await snapshot("byName")
         precondition(byName["a.pdf"] != nil, "Clicking a folder name must expand it")
-        print("PASS: main first; source dependencies always visible and indented; file activation; independent folder toggles by chevron or name, and indentation")
+        print("PASS: stable folder hierarchy across TeX/Bib/Markdown activation; PDF stays in its folder; independent folder toggles and indentation")
     }
 }
 '''

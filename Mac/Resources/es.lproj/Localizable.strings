@@ -124,6 +124,7 @@
 "sidebar.outline" = "Esquema";
 "sidebar.labels" = "Etiquetas";
 "sidebar.bibtex" = "BibTeX";
+"sidebar.workspace" = "Espacio de trabajo";
 "sidebar.project" = "Proyecto";
 "sidebar.left" = "Barra lateral izquierda";
 "sidebar.right" = "Barra lateral derecha";

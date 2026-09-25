@@ -124,6 +124,7 @@
 "sidebar.outline" = "Структура";
 "sidebar.labels" = "Метки";
 "sidebar.bibtex" = "BibTeX";
+"sidebar.workspace" = "Рабочая область";
 "sidebar.project" = "Проект";
 "sidebar.left" = "Левая панель";
 "sidebar.right" = "Правая панель";

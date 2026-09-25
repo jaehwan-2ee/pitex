@@ -123,6 +123,7 @@
 "sidebar.outline" = "アウトライン";
 "sidebar.labels" = "ラベル";
 "sidebar.bibtex" = "BibTeX";
+"sidebar.workspace" = "ワークスペース";
 "sidebar.project" = "プロジェクト";
 "sidebar.left" = "左サイドバー";
 "sidebar.right" = "右サイドバー";
