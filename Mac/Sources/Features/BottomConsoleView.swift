@@ -86,7 +86,7 @@ struct BottomConsoleView: View {
                 logPane
             }
         }
-        .frame(minHeight: 120, idealHeight: 190)
+        .frame(minHeight: 300, idealHeight: 360)
         .accessibilityIdentifier("pitex.console")
     }
 

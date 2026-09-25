@@ -15,6 +15,33 @@ sharing one architecture across platforms.
 
 ## Key features
 
+### Open projects over SSH
+
+**Open a folder on another Mac, Linux PC, or SSH server and work in the
+native Pitex editor.** Choose **File → Open via SSH**, select a host from
+`~/.ssh/config` or add one in **Settings → SSH**, then browse to the project.
+Key/agent authentication must already work without a password prompt.
+
+- **Save → sync** — manual saves, Save All, and **Settings → Editor → Auto
+  Save** upload saved changes automatically. Auto Save uses the selected
+  2, 5, or 10 second idle delay; there is no separate sync interval.
+- **Remote builds and Git** run on the connected device. Build PDFs and
+  SyncTeX metadata return to the local preview.
+- **Pitex Agent** reads and edits the local project mirror; after an agent
+  run, its file changes sync back over SSH. The agent process and its shell
+  tools run locally; they do not run in the remote machine's environment.
+- **Conflict protection** keeps files changed on both sides for review.
+  Offline edits stay in the local mirror for a later sync. The window shows
+  the device and sync state; returning to the window refreshes remote edits.
+- **Multiple manuscripts** stay distinguishable: duplicate names display
+  their folder, such as `manuscript.tex (4_journal)`, and bibliography/PDF
+  associations follow the selected manuscript's path.
+
+Mirroring excludes VCS/dependency directories (including `.git`,
+`node_modules`, and `.venv`) and files of 50 MB or larger. Open projects
+inside the mirrored folder when asking the agent to read or edit files.
+
+
 ### Pi-based AI Assistant
 
 The bottom console hosts an embedded **pi** coding agent with a native

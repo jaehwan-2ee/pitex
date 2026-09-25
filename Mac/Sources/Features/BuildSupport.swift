@@ -272,6 +272,16 @@ struct TeXProjectResolver {
         return directLinks(of: file, base: file.deletingLastPathComponent())
     }
 
+    /// Citation keys follow this manuscript's resources, including shared
+    /// references reached through included chapters. Undeclared .bib files
+    /// fall back to this manuscript's directory only.
+    mutating func bibliographyFiles(main: URL?, files: [URL]) -> [URL] {
+        let linked = main.map { dependencies(of: $0).filter { $0.pathExtension.lowercased() == "bib" } } ?? []
+        if !linked.isEmpty { return linked.sorted { $0.path < $1.path } }
+        return files.filter { $0.pathExtension.lowercased() == "bib"
+            && (main == nil || $0.deletingLastPathComponent() == main?.deletingLastPathComponent()) }
+    }
+
     private mutating func dependencies(of main: URL) -> Set<URL> {
         let base = main.deletingLastPathComponent()
         var visited = Set<URL>()

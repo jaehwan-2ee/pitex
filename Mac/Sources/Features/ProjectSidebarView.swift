@@ -313,9 +313,7 @@ struct ProjectSidebarView: View {
             // rows selected (accent wash) even without a selection binding —
             // we want only our own active-file highlight. Only directories
             // collapse; the main document's dependencies stay visible.
-            let mainStem = workspace.buildSourceURL()?
-                .deletingPathExtension().lastPathComponent ?? ""
-            let project = extractOutputPDFs(workspace.projectTree, mainStem: mainStem)
+            let project = extractOutputPDFs(workspace.projectTree, mainPath: workspace.buildSourceRelativePath() ?? "")
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ProjectTreeRows(nodes: project.tree) { fileRow($0) }
@@ -370,6 +368,7 @@ struct ProjectSidebarView: View {
                     : (url.pathExtension.lowercased() == "pdf" ? "doc.richtext" : "photo"))
                 Text(verbatim: node.name)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 Spacer()
                 if isSource, url == workspace.pinnedBuildTarget {
                     Image(systemName: "pin.fill")
@@ -393,6 +392,7 @@ struct ProjectSidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(node.path)
         .accessibilityIdentifier("pitex.project.file.\(node.path)")
     }
 
