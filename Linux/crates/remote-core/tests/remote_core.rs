@@ -845,3 +845,68 @@ fn live_remote_build_streams_output_and_fetches_artifacts() {
         "fetched outputs are in the manifest, not pending uploads"
     );
 }
+
+/// `SshClient::run_git` end to end — a device repo reports top-level and
+/// porcelain status exactly like the Git pane asks for them.
+#[cfg(unix)]
+#[test]
+fn live_run_git_status() {
+    let Some(client) = live_client() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let remote = TempDir::new("remote-git");
+    std::fs::create_dir_all(remote.path()).unwrap();
+    let dir = remote.path().to_str().unwrap().to_string();
+    let git = |args: &[&str]| {
+        let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        client.run_git(&dir, &argv).unwrap()
+    };
+    assert_eq!(git(&["init", "-q"]).status, 0);
+    assert_eq!(git(&["config", "user.email", "test@example.com"]).status, 0);
+    assert_eq!(git(&["config", "user.name", "Pitex Test"]).status, 0);
+    write(&remote.join("main.tex"), "v1\n");
+    assert_eq!(git(&["add", "main.tex"]).status, 0);
+    assert_eq!(git(&["commit", "-q", "-m", "first"]).status, 0);
+    write(&remote.join("main.tex"), "v2\n");
+    write(&remote.join("notes.md"), "new\n");
+
+    let top = git(&["rev-parse", "--show-toplevel"]);
+    assert_eq!(top.status, 0, "{}", top.stderr_text());
+    let root = top.stdout_text().trim().to_string();
+    // The pane's exact status argv (git-core `status_args`); parsed
+    // status is asserted at the pitex-shell level where git-core lives.
+    let status = client
+        .run_git(
+            &root,
+            &[
+                "--no-optional-locks".to_string(),
+                "status".to_string(),
+                "--porcelain=v1".to_string(),
+                "-z".to_string(),
+                "--branch".to_string(),
+                "-uall".to_string(),
+            ],
+        )
+        .unwrap();
+    assert_eq!(status.status, 0, "{}", status.stderr_text());
+    let raw = status.stdout_text();
+    assert!(raw.contains("## "), "{raw:?}");
+    assert!(raw.contains(" M main.tex"), "{raw:?}");
+    assert!(raw.contains("?? notes.md"), "{raw:?}");
+
+    // A path that is not a repository answers non-zero — the only
+    // "not a repository" signal the pane trusts.
+    let plain = TempDir::new("not-a-repo");
+    std::fs::create_dir_all(plain.path()).unwrap();
+    let miss = client
+        .run_git(
+            plain.path().to_str().unwrap(),
+            &[
+                "rev-parse".to_string(),
+                "--show-toplevel".to_string(),
+            ],
+        )
+        .unwrap();
+    assert_ne!(miss.status, 0);
+}

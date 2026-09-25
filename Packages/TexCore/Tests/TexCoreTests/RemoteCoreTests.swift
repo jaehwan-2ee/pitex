@@ -1,5 +1,6 @@
 import BuildCore
 import Foundation
+import GitCore
 @testable import RemoteCore
 import XCTest
 
@@ -286,6 +287,52 @@ final class RemoteCoreTests: XCTestCase {
         XCTAssertNil(RemoteMirror.containing(URL(fileURLWithPath: "/tmp/elsewhere.tex"), store: store))
     }
 
+    // MARK: - git on the device
+
+    func testGitExecArguments() {
+        XCTAssertEqual(SSHClient.gitExecArguments("/srv/ws dir", ["status", "--porcelain=v1"]), [
+            "/srv/ws dir", "env", "GIT_TERMINAL_PROMPT=0",
+            "GIT_SSH_COMMAND=ssh -o BatchMode=yes", "git", "status", "--porcelain=v1",
+        ])
+    }
+
+    func testLocalURLMapsRepoPathsIntoTheMirror() {
+        let project = RemoteProject(connection: SSHConnection(name: "dev", destination: "dev"), remoteRoot: "/srv/ws/sub")
+        let mirror = RemoteMirror(directory: URL(fileURLWithPath: "/tmp/m"), project: project)
+
+        // Repo rooted at the opened folder.
+        XCTAssertEqual(mirror.localURL(toplevel: "/srv/ws/sub", path: "a/b.tex"),
+                       mirror.root.appendingPathComponent("a/b.tex"))
+        // Repo rooted above the opened folder: a change inside `sub/`
+        // still lands in the mirror…
+        XCTAssertEqual(mirror.localURL(toplevel: "/srv/ws", path: "sub/a.tex"),
+                       mirror.root.appendingPathComponent("a.tex"))
+        // …but a change in a sibling folder has no local copy.
+        XCTAssertNil(mirror.localURL(toplevel: "/srv/ws", path: "other/a.tex"))
+        // A toplevel unrelated to the project maps nothing.
+        XCTAssertNil(mirror.localURL(toplevel: "/srv/other", path: "a.tex"))
+        // Prefix trap: `/srv/ws/sub2` does not live under `/srv/ws/sub`.
+        XCTAssertNil(mirror.localURL(toplevel: "/srv/ws", path: "sub2/a.tex"))
+        // `..` resolves lexically: inside the repo it maps…
+        XCTAssertEqual(mirror.localURL(toplevel: "/srv/ws/sub", path: "a/../b.tex"),
+                       mirror.root.appendingPathComponent("b.tex"))
+        // …but climbing above `remoteRoot` is rejected.
+        XCTAssertNil(mirror.localURL(toplevel: "/srv/ws/sub", path: "../out.tex"))
+        XCTAssertNil(mirror.localURL(toplevel: "/srv/ws/sub", path: "a/../../out.tex"))
+        // The repo root itself is no file to open.
+        XCTAssertNil(mirror.localURL(toplevel: "/srv/ws/sub", path: ""))
+        // Trailing slashes and `.` inside the toplevel normalize away.
+        XCTAssertEqual(mirror.localURL(toplevel: "/srv/ws/./sub/", path: "a.tex"),
+                       mirror.root.appendingPathComponent("a.tex"))
+    }
+
+    func testNormalizedGitDevicePath() {
+        XCTAssertEqual(RemoteMirror.normalizedGitDevicePath("/a//b/./c/../d"), "/a/b/d")
+        XCTAssertEqual(RemoteMirror.normalizedGitDevicePath("/a/../"), "/")
+        XCTAssertEqual(RemoteMirror.normalizedGitDevicePath("a/../b"), "b")
+        XCTAssertEqual(RemoteMirror.normalizedGitDevicePath(""), "")
+    }
+
     // MARK: - Live, against a real sshd (skipped unless configured)
 
     /// Configure with PITEX_TEST_SSH_DESTINATION (+ _PORT, _KEY,
@@ -473,6 +520,45 @@ final class RemoteCoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("src/main.pdf"), encoding: .utf8), "%PDF-1.4")
         let afterBuild = try await sync.push()
         XCTAssertEqual(afterBuild.uploaded, [], "fetched outputs are in the manifest, not pending uploads")
+    }
+
+    /// `runGit` through the private sshd: a device repo reports its
+    /// worktree status, and a plain folder is not a repo — a non-zero
+    /// exit, not a thrown connection error.
+    func testLiveRunGitStatusOnTheDevice() async throws {
+        let client = try liveClient()
+        let fileManager = FileManager.default
+        let remote = fileManager.temporaryDirectory.appendingPathComponent("pitex-git-\(UUID().uuidString)")
+        let plain = fileManager.temporaryDirectory.appendingPathComponent("pitex-plain-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: remote); try? fileManager.removeItem(at: plain) }
+        try fileManager.createDirectory(at: remote, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: plain, withIntermediateDirectories: true)
+
+        var result = try await client.runGit(["init"], in: remote.path)
+        XCTAssertEqual(result.status, 0, result.stderrText)
+        _ = try await client.runGit(["config", "user.name", "Pitex Test"], in: remote.path)
+        _ = try await client.runGit(["config", "user.email", "pitex@test.local"], in: remote.path)
+        try "one\n".write(to: remote.appendingPathComponent("tracked.tex"), atomically: true, encoding: .utf8)
+        _ = try await client.runGit(["add", "tracked.tex"], in: remote.path)
+        result = try await client.runGit(["commit", "-m", "init"], in: remote.path)
+        XCTAssertEqual(result.status, 0, result.stderrText)
+        try "two\n".write(to: remote.appendingPathComponent("tracked.tex"), atomically: true, encoding: .utf8)
+        try "new\n".write(to: remote.appendingPathComponent("new.tex"), atomically: true, encoding: .utf8)
+
+        result = try await client.runGit(GitSupport.topLevelArgs, in: remote.path)
+        XCTAssertEqual(result.status, 0, result.stderrText)
+        let toplevel = result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(toplevel, remote.resolvingSymlinksInPath().path)
+
+        result = try await client.runGit(GitSupport.statusArgs, in: remote.path)
+        XCTAssertEqual(result.status, 0, result.stderrText)
+        let parsed = GitSupport.parseStatus(result.stdoutText, root: toplevel)
+        XCTAssertEqual(parsed.unstaged.map(\.path).sorted(), ["new.tex", "tracked.tex"])
+        XCTAssertEqual(parsed.unstaged.first { $0.path == "tracked.tex" }?.kind, .modified)
+        XCTAssertEqual(parsed.unstaged.first { $0.path == "new.tex" }?.kind, .untracked)
+
+        result = try await client.runGit(GitSupport.topLevelArgs, in: plain.path)
+        XCTAssertNotEqual(result.status, 0, "a plain folder is not a repository")
     }
 
     private actor Collected {

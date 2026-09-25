@@ -87,6 +87,54 @@ public struct RemoteMirror: Sendable, Hashable {
         let mapped = String(text.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
         return String(mapped.prefix(40))
     }
+
+    /// Reverse of `remotePath(for:)` for git output: the device path
+    /// `toplevel` + "/" + `path` (a repo root from `rev-parse
+    /// --show-toplevel` plus a repo-relative porcelain path) mapped into
+    /// this mirror — `root / relative(joined, from: remoteRoot)`. `nil`
+    /// when the repo extends above `remoteRoot` (the opened project is a
+    /// subfolder of the repo) and the change points outside the mirror —
+    /// the file still lists in the pane but has no local copy to open.
+    public func localURL(toplevel: String, path: String) -> URL? {
+        func stripTrailingSlashes(_ value: String) -> String {
+            var value = value
+            while value.hasSuffix("/") { value.removeLast() }
+            return value
+        }
+        let remote = stripTrailingSlashes(Self.normalizedGitDevicePath(project.remoteRoot))
+        let top = stripTrailingSlashes(Self.normalizedGitDevicePath(toplevel))
+        let joined = Self.normalizedGitDevicePath(top + "/" + path)
+        // Component-boundary check — a plain `hasPrefix` would let
+        // `/repo-other/…` pass for remoteRoot `/repo`.
+        guard joined.hasPrefix(remote) else { return nil }
+        let rest = joined.dropFirst(remote.count)
+        guard rest.hasPrefix("/") else { return nil }
+        let relative = rest.dropFirst()
+        guard !relative.isEmpty, RemoteSyncRules.isSafeRelativePath(String(relative)) else { return nil }
+        var url = root
+        for component in relative.split(separator: "/") {
+            url.appendPathComponent(String(component), isDirectory: false)
+        }
+        return url
+    }
+
+    /// Lexical POSIX normalization for device paths git reports
+    /// (`rev-parse --show-toplevel`, `remoteRoot`): collapses `//`,
+    /// resolves `.` and `..`, strips the trailing `/`. git always emits
+    /// `/`-separated paths; the remote filesystem is never touched.
+    static func normalizedGitDevicePath(_ path: String) -> String {
+        let absolute = path.hasPrefix("/")
+        var out: [Substring] = []
+        for component in path.split(separator: "/", omittingEmptySubsequences: true) {
+            if component == "." { continue }
+            if component == ".." {
+                _ = out.popLast()
+                continue
+            }
+            out.append(component)
+        }
+        return (absolute ? "/" : "") + out.joined(separator: "/")
+    }
 }
 
 /// Which files are mirrored, applied identically on both sides: VCS and
@@ -382,8 +430,11 @@ extension SSHClient {
 /// push uploads local edits only where the remote is still what was last
 /// synced. Anything changed on both sides is reported, never overwritten.
 public actor RemoteSync {
-    public let mirror: RemoteMirror
-    public let client: SSHClient
+    /// Immutable and Sendable — explicitly nonisolated so other modules
+    /// (the app targets `Mac/`) can read them synchronously; inside the
+    /// module `let` already is.
+    public nonisolated let mirror: RemoteMirror
+    public nonisolated let client: SSHClient
     private let gate: (any MirrorWriteGate)?
     private var manifest: [String: String]
     /// Paths changed on both sides, kept here so every window sharing the

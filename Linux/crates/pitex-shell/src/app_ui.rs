@@ -33,7 +33,7 @@ use crate::ghost_completion::{CompletionContext, GhostCompletionCoordinator};
 use crate::l10n::{resolve_language, tr, tr1};
 use crate::markdown_preview::MarkdownPreview;
 use crate::model::{
-    ConsoleSection, DocumentTodoItem, GitRefresh, SidebarSection, TodoLineEdit,
+    ConsoleSection, DocumentTodoItem, SidebarSection, TodoLineEdit,
     WorkspaceBuildState, WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
 };
 use crate::pdf::{PdfInfo, PdfRenderer};
@@ -173,6 +173,10 @@ pub struct UiHandles {
     pub git_ahead_behind: RefCell<Option<gtk4::Label>>,
     pub git_busy_spinner: RefCell<Option<gtk4::Spinner>>,
     pub git_error_label: RefCell<Option<gtk4::Label>>,
+    /// The same `git_error` mirrored onto the "not a repository" page —
+    /// an unreachable device reports its SSH failure there instead of
+    /// pretending the project has no repo.
+    pub git_empty_error_label: RefCell<Option<gtk4::Label>>,
     pub git_changes_list: RefCell<Option<gtk4::ListView>>,
     pub(crate) git_changes_model: RefCell<Option<crate::git_list::GitList>>,
     pub(crate) git_rendered_commits: RefCell<Vec<git_core::GitCommit>>,
@@ -248,10 +252,6 @@ pub struct AppState {
     /// Assistant pane shown on the last check — its first appearance
     /// starts pi (`AgentPanel`'s `.task { prepare() }` on macOS).
     assistant_was_visible: Cell<bool>,
-    pub(crate) git_refresh_pending: Cell<bool>,
-    pub(crate) git_refresh_root: RefCell<Option<PathBuf>>,
-    /// `gitDiff` session counter — the `GitDiffLoaded` stale-result token.
-    pub(crate) git_diff_seq: Cell<u64>,
     /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
     /// capability lease like `capabilityBroker`, `workspace` opens externals).
     pub env: PlatformEnvironment,
@@ -353,8 +353,6 @@ impl AppState {
             build_ui_pending: Cell::new(false),
             git_panel_was_visible: Cell::new(false),
             assistant_was_visible: Cell::new(false),
-            git_refresh_pending: Cell::new(false),
-            git_refresh_root: RefCell::new(None),
             env: PlatformEnvironment::make("dev.pitex.app"),
             app_version,
             active_session: None,
@@ -390,7 +388,6 @@ impl AppState {
             tx: Some(tx),
             git_pending_discard: None,
             git_branch_updating: Cell::new(false),
-            git_diff_seq: Cell::new(0),
             remote_push_generation: Rc::new(Cell::new(0)),
         };
         state.wire_model_callbacks();
@@ -2950,12 +2947,18 @@ impl AppState {
                     spinner.stop();
                 }
             }
-            if let Some(label) = ui.git_error_label.borrow().as_ref() {
+            for handle in [
+                ui.git_error_label.borrow().as_ref().cloned(),
+                ui.git_empty_error_label.borrow().as_ref().cloned(),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 if let Some(error) = &self.model.git_error {
-                    label.set_label(error);
-                    label.set_visible(true);
+                    handle.set_label(error);
+                    handle.set_visible(true);
                 } else {
-                    label.set_visible(false);
+                    handle.set_visible(false);
                 }
             }
             if let Some(model) = ui.git_changes_model.borrow().as_ref() {
@@ -4007,36 +4010,15 @@ impl AppState {
                 self.refresh_console_visibility();
             }
             WorkspaceMessage::GitRefreshed(result) => {
-                self.git_refresh_pending.set(false);
-                if self.git_refresh_root.borrow_mut().take() != self.model.project_url {
+                if self.model.git_refresh_root.borrow_mut().take() != self.model.project_url {
+                    self.model.git_refresh_pending.set(false);
                     self.refresh_git();
                     return;
                 }
-                match result {
-                    Ok(Some(GitRefresh {
-                        status,
-                        commits,
-                        branches,
-                    })) => {
-                        let old = self.model.git_status.replace(status);
-                        if old.is_some() { std::thread::spawn(move || drop(old)); }
-                        self.model.git_commits = commits;
-                        self.model.git_branches = branches;
-                    }
-                    // `Ok(None)` = not a repository; `Err` = git unusable —
-                    // both land on the empty page with its init button.
-                    _ => {
-                        self.model.git_status = None;
-                        self.model.git_commits.clear();
-                        self.model.git_branches.clear();
-                        // `clearGitHistoryState` — expanded rows and an
-                        // open diff refer to a repo that may be gone.
-                        self.model.git_expanded_commits.clear();
-                        self.model.git_commit_files.clear();
-                        self.model.git_commit_files_busy.clear();
-                        self.model.git_diff = None;
-                        self.refresh_git_diff();
-                    }
+                if self.model.apply_git_refreshed(&result) {
+                    // Repo state cleared — an open diff refers to a repo
+                    // that may be gone (`clearGitHistoryState`).
+                    self.refresh_git_diff();
                 }
                 self.refresh_git_panel();
             }
@@ -6351,7 +6333,7 @@ for line in sys.stdin:
             let model = UI.with(|ui| ui.git_changes_model.borrow().as_ref().unwrap().clone());
             assert_eq!(model.n_items(), 0, "hidden panel must not create rows");
             // Keep the synthetic snapshot stable while exercising the real view.
-            state.borrow().git_refresh_pending.set(true);
+            state.borrow().model.git_refresh_pending.set(true);
             let started = std::time::Instant::now();
             {
                 let mut s = state.borrow_mut();

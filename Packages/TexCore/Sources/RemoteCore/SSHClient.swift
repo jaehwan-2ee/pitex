@@ -213,6 +213,23 @@ public struct SSHClient: Sendable {
         return result
     }
 
+    /// `git args` on the device in `remoteDir`, through the same
+    /// login-shell runner remote builds use so the device user's PATH and
+    /// git config apply. `GIT_TERMINAL_PROMPT=0` and a batch-mode
+    /// `GIT_SSH_COMMAND` make a fetch/pull/push that would prompt for
+    /// credentials fail with git's message instead of hanging the pane.
+    public func runGit(_ arguments: [String], in remoteDir: String) async throws -> SSHCommandResult {
+        try await run(RemoteScripts.loginExec, arguments: Self.gitExecArguments(remoteDir, arguments))
+    }
+
+    /// `loginExec` positional arguments for `git args` in `remoteDir` —
+    /// `env` carries the non-interactive credential guards, then the git
+    /// argv verbatim, so the runner script itself stays untouched.
+    static func gitExecArguments(_ remoteDir: String, _ arguments: [String]) -> [String] {
+        [remoteDir, "env", "GIT_TERMINAL_PROMPT=0",
+         "GIT_SSH_COMMAND=ssh -o BatchMode=yes", "git"] + arguments
+    }
+
     /// Streams stdout/stderr chunks as they arrive (builds). With `tty`,
     /// the remote runs under a pseudo-terminal so it gets SIGHUP when the
     /// local ssh is terminated — cancelling a build stops it remotely too.

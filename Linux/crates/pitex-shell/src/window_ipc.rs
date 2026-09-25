@@ -335,6 +335,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Re-offer until `path` is removed, or ~2 s pass: a sibling test's
+    /// forked child can briefly inherit the dropped listener's fd, so one
+    /// cleanup pass occasionally loses the connect race. The file's stay
+    /// is still bounded — the process exits the fd on exec.
+    fn poll_removed(dir: &Path, file: &Path, path: &Path) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while path.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+            let _ = offer_in_dir(dir, file);
+        }
+    }
+
     /// A socket file nobody listens on gets cleaned up.
     #[cfg(unix)]
     #[test]
@@ -343,6 +355,7 @@ mod tests {
         let socket = dir.join("dead.sock");
         drop(UnixListener::bind(&socket).unwrap());
         assert!(!offer_in_dir(&dir, Path::new("/tmp/doc.tex")));
+        poll_removed(&dir, Path::new("/tmp/doc.tex"), &socket);
         assert!(!socket.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -437,6 +450,7 @@ mod tests {
         let entry = dir.join("9999.json");
         write_entry(&entry, port, "deadbeef");
         assert!(!offer_in_dir(&dir, Path::new("C:\\doc.tex")));
+        poll_removed(&dir, Path::new("C:\\doc.tex"), &entry);
         assert!(!entry.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

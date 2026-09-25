@@ -5,7 +5,7 @@
 //! `WorkspaceMessage` on the channel installed with `set_event_sink`.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -1027,6 +1027,12 @@ pub struct WorkspaceModel {
     pub git_expanded_commits: std::collections::HashSet<String>,
     pub git_commit_files: HashMap<String, Vec<git_core::GitCommitFile>>,
     pub git_commit_files_busy: std::collections::HashSet<String>,
+    /// `refreshGit` in-flight guard + the project root the poll was
+    /// issued for — a result landing for a stale root re-queues.
+    pub(crate) git_refresh_pending: Cell<bool>,
+    pub(crate) git_refresh_root: RefCell<Option<PathBuf>>,
+    /// `gitDiff` session counter — the `GitDiffLoaded` stale-result token.
+    pub(crate) git_diff_seq: Cell<u64>,
     /// `todoCache` — per-file (mtime | snapshot-revision, items) entries so
     /// a per-keystroke refresh only re-parses the file that changed.
     todo_cache: HashMap<PathBuf, ((u128, u64), Vec<DocumentTodoItem>)>,
@@ -1151,6 +1157,9 @@ impl WorkspaceModel {
             git_expanded_commits: std::collections::HashSet::new(),
             git_commit_files: HashMap::new(),
             git_commit_files_busy: std::collections::HashSet::new(),
+            git_refresh_pending: Cell::new(false),
+            git_refresh_root: RefCell::new(None),
+            git_diff_seq: Cell::new(0),
             todo_cache: HashMap::new(),
             project_label_keys: BTreeSet::new(),
             citation_keys: BTreeSet::new(),
@@ -1184,7 +1193,7 @@ impl WorkspaceModel {
     pub fn set_event_sink(&mut self, sink: Sender<WorkspaceMessage>) {
         self.event_sink = Some(sink);
     }
-    fn sink(&self) -> Option<Sender<WorkspaceMessage>> {
+    pub(crate) fn sink(&self) -> Option<Sender<WorkspaceMessage>> {
         self.event_sink.clone()
     }
 
@@ -1808,6 +1817,68 @@ impl WorkspaceModel {
             Err(error) => {
                 remote.status = crate::remote::RemoteStatus::Offline(error);
                 false
+            }
+        }
+    }
+
+    /// Applies a `GitRefreshed` result — shared by the GTK dispatch and
+    /// model-level tests. Returns true when repo state was cleared (the
+    /// "not a repository" page and remote-unreachable handling differ:
+    /// a remote transport failure keeps the last status and surfaces the
+    /// SSH error instead). The stale-root requeue stays in the dispatch.
+    pub fn apply_git_refreshed(
+        &mut self,
+        result: &Result<Option<GitRefresh>, String>,
+    ) -> bool {
+        self.git_refresh_pending.set(false);
+        let cleared = |model: &mut Self| {
+            model.git_status = None;
+            model.git_commits.clear();
+            model.git_branches.clear();
+            // `clearGitHistoryState` — expanded rows and an open diff
+            // refer to a repo that may be gone.
+            model.git_expanded_commits.clear();
+            model.git_commit_files.clear();
+            model.git_commit_files_busy.clear();
+            model.git_diff = None;
+        };
+        match result {
+            Ok(Some(GitRefresh {
+                status,
+                commits,
+                branches,
+            })) => {
+                let old = self.git_status.replace(status.clone());
+                if old.is_some() {
+                    std::thread::spawn(move || drop(old));
+                }
+                self.git_commits = commits.clone();
+                self.git_branches = branches.clone();
+                if self.remote.is_some() {
+                    // A reachable device clears a stale SSH error.
+                    self.git_error = None;
+                }
+                false
+            }
+            // `Ok(None)` = a real non-zero `rev-parse` — not a repository.
+            Ok(None) => {
+                cleared(self);
+                if self.remote.is_some() {
+                    self.git_error = None;
+                }
+                true
+            }
+            Err(error) => {
+                if self.remote.is_some() {
+                    // The device is unreachable — an SSH error, not
+                    // "not a repository"; the last status stays and the
+                    // error shows in the pane.
+                    self.git_error = Some(error.clone());
+                    false
+                } else {
+                    cleared(self);
+                    true
+                }
             }
         }
     }

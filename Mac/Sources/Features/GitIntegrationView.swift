@@ -1,6 +1,7 @@
 import AppKit
 import BuildCore
 import GitCore
+import RemoteCore
 import SwiftUI
 
 /// Process-level `git` runner — argv comes from `GitSupport` so the Linux
@@ -24,8 +25,22 @@ enum GitRunner {
         return nil
     }
 
-    static func run(_ arguments: [String], in directory: URL) async -> Result {
-        await Task.detached {
+    /// The one place deciding whether a command runs locally or on the
+    /// device — `remote` non-nil while an SSH workspace is open. For a
+    /// remote run `directory` is a mirror path on the first call
+    /// (`projectURL`, mapped by `remotePath`) and a device path on
+    /// follow-ups (`status.root`, passed through verbatim).
+    static func run(_ arguments: [String], in directory: URL, remote: RemoteSync? = nil) async -> Result {
+        if let remote {
+            do {
+                let deviceDir = await remote.remotePath(for: directory) ?? directory.path
+                let result = try await remote.client.runGit(arguments, in: deviceDir)
+                return Result(code: result.status, stdout: result.stdoutText, stderr: result.stderrText)
+            } catch {
+                return Result(code: -1, stdout: "", stderr: error.localizedDescription)
+            }
+        }
+        return await Task.detached {
             guard let binary = binaryURL() else {
                 return Result(code: -1, stdout: "", stderr: "git is not installed")
             }
@@ -87,19 +102,34 @@ extension WorkspaceModel {
                 gitRefreshInFlight = false
                 if projectURL != projectRoot { refreshGit() }
             }
-            let top = await GitRunner.run(GitSupport.topLevelArgs, in: projectRoot)
+            // Remote: flush local edits first so status/commit read the
+            // saved bytes; a failed push lands in `remote.status` (offline).
+            if remote != nil { _ = await pushRemote() }
+            let top = await GitRunner.run(GitSupport.topLevelArgs, in: projectRoot, remote: remote?.sync)
             guard projectURL == projectRoot else { return }
             guard top.code == 0 else {
+                if let remote, top.code == -1 || top.code == 127 {
+                    // A transport failure is an error, not "not a
+                    // repository" — SSH down, or a 127 from loginExec:
+                    // the device shell found no `git`. The last status
+                    // stays and the pane shows the error.
+                    let text = top.errorText
+                    gitError = text.isEmpty && top.code == 127
+                        ? "git was not found on \(remote.deviceName)" : text
+                    return
+                }
+                if remote != nil { gitError = nil }
                 gitStatus = nil
                 gitCommits = []
                 gitBranches = []
                 clearGitHistoryState()
                 return
             }
+            if remote != nil { gitError = nil }
             let root = URL(fileURLWithPath: top.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
-            async let statusResult = GitRunner.run(GitSupport.statusArgs, in: root)
-            async let branchResult = GitRunner.run(GitSupport.branchArgs, in: root)
-            async let logResult = GitRunner.run(GitSupport.logArgs(), in: root)
+            async let statusResult = GitRunner.run(GitSupport.statusArgs, in: root, remote: remote?.sync)
+            async let branchResult = GitRunner.run(GitSupport.branchArgs, in: root, remote: remote?.sync)
+            async let logResult = GitRunner.run(GitSupport.logArgs(), in: root, remote: remote?.sync)
             let (status, branches, log) = await (statusResult, branchResult, logResult)
             guard projectURL == projectRoot else { return }
             let previous = gitStatus
@@ -118,9 +148,10 @@ extension WorkspaceModel {
 
     /// Sequential git steps inside the repository; first failure wins.
     func gitOperation(_ steps: [[String]]) {
+        let remoteSync = remote?.sync
         runGit { root in
             for args in steps {
-                let result = await GitRunner.run(args, in: root)
+                let result = await GitRunner.run(args, in: root, remote: remoteSync)
                 if result.code != 0 { return result.errorText }
             }
             return nil
@@ -130,10 +161,11 @@ extension WorkspaceModel {
     /// Tries argv candidates in order until one exits 0 (e.g. `restore
     /// --staged` → `reset HEAD` → `rm --cached` on a no-commit repo).
     func gitOperationAny(_ candidates: [[String]]) {
+        let remoteSync = remote?.sync
         runGit { root in
             var lastError: String?
             for args in candidates {
-                let result = await GitRunner.run(args, in: root)
+                let result = await GitRunner.run(args, in: root, remote: remoteSync)
                 if result.code == 0 { return nil }
                 lastError = result.errorText
             }
@@ -147,7 +179,12 @@ extension WorkspaceModel {
         gitBusy = true
         gitError = nil
         Task {
+            // Remote ops push the mirror first (saved bytes reach the
+            // device) and pull after (device-side rewrites — checkout,
+            // switch, pull — land in the mirror and open editors).
+            if remote != nil { _ = await pushRemote() }
             gitError = await body(root)
+            if remote != nil { await pullRemote() }
             gitBusy = false
             refreshGit()
         }
@@ -216,14 +253,16 @@ extension WorkspaceModel {
         }
     }
 
-    /// `git init` at the project root — the panel's only op when the
-    /// project is not yet a repository.
+    /// `git init` at the project root — `remoteRoot` on the device for a
+    /// remote workspace.
     func initGit() {
         guard let projectRoot = projectURL else { return }
         gitBusy = true
         gitError = nil
         Task {
-            let result = await GitRunner.run(GitSupport.initArgs, in: projectRoot)
+            if remote != nil { _ = await pushRemote() }
+            let result = await GitRunner.run(GitSupport.initArgs, in: projectRoot, remote: remote?.sync)
+            if remote != nil { await pullRemote() }
             gitBusy = false
             gitError = result.code == 0 ? nil : result.errorText
             refreshGit()
@@ -232,7 +271,16 @@ extension WorkspaceModel {
 
     func openGitChange(_ change: GitChange) {
         guard let root = gitStatus?.root else { return }
-        let url = URL(fileURLWithPath: root).appendingPathComponent(change.path)
+        let url: URL
+        if let remote {
+            // `root` is a device path — the change maps back into the
+            // mirror; a repo extending above `remoteRoot` lists changes
+            // that have no local copy and simply don't open.
+            guard let local = remote.sync.mirror.localURL(toplevel: root, path: change.path) else { return }
+            url = local
+        } else {
+            url = URL(fileURLWithPath: root).appendingPathComponent(change.path)
+        }
         Task { await activateDocument(url) }
     }
 
@@ -248,7 +296,7 @@ extension WorkspaceModel {
         let root = URL(fileURLWithPath: status.root)
         gitCommitFilesBusy.insert(commit.hash)
         Task {
-            let result = await GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root)
+            let result = await GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root, remote: remote?.sync)
             let files = await Task.detached(priority: .utility) {
                 result.code == 0 ? GitSupport.parseCommitFiles(result.stdout) : []
             }.value
@@ -265,7 +313,7 @@ extension WorkspaceModel {
         let root = URL(fileURLWithPath: status.root)
         gitDiff = GitDiffSession(source: .commit(commit), file: file)
         Task {
-            let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.fullHash, path: file.path), in: root)
+            let result = await GitRunner.run(GitSupport.fileDiffArgs(commit.fullHash, path: file.path), in: root, remote: remote?.sync)
             let rendered: (sections: [GitDiffFileSection], items: [[GitDiffItem]])?
                 = await Task.detached(priority: .utility) {
                 guard result.code == 0 else { return nil }
@@ -294,7 +342,10 @@ extension WorkspaceModel {
         let source = GitDiffSession.Source.workingTree(staged: change.staged)
         gitDiff = GitDiffSession(source: source, file: file)
         Task {
-            let result = await GitRunner.run(GitSupport.workingFileDiffArgs(change), in: root)
+            // Push first so the working diff reads the same saved bytes
+            // the editor shows.
+            if remote != nil { _ = await pushRemote() }
+            let result = await GitRunner.run(GitSupport.workingFileDiffArgs(change), in: root, remote: remote?.sync)
             // `git diff --no-index` (untracked files) exits 1 on differences.
             let ok = result.code == 0 || (change.kind == .untracked && result.code == 1)
             let rendered: (sections: [GitDiffFileSection], items: [[GitDiffItem]])?
@@ -323,8 +374,8 @@ extension WorkspaceModel {
         let root = URL(fileURLWithPath: status.root)
         gitDiff = GitDiffSession(source: .commit(commit), file: nil)
         Task {
-            async let filesResult = GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root)
-            async let diffResult = GitRunner.run(GitSupport.commitDiffArgs(commit.fullHash), in: root)
+            async let filesResult = GitRunner.run(GitSupport.commitFilesArgs(commit.fullHash), in: root, remote: remote?.sync)
+            async let diffResult = GitRunner.run(GitSupport.commitDiffArgs(commit.fullHash), in: root, remote: remote?.sync)
             let (files, diff) = await (filesResult, diffResult)
             guard gitDiff?.source == .commit(commit), gitDiff?.file == nil else { return }
             guard diff.code == 0 else {
@@ -384,7 +435,9 @@ extension WorkspaceModel {
             defer { gitSuggestBusy = false }
             let root = URL(fileURLWithPath: status.root)
             let staged = !status.staged.isEmpty
-            let diff = await GitRunner.run(GitSupport.diffArgs(staged: staged), in: root)
+            // The diff reads worktree bytes — push first on remote.
+            if remote != nil { _ = await pushRemote() }
+            let diff = await GitRunner.run(GitSupport.diffArgs(staged: staged), in: root, remote: remote?.sync)
             let tools = await PiToolchain.discover()
             guard let executable = PiExecutableLocator.resolve(environment: tools.environment) else {
                 gitError = "Pitex Agent is not installed yet — see Settings → AI."
@@ -404,7 +457,10 @@ extension WorkspaceModel {
                     environment: .inherit(overrides: AgentCoordinator.childEnvironment(
                         executable: launch.executable, environment: tools.environment))
                 )
-                let result = try await ProcessRunner().run(plan, projectRoot: root, timeout: .seconds(90))
+                // pi runs locally — its directory is the mirror, since a
+                // remote `status.root` does not exist on this filesystem.
+                let workDirectory = remote != nil ? (projectURL ?? root) : root
+                let result = try await ProcessRunner().run(plan, projectRoot: workDirectory, timeout: .seconds(90))
                 let text = Self.cleanedCommitMessage(String(decoding: result.standardOutput, as: UTF8.self))
                 if result.termination == .exited(code: 0), !text.isEmpty {
                     gitCommitMessage = text
@@ -552,6 +608,14 @@ struct GitIntegrationView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .accessibilityIdentifier("pitex.git.init")
+            }
+            if let error = workspace.gitError {
+                Text(verbatim: error)
+                    .font(gitFont())
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

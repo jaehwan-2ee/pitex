@@ -874,6 +874,20 @@ impl SshClient {
         Ok(result)
     }
 
+    /// `git args` on the device in `dir`, through the same login-shell
+    /// runner remote builds use so the device user's PATH and git config
+    /// apply. `GIT_TERMINAL_PROMPT=0` and a batch-mode `GIT_SSH_COMMAND`
+    /// make a fetch/pull/push that would prompt for credentials fail with
+    /// git's message instead of hanging the pane.
+    pub fn run_git(&self, dir: &str, args: &[String]) -> Result<SshCommandResult, SshError> {
+        self.run(
+            &remote_scripts::login_exec(),
+            &git_exec_arguments(dir, args),
+            None,
+            None,
+        )
+    }
+
     /// Streams stdout/stderr chunks as they arrive (builds). With `tty`,
     /// the remote runs under a pseudo-terminal so it gets SIGHUP when the
     /// local ssh is terminated — cancelling a build stops it remotely too.
@@ -1010,6 +1024,43 @@ impl SshClient {
     }
 }
 
+/// `login_exec` positional arguments for `git args` in `dir` — `env`
+/// carries the non-interactive credential guards, then the git argv
+/// verbatim, so the runner script itself stays untouched.
+fn git_exec_arguments(dir: &str, args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len() + 5);
+    out.push(dir.to_string());
+    out.push("env".to_string());
+    out.push("GIT_TERMINAL_PROMPT=0".to_string());
+    out.push("GIT_SSH_COMMAND=ssh -o BatchMode=yes".to_string());
+    out.push("git".to_string());
+    out.extend(args.iter().cloned());
+    out
+}
+
+/// Lexical POSIX normalization for device paths git reports
+/// (`rev-parse --show-toplevel`, `remote_root`): collapses `//`, resolves
+/// `.` and `..`, strips the trailing `/`. git always emits `/`-separated
+/// paths; the remote filesystem is never touched.
+fn normalize_git_device_path(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut out: Vec<&str> = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => continue,
+            ".." => {
+                out.pop();
+            }
+            _ => out.push(component),
+        }
+    }
+    if absolute {
+        format!("/{}", out.join("/"))
+    } else {
+        out.join("/")
+    }
+}
+
 // ─── RemoteSync.swift ────────────────────────────────────────────────────────
 
 /// A folder on a remote device, as opened through "Open via SSH".
@@ -1075,6 +1126,41 @@ impl RemoteMirror {
     pub fn root(&self) -> PathBuf {
         self.directory.join("project").join(self.project.folder_name())
     }
+
+    /// Reverse of `RemoteSync::remote_path` for git output: the device
+    /// path `toplevel`/`path` (a repo root from `rev-parse --show-toplevel`
+    /// plus a repo-relative porcelain path) mapped into this mirror —
+    /// `mirror.root / relative(toplevel + "/" + path, from: remote_root)`.
+    /// `None` when the repo extends above `remote_root` (the opened
+    /// project is a subfolder of the repo) and the change points outside
+    /// the mirror — the file still lists in the pane but has no local
+    /// copy to open.
+    pub fn local_path(&self, toplevel: &str, path: &str) -> Option<PathBuf> {
+        let remote = normalize_git_device_path(&self.project.remote_root);
+        let remote = remote.trim_end_matches('/');
+        let toplevel = normalize_git_device_path(toplevel);
+        let joined = normalize_git_device_path(&format!(
+            "{}/{}",
+            toplevel.trim_end_matches('/'),
+            path
+        ));
+        // Component-boundary check — a plain `strip_prefix` would let
+        // `/repo-other/…` pass for remote_root `/repo`.
+        let relative = match joined.strip_prefix(remote) {
+            Some("") => return None,
+            Some(rest) if rest.starts_with('/') => &rest[1..],
+            _ => return None,
+        };
+        if !RemoteSyncRules::is_safe_relative_path(relative) {
+            return None;
+        }
+        let mut out = self.root();
+        for component in relative.split('/') {
+            out.push(component);
+        }
+        Some(out)
+    }
+
     pub fn metadata_path(&self) -> PathBuf {
         self.directory.join("remote.json")
     }
@@ -3156,5 +3242,87 @@ mod windows_tests {
             !sync.local_hashes().contains_key("link/escaped.tex"),
             "the local scan neither descends nor hashes a junction"
         );
+    }
+}
+
+// ─── Remote git helpers ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod git_tests {
+    use super::*;
+
+    fn mirror(remote_root: &str) -> RemoteMirror {
+        RemoteMirror {
+            directory: PathBuf::from("/store/slug"),
+            project: RemoteProject::new(
+                SshConnection::new("dev", "example.local", None, None, None),
+                remote_root,
+            ),
+        }
+    }
+
+    #[test]
+    fn git_exec_arguments_prefix_env_and_git() {
+        let args = git_exec_arguments(
+            "/srv/repo",
+            &["status".to_string(), "--porcelain=v1".to_string()],
+        );
+        assert_eq!(
+            args,
+            [
+                "/srv/repo",
+                "env",
+                "GIT_TERMINAL_PROMPT=0",
+                "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+                "git",
+                "status",
+                "--porcelain=v1",
+            ]
+        );
+    }
+
+    #[test]
+    fn local_path_maps_repo_at_remote_root() {
+        let mirror = mirror("/srv/repo");
+        assert_eq!(
+            mirror.local_path("/srv/repo", "chapters/one.tex"),
+            Some(mirror.root().join("chapters").join("one.tex"))
+        );
+    }
+
+    #[test]
+    fn local_path_maps_repo_above_remote_root() {
+        // The opened project is `sub` inside repo `/srv/repo`: changes
+        // under `sub/…` map into the mirror, everything else has no copy.
+        let mirror = mirror("/srv/repo/sub");
+        assert_eq!(
+            mirror.local_path("/srv/repo", "sub/a.tex"),
+            Some(mirror.root().join("a.tex"))
+        );
+        assert_eq!(mirror.local_path("/srv/repo", "other/x.tex"), None);
+        assert_eq!(mirror.local_path("/srv/repo", "a.tex"), None);
+    }
+
+    #[test]
+    fn local_path_rejects_paths_outside_and_escapes() {
+        let mirror = mirror("/srv/repo");
+        assert_eq!(mirror.local_path("/srv/repo", "../outside.tex"), None);
+        assert_eq!(mirror.local_path("/elsewhere", "a.tex"), None);
+        // `/srv/repo-other` shares a string prefix but not the directory.
+        assert_eq!(mirror.local_path("/srv/repo-other", "a.tex"), None);
+        // A repo nested below remote_root maps with the infix kept.
+        assert_eq!(
+            mirror.local_path("/srv/repo/inner", "a.tex"),
+            Some(mirror.root().join("inner").join("a.tex"))
+        );
+    }
+
+    #[test]
+    fn normalize_git_device_path_resolves_dots() {
+        assert_eq!(normalize_git_device_path("/a//b/./c"), "/a/b/c");
+        assert_eq!(normalize_git_device_path("/a/b/../c"), "/a/c");
+        assert_eq!(normalize_git_device_path("/a/.."), "/");
+        assert_eq!(normalize_git_device_path("/"), "/");
+        assert_eq!(normalize_git_device_path("/srv/repo/"), "/srv/repo");
     }
 }

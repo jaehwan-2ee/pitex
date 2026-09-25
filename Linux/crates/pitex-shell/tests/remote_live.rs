@@ -10,7 +10,8 @@
 #![cfg(unix)]
 
 use document_session_core::DocumentMutation;
-use pitex_shell::model::{SaveResult, WorkspaceMessage, WorkspaceModel};
+use git_core::{GitChange, GitChangeKind};
+use pitex_shell::model::{ConsoleSection, SaveResult, WorkspaceMessage, WorkspaceModel};
 use pitex_shell::settings::{Preferences, SettingsStore};
 use remote_core::{RemoteMirror, RemoteProject, RemoteSync, SshClient, SshConnection};
 use std::path::{Path, PathBuf};
@@ -67,19 +68,26 @@ fn live_connection() -> Option<SshConnection> {
     Some(SshConnection::new("test", destination, None, port, key))
 }
 
-/// The engine `RemoteWorkspace::new` → `RemoteSync::shared` would build
-/// gets no test-only arguments, so the test pre-registers one whose
-/// client points host-key verification at the private sshd's file.
-fn install_engine(mirror: &RemoteMirror, connection: &SshConnection) {
+/// The client the test uses to drive the device directly — `run_git`
+/// for repo setup/verification and the engine `install_engine`
+/// pre-registers for the model's sync.
+fn live_client(connection: &SshConnection) -> SshClient {
     let mut client = SshClient::new(connection.clone());
     if let Ok(known) = std::env::var("PITEX_TEST_SSH_KNOWN_HOSTS") {
         client
             .extra_arguments
             .extend(["-o".to_string(), format!("UserKnownHostsFile={known}")]);
     }
+    client
+}
+
+/// The engine `RemoteWorkspace::new` → `RemoteSync::shared` would build
+/// gets no test-only arguments, so the test pre-registers one whose
+/// client points host-key verification at the private sshd's file.
+fn install_engine(mirror: &RemoteMirror, connection: &SshConnection) {
     RemoteSync::install(
         mirror.clone(),
-        client,
+        live_client(connection),
         Some(Arc::new(pitex_shell::remote::SharedGate)),
     );
 }
@@ -113,6 +121,13 @@ fn pump(
                 if model.apply_remote_pull(root, result.clone()) {
                     model.refresh_after_agent_activity(false);
                 }
+            }
+            WorkspaceMessage::GitRefreshed(result) => {
+                model.apply_git_refreshed(result);
+            }
+            WorkspaceMessage::GitOpFinished { error, .. } => {
+                model.git_busy = false;
+                model.git_error = error.clone();
             }
             WorkspaceMessage::RemoteBuildPrepFailed(problem) => {
                 panic!("remote build preparation failed: {problem}");
@@ -244,5 +259,190 @@ fn live_workspace_round_trip() {
         "\\documentclass{article}\n\\begin{document}\nremote edit\n\\end{document}\n"
     );
     assert!(model.build_log_text.contains("Building on test"));
+    model.close();
+}
+
+/// The Git pane over SSH — the mirror has no `.git`, so every command the
+/// pane issues must run on the device: a refresh reports the device
+/// repo's status, a stage+commit runs there (the push inside carries the
+/// saved edit first), and a discard pulls the reverted bytes back into
+/// the mirror.
+#[test]
+fn live_workspace_git() {
+    let Some(connection) = live_connection() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let client = live_client(&connection);
+    let data = TempDir::new("data");
+    std::env::set_var("XDG_DATA_HOME", data.path());
+    std::env::set_var("XDG_CONFIG_HOME", data.join("config"));
+    let mut store = SettingsStore::new(Preferences::standard());
+
+    // A repo on the device: one commit, a modified tracked file, an
+    // untracked file.
+    let remote = TempDir::new("remote-git");
+    let dir = remote.path().to_str().unwrap().to_string();
+    let git = |args: &[&str]| {
+        let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let result = client.run_git(&dir, &argv).unwrap();
+        assert_eq!(
+            result.status,
+            0,
+            "device git {} failed: {}",
+            args.join(" "),
+            result.stderr_text()
+        );
+        result
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "Pitex Test"]);
+    write(&remote.join("main.tex"), "v1\n");
+    git(&["add", "main.tex"]);
+    git(&["commit", "-q", "-m", "first"]);
+    write(&remote.join("main.tex"), "v2\n");
+    write(&remote.join("notes.md"), "new\n");
+
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(connection.clone(), dir.clone()),
+        &RemoteMirror::default_store(),
+    )
+    .unwrap();
+    install_engine(&mirror, &connection);
+
+    let mut model = WorkspaceModel::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    model.set_event_sink(tx.clone());
+    model.open(mirror.root(), tx);
+    let message = pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::OpenFinished(_))
+    });
+    let WorkspaceMessage::OpenFinished(result) = message else {
+        unreachable!()
+    };
+    let opened = result.unwrap_or_else(|failure| match failure {
+        pitex_shell::model::OpenFailure::Error(error) => panic!("open failed: {error}"),
+        pitex_shell::model::OpenFailure::RemoteOpen { device, error } => {
+            panic!("remote open failed on {device}: {error}")
+        }
+    });
+    assert!(opened.remote.is_some());
+    model.apply_open(&mut store, opened);
+    assert!(model.remote.is_some());
+
+    // Refresh — the pane sees the device repo even though the mirror
+    // holds no `.git`.
+    model.console_section = ConsoleSection::Git;
+    model.bottom_panel_visible = true;
+    model.refresh_git();
+    pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::GitRefreshed(_))
+    });
+    let status = model.git_status.clone().expect("the device repo is found");
+    assert_eq!(status.unstaged.len(), 2);
+    assert!(
+        status
+            .unstaged
+            .iter()
+            .any(|c| c.path == "main.tex" && c.kind == GitChangeKind::Modified)
+    );
+    assert!(
+        status
+            .unstaged
+            .iter()
+            .any(|c| c.path == "notes.md" && c.kind == GitChangeKind::Untracked)
+    );
+    // `status.root` is the *device* toplevel, not a mirror path.
+    assert_eq!(status.root, dir);
+
+    // Edit + save locally; the stage/commit below must see it on the
+    // device (push-before-operation).
+    let session = model
+        .registered_sessions
+        .iter()
+        .find(|s| s.path().raw_value() == "main.tex")
+        .expect("main.tex session")
+        .clone();
+    let snap = session.snapshot();
+    session
+        .apply(
+            DocumentMutation::ReplaceRange {
+                utf16_offset: snap.text.encode_utf16().count(),
+                utf16_length: 0,
+                text: "% saved locally\n".to_string(),
+            },
+            snap.revision,
+        )
+        .unwrap();
+    model.document_snapshot = Some(session.snapshot());
+    model.save();
+    pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::SaveFinished { .. })
+    });
+    let mirror_file = mirror.root().join("main.tex");
+    assert!(read(&mirror_file).contains("% saved locally"));
+
+    // Stage through the model — runs `git add` on the device.
+    model.git_stage(&GitChange {
+        path: "main.tex".to_string(),
+        original_path: None,
+        kind: GitChangeKind::Modified,
+        staged: false,
+    });
+    pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::GitOpFinished { .. })
+    });
+    assert_eq!(model.git_error, None);
+    assert!(
+        git(&["diff", "--cached", "--name-only"])
+            .stdout_text()
+            .contains("main.tex"),
+        "the file is staged on the device"
+    );
+
+    // Commit through the model — the push inside means the device
+    // commits the saved bytes, not stale device-side content.
+    model.git_commit_message = "remote commit".to_string();
+    model.git_commit();
+    pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::GitOpFinished { .. })
+    });
+    assert_eq!(model.git_error, None);
+    assert!(
+        git(&["log", "-1", "--format=%s"])
+            .stdout_text()
+            .contains("remote commit")
+    );
+    assert!(
+        git(&["show", "HEAD:main.tex"])
+            .stdout_text()
+            .contains("% saved locally"),
+        "push-before-operation: the commit contains the saved edit"
+    );
+
+    // A device-side edit the model discards — pull-after-operation
+    // brings the reverted bytes back into the mirror.
+    write(&remote.join("main.tex"), "device touched\n");
+    model.refresh_git();
+    pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::GitRefreshed(_))
+    });
+    model.git_discard(&GitChange {
+        path: "main.tex".to_string(),
+        original_path: None,
+        kind: GitChangeKind::Modified,
+        staged: false,
+    });
+    pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::GitOpFinished { .. })
+    });
+    assert_eq!(model.git_error, None);
+    assert_eq!(read(&remote.join("main.tex")), "v2\n% saved locally\n");
+    assert_eq!(
+        read(&mirror_file),
+        "v2\n% saved locally\n",
+        "pull-after-operation: the mirror picked up the device rewrite"
+    );
     model.close();
 }

@@ -550,6 +550,7 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
     let empty = adw::StatusPage::new();
     empty.set_title(&tr(lang, "git.no_repo"));
     empty.set_icon_name(Some("folder-symbolic"));
+    let empty_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
     let init = gtk4::Button::with_label(&tr(lang, "git.init"));
     init.add_css_class("suggested-action");
     init.set_halign(gtk4::Align::Center);
@@ -563,7 +564,18 @@ fn build_git_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget
             s.git_init();
         });
     }
-    empty.set_child(Some(&init));
+    empty_box.append(&init);
+    // `git_error` mirrored from the repo page — an unreachable device
+    // reports its SSH failure here rather than looking like "not a repo".
+    let empty_error = gtk4::Label::new(None);
+    empty_error.add_css_class("caption");
+    empty_error.add_css_class("error");
+    empty_error.set_wrap(true);
+    empty_error.set_justify(gtk4::Justification::Center);
+    empty_error.set_visible(false);
+    ui.git_empty_error_label.replace(Some(empty_error.clone()));
+    empty_box.append(&empty_error);
+    empty.set_child(Some(&empty_box));
     stack.add_named(&empty, Some("empty"));
     stack.set_visible_child_name("empty");
     stack.upcast()
