@@ -1,0 +1,20 @@
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 1540-1543,1545-1561
+Linux/crates/build-core/tests/runner.rs
+  h_d73c695d83f4a7 280-282
+Linux/crates/pitex-shell/Cargo.toml
+  h_d73c695d83f4a7 44,46-47,68
+Linux/crates/pitex-shell/src/markdown_preview/webview2.rs
+  h_d73c695d83f4a7 21-22,39-48,262-263,266-274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0626e57e095c6ce07f083d12011734b485a88fff",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
