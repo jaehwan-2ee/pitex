@@ -1,0 +1,29 @@
+.github/workflows/ci.yml
+  s_61259ddb619c79::t_52c40a1592e2c5 199-201
+Linux/crates/pitex-shell/Cargo.toml
+  s_61259ddb619c79::t_fc8594285622da 26
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_8e6c0f684453ba 4759
+Linux/crates/remote-core/src/lib.rs
+  s_61259ddb619c79::t_9f5de5ea1062e0 3-5,80-81,83,253-255,432-434,442,507-509,517-571,636,707,717,729-734,740,788-790,927,1075-1077,1079-1084,1191,1197,1213-1234,1277-1323,1820-1837,1913-1914,2136-2139,2147-2152,2156,2185-2187,2189,2214,2260,2265-2266,2285,2396-2401,2406-2407,2410,2466-2468,2470,2478-2484,2487,2544-2571,2574,2581-2583,2889-3064
+Linux/crates/remote-core/tests/remote_core.rs
+  s_61259ddb619c79::t_a5510ef296aae6 2-4,8-9,11-12,15,17,61,66,71,76,210,347-348,395,418,527,592-595,612,770
+Windows/Cargo.lock
+  s_61259ddb619c79::t_087f7dc62a86ab 377-380,852,863,981-993
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0af9ac85f3e1d1a1baa67772728d64c982ca60d",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

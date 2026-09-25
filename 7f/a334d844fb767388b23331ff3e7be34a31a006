@@ -1,0 +1,23 @@
+Linux/crates/pitex-shell/src/git.rs
+  s_61259ddb619c79::t_186e67dc996bb6 212-223
+Mac/Sources/Features/GitIntegrationView.swift
+  s_61259ddb619c79::t_1c7cf7abdbc17b 111-118
+Packages/TexCore/Sources/RemoteCore/RemoteSync.swift
+  s_61259ddb619c79::t_978ed7b5ad9189 433-437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7fa334d844fb767388b23331ff3e7be34a31a006",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

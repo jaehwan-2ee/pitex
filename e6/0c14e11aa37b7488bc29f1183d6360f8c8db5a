@@ -1,0 +1,52 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 141-142,148-153,157,160,163,170,208-209,215-216,225-227
+.github/workflows/release.yml
+  h_d73c695d83f4a7 74
+Linux/Cargo.lock
+  h_d73c695d83f4a7 834,836,838
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 13-14,19-24,1170,1203,1214,1600,2866-2868
+Linux/crates/pitex-shell/Cargo.toml
+  h_d73c695d83f4a7 30,50-52
+Linux/crates/pitex-shell/src/agent.rs
+  h_d73c695d83f4a7 882-887
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_d73c695d83f4a7 4895-4896,5106,5113-5121,6492-6495
+Linux/crates/pitex-shell/src/compat.rs
+  h_d73c695d83f4a7 550-552,555,558-559,566,569,571,578,586-587,595-596,601,605,609-610,612,620-621,627-630,633,636-637,646,649,651-653,660,668-669,677-678,683,687,691-692,694,702-703
+Linux/crates/pitex-shell/src/git.rs
+  h_d73c695d83f4a7 26-34
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  h_d73c695d83f4a7 4-6,297-303
+Linux/crates/pitex-shell/src/panes.rs
+  h_d73c695d83f4a7 1845-1848
+Linux/crates/pitex-shell/src/synctex.rs
+  h_d73c695d83f4a7 66-70,73-74,83-89,514-515,620,623-649,652-653,659-660
+Linux/crates/pitex-shell/src/update.rs
+  h_d73c695d83f4a7 44-45,49-56,297,304-306,310-324,328
+Linux/crates/pitex-shell/src/window_ipc.rs
+  h_d73c695d83f4a7 2-14,20-24,29-47,52,59,67-76,78,80,84,89-93,100,106,108-112,114,131,139-479
+Linux/crates/pitex-shell/tests/support/parity_shots.rs
+  h_d73c695d83f4a7 1-295
+Linux/crates/pitex/Cargo.toml
+  h_d73c695d83f4a7 53,57
+Linux/crates/remote-core/src/lib.rs
+  h_d73c695d83f4a7 3-5,80-81,83,253-255,432-434,442,507-509,517-585,622,651,722,732,744-749,755,803-805,896,943,1091-1093,1095-1100,1207,1213,1229-1250,1293-1345,1727-1732,1776-1777,1850-1890,1966-1967,2051-2060,2090-2110,2220-2223,2231-2236,2240,2269-2271,2273,2298,2344,2349-2350,2369,2480-2485,2490-2491,2494,2550-2552,2554,2562-2568,2571,2628-2655,2658,2665-2667,2973-3160
+Linux/crates/remote-core/tests/remote_core.rs
+  h_d73c695d83f4a7 2-4,8-9,11-12,15,17,61,66,71,76,210,347-348,395,418,527,592-595,612,770
+Windows/Cargo.lock
+  h_d73c695d83f4a7 29-52,67-72,79-84,90-92,155-163,173-184,246-261,453-456,644-658,849-860,867-881,907-915,946-994,1017-1027,1039,1046,1051,1057,1075-1088,1144-1152,1193-1205,1215-1258,1326-1345,1468-1476,1591-1596,1615-1620,1636-1659,1666-1671,1698-1715
+Windows/crates/windows-platform/src/lib.rs
+  h_d73c695d83f4a7 10,15-19,209,281,344,364-366,370-398,401,405-410,424-443,449-460
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e60c14e11aa37b7488bc29f1183d6360f8c8db5a",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

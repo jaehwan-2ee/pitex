@@ -1,0 +1,30 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 207-209
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 13-14,19-24,1170,1203,1214,1600,2866-2868
+Linux/crates/pitex-shell/Cargo.toml
+  h_d73c695d83f4a7 26
+Linux/crates/pitex-shell/src/agent.rs
+  h_d73c695d83f4a7 882-887
+Linux/crates/pitex-shell/src/git.rs
+  h_d73c695d83f4a7 26-34
+Linux/crates/pitex-shell/src/update.rs
+  h_d73c695d83f4a7 44-45,49-56,297,304-306,310-324,328
+Linux/crates/remote-core/src/lib.rs
+  h_d73c695d83f4a7 3-5,80-81,83,253-255,432-434,442,507-509,517-585,622,651,722,732,744-749,755,803-805,896,943,1091-1093,1095-1100,1207,1213,1229-1250,1293-1345,1727-1732,1776-1777,1850-1890,1966-1967,2051-2060,2090-2110,2220-2223,2231-2236,2240,2269-2271,2273,2298,2344,2349-2350,2369,2480-2485,2490-2491,2494,2550-2552,2554,2562-2568,2571,2628-2655,2658,2665-2667,2973-3160
+Linux/crates/remote-core/tests/remote_core.rs
+  h_d73c695d83f4a7 2-4,8-9,11-12,15,17,61,66,71,76,210,347-348,395,418,527,592-595,612,770
+Windows/crates/windows-platform/src/lib.rs
+  h_d73c695d83f4a7 10,15-19,209,281,344,449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "93547b274cfe4147654e57ae267f1a0fd35b7e65",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

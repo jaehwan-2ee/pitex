@@ -1,0 +1,14 @@
+Linux/crates/pitex-shell/src/window_ipc.rs
+  h_d73c695d83f4a7 67-76,78,80,169-179,181,183,372-389,444-467
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09041ed4ea0e0b3e198e9a318259c17ad91d12dd",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

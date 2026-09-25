@@ -1,0 +1,125 @@
+Linux/Cargo.lock
+  s_61259ddb619c79::t_66cbb0ef2c3af6 125,426,465,1002-1003,1090,1433-1442,1456-1466,1661-1777,1786-1803,1871-1879
+  h_d73c695d83f4a7 29-52,67-72,79-84,90-92,155-163,173-184,235-250,633-647,780-806,832-840,871-896,906-928,951-961,987,998,1013-1026,1073-1081,1144-1187,1259-1278,1410-1418,1520-1525,1544-1549,1565-1578,1612-1621,1822-1839
+Linux/crates/pitex-shell/Cargo.toml
+  s_61259ddb619c79::t_663b185e74e2b1 43,45,48-53,60
+  h_d73c695d83f4a7 26-30,44,46-47,61-63,68
+Linux/crates/pitex-shell/build.rs
+  s_61259ddb619c79::t_1ebf7e2a342d08 1-34,37-51,58-69
+  h_d73c695d83f4a7 35-36,52-57
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_e2dced3ba62c2f 593-600
+  h_d73c695d83f4a7 1867-1868,2224-2228,2230-2231,4902-4903,5113,5120-5128,6499-6502
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  s_61259ddb619c79::t_b8640eff74ffe8 3-4,12-13,21-30,32,37-52,55-92,127,131-143,168-270,273-275,280-308,314,320-328,333,342-356,373-377,379,386,418-424,427-431,447-449,454,457,460-461,465,472,477,487,492-506,524-526,528,530-538,540,544-548,550-555,557-580,582,606-610,613-615,630,634-639,655-658,662,669,676,679-680,684,687-701,706,710,716,718,720,726,734,741-796
+  h_d73c695d83f4a7 5-7,509-512,513,514-522,601
+Linux/crates/pitex-shell/src/markdown_preview/webkit6.rs
+  s_61259ddb619c79::t_5d1e6dbac55275 1-17,20-129
+  h_d73c695d83f4a7 18-19
+Linux/crates/pitex-shell/src/markdown_preview/webview2.rs
+  s_61259ddb619c79::t_f4d2ca159a94f4 1-20,23-38,49-178,182-261,264-265,277-537,542-567
+  h_d73c695d83f4a7 21-22,39-48,179-181,262-263,266,267-271,272-273,274,275-276,538-541
+Mac/Resources/en.lproj/Localizable.strings
+  s_61259ddb619c79::t_3af1edd61314f1 45-46
+Mac/Resources/es.lproj/Localizable.strings
+  s_61259ddb619c79::t_60c8093311ff2e 45-46
+Mac/Resources/ja.lproj/Localizable.strings
+  s_61259ddb619c79::t_9a84db548badfc 45-46
+Mac/Resources/ko.lproj/Localizable.strings
+  s_61259ddb619c79::t_d1132b1ce1ec73 45-46
+Mac/Resources/ru.lproj/Localizable.strings
+  s_61259ddb619c79::t_d359cf642fd545 45-46
+Mac/Resources/vi.lproj/Localizable.strings
+  s_61259ddb619c79::t_125c0cf69df59f 45-46
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_61259ddb619c79::t_173d305c7f5fec 45-46
+Tools/rust-target-dag.json
+  s_61259ddb619c79::t_8ed55be994f1e7 11,16-17
+  h_d73c695d83f4a7 149-151,174-175
+Windows/Cargo.lock
+  s_61259ddb619c79::t_e03419d43f2d16 125,437,453-456,476,779-801,1062,1074,1082-1084,1187,1219-1231,1390-1415,1543-1552,1566-1576,1738-1887,1896-1913,1981-1989
+  h_d73c695d83f4a7 29-52,67-72,79-84,90-92,155-163,173-184,246-261,644-658,872-883,890-904,930-938,969-1017,1040-1050,1069,1080,1101-1114,1170-1178,1241-1284,1352-1371,1520-1528,1663-1668,1687-1692,1708-1731,1932-1949
+Windows/Cargo.toml
+  s_61259ddb619c79::t_743f833353a25d 10-12
+Windows/build.sh
+  s_61259ddb619c79::t_739207bae48e36 28-30
+  h_d73c695d83f4a7 31-44
+Windows/crates/pitex-windows/Cargo.toml
+  s_61259ddb619c79::t_565ffafdd862cc 15,17
+Windows/crates/windows-platform/src/lib.rs
+  s_61259ddb619c79::t_e4167dc28d36c7 371-374,396-397,401
+  h_d73c695d83f4a7 10,15-19,209,281,344,364-366,370,375-395,398,405-410,424-443,449-460
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 141-142,148-153,157,160,163,170-173,210-217,225-227
+.github/workflows/release.yml
+  h_d73c695d83f4a7 74
+Linux/Cargo.toml
+  h_d73c695d83f4a7 22
+Linux/README.md
+  h_d73c695d83f4a7 13-17,40
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 13-14,19-24,1170,1203,1214,1540-1543,1545-1561,1611,2877-2879
+Linux/crates/pitex-shell/examples/term_smoke.rs
+  h_d73c695d83f4a7 1-37
+Linux/crates/pitex-shell/src/agent.rs
+  h_d73c695d83f4a7 882-887,2878-2882
+Linux/crates/pitex-shell/src/compat.rs
+  h_d73c695d83f4a7 9-12,355-358,362-363,378,382,387-388,392,397-398,402-404,408-410,412-413,417-419,445-446,454-455,459-460,467-469,482-483,550-552,555,558-559,566,569,571,578,586-587,595-596,601,605,609-610,612,620-621,627-630,633,636-637,646,649,651-653,660,668-669,677-678,683,687,691-692,694,702-703
+Linux/crates/pitex-shell/src/git.rs
+  h_d73c695d83f4a7 26-34
+Linux/crates/pitex-shell/src/lib.rs
+  h_d73c695d83f4a7 28-29
+Linux/crates/pitex-shell/src/panes.rs
+  h_d73c695d83f4a7 170-172,1845-1848
+Linux/crates/pitex-shell/src/synctex.rs
+  h_d73c695d83f4a7 66-70,73-74,83-89,514-515,620,623-649,652-653,659-660
+Linux/crates/pitex-shell/src/terminal.rs
+  h_d73c695d83f4a7 1-1156
+Linux/crates/pitex-shell/src/update.rs
+  h_d73c695d83f4a7 44-45,49-56,297,304-306,310-324,328
+Linux/crates/pitex-shell/src/window_ipc.rs
+  h_d73c695d83f4a7 2-14,20-24,29-47,52,59,67-76,78,80,84,89-93,100,106,108-112,114,131,139-479
+Linux/crates/pitex-shell/tests/support/parity_shots.rs
+  h_d73c695d83f4a7 1-8,9-11,12-185,186,187-297
+Linux/crates/pitex/Cargo.toml
+  h_d73c695d83f4a7 53,57
+Linux/crates/remote-core/src/lib.rs
+  h_d73c695d83f4a7 3-5,80-81,83,253-255,432-434,442,507-509,517-585,622,651,722,732,744-749,755,803-805,896,943,1091-1093,1095-1100,1207,1213,1229-1250,1293-1345,1727-1732,1776-1777,1850-1890,1966-1967,2051-2060,2090-2110,2220-2223,2231-2236,2240,2269-2271,2273,2298,2344,2349-2350,2369,2480-2485,2490-2491,2494,2550-2552,2554,2562-2568,2571,2628-2655,2658,2665-2667,2973-3160
+Linux/crates/remote-core/tests/remote_core.rs
+  h_d73c695d83f4a7 2-4,8-9,11-12,15,17,61,66,71,76,210,347-348,395,418,527,592-595,612,770
+Linux/crates/terminal-core/Cargo.toml
+  h_d73c695d83f4a7 1-23
+Linux/crates/terminal-core/src/input.rs
+  h_d73c695d83f4a7 1-249
+Linux/crates/terminal-core/src/lib.rs
+  h_d73c695d83f4a7 1-27
+Linux/crates/terminal-core/src/session.rs
+  h_d73c695d83f4a7 1-253
+Linux/crates/terminal-core/tests/terminal.rs
+  h_d73c695d83f4a7 1-179
+Windows/README.md
+  h_d73c695d83f4a7 18-20,81-83
+Linux/crates/build-core/tests/runner.rs
+  h_d73c695d83f4a7 280-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "183418e9cf8ca7f58c211786148f46a22ed0713b",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  },
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

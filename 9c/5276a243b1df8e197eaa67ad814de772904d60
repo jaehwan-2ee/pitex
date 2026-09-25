@@ -1,0 +1,25 @@
+Mac/Sources/Features/Preview.swift
+  s_61259ddb619c79::t_1eb650a8116c57 504-507
+Tools/build-markdown-preview.mjs
+  s_61259ddb619c79::t_dd1766240b65b9 32-34,36,47-51,55,60,64
+Tools/check-markdown-preview.mjs
+  s_61259ddb619c79::t_b92b2ac990a573 108-111
+Mac/Resources/markdown-preview.html
+  s_61259ddb619c79::t_dd1766240b65b9 8,10-29,200-566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c5276a243b1df8e197eaa67ad814de772904d60",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

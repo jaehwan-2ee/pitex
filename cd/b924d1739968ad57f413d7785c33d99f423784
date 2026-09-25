@@ -1,0 +1,23 @@
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  s_61259ddb619c79::t_14e11660b30285 249-251,260,268,279,287-301,303-325,329,332-337,339,341,348-355,359-376,381,388
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_61259ddb619c79::t_b2dcfe675ca6b1 157-165,167-198,297,306-335,337-338,340-346,351-354,361-363,365-371,373-374,376-378,380-382,384,387-420
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_61259ddb619c79::t_8f4c3488e8666c 248-325,331-341
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cdb924d1739968ad57f413d7785c33d99f423784",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

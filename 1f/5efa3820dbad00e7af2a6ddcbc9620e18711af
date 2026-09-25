@@ -1,0 +1,39 @@
+.github/workflows/ci.yml
+  s_61259ddb619c79::t_b9a06897105c1c 70,77-78
+Mac/Sources/AppShell/PitexApp.swift
+  s_61259ddb619c79::t_718e7e9543099c 125-128
+Mac/Sources/Features/EditorContainerView.swift
+  s_61259ddb619c79::t_12c68655944e39 309,340,345-354,356-357
+Mac/Sources/Features/EditorFolding.swift
+  s_61259ddb619c79::t_984467621f116a 56-61,83-97,106-108,304,321-334,339,341,408-412,521,524,530-534
+Mac/Sources/Features/SyntaxHighlighting.swift
+  s_61259ddb619c79::t_dd3690d94e7cc5 18-20,31,39-42,126-128,139,145-150,153-184
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_61259ddb619c79::t_8fd244fab9d6ff 172-177,185-186,201-221,259-264,387
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_61259ddb619c79::t_14b870d7ad128c 7,246-285
+Packages/TexCore/Sources/DocumentSessionCore/DocumentSessionCore.swift
+  s_61259ddb619c79::t_066c486f87fd86 12-18,20-35
+Packages/TexCore/Tests/TexCoreTests/DiskContentHashTests.swift
+  s_61259ddb619c79::t_781c1662821bd2 1-55
+Tools/check-fold-layout.py
+  s_61259ddb619c79::t_e0ae6144c8a3f5 1-193
+Tools/check-highlighting-performance.py
+  s_61259ddb619c79::t_87ad68b93a023d 98-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f5efa3820dbad00e7af2a6ddcbc9620e18711af",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+Tools/check-fold-layout.py
+  s_61259ddb619c79::t_df9d3b2ed67e04 41-44
+Tools/check-highlighting-performance.py
+  s_61259ddb619c79::t_df9d3b2ed67e04 128-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5260a06de9cf04920f597f270aa7591116cd8e1b",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

@@ -1,0 +1,81 @@
+Linux/crates/remote-core/src/lib.rs
+  s_61259ddb619c79::t_667ebc5c6a5316 1-2688
+Fixtures/expected/accessibility-identifiers.json
+  s_61259ddb619c79::t_8a0cfadc750ebb 14,34,42,44-45,52-61
+Fixtures/expected/remote-scripts/commitUpload.sh
+  s_61259ddb619c79::t_a6dac261505a90 1
+Fixtures/expected/remote-scripts/hashTree.sh
+  s_61259ddb619c79::t_de15d0cff6e889 1
+Fixtures/expected/remote-scripts/listDirectory.sh
+  s_61259ddb619c79::t_6701546c3f2216 1
+Fixtures/expected/remote-scripts/loginExec.sh
+  s_61259ddb619c79::t_0b361b5bc53343 1
+Fixtures/expected/remote-scripts/probe.sh
+  s_61259ddb619c79::t_d6bff5da47f8e7 1
+Fixtures/expected/remote-scripts/tarOut.sh
+  s_61259ddb619c79::t_cd7a4972b64a84 1
+Linux/Cargo.lock
+  s_61259ddb619c79::t_6f50b55b8140db 804,908-920
+Linux/Cargo.toml
+  s_61259ddb619c79::t_7a57797966897b 19
+Linux/crates/pitex-shell/Cargo.toml
+  s_61259ddb619c79::t_4547c718bf1f70 32
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_3ba71a08bd5800 57-62,90-99,323-326,399-400,468-480,1500-1513,1652,2300-2304,2315-2319,2338-2350,2795-2892,3844-3855,3972-4024,4147-4165,4793-4794,4928-4932,5298-5318,5387-5398,5446-5459,5957-5983
+Linux/crates/pitex-shell/src/l10n.rs
+  s_61259ddb619c79::t_be97103d1e7830 148-202,205,227-251
+Linux/crates/pitex-shell/src/lib.rs
+  s_61259ddb619c79::t_e9bf270b0a67d1 23-24,26-27
+Linux/crates/pitex-shell/src/model.rs
+  s_61259ddb619c79::t_434150676d1fab 39-112,275-301,405-409,483-490,502-515,535-538,992-1003,1107-1110,1117,1138-1142,1200-1201,1288,1295-1305,1335,1369-1370,1376-1381,1572-1581,1666-1889,1937-1938,1941-1942,1993-2012,2027-2033,2517-2531,2645-2659,3353,3427-3434,3516-3527,3531-3574,3665-3670
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_9d5b358d399215 2629-2818
+Linux/crates/pitex-shell/src/remote.rs
+  s_61259ddb619c79::t_d90b5f1d966627 1-164
+Linux/crates/pitex-shell/src/settings.rs
+  s_61259ddb619c79::t_4dee2d4a8c4d83 347-375
+Linux/crates/pitex-shell/src/ssh_ui.rs
+  s_61259ddb619c79::t_312449d4b98b70 1-1053
+Linux/crates/pitex-shell/tests/accessibility_contract.rs
+  s_61259ddb619c79::t_5fa092b5566567 145
+Linux/crates/pitex-shell/tests/remote_live.rs
+  s_61259ddb619c79::t_997472df273fce 1-248
+Linux/crates/remote-core/Cargo.toml
+  s_61259ddb619c79::t_1b08187c6efae5 1-15
+Linux/crates/remote-core/tests/remote_core.rs
+  s_61259ddb619c79::t_b44a5bd5cede9c 1-828
+Mac/Resources/en.lproj/Localizable.strings
+  s_61259ddb619c79::t_b9ea420657ced3 411,437
+Mac/Resources/es.lproj/Localizable.strings
+  s_61259ddb619c79::t_81a6cae7866224 411,437
+Mac/Resources/ja.lproj/Localizable.strings
+  s_61259ddb619c79::t_a6642a6fbdbe93 412,438,452,455
+Mac/Resources/ko.lproj/Localizable.strings
+  s_61259ddb619c79::t_ce08a749601e91 412,438,452,455
+Mac/Resources/ru.lproj/Localizable.strings
+  s_61259ddb619c79::t_675cadb71725c4 411,437
+Mac/Resources/vi.lproj/Localizable.strings
+  s_61259ddb619c79::t_2938375cfeaf21 411,437
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_61259ddb619c79::t_642e7971698583 411,437
+Packages/TexCore/Tests/TexCoreTests/RemoteCoreTests.swift
+  s_61259ddb619c79::t_e4821fa4f681cf 162-186
+Tools/rust-target-dag.json
+  s_61259ddb619c79::t_620f3c4d9207ab 39,134-139,167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11c62f82c75c794288782b589a348b7c9af3021d",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

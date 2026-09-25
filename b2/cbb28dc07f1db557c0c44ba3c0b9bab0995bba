@@ -1,0 +1,18 @@
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  h_d73c695d83f4a7 513,601
+Linux/crates/pitex-shell/src/markdown_preview/webview2.rs
+  h_d73c695d83f4a7 168-170,516-519
+Linux/crates/pitex-shell/tests/support/parity_shots.rs
+  h_d73c695d83f4a7 9-11,186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2cbb28dc07f1db557c0c44ba3c0b9bab0995bba",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

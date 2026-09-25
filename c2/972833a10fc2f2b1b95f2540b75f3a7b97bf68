@@ -1,0 +1,23 @@
+.github/workflows/ci.yml
+  s_61259ddb619c79::t_a9520222583370 70
+Packages/TexCore/Sources/RemoteCore/SSHClient.swift
+  s_61259ddb619c79::t_e4f5659728798d 2-6,133-136,138-156,163,165
+Packages/TexCore/Tests/TexCoreTests/RemoteCoreTests.swift
+  s_61259ddb619c79::t_efa10fd1a2c021 89-105,279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2972833a10fc2f2b1b95f2540b75f3a7b97bf68",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+Mac/Sources/Features/Preview.swift
+  s_61259ddb619c79::t_89082cae84b752 99,191-193,227
+Mac/Sources/AppShell/PitexApp.swift
+  s_61259ddb619c79::t_b743af23845a47 271-302,339
+  s_61259ddb619c79::t_88061364e952e3 2179,2197-2198,2201-2203
+  s_61259ddb619c79::t_f64ff1bf13d9cb 1965-1968,1981,1992-1999,2001
+  s_61259ddb619c79::t_89082cae84b752 183,1015
+  s_61259ddb619c79::t_45472c7c2ddfde 2121-2161,2163-2178,2180-2196,2199-2200,2204-2230
+  s_61259ddb619c79::t_19c2102530b9e1 2084,2086,2090-2091,2097-2098,2101,2111
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_e887e258d784c8 1297-1323,1335,1377,1389,4283-4304,4306-4311,4314,4347,4354
+Mac/Sources/Features/SettingsView.swift
+  s_61259ddb619c79::t_89082cae84b752 11-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90412712835b49d9a5190c37f621c1e476bf5b7b",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

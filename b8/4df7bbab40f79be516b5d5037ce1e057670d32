@@ -1,0 +1,31 @@
+.github/workflows/ci.yml
+  s_61259ddb619c79::t_6582025f3d267f 199-200
+Linux/crates/build-core/src/lib.rs
+  s_61259ddb619c79::t_2bd218cd37472d 13-14,19-24,1170,1203,1214,1600,2866-2868
+Linux/crates/pitex-shell/src/agent.rs
+  s_61259ddb619c79::t_ec4180d8d496c0 882-887
+Linux/crates/pitex-shell/src/git.rs
+  s_61259ddb619c79::t_4a18fe96ac9e74 26-34
+Linux/crates/pitex-shell/src/update.rs
+  s_61259ddb619c79::t_bd1298899e4eef 44-45,49-56,297,304-306,310-324,328
+Linux/crates/remote-core/src/lib.rs
+  s_61259ddb619c79::t_36c478cd395e21 572-585,622,896,1324-1327,1329-1332,1334,1337-1344,1727-1732,1776-1777,1852-1857,1861-1868,1871-1873,1879-1889,2051-2060,2090-2110,3035,3038,3040-3045,3048,3051,3054,3090,3092-3097,3099,3101-3102,3104-3105,3110-3128
+Windows/crates/windows-platform/src/lib.rs
+  s_61259ddb619c79::t_24bfa9066dc32f 10,15-19,209,281,344,391
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b84df7bbab40f79be516b5d5037ce1e057670d32",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

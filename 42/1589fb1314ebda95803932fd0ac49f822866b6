@@ -1,0 +1,23 @@
+Packages/TexCore/Sources/DocumentSessionCore/DocumentSessionCore.swift
+  s_61259ddb619c79::t_e6a0b0e1c57a9e 99,190-247
+Mac/Sources/AppShell/PitexApp.swift
+  s_61259ddb619c79::t_3a4e2057d99cf5 277-285,660-724,727-736,738,740-747,749-753,755-759,761-797,808,811-813,815-818,821,823-828,832-852,864-866,895-897,1289-1292,1297-1298,1304-1309,1323-1324,1341,1349-1363,1365,1368,2275-2290
+Packages/TexCore/Tests/TexCoreTests/DocumentSessionPersistenceTests.swift
+  s_61259ddb619c79::t_d0fa886011bcf4 191-466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "421589fb1314ebda95803932fd0ac49f822866b6",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}

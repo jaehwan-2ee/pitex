@@ -1,0 +1,31 @@
+Mac/Sources/AppShell/PitexApp.swift
+  s_61259ddb619c79::t_26f2bce37dd1f3 565-566,1271,2117
+Mac/Sources/Features/AgentCoordinator.swift
+  s_61259ddb619c79::t_5337a966a949c3 79-82,167-171,207,219,231-233,240-249,379,407,412,419-429,459,616-617,776-803,809,814,820,823,828,834,837,840
+Mac/Sources/Features/EditorContainerView.swift
+  s_61259ddb619c79::t_fefac7590934dd 617
+Mac/Sources/Features/EditorFolding.swift
+  s_61259ddb619c79::t_c4ae34815f9d19 77,469-472,498-499
+Mac/Sources/Features/SettingsView.swift
+  s_61259ddb619c79::t_dba28f55480fac 949
+Mac/Sources/Features/SyntaxHighlighting.swift
+  s_61259ddb619c79::t_f33cc87ddbd69b 54-59,92
+Tools/check-fold-layout.py
+  s_61259ddb619c79::t_acee97cab740a3 80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4aedf804c1ce4003755ebe572e51def2326dc4cd",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
