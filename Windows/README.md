@@ -15,8 +15,9 @@ clock, UUID, environment bundle).
   stderr logging, `std`-only clock/UUID.
 - `crates/pitex-windows` — the `pitex` binary. It links `pitex-shell` with
   `modern-gtk` and without `vte` (there is no VTE-GTK4 on Windows), so the
-  terminal pane is a transcript plus an external-terminal fallback
-  (`wt`, then conhost `cmd /k`) — same shape as the Ubuntu 22.04 build.
+  terminal pane embeds the `terminal-core` engine (ConPTY + DrawingArea) —
+  same shape as the Ubuntu 22.04 build; an external terminal (`wt`, then
+  conhost `cmd /k`) is only the fallback if the shell can't be spawned.
 - `build.sh` — MSYS2 UCRT64 build + bundling script.
 
 ## Build prerequisites (MSYS2 UCRT64)
@@ -77,5 +78,6 @@ installer and the portable zip.
 - The Pi agent runtime installs into the app-local agent directory and is
   launched through Bun/Node like on the other platforms; script shims
   (`.cmd`/`.bat`/`.ps1`) route through `cmd`/`powershell`.
-- Authentication (Pi `/login`) runs in an external terminal — Windows
-  Terminal when present, otherwise conhost.
+- Authentication (Pi `/login`) runs in the embedded terminal's shell —
+  an external terminal (Windows Terminal, else conhost) is the fallback
+  when no embedded shell is running.

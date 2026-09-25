@@ -2875,10 +2875,11 @@ pub mod pi_installer {
         Ok(script_path)
     }
 
-    /// Windows counterpart — a `.bat` file run under `cmd /k` by
-    /// `spawn_external_terminal`. conhost gives `pi` a real console, so the
-    /// `stty`/`script` plumbing the Unix PTY needs is unnecessary: export the
-    /// environment, print the same guidance, launch the agent interactively.
+    /// Windows counterpart — a `.bat` file typed into the embedded
+    /// terminal's shell (`cmd` by default; an external emulator is the
+    /// fallback). ConPTY gives `pi` a real console, so the `stty`/`script`
+    /// plumbing the Unix PTY needs is unnecessary: export the environment,
+    /// print the same guidance, launch the agent interactively.
     #[cfg(windows)]
     fn write_authentication_script(
         tools: &PiToolchain,

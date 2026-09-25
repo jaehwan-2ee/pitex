@@ -167,8 +167,9 @@ fn build_terminal_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     };
     terminal.set_font(Some(&font));
     // Spawn a login shell rooted at the project — `TerminalShellView` parity.
-    // The Ubuntu 22.04 build has no VTE: `spawn_shell` reports failure and
-    // the transcript explains that commands run in an external terminal.
+    // Builds without VTE embed the terminal-core engine instead; an external
+    // emulator is only the fallback if the shell fails to spawn (reported via
+    // `terminal_running`) or exits.
     {
         let state = state.clone();
         terminal.spawn_shell(dir.as_deref(), move |ok| {

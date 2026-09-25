@@ -6,9 +6,10 @@
 //!   `ContentFit`, `FontDialogButton`, `ColorDialogButton`). Off for the
 //!   Ubuntu 22.04 build (GTK 4.6 / libadwaita 1.1), on everywhere else.
 //! - `vte` — the embedded VTE terminal. On for Unix desktop builds; off on
-//!   Ubuntu 22.04 and Windows, where the console terminal degrades to a
-//!   read-only transcript plus an external terminal emulator (kgx /
-//!   gnome-terminal / konsole / xterm on Linux, `wt` / conhost on Windows).
+//!   Ubuntu 22.04 and Windows, which embed the terminal-core DrawingArea
+//!   instead (same API). An external emulator (kgx / gnome-terminal / konsole
+//!   / xterm on Linux, `wt` / conhost on Windows) is only the fallback for a
+//!   shell that failed to spawn or already exited.
 
 use gtk4::prelude::*;
 use libadwaita as adw;
@@ -351,16 +352,15 @@ pub fn fit_picture(picture: &gtk4::Picture) {
 // ─── Embedded terminal ──────────────────────────────────────────────────
 
 /// The bottom-console terminal. `vte` builds embed a real VTE widget
-/// running a login shell; Ubuntu 22.04 and Windows have no VTE-GTK4, so the
-/// pane degrades to a read-only transcript — status feeds still land here
-/// and `send` hands interactive commands to an external terminal emulator.
+/// running a login shell; Ubuntu 22.04 and Windows have no VTE-GTK4, so
+/// they embed the `terminal-core` + DrawingArea terminal instead — same
+/// API, same behavior. An external emulator is only the fallback for a
+/// shell that failed to spawn or already exited.
 pub enum ShellTerminal {
     #[cfg(feature = "vte")]
     Embedded(vte4::Terminal),
-    /// Only constructed when `vte` is off — kept visible in both builds so
-    /// the match arms below stay uniform.
-    #[allow(dead_code)]
-    External(gtk4::TextView),
+    #[cfg(not(feature = "vte"))]
+    Embedded(crate::terminal::EmbeddedTerminal),
 }
 
 impl ShellTerminal {
@@ -375,71 +375,48 @@ impl ShellTerminal {
         }
         #[cfg(not(feature = "vte"))]
         {
-            let view = gtk4::TextView::new();
-            view.set_editable(false);
-            view.set_cursor_visible(false);
-            view.set_monospace(true);
-            view.set_wrap_mode(gtk4::WrapMode::Char);
-            view.set_top_margin(8);
-            view.set_bottom_margin(8);
-            view.set_left_margin(8);
-            view.set_right_margin(8);
-            view.buffer()
-                .set_text("Interactive commands run in an external terminal on this build.\n");
-            Self::External(view)
+            Self::Embedded(crate::terminal::EmbeddedTerminal::new())
         }
     }
 
-    /// The widget placed inside the console pane (already wrapped in a
-    /// `ScrolledWindow` for the legacy transcript).
+    /// The widget placed inside the console pane.
     pub fn widget(&self) -> gtk4::Widget {
         match self {
             #[cfg(feature = "vte")]
             Self::Embedded(t) => t.clone().upcast(),
-            Self::External(v) => {
-                let scroll = gtk4::ScrolledWindow::new();
-                scroll.set_vexpand(true);
-                scroll.set_hexpand(true);
-                scroll.set_child(Some(v));
-                scroll.upcast()
-            }
+            #[cfg(not(feature = "vte"))]
+            Self::Embedded(t) => t.widget(),
         }
     }
 
-    /// ANSI status text. The legacy transcript strips escape sequences —
-    /// it only ever carries the app's own colored status lines.
+    /// ANSI status text — rendered into the grid like child output.
     pub fn feed(&self, text: &str) {
         match self {
             #[cfg(feature = "vte")]
             Self::Embedded(t) => t.feed(text.as_bytes()),
-            Self::External(v) => {
-                let buffer = v.buffer();
-                let mut end = buffer.end_iter();
-                buffer.insert(&mut end, &strip_ansi(text));
-            }
+            #[cfg(not(feature = "vte"))]
+            Self::Embedded(t) => t.feed(text),
         }
     }
 
-    /// A command line to a shell's stdin. Embedded builds write to the PTY;
-    /// builds without VTE spawn an external terminal emulator so interactive
-    /// flows (Pi sign-in, custom commands) still work.
+    /// A command line to the shell's stdin. If the embedded shell never
+    /// spawned or already exited, `send` falls back to an external terminal
+    /// emulator so interactive flows (Pi sign-in, custom commands) still work.
     pub fn send(&self, command: &str, dir: Option<&Path>) {
         match self {
             #[cfg(feature = "vte")]
-            Self::Embedded(t) => t.feed_child(format!("{command}\r").as_bytes()),
-            Self::External(_) => {
-                if spawn_external_terminal(command, dir) {
-                    self.feed(&format!("\n→ ran in external terminal: {command}\n"));
-                } else {
-                    self.feed(&format!("\nNo terminal emulator found to run: {command}\n"));
-                }
+            Self::Embedded(t) => {
+                let _ = dir;
+                t.feed_child(format!("{command}\r").as_bytes())
             }
+            #[cfg(not(feature = "vte"))]
+            Self::Embedded(t) => t.send(command, dir),
         }
     }
 
-    /// Spawn the login shell — embedded only. Transcript builds have no
-    /// embedded shell; the callback reports failure so `terminal_running`
-    /// stays honest.
+    /// Spawn the login shell on the embedded PTY. The non-VTE spawn is
+    /// synchronous — the callback still reports success/failure so
+    /// `terminal_running` stays honest.
     pub fn spawn_shell(&self, dir: Option<&Path>, on_result: impl Fn(bool) + 'static) {
         match self {
             #[cfg(feature = "vte")]
@@ -465,10 +442,8 @@ impl ShellTerminal {
                     move |result| on_result(result.is_ok()),
                 );
             }
-            Self::External(_) => {
-                let _ = dir;
-                on_result(false);
-            }
+            #[cfg(not(feature = "vte"))]
+            Self::Embedded(t) => t.spawn_shell(dir, on_result),
         }
     }
 
@@ -476,23 +451,22 @@ impl ShellTerminal {
         match self {
             #[cfg(feature = "vte")]
             Self::Embedded(t) => t.set_font(font),
-            Self::External(_) => {
-                let _ = font;
-            }
+            #[cfg(not(feature = "vte"))]
+            Self::Embedded(t) => t.set_font(font),
         }
     }
 
-    /// Embedded shells report exit so the transcript can note it; external
-    /// terminals are fire-and-forget so there is nothing to connect.
-    pub fn connect_exited(&self, f: impl Fn(&Self) + 'static) {
+    /// Embedded shells report exit so the transcript can note it.
+    pub fn connect_exited(&self, f: impl Fn(&Self) + Send + 'static) {
         match self {
             #[cfg(feature = "vte")]
             Self::Embedded(t) => {
                 let this = self.clone_ref();
                 t.connect_child_exited(move |_, _| f(&this));
             }
-            Self::External(_) => {
-                let _ = f;
+            #[cfg(not(feature = "vte"))]
+            Self::Embedded(t) => {
+                t.connect_exited(move |inner| f(&Self::Embedded(inner.clone())));
             }
         }
     }
@@ -501,49 +475,12 @@ impl ShellTerminal {
     fn clone_ref(&self) -> Self {
         match self {
             Self::Embedded(t) => Self::Embedded(t.clone()),
-            Self::External(v) => Self::External(v.clone()),
         }
     }
 }
 
-/// Strip ANSI CSI/OSC sequences for the read-only transcript.
-fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            match chars.peek() {
-                Some(&'[') => {
-                    // CSI: consume until a final byte in 0x40..=0x7e.
-                    chars.next();
-                    for n in chars.by_ref() {
-                        if ('\u{40}'..='\u{7e}').contains(&n) {
-                            break;
-                        }
-                    }
-                }
-                Some(&']') => {
-                    // OSC: consume until BEL or ST (ESC \).
-                    chars.next();
-                    let mut prev = '\0';
-                    for n in chars.by_ref() {
-                        if n == '\u{7}' || (prev == '\u{1b}' && n == '\\') {
-                            break;
-                        }
-                        prev = n;
-                    }
-                }
-                _ => {}
-            }
-            continue;
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Non-VTE builds hand interactive commands to a real terminal emulator —
-/// the updater uses the same path for `sudo apt install`.
+/// Fallback for a dead/unspawned embedded shell — the updater uses the
+/// same path for `sudo apt install`.
 pub fn run_in_external_terminal(command: &str, dir: Option<&Path>) -> bool {
     spawn_external_terminal(command, dir)
 }

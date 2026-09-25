@@ -145,8 +145,6 @@
 "issues.filter.all" = "Все";
 "issues.filter.errors" = "Ошибки";
 "issues.filter.warnings" = "Предупреждения";
-"console.terminal_empty" = "Запустите пользовательскую команду или введите её ниже.";
-"console.terminal_prompt" = "Введите команду и нажмите Return";
 "console.no_issues" = "Нет проблем";
 "console.no_issues_detail" = "Последняя сборка не сообщила об ошибках или предупреждениях.";
 "console.build_command_help" = "Команда сборки; {file} заменяется на исходный файл";

@@ -145,8 +145,6 @@
 "issues.filter.all" = "全部";
 "issues.filter.errors" = "错误";
 "issues.filter.warnings" = "警告";
-"console.terminal_empty" = "运行自定义命令或在下方输入命令。";
-"console.terminal_prompt" = "输入命令并按回车";
 "console.no_issues" = "没有问题";
 "console.no_issues_detail" = "上次构建未报告错误或警告。";
 "console.build_command_help" = "构建命令；{file} 会替换为源文件";

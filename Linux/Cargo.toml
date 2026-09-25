@@ -19,6 +19,7 @@ members = [
     "crates/remote-core",
     "crates/linux-platform",
     "crates/gtk-editor-adapter",
+    "crates/terminal-core",
     "crates/pitex-shell",
     "crates/pitex",
 ]

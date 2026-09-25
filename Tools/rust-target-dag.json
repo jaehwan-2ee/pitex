@@ -144,6 +144,9 @@
     "app-ports"
    ]
   },
+  "terminal-core": {
+   "dependencies": []
+  },
   "linux-platform": {
    "dependencies": [
     "app-ports"
@@ -166,7 +169,8 @@
     "settings-feature",
     "remote-core",
     "linux-platform",
-    "gtk-editor-adapter"
+    "gtk-editor-adapter",
+    "terminal-core"
    ]
   },
   "pitex": {

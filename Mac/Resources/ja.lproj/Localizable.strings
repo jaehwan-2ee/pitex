@@ -144,8 +144,6 @@
 "issues.filter.errors" = "エラー";
 "issues.filter.warnings" = "警告";
 "console.terminal" = "ターミナル";
-"console.terminal_empty" = "カスタムコマンドを実行するか、下にコマンドを入力してください。";
-"console.terminal_prompt" = "コマンドを入力して Return を押します";
 "console.no_issues" = "問題なし";
 "console.no_issues_detail" = "前回のビルドでエラーや警告はありませんでした。";
 "console.build_command_help" = "ビルドコマンド。{file} はソースファイルに置き換わります";

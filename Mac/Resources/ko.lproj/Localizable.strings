@@ -144,8 +144,6 @@
 "issues.filter.errors" = "오류";
 "issues.filter.warnings" = "경고";
 "console.terminal" = "터미널";
-"console.terminal_empty" = "커스텀 명령을 실행하거나 아래에 명령을 입력하세요.";
-"console.terminal_prompt" = "명령을 입력하고 Return을 누르세요";
 "console.no_issues" = "이슈 없음";
 "console.no_issues_detail" = "마지막 빌드에서 오류나 경고가 없었습니다.";
 "console.build_command_help" = "빌드 명령; {file}은 소스 파일로 치환됩니다";

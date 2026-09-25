@@ -10,10 +10,11 @@ Two build variants:
   GTK 4.10+, libadwaita 1.4+, embedded VTE terminal.
 - **Compatibility build** (`--no-default-features`) — Ubuntu 22.04:
   GTK 4.6, libadwaita 1.1, and no VTE-GTK4. The bottom-console terminal
-  degrades to a read-only transcript; interactive commands (Pi sign-in,
-  custom shell commands) are handed to an external terminal emulator
-  (`kgx`, `gnome-terminal`, `konsole`, or `xterm`). Everything else —
-  editor, PDF preview, SyncTeX, builds, the Pi assistant — is identical.
+  embeds the `terminal-core` engine (PTY + DrawingArea) instead of VTE —
+  same embedded shell; an external emulator (`kgx`, `gnome-terminal`,
+  `konsole`, `xterm`) is only the fallback if the shell can't be spawned.
+  Everything else — editor, PDF preview, SyncTeX, builds, the Pi
+  assistant — is identical.
 
 ## System dependencies (Ubuntu 24.04)
 
@@ -36,7 +37,7 @@ sudo apt-get install -y \
 ```
 
 Ubuntu 22.04 ships GTK 4.6 — there is no `libvte-2.91-gtk4-dev` package,
-which is why the compat build drops the embedded terminal.
+which is why the compat build uses `terminal-core` instead of VTE.
 
 ## Build & test
 

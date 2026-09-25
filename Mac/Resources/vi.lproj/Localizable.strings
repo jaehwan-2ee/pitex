@@ -144,8 +144,6 @@
 "issues.filter.all" = "Tất cả";
 "issues.filter.errors" = "Lỗi";
 "issues.filter.warnings" = "Cảnh báo";
-"console.terminal_empty" = "Chạy lệnh tùy chỉnh hoặc nhập lệnh bên dưới.";
-"console.terminal_prompt" = "Nhập lệnh và nhấn Return";
 "console.no_issues" = "Không có vấn đề";
 "console.no_issues_detail" = "Bản dựng gần nhất không báo lỗi hay cảnh báo.";
 "console.build_command_help" = "Lệnh biên dịch; {file} được thay bằng tệp nguồn";

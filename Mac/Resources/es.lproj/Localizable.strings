@@ -145,8 +145,6 @@
 "issues.filter.all" = "Todos";
 "issues.filter.errors" = "Errores";
 "issues.filter.warnings" = "Advertencias";
-"console.terminal_empty" = "Ejecuta un comando personalizado o escribe uno abajo.";
-"console.terminal_prompt" = "Escribe un comando y pulsa Retorno";
 "console.no_issues" = "Sin problemas";
 "console.no_issues_detail" = "La última compilación no informó de errores ni advertencias.";
 "console.build_command_help" = "Comando de compilación; {file} se sustituye por el archivo fuente";

@@ -1,0 +1,23 @@
+[package]
+name = "terminal-core"
+edition.workspace = true
+rust-version.workspace = true
+description = "Portable embedded-terminal engine: VT emulation, PTY (openpty/ConPTY) and xterm input encoding"
+
+# alacritty_terminal is the one maintained crate that covers the whole job —
+# VT state machine, grid + scrollback, selection, and the PTY layer
+# (openpty on Unix, ConPTY on Windows). 0.25.0 is the last release whose
+# declared MSRV (1.74) fits our 1.75 floor; 0.25.1+ requires rustc 1.85.
+[dependencies]
+alacritty_terminal = "=0.25.0"
+# Resolution pin only (unused directly): alacritty_terminal -> home ^0.5.5
+# resolves to a release that needs edition2024 (rustc 1.85); 0.5.9 is the
+# last 1.75-compatible one.
+home = "=0.5.9"
+
+# rustix-openpty (via alacritty_terminal) builds rustix with
+# default-features = false, which leaves rustix's AsFd unimplemented for
+# std::os::fd::OwnedFd and breaks alacritty_terminal's unix tty. Enabling
+# `std` here unifies the feature set.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "0.38", features = ["std"] }

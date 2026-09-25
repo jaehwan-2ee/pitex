@@ -1857,8 +1857,8 @@ impl AppState {
         });
     }
 
-    /// `on_terminal_send` — a full command line to the shell's stdin (or an
-    /// external terminal on the Ubuntu 22.04 build, which has no VTE).
+    /// `on_terminal_send` — a full command line to the embedded shell's
+    /// stdin (external-terminal fallback if no shell is running).
     pub fn terminal_send(&self, command: &str) {
         UI.with(|ui| {
             if let Some(term) = ui.terminal.borrow().as_ref() {
@@ -2214,11 +2214,14 @@ impl AppState {
                                             &script.display().to_string()
                                         )
                                     );
-                                    // `cmd /k` (spawn_external_terminal) runs
-                                    // the .bat directly — quoting the path
-                                    // is the whole command line.
+                                    // The embedded shell (or the external
+                                    // `cmd /k` fallback) runs the .bat.
+                                    // `cmd /c` not bare `"path"`: under a
+                                    // configured PowerShell a quoted path is
+                                    // a string literal, not an invocation.
                                     #[cfg(windows)]
-                                    let command = format!("\"{}\"", script.display());
+                                    let command =
+                                        format!("cmd /c \"{}\"", script.display());
                                     st.model.console_section = ConsoleSection::Terminal;
                                     st.model.bottom_panel_visible = true;
                                     st.refresh_console_visibility();

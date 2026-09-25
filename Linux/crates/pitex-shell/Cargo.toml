@@ -23,6 +23,10 @@ build-feature = { path = "../build-feature" }
 pdf-feature = { path = "../pdf-feature" }
 settings-feature = { path = "../settings-feature" }
 gtk-editor-adapter = { path = "../gtk-editor-adapter" }
+terminal-core = { path = "../terminal-core" }
+# pangocairo draws Pango layouts onto the terminal DrawingArea's cairo
+# surface — only used by the non-VTE embedded terminal.
+pangocairo = "0.19"
 remote-core = { path = "../remote-core" }
 gtk4.workspace = true
 libadwaita.workspace = true

@@ -144,8 +144,6 @@
 "issues.filter.all" = "All";
 "issues.filter.errors" = "Errors";
 "issues.filter.warnings" = "Warnings";
-"console.terminal_empty" = "Run a custom command or type one below.";
-"console.terminal_prompt" = "Type a command and press Return";
 "console.no_issues" = "No Issues";
 "console.no_issues_detail" = "The last build reported no errors or warnings.";
 "console.build_command_help" = "Build command; {file} is replaced with the source file";

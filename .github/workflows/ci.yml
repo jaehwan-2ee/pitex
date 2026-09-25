@@ -168,6 +168,9 @@ jobs:
         env:
           GSK_RENDERER: cairo
         run: xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview startup_tests::small_project_opens_without_blocking_the_ui -- --ignored --nocapture --test-threads=1
+      - name: Embedded terminal core (emulator, PTY round trip)
+        run: cargo test -p terminal-core
+        working-directory: Linux
 
 
   windows:
@@ -204,6 +207,11 @@ jobs:
         working-directory: Windows
       - run: cargo build -p pitex-windows
         working-directory: Windows
+      # terminal-core is a member of the Linux workspace only; the manifest
+      # path resolves it and builds just the crate (no GTK needed).
+      - name: Embedded terminal core (emulator, ConPTY round trip)
+        run: cargo test -p terminal-core
+        working-directory: Linux
       - name: Remote sync core (OpenSSH/bsdtar path logic)
         run: cargo test -p remote-core
         working-directory: Windows
