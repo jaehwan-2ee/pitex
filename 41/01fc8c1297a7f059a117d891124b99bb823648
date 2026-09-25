@@ -1,0 +1,64 @@
+.github/workflows/ci.yml
+  s_61259ddb619c79::t_7ea44c550a0226 141-142,148-153,157,160,163,170,217-219
+  h_d73c695d83f4a7 207-209
+.github/workflows/release.yml
+  s_61259ddb619c79::t_eeec1ef906284d 74
+Linux/crates/pitex-shell/Cargo.toml
+  s_61259ddb619c79::t_c1991949a1af4a 46-48
+  h_d73c695d83f4a7 26
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_4d2c5a5b67b3a3 4892-4893,5103,5110-5118,6489-6492
+Linux/crates/pitex-shell/src/compat.rs
+  s_61259ddb619c79::t_dc4f2d96553b81 613-615,618,621-622,629,632,634,641,649-650,658-659,664,668,672-673,675,683-684,690-693,696,699-700,709,712,714-716,723,731-732,740-741,746,750,754-755,757,765-766
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  s_61259ddb619c79::t_af3af05984e3d3 4-6,297-303
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_15d7d62051fe81 1844-1847
+Linux/crates/pitex-shell/src/synctex.rs
+  s_61259ddb619c79::t_168b0026e1b430 66-70,73-74,83-89,514-515,620,623-649,652-653,659-660
+Linux/crates/pitex-shell/src/window_ipc.rs
+  s_61259ddb619c79::t_4c278fd511f2ae 2-14,20-24,29-47,52,59,84,89-93,100,106,108-112,114,131,139-168,180,182,184-371,390-443,468-479
+  h_d73c695d83f4a7 67-76,78,80,169-179,181,183,372-389,444-467
+Linux/crates/pitex-shell/tests/support/parity_shots.rs
+  s_61259ddb619c79::t_f2a5411b641dcb 1-295
+Linux/crates/pitex/Cargo.toml
+  s_61259ddb619c79::t_54789a159b0bf3 53,57
+Windows/Cargo.lock
+  s_61259ddb619c79::t_877bee3039e226 377-380,852,863,981-993
+Windows/crates/windows-platform/src/lib.rs
+  s_61259ddb619c79::t_0b2dd8a6910833 364-366,370-398,401,405-410,424-443,451-461
+  h_d73c695d83f4a7 10,15-19,209,281,344,449
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 13-14,19-24,1170,1203,1214,1600,2866-2868
+Linux/crates/pitex-shell/src/agent.rs
+  h_d73c695d83f4a7 882-887
+Linux/crates/pitex-shell/src/git.rs
+  h_d73c695d83f4a7 26-34
+Linux/crates/pitex-shell/src/update.rs
+  h_d73c695d83f4a7 44-45,49-56,297,304-306,310-324,328
+Linux/crates/remote-core/src/lib.rs
+  h_d73c695d83f4a7 3-5,80-81,83,253-255,432-434,442,507-509,517-585,622,651,722,732,744-749,755,803-805,896,943,1091-1093,1095-1100,1207,1213,1229-1250,1293-1345,1727-1732,1776-1777,1850-1890,1966-1967,2051-2060,2090-2110,2220-2223,2231-2236,2240,2269-2271,2273,2298,2344,2349-2350,2369,2480-2485,2490-2491,2494,2550-2552,2554,2562-2568,2571,2628-2655,2658,2665-2667,2973-3160
+Linux/crates/remote-core/tests/remote_core.rs
+  h_d73c695d83f4a7 2-4,8-9,11-12,15,17,61,66,71,76,210,347-348,395,418,527,592-595,612,770
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4101fc8c1297a7f059a117d891124b99bb823648",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  },
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
