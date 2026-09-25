@@ -361,15 +361,53 @@ impl WindowsDefaultEditorRegistration {
     /// Declared extensions — the counterpart of the desktop entry's MimeType
     /// list / the bundle's document types.
     const DECLARED_EXTENSIONS: &'static [&'static str] = &[".tex", ".bib"];
+    /// Claimed only by the Markdown tab's button, mirroring Linux's
+    /// separate `text/markdown` claim — the TeX button leaves them alone.
+    const MARKDOWN_EXTENSIONS: &'static [&'static str] = &[".md", ".markdown"];
 
     /// Registers the app as the default handler for every declared type.
     pub fn register_as_default() -> Result<(), PlatformPortError> {
+        Self::register(Self::DECLARED_EXTENSIONS)
+    }
+
+    /// "Use for .md Files" — the default handler for Markdown only.
+    pub fn register_markdown_as_default() -> Result<(), PlatformPortError> {
+        Self::register(Self::MARKDOWN_EXTENSIONS)?;
+        // Windows 8+ honors `FileExts\<ext>\UserChoice` over the class
+        // default, and its hash can't be written without the OS's secret
+        // algorithm. When the user already locked a Markdown app, the
+        // class registration stays inert, so land them on the page where
+        // the choice can be changed. With no UserChoice the class default
+        // applies immediately and the detour is unnecessary.
+        if Self::MARKDOWN_EXTENSIONS
+            .iter()
+            .any(|e| Self::claimed_elsewhere(e))
+        {
+            spawn_reaped(
+                std::process::Command::new("cmd")
+                    .args(["/c", "start", "", "ms-settings:defaultapps"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null()),
+            )
+            .map_err(|_| PlatformPortError::InvalidCapability)?;
+        }
+        Ok(())
+    }
+
+    fn register(extensions: &[&str]) -> Result<(), PlatformPortError> {
         let exe = std::env::current_exe().map_err(|_| PlatformPortError::InvalidCapability)?;
         let command = format!("\"{}\" \"%1\"", exe.to_string_lossy());
-        for extension in Self::DECLARED_EXTENSIONS {
+        for extension in extensions {
             let progid = format!("Pitex{extension}");
             // HKCU\Software\Classes\.tex -> Pitex.tex
             Self::reg_add(&format!("HKCU\\Software\\Classes\\{extension}"), &progid);
+            // OpenWithProgids keeps Pitex listed as a candidate in Settings
+            // and Open With even while a UserChoice pins another app.
+            Self::reg_add_named(
+                &format!("HKCU\\Software\\Classes\\{extension}\\OpenWithProgids"),
+                &progid,
+            );
             // ProgID friendly name + open command.
             Self::reg_add(
                 &format!("HKCU\\Software\\Classes\\{progid}"),
@@ -383,12 +421,43 @@ impl WindowsDefaultEditorRegistration {
         Ok(())
     }
 
+    /// True when `UserChoice` already pins the extension to a different
+    /// ProgID — the hash-protected value our registration can't override.
+    fn claimed_elsewhere(extension: &str) -> bool {
+        let key = format!(
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{extension}\\UserChoice"
+        );
+        let output = std::process::Command::new("reg")
+            .args(["query", key.as_str(), "/v", "ProgId"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout);
+                !text.contains("Pitex")
+            }
+            _ => false,
+        }
+    }
+
     /// `/ve` writes the key's (Default) value — the only slot this
     /// registration needs.
     fn reg_add(key: &str, data: &str) {
         let _ = std::process::Command::new("reg")
             .args(["add", key, "/ve", "/d", data, "/f"])
             .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    /// Writes an empty named value — `OpenWithProgids` takes one value per
+    /// candidate ProgID, named for the ProgID with empty data.
+    fn reg_add_named(key: &str, name: &str) {
+        let _ = std::process::Command::new("reg")
+            .args(["add", key, "/v", name, "/t", "REG_SZ", "/d", "", "/f"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

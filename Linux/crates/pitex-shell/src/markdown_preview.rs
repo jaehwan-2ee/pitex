@@ -1,9 +1,9 @@
 //! `MarkdownPreview` — the inspector's Markdown half, hosting the shared
 //! renderer page (`Assets/markdown-preview`, inlined into
 //! `Mac/Resources/markdown-preview.html`) inside a WebKitGTK 6.0 `WebView`.
-//! The `markdown-preview` feature is off on the Ubuntu 22.04 and Windows
-//! builds; those show the localized "not available" status page instead and
-//! none of the WebKit paths compile in.
+//! The `markdown-preview` feature is off only on Windows; builds without
+//! it show the localized "not available" status page instead and none of
+//! the WebKit paths compile in.
 
 use gtk4::prelude::*;
 use gtk4::{gio, glib};
@@ -292,6 +292,13 @@ impl MarkdownPreview {
             .get()
             .map(|t| Instant::now() < t)
             .unwrap_or(false)
+    }
+
+    /// Test handle to the lazily created `WebView` — lets the Xvfb smoke
+    /// tests evaluate JS (scroll position, dark palette) against the page.
+    #[cfg(all(test, feature = "markdown-preview"))]
+    pub(crate) fn webview_for_test(&self) -> Option<webkit6::WebView> {
+        self.web.borrow().as_ref().map(|w| w.view.clone())
     }
 
     #[cfg(feature = "markdown-preview")]

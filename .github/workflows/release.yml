@@ -71,7 +71,7 @@ jobs:
           apt-get install -y build-essential pkg-config libssl-dev curl \
             ca-certificates git dpkg-dev \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-            libpoppler-glib-dev
+            libpoppler-glib-dev libwebkitgtk-6.0-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-deb
       - name: Build deb (compat variant)

@@ -1841,9 +1841,10 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     }
     preview_group.add(&size_row);
     markdown.add(&preview_group);
-    // Markdown twin of the TeX Compile page's default-editor row. Windows
-    // has no Markdown preview, so it doesn't offer to claim .md files.
-    #[cfg(not(windows))]
+    // Markdown twin of the TeX Compile page's default-editor row — shown
+    // wherever the Markdown preview exists (every Linux build; Windows is
+    // `markdown-preview`-less and gets the row when it gains one).
+    #[cfg(feature = "markdown-preview")]
     {
         let default_group = adw::PreferencesGroup::new();
         let make_default = adw::ActionRow::new();

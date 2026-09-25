@@ -138,30 +138,36 @@ jobs:
           apt-get install -y build-essential pkg-config libssl-dev curl \
             ca-certificates git unzip \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-            libpoppler-glib-dev xvfb xdotool ibus-hangul dbus-x11
+            libpoppler-glib-dev libwebkitgtk-6.0-dev xvfb xdotool \
+            ibus-hangul dbus-x11
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - uses: oven-sh/setup-bun@v2
-      - run: cargo build -p pitex --no-default-features
+      # The job exercises the deb's exact feature set: `--no-default-features`
+      # + `markdown-preview` (the ubuntu2204 variant in pitex/Cargo.toml).
+      - run: cargo build -p pitex --no-default-features --features markdown-preview
+        working-directory: Linux
+      - name: Unit tests (22.04 feature set)
+        run: cargo test --workspace --exclude pitex --no-default-features --features markdown-preview
         working-directory: Linux
       - name: Agent update through the real Settings button on GTK 4.6
         timeout-minutes: 10
-        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features agent_update_tests -- --ignored --nocapture --test-threads=1
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview agent_update_tests -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Search navigation and match counter on GTK 4.6
-        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Replaced editors release their buffer and state on GTK 4.6
-        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features editor_release_tests -- --ignored --nocapture --test-threads=1
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview editor_release_tests -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Million-file Git pane on GTK 4.6
         timeout-minutes: 3
         working-directory: Linux
         env:
           GSK_RENDERER: cairo
-        run: xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features startup_tests::small_project_opens_without_blocking_the_ui -- --ignored --nocapture --test-threads=1
+        run: xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview startup_tests::small_project_opens_without_blocking_the_ui -- --ignored --nocapture --test-threads=1
 
 
   windows:
@@ -207,4 +213,7 @@ jobs:
         working-directory: Windows
       - name: Native Windows search navigation and counter
         run: cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
+        working-directory: Windows
+      - name: Window routing protocol (loopback IPC)
+        run: cargo test -p pitex-shell --lib window_ipc
         working-directory: Windows

@@ -610,74 +610,69 @@ fn spawn_external_terminal(command: &str, dir: Option<&Path>) -> bool {
 
 // ─── Font / color pickers ────────────────────────────────────────────────
 
-/// Editor-font picker. GTK 4.10's `FontDialogButton` on modern builds; a
-/// "Family Size" text entry on 22.04 (no font chooser exists below 4.10).
+/// Editor-font picker. GTK 4.10's `FontDialogButton` on modern builds;
+/// `GtkFontButton` on 22.04 — deprecated in 4.10, but the only stock font
+/// picker GTK 4.6 ships.
 pub enum FontPicker {
     #[cfg(feature = "modern-gtk")]
-    Button(gtk4::FontDialogButton),
+    Dialog(gtk4::FontDialogButton),
     /// Only constructed when `modern-gtk` is off.
     #[allow(dead_code)]
-    Entry(gtk4::Entry),
+    #[allow(deprecated)]
+    Button(gtk4::FontButton),
 }
 
 impl FontPicker {
     pub fn new() -> Self {
         #[cfg(feature = "modern-gtk")]
         {
-            Self::Button(gtk4::FontDialogButton::new(Some(gtk4::FontDialog::new())))
+            Self::Dialog(gtk4::FontDialogButton::new(Some(gtk4::FontDialog::new())))
         }
         #[cfg(not(feature = "modern-gtk"))]
+        #[allow(deprecated)]
         {
-            let entry = gtk4::Entry::new();
-            entry.set_placeholder_text(Some("Family Size"));
-            entry.set_width_chars(18);
-            Self::Entry(entry)
+            Self::Button(gtk4::FontButton::new())
         }
     }
 
     pub fn widget(&self) -> &gtk4::Widget {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => b.upcast_ref(),
             Self::Button(b) => b.upcast_ref(),
-            Self::Entry(e) => e.upcast_ref(),
         }
     }
 
     pub fn set_font_desc(&self, desc: &gtk4::pango::FontDescription) {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => b.set_font_desc(desc),
+            #[allow(deprecated)]
             Self::Button(b) => b.set_font_desc(desc),
-            Self::Entry(e) => e.set_text(&desc.to_string()),
         }
     }
 
     pub fn font_desc(&self) -> Option<gtk4::pango::FontDescription> {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => b.font_desc(),
+            #[allow(deprecated)]
             Self::Button(b) => b.font_desc(),
-            Self::Entry(e) => {
-                let text = e.text().to_string();
-                if text.trim().is_empty() {
-                    None
-                } else {
-                    Some(gtk4::pango::FontDescription::from_string(&text))
-                }
-            }
         }
     }
 
-    /// Fires when the picked font changes (notify::font-desc on modern,
-    /// entry changes on legacy).
+    /// Fires on notify::font-desc — same signal on both widget families.
     pub fn connect_changed(&self, f: impl Fn(&Self) + 'static) {
         match self {
             #[cfg(feature = "modern-gtk")]
-            Self::Button(b) => {
+            Self::Dialog(b) => {
                 let this = self.clone_ref();
                 b.connect_font_desc_notify(move |_| f(&this));
             }
-            Self::Entry(e) => {
+            #[allow(deprecated)]
+            Self::Button(b) => {
                 let this = self.clone_ref();
-                e.connect_changed(move |_| f(&this));
+                b.connect_font_desc_notify(move |_| f(&this));
             }
         }
     }
@@ -685,21 +680,24 @@ impl FontPicker {
     pub fn clone_ref(&self) -> Self {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => Self::Dialog(b.clone()),
+            #[allow(deprecated)]
             Self::Button(b) => Self::Button(b.clone()),
-            Self::Entry(e) => Self::Entry(e.clone()),
         }
     }
 }
 
-/// Palette color well. GTK 4.10's `ColorDialogButton` on modern builds; a
-/// hex entry (`#rrggbb[aa]`) on 22.04 — GTK4 has no color chooser below
-/// 4.10, and hex is the palette's storage format anyway.
+/// Palette color well. GTK 4.10's `ColorDialogButton` on modern builds;
+/// `GtkColorButton` on 22.04 — deprecated in 4.10, but the only stock
+/// color picker GTK 4.6 ships. Alpha stays on, matching the modern
+/// dialog's `with_alpha`.
 pub enum ColorWell {
     #[cfg(feature = "modern-gtk")]
-    Button(gtk4::ColorDialogButton),
+    Dialog(gtk4::ColorDialogButton),
     /// Only constructed when `modern-gtk` is off.
     #[allow(dead_code)]
-    Entry(gtk4::Entry),
+    #[allow(deprecated)]
+    Button(gtk4::ColorButton),
 }
 
 impl ColorWell {
@@ -708,64 +706,55 @@ impl ColorWell {
         {
             let dialog = gtk4::ColorDialog::new();
             dialog.set_with_alpha(true);
-            Self::Button(gtk4::ColorDialogButton::new(Some(dialog)))
+            Self::Dialog(gtk4::ColorDialogButton::new(Some(dialog)))
         }
         #[cfg(not(feature = "modern-gtk"))]
+        #[allow(deprecated)]
         {
-            let entry = gtk4::Entry::new();
-            entry.set_placeholder_text(Some("#rrggbb"));
-            entry.set_width_chars(10);
-            Self::Entry(entry)
+            let button = gtk4::ColorButton::new();
+            button.set_use_alpha(true);
+            Self::Button(button)
         }
     }
 
     pub fn widget(&self) -> &gtk4::Widget {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => b.upcast_ref(),
             Self::Button(b) => b.upcast_ref(),
-            Self::Entry(e) => e.upcast_ref(),
         }
     }
 
     pub fn set_rgba(&self, rgba: &gtk4::gdk::RGBA) {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => b.set_rgba(rgba),
+            #[allow(deprecated)]
             Self::Button(b) => b.set_rgba(rgba),
-            Self::Entry(e) => e.set_text(&crate::settings::rgba_to_hex_string(
-                rgba.red() as f64,
-                rgba.green() as f64,
-                rgba.blue() as f64,
-                rgba.alpha() as f64,
-            )),
         }
     }
 
     pub fn rgba(&self) -> gtk4::gdk::RGBA {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => b.rgba(),
+            #[allow(deprecated)]
             Self::Button(b) => b.rgba(),
-            Self::Entry(e) => {
-                let fallback = gtk4::gdk::RGBA::new(0.0, 0.0, 0.0, 1.0);
-                crate::settings::parse_hex_color(&e.text())
-                    .map(|(r, g, b, a)| {
-                        gtk4::gdk::RGBA::new(r as f32, g as f32, b as f32, a as f32)
-                    })
-                    .unwrap_or(fallback)
-            }
         }
     }
 
-    /// notify::rgba on modern; text commits on legacy.
+    /// notify::rgba on both widget families.
     pub fn connect_changed(&self, f: impl Fn(&Self) + 'static) {
         match self {
             #[cfg(feature = "modern-gtk")]
-            Self::Button(b) => {
+            Self::Dialog(b) => {
                 let this = self.clone_ref();
                 b.connect_rgba_notify(move |_| f(&this));
             }
-            Self::Entry(e) => {
+            #[allow(deprecated)]
+            Self::Button(b) => {
                 let this = self.clone_ref();
-                e.connect_changed(move |_| f(&this));
+                b.connect_rgba_notify(move |_| f(&this));
             }
         }
     }
@@ -773,8 +762,9 @@ impl ColorWell {
     fn clone_ref(&self) -> Self {
         match self {
             #[cfg(feature = "modern-gtk")]
+            Self::Dialog(b) => Self::Dialog(b.clone()),
+            #[allow(deprecated)]
             Self::Button(b) => Self::Button(b.clone()),
-            Self::Entry(e) => Self::Entry(e.clone()),
         }
     }
 }

@@ -63,8 +63,15 @@ pub struct SyncTeXBinding {
     pub source_paths: HashMap<String, PathBuf>,
 }
 
+/// mtime alone can't flag a rewrite that restores it; the inode + ctime
+/// pair pins the file on Unix. Stable `std` exposes no Windows equivalent
+/// (`MetadataExt::file_index`/`change_time` are still unstable), so the
+/// Windows stamp is size + last-write time: a rebuild always moves the
+/// write time, which is what the cache needs to see.
 #[cfg(unix)]
 type FileStamp = (u64, u64, u64, i64, i64, i64, i64);
+#[cfg(windows)]
+type FileStamp = (u64, u64);
 
 #[cfg(unix)]
 fn file_stamp(path: &Path) -> Result<FileStamp, SyncTeXSupportError> {
@@ -73,11 +80,17 @@ fn file_stamp(path: &Path) -> Result<FileStamp, SyncTeXSupportError> {
     Ok((m.dev(), m.ino(), m.len(), m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec()))
 }
 
+#[cfg(windows)]
+fn file_stamp(path: &Path) -> Result<FileStamp, SyncTeXSupportError> {
+    use std::os::windows::fs::MetadataExt;
+    let m = std::fs::metadata(path).map_err(|_| SyncTeXSupportError::MissingMetadata)?;
+    Ok((m.file_size(), m.last_write_time()))
+}
+
 /// `SyncTeXRunner` — resolves the tool once, runs queries, normalizes output.
 pub struct SyncTeXRunner {
     runner: ProcessRunner,
     tool_path: Mutex<Option<String>>,
-    #[cfg(unix)]
     digest_cache: Mutex<HashMap<PathBuf, (FileStamp, String)>>,
 }
 impl SyncTeXRunner {
@@ -89,7 +102,6 @@ impl SyncTeXRunner {
         Self {
             runner: ProcessRunner::default(),
             tool_path: Mutex::new(None),
-            #[cfg(unix)]
             digest_cache: Mutex::new(HashMap::new()),
         }
     }
@@ -105,7 +117,6 @@ impl SyncTeXRunner {
         self.resolved_tool()?;
         let root = standardize(project_root.to_path_buf());
         let pdf = standardize(pdf_url.to_path_buf());
-        #[cfg(unix)]
         self.digest_cache.lock().unwrap().clear();
         let output_hash = self.file_digest(&pdf)?;
         let fingerprint = self.synctex_fingerprint(&pdf)?;
@@ -493,19 +504,15 @@ impl SyncTeXRunner {
     }
 
     fn file_digest(&self, path: &Path) -> Result<String, SyncTeXSupportError> {
-        #[cfg(unix)]
         let before = file_stamp(path)?;
-        #[cfg(unix)]
         if let Some((stamp, digest)) = self.digest_cache.lock().unwrap().get(path) {
             if *stamp == before { return Ok(digest.clone()); }
         }
         let data = std::fs::read(path).map_err(|_| SyncTeXSupportError::MissingMetadata)?;
         if data.is_empty() { return Err(SyncTeXSupportError::MissingMetadata); }
         let digest = sha256_hex(&data);
-        #[cfg(unix)] {
-            if file_stamp(path)? != before { return Err(SyncTeXSupportError::StaleResult); }
-            self.digest_cache.lock().unwrap().insert(path.to_path_buf(), (before, digest.clone()));
-        }
+        if file_stamp(path)? != before { return Err(SyncTeXSupportError::StaleResult); }
+        self.digest_cache.lock().unwrap().insert(path.to_path_buf(), (before, digest.clone()));
         Ok(digest)
     }
 
@@ -610,19 +617,47 @@ fn sha256_hex(data: &[u8]) -> String {
         .collect()
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod digest_cache_tests {
     use super::*;
+
+    fn temp_file(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("pitex-digest-{tag}-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()))
+    }
+
+    /// An untouched file hits the cache; a rewrite moves the stamp and a
+    /// delete makes the digest fail — the portable core of the cache.
+    #[test]
+    fn digest_cache_tracks_content_changes() {
+        let path = temp_file("rewrite");
+        std::fs::write(&path, b"first").unwrap();
+        let runner = SyncTeXRunner::new();
+        let original = runner.file_digest(&path).unwrap();
+        assert_eq!(original, runner.file_digest(&path).unwrap());
+        std::fs::write(&path, b"other content, longer").unwrap();
+        assert_ne!(original, runner.file_digest(&path).unwrap());
+        std::fs::remove_file(&path).unwrap();
+        assert!(runner.file_digest(&path).is_err());
+    }
+
+    /// Same-size rewrite with the mtime forged back, done the way editors
+    /// actually save — write sibling + rename over. The new inode changes
+    /// the Unix stamp deterministically; the pure-truncate variant of this
+    /// test relied on ctime moving, which a jiffy-granular clock can merge
+    /// into one tick.
+    #[cfg(unix)]
     #[test]
     fn digest_cache_detects_same_size_edits_with_restored_mtime() {
-        let path = std::env::temp_dir().join(format!("pitex-digest-{}-{}", std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = temp_file("forged");
+        let staged = temp_file("forged-staged");
         std::fs::write(&path, b"first").unwrap();
         let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
         let runner = SyncTeXRunner::new();
         let original = runner.file_digest(&path).unwrap();
         assert_eq!(original, runner.file_digest(&path).unwrap());
-        std::fs::write(&path, b"other").unwrap();
+        std::fs::write(&staged, b"other").unwrap();
+        std::fs::rename(&staged, &path).unwrap();
         std::fs::File::open(&path).unwrap().set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();
         assert_ne!(original, runner.file_digest(&path).unwrap());
         std::fs::remove_file(&path).unwrap();

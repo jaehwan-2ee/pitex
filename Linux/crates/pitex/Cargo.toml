@@ -50,6 +50,8 @@ assets = [
 # Ubuntu 22.04 variant: GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — disables
 # `modern-gtk` so the compat code paths compile instead. Same package name:
 # it's an alternative build of the same app, not a separate package.
+# `markdown-preview` stays on: Jammy's updates ship libwebkitgtk-6.0-dev.
 [package.metadata.deb.variants.ubuntu2204]
 name = "pitex"
 default-features = false
+features = ["markdown-preview"]

@@ -1384,7 +1384,6 @@ impl AppState {
             return;
         }
         // Another Pitex window (a separate process) may own the project.
-        #[cfg(unix)]
         if crate::window_ipc::offer_to_other_windows(&path) {
             return;
         }
@@ -4756,7 +4755,6 @@ pub fn run(app_version: &str) -> i32 {
         .flags(flags)
         .build();
     app.connect_shutdown(|_| {
-        #[cfg(unix)]
         crate::window_ipc::stop();
         // Quitting right after a save must not cut the write short.
         STATE.with(|slot| {
@@ -4825,7 +4823,6 @@ fn build_window(app: &adw::Application, app_version: &str) {
     state.borrow_mut().language = lang;
     LANG.with(|l| l.set(lang));
     STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
-    #[cfg(unix)]
     crate::window_ipc::listen();
     state.borrow_mut().install_agent_config_watch();
 
@@ -4892,10 +4889,8 @@ fn build_chrome(
     ui.window.replace(Some(window.clone()));
 
     // Vertical box mirrors ToolbarView's header+content layout; the plain
-    // Box keeps the same visuals on both GTK variants. On `modern-gtk` the
-    // header moves into a real `AdwToolbarView` wrapping the whole window —
-    // the only way libadwaita 1.4+ draws window controls (AdwWindow rejects
-    // `set_titlebar`), which is what gives Windows its min/max/close buttons.
+    // Box keeps the same visuals on both GTK variants. The header itself
+    // moves to the window level below, wrapping the whole phase stack.
     let toolbar_view = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let header = adw::HeaderBar::new();
     // WindowTitle's subtitle line carries the remote status (macOS shows
@@ -5044,9 +5039,6 @@ fn build_chrome(
     }
     header.pack_end(&find_btn);
 
-    #[cfg(not(feature = "modern-gtk"))]
-    toolbar_view.append(&header);
-
     // ── central three-column layout ──
     let outer = gtk4::Paned::new(gtk4::Orientation::Horizontal);
     outer.set_resize_start_child(false);
@@ -5108,15 +5100,22 @@ fn build_chrome(
     {
         // The header is the window's top bar — window controls (min/max/
         // close on Windows, close/min/max per decoration layout on Linux)
-        // appear on every stack page. Legacy GTK keeps the header inside
-        // the ready page's box.
+        // appear on every stack page.
         let chrome = adw::ToolbarView::new();
         chrome.add_top_bar(&header);
         chrome.set_content(Some(&toast));
         window.set_content(Some(&chrome));
     }
     #[cfg(not(feature = "modern-gtk"))]
-    window.set_content(Some(&toast));
+    {
+        // libadwaita 1.1 has no ToolbarView — a plain vertical box puts the
+        // same header (and its window controls) above every stack page.
+        let chrome = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        chrome.append(&header);
+        toast.set_vexpand(true);
+        chrome.append(&toast);
+        window.set_content(Some(&chrome));
+    }
 
     // ── keyboard shortcuts — the macOS `AppCommands` accelerator surface:
     // ⌘N new, ⌘O open, ⌘P pin, ⌘W close, ⌘S save, ⌘⇧S save-as, ⌘⌥S save-all,
@@ -6486,6 +6485,10 @@ for line in sys.stdin:
 #[cfg(test)]
 #[path = "../tests/support/agent_update_settings.rs"]
 mod agent_update_tests;
+
+#[cfg(test)]
+#[path = "../tests/support/parity_shots.rs"]
+mod parity_shots;
 
 #[cfg(test)]
 mod build_key_tests {

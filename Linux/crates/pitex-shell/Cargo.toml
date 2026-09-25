@@ -43,8 +43,9 @@ windows-platform = { path = "../../../Windows/crates/windows-platform" }
 # The `vte` feature (embedded VTE terminal) exists only on Unix — Windows
 # builds use `modern-gtk` without it and take the external-terminal fallback,
 # like the Ubuntu 22.04 build. `markdown-preview` (WebKitGTK 6.0) is wired the
-# same way: on for Unix desktop builds, off on Ubuntu 22.04 and Windows,
-# where the preview pane shows an unavailability page instead.
+# same way: on for every Unix build — the ubuntu2204 deb variant turns it on
+# explicitly — off on Windows, where the preview pane shows an
+# unavailability page instead.
 [features]
 default = ["modern-gtk", "vte", "markdown-preview"]
 modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
