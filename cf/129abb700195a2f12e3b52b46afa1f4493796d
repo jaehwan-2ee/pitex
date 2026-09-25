@@ -1,0 +1,14 @@
+Linux/crates/pitex-shell/src/markdown_preview/webview2.rs
+  h_d73c695d83f4a7 267-271,274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf129abb700195a2f12e3b52b46afa1f4493796d",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
