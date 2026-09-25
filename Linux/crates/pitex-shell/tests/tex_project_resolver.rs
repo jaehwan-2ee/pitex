@@ -246,13 +246,13 @@ fn selecting_and_closing_files_refreshes_highlight_without_changing_folders() {
         let url = write(&root.join("journal").join(name), text);
         model.project_files.push(url.clone());
         let file = ProjectFile {
-            document_id: StableDocumentID::new(name).unwrap(),
+            document_id: StableDocumentID::new(name.replace('.', "-")).unwrap(),
             path: NormalizedRelativePath::new(format!("journal/{name}")).unwrap(),
         };
         let before = model.files_revision;
         model.apply_activate(ActivatedDocument {
             url: url.clone(), session: DocumentSession::new(&file, text.into(), None),
-            resolution: Ok(Some(main.clone())), bibliography_items: Vec::new(),
+            resolution: (Ok(Some(main.clone())), Default::default()), bibliography_items: Vec::new(),
             label_scan: Default::default(), built_pdf: None,
         });
         assert_eq!(model.active_document_url.as_ref(), Some(&url));
@@ -265,5 +265,39 @@ fn selecting_and_closing_files_refreshes_highlight_without_changing_folders() {
     assert!(model.files_revision > before);
     assert!(model.collapsed_project_dirs.contains("other"));
     model.close();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn document_project_resolves_nested_tex_bib_and_graphicspath_without_other_manuscripts() {
+    let root = temp_dir("document-project");
+    let main = write(&root.join("journal/main.tex"), r"\documentclass{article}
+\graphicspath{{figures/}}
+\input{sections/intro}
+\bibliography{refs}
+% \includegraphics{ignored}
+");
+    let intro = write(&root.join("journal/sections/intro.tex"), r"\input{sections/deep}\includegraphics[width=5cm]{chart}");
+    let deep = write(&root.join("journal/sections/deep.tex"), r"\input{main}");
+    let bib = write(&root.join("journal/refs.bib"), "@book{key, title={Book}}");
+    let figure = write(&root.join("journal/figures/chart.pdf"), "pdf fixture");
+    let output = write(&root.join("journal/main.pdf"), "pdf fixture");
+    let markdown = write(&root.join("notes.md"), "# Notes");
+    let other = write(&root.join("other/main.tex"), MAIN);
+    let ignored = write(&root.join("journal/ignored.pdf"), "unused");
+    let files = vec![main.clone(), intro.clone(), deep, bib, figure, output, markdown.clone(), other, ignored];
+    let mut resolver = TeXProjectResolver::new();
+    let project = resolver.document_project(Some(&intro), Some(&main), Some(&root), &files);
+    assert_eq!(project.tree[0].path, "journal/main.tex");
+    let children = project.tree[0].children.as_ref().unwrap();
+    assert_eq!(children.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(), ["journal/sections/intro.tex", "journal/refs.bib"]);
+    let nested = children[0].children.as_ref().unwrap();
+    assert_eq!(nested.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(), ["journal/sections/deep.tex", "journal/figures/chart.pdf"]);
+    assert!(nested[0].children.is_none());
+    assert_eq!(project.outputs[0].path, "journal/main.pdf");
+    let project = resolver.document_project(Some(&markdown), Some(&main), Some(&root), &files);
+    assert_eq!(project.tree[0].path, "notes.md");
+    assert!(project.tree[0].children.is_none());
+    assert!(project.outputs.is_empty());
     std::fs::remove_dir_all(root).unwrap();
 }

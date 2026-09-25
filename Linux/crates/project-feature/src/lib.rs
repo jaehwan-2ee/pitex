@@ -299,6 +299,46 @@ fn sort_nodes(nodes: &mut Vec<ProjectFileNode>, labels: &HashMap<String, String>
     }
 }
 
+/// The active document's dependency hierarchy and its separate compiled PDF.
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct DocumentProject {
+    pub tree: Vec<ProjectFileNode>,
+    pub outputs: Vec<ProjectFileNode>,
+}
+
+pub fn build_document_project(main: &str, paths: &[String], dependencies: &HashMap<String, Vec<String>>) -> DocumentProject {
+    let available: std::collections::HashSet<_> = paths.iter().map(String::as_str).collect();
+    if !available.contains(main) { return DocumentProject::default(); }
+    let labels = project_file_labels(paths);
+    let is_tex = main.to_lowercase().ends_with(".tex");
+    let stem = main.rsplit_once('.').map(|(s, _)| s).unwrap_or(main);
+    let pdf = format!("{stem}.pdf");
+    let mut links = dependencies.clone();
+    if is_tex && !dependencies.values().flatten().any(|p| p.to_lowercase().ends_with(".bib")) {
+        let bib = format!("{stem}.bib");
+        if available.contains(bib.as_str()) { links.entry(main.into()).or_default().push(bib); }
+    }
+    fn node(path: &str, ancestors: &mut Vec<String>, available: &std::collections::HashSet<&str>,
+            labels: &HashMap<String, String>, links: &HashMap<String, Vec<String>>, output: Option<&str>) -> ProjectFileNode {
+        ancestors.push(path.into());
+        let mut children = Vec::new();
+        for child in links.get(path).into_iter().flatten() {
+            if available.contains(child.as_str()) && !ancestors.contains(child) && output != Some(child.as_str()) {
+                children.push(node(child, ancestors, available, labels, links, output));
+            }
+        }
+        ancestors.pop();
+        ProjectFileNode { path: path.into(), name: labels[path].clone(), is_directory: false,
+                          children: (!children.is_empty()).then_some(children) }
+    }
+    DocumentProject {
+        tree: vec![node(main, &mut Vec::new(), &available, &labels, &links, is_tex.then_some(pdf.as_str()))],
+        outputs: if is_tex && available.contains(pdf.as_str()) {
+            vec![node(&pdf, &mut Vec::new(), &available, &labels, &links, None)]
+        } else { Vec::new() },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,4 +368,27 @@ mod tests {
         assert_eq!(figures.path, "4_journal/figures");
         assert_eq!(figures.children.as_ref().unwrap()[0].path, "4_journal/figures/plot.pdf");
     }
+    #[test]
+    fn document_project_scopes_nested_dependencies_and_separates_only_its_pdf() {
+        let paths: Vec<String> = ["paper/main.tex", "paper/intro.tex", "paper/deep.tex", "paper/refs.bib",
+            "paper/chart.pdf", "paper/main.pdf", "other/main.tex", "other/main.pdf", "notes.md"].map(String::from).into();
+        let links = [("paper/main.tex", vec!["paper/intro.tex", "paper/refs.bib"]),
+            ("paper/intro.tex", vec!["paper/deep.tex", "paper/chart.pdf"]),
+            ("paper/deep.tex", vec!["paper/main.tex"])].into_iter()
+            .map(|(k,v)| (k.into(), v.into_iter().map(String::from).collect())).collect();
+        let project = build_document_project("paper/main.tex", &paths, &links);
+        assert_eq!(project.tree.len(), 1);
+        assert_eq!(project.tree[0].path, "paper/main.tex");
+        let children = project.tree[0].children.as_ref().unwrap();
+        assert_eq!(children.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(), ["paper/intro.tex", "paper/refs.bib"]);
+        let nested = children[0].children.as_ref().unwrap();
+        assert_eq!(nested.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(), ["paper/deep.tex", "paper/chart.pdf"]);
+        assert!(nested[0].children.is_none());
+        assert_eq!(project.outputs[0].path, "paper/main.pdf");
+        let markdown = build_document_project("notes.md", &paths, &HashMap::new());
+        assert_eq!(markdown.tree[0].path, "notes.md");
+        assert!(markdown.tree[0].children.is_none());
+        assert!(markdown.outputs.is_empty());
+    }
+
 }

@@ -234,6 +234,7 @@ final class WorkspaceModel: ObservableObject {
     /// Sidebar file tree, rebuilt only when its inputs change — computing it
     /// in the view body re-sorted the whole tree on every keystroke.
     @Published private(set) var projectTree: [ProjectFileNode] = []
+    @Published private(set) var documentProject = DocumentProject()
     private(set) var projectFileNames: [String: String] = [:]
     @Published internal(set) var buildTargetMessage: String?
 
@@ -924,6 +925,7 @@ final class WorkspaceModel: ObservableObject {
                 environment = nil
                 activeDocumentURL = nil
                 documentSnapshot = nil
+                documentProject = DocumentProject()
             }
         }
     }
@@ -964,6 +966,7 @@ final class WorkspaceModel: ObservableObject {
         syncTeXBinding = nil
         pinnedBuildTarget = nil
         automaticBuildTarget = nil
+        documentProject = DocumentProject()
         buildTargetMessage = nil
         consoleSection = .assistant
         outlineItems = []
@@ -1587,6 +1590,9 @@ final class WorkspaceModel: ObservableObject {
         resolver.diskCache = resolverDiskCache
         if let url = activeDocumentURL, let text = documentSnapshot?.text { resolver.activeText = (url, text) }
         let files = resolver.bibliographyFiles(main: buildSourceURL() ?? activeDocumentURL, files: projectFiles)
+        let project = resolver.documentProject(active: activeDocumentURL, main: automaticBuildTarget,
+                                               root: projectURL, files: projectFiles)
+        if documentProject != project { documentProject = project }
         resolverDiskCache = resolver.diskCache
         let key = files.map { file in
             let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
@@ -2072,6 +2078,9 @@ final class WorkspaceModel: ObservableObject {
             automaticBuildTarget = nil
             buildTargetMessage = error.localizedDescription
         }
+        let project = resolver.documentProject(active: activeDocumentURL, main: automaticBuildTarget,
+                                               root: projectURL, files: projectFiles)
+        if documentProject != project { documentProject = project }
         resolverDiskCache = resolver.diskCache
     }
 

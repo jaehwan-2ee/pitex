@@ -237,3 +237,34 @@ private func sorted(_ nodes: [ProjectFileNode], labels: [String: String]) -> [Pr
                         children: node.children.map { sorted($0, labels: labels) })
     }
 }
+
+/// The active document's dependency hierarchy and its separate compiled PDF.
+public struct DocumentProject: Equatable, Sendable {
+    public var tree: [ProjectFileNode] = []
+    public var outputs: [ProjectFileNode] = []
+    public init() {}
+}
+
+public func buildDocumentProject(main: String, paths: [String], dependencies: [String: [String]]) -> DocumentProject {
+    let available = Set(paths)
+    guard available.contains(main) else { return DocumentProject() }
+    let labels = projectFileLabels(paths)
+    let isTeX = (main as NSString).pathExtension.lowercased() == "tex"
+    let pdf = (main as NSString).deletingPathExtension + ".pdf"
+    var links = dependencies
+    if isTeX, !dependencies.values.joined().contains(where: { ($0 as NSString).pathExtension.lowercased() == "bib" }) {
+        let bib = (main as NSString).deletingPathExtension + ".bib"
+        if available.contains(bib) { links[main, default: []].append(bib) }
+    }
+    func node(_ path: String, ancestors: Set<String>) -> ProjectFileNode {
+        let children = (links[path] ?? []).filter {
+            available.contains($0) && !ancestors.contains($0) && (!isTeX || $0 != pdf)
+        }.map { node($0, ancestors: ancestors.union([$0])) }
+        return ProjectFileNode(path: path, name: labels[path] ?? (path as NSString).lastPathComponent,
+                               isDirectory: false, children: children.isEmpty ? nil : children)
+    }
+    var project = DocumentProject()
+    project.tree = [node(main, ancestors: [main])]
+    if isTeX, available.contains(pdf) { project.outputs = [node(pdf, ancestors: [pdf])] }
+    return project
+}

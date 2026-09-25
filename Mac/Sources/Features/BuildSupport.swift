@@ -4,6 +4,7 @@ import DocumentSessionCore
 import Foundation
 import LanguageCore
 import ProjectCore
+import ProjectFeature
 import SettingsFeature
 import TexDomain
 
@@ -232,7 +233,7 @@ struct TeXProjectResolver {
     /// `direct_links` — include/bibliography targets of one file, resolved
     /// against the main document's directory first, then the including
     /// file's. Only existing files are returned, canonicalized.
-    private mutating func directLinks(of file: URL, base: URL) -> [URL] {
+    private mutating func directLinks(of file: URL, base: URL, graphicsPaths: [String]? = nil) -> [URL] {
         guard let parsed = snapshot(file) else { return [] }
         var links = parsed.includes.map { ($0.target, "tex") }
         // Remove lexer-recognized comments before scanning the resource
@@ -261,7 +262,56 @@ struct TeXProjectResolver {
                 if !targets.contains(target) { targets.append(target) }
             }
         }
+        if let graphicsPaths {
+            let graphicNames = captures(Self.includegraphicsRegex, in: source)
+            let searchDirectories = [base, file.deletingLastPathComponent()]
+                + graphicsPaths.map { base.appendingPathComponent($0) }
+                + captures(Self.graphicspathRegex, in: source).flatMap {
+                    captures(Self.bracedPathRegex, in: $0).map { base.appendingPathComponent($0) }
+                }
+            for name in graphicNames {
+                let names = (name as NSString).pathExtension.isEmpty
+                    ? ["pdf", "png", "jpg", "jpeg", "eps", "svg"].map { name + "." + $0 } : [name]
+                let candidates = searchDirectories.flatMap { directory in names.map { directory.appendingPathComponent($0) } }
+                if let target = candidates.first(where: { FileManager.default.isReadableFile(atPath: $0.path) }) {
+                    let target = canonical(target)
+                    if !targets.contains(target) { targets.append(target) }
+                }
+            }
+        }
         return targets
+    }
+
+    private static let includegraphicsRegex = try? NSRegularExpression(pattern: #"\\includegraphics\*?(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"#)
+    private static let graphicspathRegex = try? NSRegularExpression(pattern: #"\\graphicspath\s*\{((?:\s*\{[^}]*\}\s*)*)\}"#)
+    private static let bracedPathRegex = try? NSRegularExpression(pattern: #"\{([^}]+)\}"#)
+
+    mutating func documentProject(active: URL?, main: URL?, root: URL?, files: [URL]) -> DocumentProject {
+        guard let active, let root else { return DocumentProject() }
+        let markdown = ["md", "markdown"].contains(active.pathExtension.lowercased())
+        let main = canonical(markdown ? active : (main ?? active))
+        let base = main.deletingLastPathComponent()
+        func relative(_ url: URL) -> String? {
+            let prefix = root.standardizedFileURL.path == "/" ? "/" : root.standardizedFileURL.path + "/"
+            let path = url.standardizedFileURL.path
+            return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : nil
+        }
+        guard let mainPath = relative(main) else { return DocumentProject() }
+        let paths = files.compactMap(relative)
+        let available = Set(files.map(canonical))
+        var links: [String: [String]] = [:]
+        var seen = Set<URL>()
+        var pending = [main]
+        let source = snapshot(main)?.source ?? ""
+        let graphicsPaths = captures(Self.graphicspathRegex, in: source).flatMap { captures(Self.bracedPathRegex, in: $0) }
+        while let file = pending.popLast() {
+            guard seen.insert(file).inserted, file.pathExtension.lowercased() == "tex",
+                  let path = relative(file) else { continue }
+            let children = directLinks(of: file, base: base, graphicsPaths: graphicsPaths).filter { available.contains($0) }
+            links[path] = children.compactMap(relative)
+            pending.append(contentsOf: children)
+        }
+        return buildDocumentProject(main: mainPath, paths: paths, dependencies: links)
     }
 
     /// `direct_dependencies` — the main document's own bibliography and

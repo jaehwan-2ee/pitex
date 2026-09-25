@@ -143,7 +143,18 @@ import Vision
             // Four independent manuscripts with identical basenames.
             for folder in ["1_icml2026", "2_nips2026", "3_arxiv", "4_journal"] {
                 _ = try await client.runChecked("mkdir -p -- \"$1/$2\"", arguments: [root, folder])
-                let tex = "\\documentclass{article}\n\\begin{document}\nJournal body.\n\\bibliography{manuscript}\n\\end{document}\n"
+                var tex = "\\documentclass{article}\n\\begin{document}\nJournal body.\n\\bibliography{manuscript}\n\\end{document}\n"
+                if folder == "4_journal" {
+                    tex += "\\graphicspath{{figures/}}\n\\input{sections/intro}\n% \\includegraphics{unused}\n"
+                    _ = try await client.runChecked("mkdir -p -- \"$1/4_journal/sections\" \"$1/4_journal/figures\"", arguments: [root])
+                    for (file, text) in [
+                        ("sections/intro.tex", "\\input{sections/deep}\n\\includegraphics[width=5cm]{chart}\n"),
+                        ("sections/deep.tex", "Nested chapter.\n\\input{manuscript}\n"),
+                        ("figures/chart.pdf", "figure fixture"), ("unused.pdf", "unused fixture")
+                    ] {
+                        _ = try await client.runChecked("cat > \"$1/4_journal/$2\"", arguments: [root, file], input: Data(text.utf8))
+                    }
+                }
                 _ = try await client.runChecked("cat > \"$1/$2/manuscript.tex\"", arguments: [root, folder], input: Data(tex.utf8))
                 _ = try await client.runChecked("cat > \"$1/$2/manuscript.bib\"", arguments: [root, folder],
                     input: Data("@article{\(folder), title={\(folder)}}\n".utf8))
@@ -160,13 +171,22 @@ import Vision
             let tree = workspace.projectTree
             try require(tree.prefix(4).map(\.path) == ["1_icml2026", "2_nips2026", "3_arxiv", "4_journal"], "Main file moved ahead of its folder")
             let journalChildren = tree.first { $0.path == "4_journal" }?.children ?? []
-            try require(journalChildren.map(\.path) == ["4_journal/manuscript.bib", "4_journal/manuscript.pdf", "4_journal/manuscript.tex", "4_journal/review.md"], "Files left their real directory")
-            try require(journalChildren.allSatisfy { !$0.isDirectory && $0.children == nil }, "Dependencies were nested under a file")
+            try require(journalChildren.filter { !$0.isDirectory }.map(\.path) == ["4_journal/manuscript.bib", "4_journal/manuscript.pdf", "4_journal/manuscript.tex", "4_journal/review.md", "4_journal/unused.pdf"], "Files left their real directory")
+            try require(journalChildren.filter { !$0.isDirectory }.allSatisfy { $0.children == nil }, "Dependencies were nested under a file")
+            let project = workspace.documentProject
+            try require(project.tree.map(\.path) == ["4_journal/manuscript.tex"], "Project included unrelated manuscripts")
+            let related = project.tree[0].children ?? []
+            try require(related.map(\.path) == ["4_journal/sections/intro.tex", "4_journal/manuscript.bib"], "Project direct dependencies are wrong")
+            try require(related[0].children?.map(\.path) == ["4_journal/sections/deep.tex", "4_journal/figures/chart.pdf"], "Project lost nested chapters or graphics")
+            try require(related[0].children?[0].children == nil, "Project did not break include cycle")
+            try require(project.outputs.map(\.path) == ["4_journal/manuscript.pdf"], "Project output PDF is not isolated")
             workspace.togglePinnedBuildTarget()
             try require(workspace.projectTree == tree, "Pinning a build target rearranged the tree")
-            workspace.togglePinnedBuildTarget()
             await workspace.activateDocument(mirror.root.appendingPathComponent("4_journal/review.md"))
             try require(workspace.projectTree == tree, "Markdown activation rearranged the tree")
+            try require(workspace.documentProject.tree.map(\.path) == ["4_journal/review.md"] && workspace.documentProject.outputs.isEmpty, "Markdown did not get its own Project while a TeX was pinned")
+            await workspace.activateDocument(journal)
+            workspace.togglePinnedBuildTarget()
             await workspace.activateDocument(mirror.root.appendingPathComponent("1_icml2026/manuscript.bib"))
             try require(workspace.projectTree == tree, "Bib activation rearranged the tree")
             try require(workspace.buildSourceRelativePath() == "1_icml2026/manuscript.tex", "Bib selected the wrong main")
@@ -175,7 +195,7 @@ import Vision
             }
             await workspace.activateDocument(journal)
             try require(workspace.projectTree == tree, "TeX activation rearranged the tree")
-            print("PASS stable TeX/Bib/Markdown/PDF hierarchy across selection and pin changes; duplicate labels and citation scope")
+            print("PASS Workspace hierarchy; scoped Project with nested TeX/Bib/figures, isolated PDF, cycles and Markdown; duplicate labels and citation scope")
 
             if ProcessInfo.processInfo.environment["PITEX_TEST_PI_TOOLS"] != nil {
                 let agent = workspace.agent!
@@ -186,8 +206,12 @@ import Vision
                 try await waitUntil("Agent edit did not reach the editor") {
                     workspace.documentSnapshot?.text.contains("Edited by Pitex Agent.") == true && !agent.isRunning
                 }
+                let deadline = ContinuousClock.now + .seconds(20)
+                while try await !readRemote("4_journal/manuscript.tex").contains("Edited by Pitex Agent.") {
+                    try require(.now < deadline, "Agent edit did not upload")
+                    try await Task.sleep(for: .milliseconds(50))
+                }
                 try await waitUntil("Agent sync did not finish") { workspace.remote?.status == .synced }
-                try require(try await readRemote("4_journal/manuscript.tex").contains("Edited by Pitex Agent."), "Agent edit did not upload")
                 try require(try await readRemote("4_journal/agent-created.txt") == "Created by Pitex Agent.\n", "Agent write did not upload")
                 try require(try await readRemote("1_icml2026/manuscript.tex").contains("Journal body."), "Agent edited the other manuscript")
                 print("PASS installed pi read/write/edit tools → agent_end hook → SSH bytes")
@@ -217,6 +241,61 @@ import Vision
                 let image = URL(fileURLWithPath: "/tmp/pitex-remote-subtitle.png")
                 try bitmap.representation(using: .png, properties: [:])?.write(to: image)
             }
+            func sidebarSnapshot(_ name: String) async throws -> [String: CGRect] {
+                try await Task.sleep(for: .milliseconds(400))
+                let view = window.contentView!
+                view.layoutSubtreeIfNeeded()
+                let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-\(name).png"))
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.recognitionLanguages = ["en-US"]
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
+                var rows: [String: CGRect] = [:]
+                for observation in request.results ?? [] where observation.boundingBox.minX < 0.28 {
+                    guard let candidate = observation.topCandidates(1).first else { continue }
+                    for name in ["Workspace", "Project", "TODOs", "4_journal", "figures", "intro.tex", "review.md"] {
+                        if let range = candidate.string.range(of: name), let box = try candidate.boundingBox(for: range),
+                           box.boundingBox.minX < 0.28 {
+                            if rows[name] == nil || box.boundingBox.midY > rows[name]!.midY { rows[name] = box.boundingBox }
+                        }
+                    }
+                }
+                return rows
+            }
+            func clickSidebar(_ name: String, rows: [String: CGRect]) throws {
+                try require(rows[name] != nil, "Sidebar control is missing: \(name); found \(rows.keys)")
+                let rect = rows[name]!
+                let view = window.contentView!
+                let local = NSPoint(x: view.bounds.width * rect.midX, y: view.bounds.height * (view.isFlipped ? 1 - rect.midY : rect.midY))
+                let point = view.convert(local, to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+                }
+            }
+            let initial = try await sidebarSnapshot("workspace-default")
+            try require(initial["Workspace"] != nil && initial["Project"] != nil && initial["TODOs"] != nil, "Three sidebar tabs are clipped")
+            try clickSidebar("4_journal", rows: initial)
+            let expanded = try await sidebarSnapshot("workspace-expanded")
+            try require(expanded["figures"] != nil, "Workspace folder did not expand")
+            try clickSidebar("Project", rows: expanded)
+            let projectRows = try await sidebarSnapshot("project-tex")
+            try require(projectRows["4_journal"] == nil || projectRows["intro.tex"] != nil, "Project did not show dependencies")
+            await workspace.activateDocument(mirror.root.appendingPathComponent("4_journal/review.md"))
+            let markdownRows = try await sidebarSnapshot("project-markdown")
+            try require(markdownRows["review.md"] != nil, "Project omitted Markdown")
+            try clickSidebar("Workspace", rows: markdownRows)
+            let restored = try await sidebarSnapshot("workspace-restored")
+            try require(restored["figures"] != nil, "Switching tabs lost Workspace folder expansion")
+            try clickSidebar("TODOs", rows: restored)
+            let todos = try await sidebarSnapshot("todos")
+            try clickSidebar("Workspace", rows: todos)
+            await workspace.activateDocument(journal)
+            print("PASS Workspace default; Project/Markdown/TODOs tabs; folder expansion survives tab switches")
+
             workspace.consoleSection = .assistant
             workspace.bottomPanelVisible = true
             try await Task.sleep(for: .milliseconds(700))

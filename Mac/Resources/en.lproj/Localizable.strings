@@ -123,6 +123,7 @@
 "sidebar.outline" = "Outline";
 "sidebar.labels" = "Labels";
 "sidebar.bibtex" = "BibTeX";
+"sidebar.workspace" = "Workspace";
 "sidebar.project" = "Project";
 "sidebar.left" = "Left Sidebar";
 "sidebar.right" = "Right Sidebar";

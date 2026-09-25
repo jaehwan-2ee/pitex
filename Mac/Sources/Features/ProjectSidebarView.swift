@@ -12,10 +12,15 @@ extension SidebarSection {
     }
 }
 
-/// Document structure above a separate Project | TODOs switcher.
+private enum ProjectNavigatorSection: String, CaseIterable {
+    case workspace, project, todos
+    var titleKey: LocalizedStringKey { LocalizedStringKey("sidebar." + rawValue) }
+}
+
+/// Document structure above Workspace | Project | TODOs.
 struct ProjectSidebarView: View {
     @ObservedObject var workspace: WorkspaceModel
-    @State private var showingTodos = false
+    @State private var navigatorSection = ProjectNavigatorSection.workspace
     /// Inline-rename state for the TODOs pane (which row, draft text).
     @State private var editingTodoID: DocumentTodoItem.ID?
     @State private var editingTodoText = ""
@@ -54,25 +59,42 @@ struct ProjectSidebarView: View {
             Divider()
 
             VStack(spacing: 0) {
-                Picker("sidebar.project", selection: $showingTodos) {
-                    Text("sidebar.project").tag(false)
-                    Text("sidebar.todos").tag(true)
+                ViewThatFits(in: .horizontal) {
+                    navigatorPicker.pickerStyle(.segmented).controlSize(.mini).fixedSize()
+                    navigatorPicker.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
                 .padding(6)
                 .accessibilityIdentifier("pitex.sidebar.projectSection")
 
-                if showingTodos {
+                // Keep each page mounted so switching tabs preserves folder disclosure state.
+                ZStack(alignment: .top) {
+                    fileSection(isWorkspace: true)
+                        .opacity(navigatorSection == .workspace ? 1 : 0)
+                        .allowsHitTesting(navigatorSection == .workspace)
+                        .accessibilityHidden(navigatorSection != .workspace)
+                    fileSection(isWorkspace: false)
+                        .opacity(navigatorSection == .project ? 1 : 0)
+                        .allowsHitTesting(navigatorSection == .project)
+                        .accessibilityHidden(navigatorSection != .project)
                     todosPane
                         .frame(minHeight: 120, idealHeight: 180, maxHeight: 280)
-                } else {
-                    projectSection
+                        .opacity(navigatorSection == .todos ? 1 : 0)
+                        .allowsHitTesting(navigatorSection == .todos)
+                        .accessibilityHidden(navigatorSection != .todos)
                 }
             }
         }
         .accessibilityIdentifier("pitex.projectOutline")
+    }
+
+    private var navigatorPicker: some View {
+        Picker("sidebar.workspace", selection: $navigatorSection) {
+            ForEach(ProjectNavigatorSection.allCases, id: \.self) { section in
+                Text(section.titleKey).tag(section)
+            }
+        }
     }
 
     // MARK: - Upper section (document structure)
@@ -289,10 +311,10 @@ struct ProjectSidebarView: View {
 
     // MARK: - Project section
 
-    private var projectSection: some View {
+    private func fileSection(isWorkspace: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("sidebar.project")
+                Text(isWorkspace ? "sidebar.workspace" : "sidebar.project")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -315,11 +337,23 @@ struct ProjectSidebarView: View {
             // follows the project's directories, independent of the build target.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    ProjectTreeRows(nodes: workspace.projectTree) { fileRow($0) }
+                    ProjectTreeRows(nodes: isWorkspace ? workspace.projectTree : workspace.documentProject.tree) { fileRow($0) }
                 }
                 .padding(.horizontal, 4)
             }
             .frame(minHeight: 80, idealHeight: 140, maxHeight: 220)
+
+            if !isWorkspace, !workspace.documentProject.outputs.isEmpty {
+                Rectangle()
+                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                    .foregroundStyle(.secondary)
+                    .frame(height: 1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                ForEach(workspace.documentProject.outputs) { fileRow($0) }
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 4)
+            }
 
             if let path = workspace.projectURL?.path {
                 Text(verbatim: path)
@@ -382,7 +416,7 @@ struct ProjectSidebarView: View {
 
 }
 
-/// Only directory nodes contain children and disclose.
+/// Directories disclose; Project dependency rows stay visible beneath their parent.
 private struct ProjectTreeRows<FileRow: View>: View {
     let nodes: [ProjectFileNode]
     let fileRow: (ProjectFileNode) -> FileRow
@@ -394,6 +428,10 @@ private struct ProjectTreeRows<FileRow: View>: View {
                     ProjectFolderRow(node: node, fileRow: fileRow)
                 } else {
                     fileRow(node)
+                    if let children = node.children {
+                        ProjectTreeRows(nodes: children, fileRow: fileRow)
+                            .padding(.leading, 24)
+                    }
                 }
             }
         }

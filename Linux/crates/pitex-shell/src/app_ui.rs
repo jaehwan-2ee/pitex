@@ -100,7 +100,10 @@ pub struct UiHandles {
     pub bib_list: RefCell<Option<gtk4::ListBox>>,
     pub todo_list: RefCell<Option<gtk4::ListBox>>,
     pub todo_add_button: RefCell<Option<gtk4::Button>>,
+    pub workspace_list: RefCell<Option<gtk4::ListBox>>,
     pub project_list: RefCell<Option<gtk4::ListBox>>,
+    pub project_output_sep: RefCell<Option<gtk4::Widget>>,
+    pub project_output_list: RefCell<Option<gtk4::ListBox>>,
     pub pin_button: RefCell<Option<gtk4::Button>>,
     /// `win.save` / `win.saveas` / `win.saveall` — enabled state mirrors the
     /// macOS File menu's `.disabled(...)` conditions.
@@ -2647,7 +2650,7 @@ impl AppState {
             // Project file tree — always visible at the bottom. Built from
             // relative paths through the shared `project-feature` builder
             // so directories nest like the macOS project tree.
-            if let Some(list) = ui.project_list.borrow().as_ref() {
+            if let Some(list) = ui.workspace_list.borrow().as_ref() {
                 clear_list(list);
                 let root = self.model.project_url.clone();
                 let rel_paths: Vec<String> = self
@@ -2665,6 +2668,21 @@ impl AppState {
                 let tree = project_feature::build_project_file_tree(&rel_paths);
                 for node in &tree {
                     append_project_node(list, node, 0, &root, &self.model);
+                }
+            }
+            if let Some(list) = ui.project_list.borrow().as_ref() {
+                clear_list(list);
+                for node in &self.model.document_project.tree {
+                    append_project_node(list, node, 0, &self.model.project_url, &self.model);
+                }
+            }
+            if let (Some(sep), Some(list)) = (ui.project_output_sep.borrow().as_ref(), ui.project_output_list.borrow().as_ref()) {
+                clear_list(list);
+                let visible = !self.model.document_project.outputs.is_empty();
+                sep.set_visible(visible);
+                list.set_visible(visible);
+                for node in &self.model.document_project.outputs {
+                    append_project_node(list, node, 0, &self.model.project_url, &self.model);
                 }
             }
             }
@@ -4406,6 +4424,9 @@ fn append_project_node(
     });
     row.add_controller(gesture);
     list.append(&row);
+    for child in node.children.as_deref().unwrap_or(&[]) {
+        append_project_node(list, child, depth + 1, root, model);
+    }
 }
 
 fn dialect_for(url: Option<&Path>) -> TeXDialect {
@@ -5628,13 +5649,13 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     root.append(&stack);
     root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
 
-    // Project and TODOs switch independently of the document structure above.
-    let project_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    // Workspace, Project and TODOs switch independently of document structure.
+    let workspace_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     header.set_margin_start(10);
     header.set_margin_end(6);
     header.set_margin_top(8);
-    let title = gtk4::Label::new(Some(&tr(lang, "sidebar.project")));
+    let title = gtk4::Label::new(Some(&tr(lang, "sidebar.workspace")));
     title.set_xalign(0.0);
     title.set_hexpand(true);
     title.add_css_class("caption");
@@ -5668,7 +5689,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     }
     ui.pin_button.replace(Some(pin.clone()));
     header.append(&pin);
-    project_page.append(&header);
+    workspace_page.append(&header);
 
     let project_scroll = gtk4::ScrolledWindow::new();
     project_scroll.set_vexpand(true);
@@ -5677,14 +5698,45 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     project_list.set_selection_mode(gtk4::SelectionMode::None);
     project_list.add_css_class("navigation-sidebar");
     project_scroll.set_child(Some(&project_list));
-    ui.project_list.replace(Some(project_list));
-    project_page.append(&project_scroll);
+    ui.workspace_list.replace(Some(project_list));
+    workspace_page.append(&project_scroll);
+
+    let project_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let project_title = gtk4::Label::new(Some(&tr(lang, "sidebar.project")));
+    project_title.set_xalign(0.0);
+    project_title.set_margin_start(10);
+    project_title.set_margin_top(8);
+    project_title.add_css_class("caption");
+    project_title.add_css_class("dim-label");
+    project_page.append(&project_title);
+    let dependency_scroll = gtk4::ScrolledWindow::new();
+    dependency_scroll.set_vexpand(true);
+    dependency_scroll.set_min_content_height(140);
+    let dependency_list = gtk4::ListBox::new();
+    dependency_list.set_selection_mode(gtk4::SelectionMode::None);
+    dependency_list.add_css_class("navigation-sidebar");
+    dependency_scroll.set_child(Some(&dependency_list));
+    ui.project_list.replace(Some(dependency_list));
+    project_page.append(&dependency_scroll);
+    let output_sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+    output_sep.set_margin_start(10);
+    output_sep.set_margin_end(10);
+    output_sep.set_visible(false);
+    let output_list = gtk4::ListBox::new();
+    output_list.set_selection_mode(gtk4::SelectionMode::None);
+    output_list.add_css_class("navigation-sidebar");
+    output_list.set_visible(false);
+    ui.project_output_sep.replace(Some(output_sep.clone().upcast()));
+    ui.project_output_list.replace(Some(output_list.clone()));
+    project_page.append(&output_sep);
+    project_page.append(&output_list);
 
     let project_stack = gtk4::Stack::new();
     project_stack.set_vexpand(true);
+    project_stack.add_titled(&workspace_page, Some("workspace"), &tr(lang, "sidebar.workspace"));
     project_stack.add_titled(&project_page, Some("project"), &tr(lang, "sidebar.project"));
     project_stack.add_titled(&todos_page, Some("todos"), &tr(lang, "sidebar.todos"));
-    project_stack.set_visible_child_name("project");
+    project_stack.set_visible_child_name("workspace");
     let project_switcher = gtk4::StackSwitcher::new();
     project_switcher.set_stack(Some(&project_stack));
     project_switcher.set_margin_start(6);

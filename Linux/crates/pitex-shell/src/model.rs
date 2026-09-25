@@ -509,7 +509,7 @@ pub struct OpenedProject {
     pub initial_url: PathBuf,
     pub session: DocumentSession,
     /// Main-document resolution for the initially selected file.
-    pub resolution: Result<Option<PathBuf>, ResolutionError>,
+    pub resolution: (Result<Option<PathBuf>, ResolutionError>, project_feature::DocumentProject),
     pub bibliography_items: Vec<BibliographyItem>,
     /// Project-wide `\label` scan — seeded into `label_scan_cache` so the
     /// first `refresh_structure` never re-reads the tree on the main thread.
@@ -525,7 +525,7 @@ pub struct OpenedProject {
 pub struct ActivatedDocument {
     pub url: PathBuf,
     pub session: DocumentSession,
-    pub resolution: Result<Option<PathBuf>, ResolutionError>,
+    pub resolution: (Result<Option<PathBuf>, ResolutionError>, project_feature::DocumentProject),
     pub bibliography_items: Vec<BibliographyItem>,
     pub label_scan: LabelScanCache,
     pub built_pdf: Option<Vec<u8>>,
@@ -691,7 +691,7 @@ impl TeXProjectResolver {
     /// `directLinks` — include/bibliography targets of one file, resolved
     /// against the main document's directory first, then the including
     /// file's. Only existing files are returned, canonicalized.
-    fn direct_links(&mut self, file: &Path, base: &Path) -> Vec<PathBuf> {
+    fn direct_links(&mut self, file: &Path, base: &Path, graphics_paths: Option<&[String]>) -> Vec<PathBuf> {
         let Some(parsed) = self.snapshot(file).cloned() else {
             return Vec::new();
         };
@@ -749,7 +749,53 @@ impl TeXProjectResolver {
                 }
             }
         }
+        if let Some(graphics_paths) = graphics_paths {
+            let mut directories = vec![base.to_path_buf(), file.parent().unwrap_or(base).to_path_buf()];
+            directories.extend(graphics_paths.iter().map(|p| base.join(p)));
+            directories.extend(Self::graphic_paths(&source).iter().map(|p| base.join(p)));
+            for name in Self::captures(r"\\includegraphics\*?(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}", &source) {
+                let names: Vec<_> = if Path::new(&name).extension().is_none() {
+                    ["pdf", "png", "jpg", "jpeg", "eps", "svg"].iter().map(|ext| format!("{name}.{ext}")).collect()
+                } else { vec![name] };
+                let target = directories.iter().flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+                    .find(|p| is_readable_file(p));
+                if let Some(target) = target {
+                    let target = Self::canonical(&target);
+                    if !targets.contains(&target) { targets.push(target); }
+                }
+            }
+        }
         targets
+    }
+
+    fn graphic_paths(source: &str) -> Vec<String> {
+        Self::captures(r"\\graphicspath\s*\{((?:\s*\{[^}]*\}\s*)*)\}", source).iter()
+            .flat_map(|group| Self::captures(r"\{([^}]+)\}", group)).collect()
+    }
+
+    pub fn document_project(&mut self, active: Option<&Path>, main: Option<&Path>, root: Option<&Path>, files: &[PathBuf]) -> project_feature::DocumentProject {
+        let (Some(active), Some(root)) = (active, root) else { return Default::default() };
+        let markdown = active.extension().map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")).unwrap_or(false);
+        let main = Self::canonical(if markdown { active } else { main.unwrap_or(active) });
+        let base = main.parent().unwrap_or(root);
+        let relative = |p: &Path| p.strip_prefix(root).ok().map(|p| p.to_string_lossy().replace('\\', "/"));
+        let Some(main_path) = relative(&main) else { return Default::default() };
+        let paths: Vec<_> = files.iter().filter_map(|p| relative(p)).collect();
+        let available: HashSet<_> = files.iter().map(|p| Self::canonical(p)).collect();
+        let source = self.snapshot(&main).map(|s| s.source.clone()).unwrap_or_default();
+        let graphics_paths = Self::graphic_paths(&source);
+        let mut links = HashMap::new();
+        let mut seen = HashSet::new();
+        let mut pending = vec![main.clone()];
+        while let Some(file) = pending.pop() {
+            if !seen.insert(file.clone()) || !file.extension().map(|e| e.eq_ignore_ascii_case("tex")).unwrap_or(false) { continue; }
+            let Some(path) = relative(&file) else { continue };
+            let children: Vec<_> = self.direct_links(&file, base, Some(&graphics_paths)).into_iter()
+                .filter(|p| available.contains(p)).collect();
+            links.insert(path, children.iter().filter_map(|p| relative(p)).collect());
+            pending.extend(children);
+        }
+        project_feature::build_document_project(&main_path, &paths, &links)
     }
 
     /// `directDependencies` — the main document's own bibliography and
@@ -764,7 +810,7 @@ impl TeXProjectResolver {
             return Vec::new();
         }
         let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
-        self.direct_links(&file, &base)
+        self.direct_links(&file, &base, None)
     }
 
     pub fn bibliography_files(&mut self, main: Option<&Path>, files: &[PathBuf]) -> Vec<PathBuf> {
@@ -790,7 +836,7 @@ impl TeXProjectResolver {
             {
                 continue;
             }
-            pending.extend(self.direct_links(&file, &base));
+            pending.extend(self.direct_links(&file, &base, None));
         }
         visited
     }
@@ -964,6 +1010,7 @@ pub struct WorkspaceModel {
     pub phase: WorkspacePhase,
     pub project_url: Option<PathBuf>,
     pub project_files: Vec<PathBuf>,
+    pub document_project: project_feature::DocumentProject,
     /// Relative dir paths the user collapsed in the project tree. Entries
     /// for dirs that disappear on rescan are simply ignored.
     pub collapsed_project_dirs: std::collections::HashSet<String>,
@@ -1111,6 +1158,7 @@ impl WorkspaceModel {
             phase: WorkspacePhase::NoProject,
             project_url: None,
             project_files: Vec::new(),
+            document_project: Default::default(),
             collapsed_project_dirs: std::collections::HashSet::new(),
             open_documents: Vec::new(),
             active_document_url: None,
@@ -1330,14 +1378,15 @@ impl WorkspaceModel {
             Some(initial_text),
             &files,
             None,
+            Some(&root),
         );
-        let built_pdf = resolution
+        let built_pdf = resolution.0
             .as_ref()
             .ok()
             .and_then(|m| m.as_ref())
             .and_then(|main| Self::built_pdf_bytes(&root, main));
         let bib_files = TeXProjectResolver::new().bibliography_files(
-            resolution.as_ref().ok().and_then(|m| m.as_deref()).or(Some(&initial_url)), &files);
+            resolution.0.as_ref().ok().and_then(|m| m.as_deref()).or(Some(&initial_url)), &files);
         Ok(OpenedProject {
             bibliography_items: Self::parse_bibliography(&bib_files, Some(&root)),
             label_scan: Self::scan_project_labels(&files),
@@ -1437,13 +1486,14 @@ impl WorkspaceModel {
                     Some(text),
                     &files,
                     preferred.as_deref(),
+                    Some(&root),
                 );
                 let built_pdf = pinned
                     .as_ref()
-                    .or(resolution.as_ref().ok().and_then(|m| m.as_ref()))
+                    .or(resolution.0.as_ref().ok().and_then(|m| m.as_ref()))
                     .and_then(|main| Self::built_pdf_bytes(&root, main));
                 let bib_files = TeXProjectResolver::new().bibliography_files(
-                    pinned.as_deref().or(resolution.as_ref().ok().and_then(|m| m.as_deref())).or(Some(&url)), &files);
+                    pinned.as_deref().or(resolution.0.as_ref().ok().and_then(|m| m.as_deref())).or(Some(&url)), &files);
                 Ok(ActivatedDocument {
                     url,
                     session,
@@ -1941,6 +1991,7 @@ impl WorkspaceModel {
             } else {
                 self.active_document_url = None;
                 self.document_snapshot = None;
+                self.document_project = Default::default();
             }
         }
     }
@@ -1975,6 +2026,7 @@ impl WorkspaceModel {
             }
         }
         self.project_files.clear();
+        self.document_project = Default::default();
         self.files_revision += 1;
         self.open_documents.clear();
         self.outline_items.clear();
@@ -2316,7 +2368,17 @@ impl WorkspaceModel {
 
     fn refresh_bibliography(&mut self) {
         let main = self.build_source_url().or_else(|| self.active_document_url.clone());
-        let files = TeXProjectResolver::new().bibliography_files(main.as_deref(), &self.project_files);
+        let mut resolver = TeXProjectResolver::new();
+        if let (Some(url), Some(snapshot)) = (&self.active_document_url, &self.document_snapshot) {
+            resolver.active_text = Some((url.clone(), snapshot.text.clone()));
+        }
+        let files = resolver.bibliography_files(main.as_deref(), &self.project_files);
+        let project = resolver.document_project(self.active_document_url.as_deref(), self.automatic_build_target.as_deref(),
+                                                self.project_url.as_deref(), &self.project_files);
+        if self.document_project != project {
+            self.document_project = project;
+            self.files_revision += 1;
+        }
         let metadata: Vec<_> = files.iter()
             .map(|file| {
                 let stamp = std::fs::metadata(file).ok().and_then(|m| {
@@ -3271,18 +3333,21 @@ impl WorkspaceModel {
         active_text: Option<String>,
         files: &[PathBuf],
         preferred: Option<&Path>,
-    ) -> Result<Option<PathBuf>, ResolutionError> {
+        root: Option<&Path>,
+    ) -> (Result<Option<PathBuf>, ResolutionError>, project_feature::DocumentProject) {
         let mut resolver = TeXProjectResolver::new();
         if let (Some(url), Some(text)) = (active_url, active_text) {
             resolver.active_text = Some((url.to_path_buf(), text));
         }
-        resolver.resolve(active_url, files, preferred)
+        let result = resolver.resolve(active_url, files, preferred);
+        let project = resolver.document_project(active_url, result.as_ref().ok().and_then(|p| p.as_deref()), root, files);
+        (result, project)
     }
 
     /// Applies a `resolve_build_target` result — the cheap, main-thread half.
     fn apply_build_resolution(
         &mut self,
-        result: Result<Option<PathBuf>, ResolutionError>,
+        (result, project): (Result<Option<PathBuf>, ResolutionError>, project_feature::DocumentProject),
     ) {
         let previous_target = self.automatic_build_target.clone();
         match result {
@@ -3302,10 +3367,10 @@ impl WorkspaceModel {
                 self.build_target_message = Some(e.to_string());
             }
         }
-        // Refresh the build-target badge only when it changes.
-        if self.automatic_build_target != previous_target {
+        if self.automatic_build_target != previous_target || self.document_project != project {
             self.files_revision += 1;
         }
+        self.document_project = project;
     }
 
     /// `refreshBuildTarget` — resolve the main document for the active
@@ -3316,6 +3381,7 @@ impl WorkspaceModel {
             self.document_snapshot.as_ref().map(|s| s.text.clone()),
             &self.project_files,
             self.automatic_build_target.as_deref(),
+            self.project_url.as_deref(),
         );
         self.apply_build_resolution(resolution);
     }

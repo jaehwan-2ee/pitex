@@ -143,4 +143,23 @@ final class FeatureStateTests: XCTestCase {
         XCTAssertEqual(figures?.path, "4_journal/figures")
         XCTAssertEqual(figures?.children?.first?.path, "4_journal/figures/plot.pdf")
     }
+    func testDocumentProjectScopesNestedDependenciesAndSeparatesOnlyItsPDF() {
+        let paths = ["paper/main.tex", "paper/intro.tex", "paper/deep.tex", "paper/refs.bib",
+                     "paper/chart.pdf", "paper/main.pdf", "other/main.tex", "other/main.pdf", "notes.md"]
+        let links = ["paper/main.tex": ["paper/intro.tex", "paper/refs.bib"],
+                     "paper/intro.tex": ["paper/deep.tex", "paper/chart.pdf"],
+                     "paper/deep.tex": ["paper/main.tex"]]
+        let project = buildDocumentProject(main: "paper/main.tex", paths: paths, dependencies: links)
+        XCTAssertEqual(project.tree.map(\.path), ["paper/main.tex"])
+        let children = project.tree[0].children ?? []
+        XCTAssertEqual(children.map(\.path), ["paper/intro.tex", "paper/refs.bib"])
+        XCTAssertEqual(children[0].children?.map(\.path), ["paper/deep.tex", "paper/chart.pdf"])
+        XCTAssertNil(children[0].children?[0].children)
+        XCTAssertEqual(project.outputs.map(\.path), ["paper/main.pdf"])
+        let markdown = buildDocumentProject(main: "notes.md", paths: paths, dependencies: [:])
+        XCTAssertEqual(markdown.tree.map(\.path), ["notes.md"])
+        XCTAssertNil(markdown.tree[0].children)
+        XCTAssertTrue(markdown.outputs.isEmpty)
+    }
+
 }
