@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "pitex"
-version = "1.9.1"
+version = "2.0.0"
 dependencies = [
  "pitex-shell",
 ]

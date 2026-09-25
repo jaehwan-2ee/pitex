@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "pitex-windows"
-version = "1.9.1"
+version = "2.0.0"
 dependencies = [
  "pitex-shell",
 ]
