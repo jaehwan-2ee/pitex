@@ -40,18 +40,29 @@ webkit6 = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-platform = { path = "../../../Windows/crates/windows-platform" }
+# The Markdown preview host on Windows: `webview2-com` wraps the Edge
+# WebView2 COM API (there is no WebKitGTK port), and `windows` is pinned
+# to the same 0.62 train webview2-com-sys generates its bindings against.
+# The parent HWND comes from two self-declared gdk_win32_surface_* entries
+# — gdk4-win32's StaticType impls reference symbols current GTK4 dropped.
+webview2-com = { version = "0.39", optional = true }
+windows = { version = "0.62", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+] }
 
 # API level: GTK 4.10 / libadwaita 1.4+. Ubuntu 22.04 ships GTK 4.6 /
 # libadwaita 1.1 — building with --no-default-features produces that
 # compatibility variant. Ubuntu 24.04+ and Windows keep the modern API level.
 # The `vte` feature (embedded VTE terminal) exists only on Unix — Windows
 # builds use `modern-gtk` without it and take the external-terminal fallback,
-# like the Ubuntu 22.04 build. `markdown-preview` (WebKitGTK 6.0) is wired the
-# same way: on for every Unix build — the ubuntu2204 deb variant turns it on
-# explicitly — off on Windows, where the preview pane shows an
-# unavailability page instead.
+# like the Ubuntu 22.04 build. `markdown-preview` covers both engines —
+# WebKitGTK 6.0 on Unix (the ubuntu2204 deb variant turns it on
+# explicitly), WebView2 on Windows — and each `dep:` activates only on
+# its own target.
 [features]
 default = ["modern-gtk", "vte", "markdown-preview"]
 modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
 vte = ["dep:vte4"]
-markdown-preview = ["dep:webkit6"]
+markdown-preview = ["dep:webkit6", "dep:webview2-com", "dep:windows"]

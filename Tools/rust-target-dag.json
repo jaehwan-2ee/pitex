@@ -8,11 +8,13 @@
   "sourceview5",
   "vte4",
   "webkit6",
+  "webview2-com",
   "gdk4",
   "gsk4",
   "pango",
   "cairo-rs",
-  "poppler-rs"
+  "poppler-rs",
+  "windows"
  ],
  "nonPortableTargets": [
   "gtk-editor-adapter",

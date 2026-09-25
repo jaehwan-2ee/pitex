@@ -42,6 +42,8 @@
 "preview.download" = "PDFのコピーを保存";
 "preview.markdown.unavailable" = "このビルドではMarkdownプレビューを利用できません。";
 "preview.markdown.blocked_link" = "Pitexはプレビューから実行ファイルを開きません。";
+"preview.markdown.runtime_missing" = "Markdownプレビューには Microsoft Edge WebView2 Runtime が必要です。https://developer.microsoft.com/microsoft-edge/webview2/ からインストールして、Pitex を再起動してください。";
+"preview.markdown.pdf_failed" = "PDFのコピーを保存できませんでした。";
 
 "assistant.title" = "アシスタント";
 "assistant.sign_in" = "サインイン";

@@ -590,7 +590,14 @@ impl AppState {
 
     pub fn toast(&self, message: &str) {
         if let Some(overlay) = UI.with(|ui| ui.toast_overlay.borrow().clone()) {
-            overlay.add_toast(adw::Toast::new(message));
+            let toast = adw::Toast::new(message);
+            // Airspace: a WebView2 child HWND can't be overdrawn by the
+            // in-surface toast layer — the preview hides while one is open.
+            // Engines GTK composites itself ignore the hint.
+            self.markdown.overlay_opened();
+            let markdown = self.markdown.clone();
+            toast.connect_dismissed(move |_| markdown.overlay_closed());
+            overlay.add_toast(toast);
         }
     }
 

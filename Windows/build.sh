@@ -25,6 +25,23 @@ cargo build --release --manifest-path "$HERE/Cargo.toml" -p pitex-windows
 rm -rf "$DIST"
 mkdir -p "$BIN" "$DIST/etc/fonts" "$DIST/share/icons" "$DIST/lib"
 cp "$HERE/target/release/pitex.exe" "$BIN/"
+# WebView2Loader.dll — the Evergreen runtime stays external; the app loads
+# the stub loader dynamically (LoadLibraryW) so its absence only degrades
+# the preview, but ship it beside the exe so preview works out of the box.
+# pitex-shell's build.rs also stages a copy into target/release for
+# `cargo run`/`test`, but don't rely on that here: cargo gives no ordering
+# guarantee between unrelated build scripts, so resolve the vendored DLL
+# deterministically (newest match wins).
+LOADER="$(ls -t "$HERE"/target/release/build/webview2-com-sys-*/out/x64/WebView2Loader.dll 2>/dev/null | head -n1)"
+if [ -z "$LOADER" ] && [ -f "$HERE/target/release/WebView2Loader.dll" ]; then
+    LOADER="$HERE/target/release/WebView2Loader.dll"
+fi
+if [ -z "$LOADER" ]; then
+    echo "error: WebView2Loader.dll not found under target/release/build/webview2-com-sys-*/out/x64/" >&2
+    echo "       (nor pre-staged in target/release) — is markdown-preview enabled?" >&2
+    exit 1
+fi
+cp "$LOADER" "$BIN/"
 
 echo "==> collecting runtime DLLs"
 ldd "$BIN/pitex.exe" | awk '/=> \// {print $3}' | while read -r dll; do

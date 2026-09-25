@@ -6,7 +6,9 @@
 //!     -- --ignored --nocapture --test-threads=1
 
 use super::*;
-#[cfg(feature = "markdown-preview")]
+// The WebKit test handle exists only on Unix — the Windows engine is
+// WebView2, and `webkit6` isn't a dependency there.
+#[cfg(all(unix, feature = "markdown-preview"))]
 use webkit6::prelude::WebViewExt;
 use std::time::Instant;
 
@@ -181,7 +183,7 @@ fn pickers_use_native_widgets() {
 
 /// A1: the Markdown preview renders heading/table/KaTeX, syncs scroll,
 /// follows the dark theme and exports a PDF — all on the 22.04 build.
-#[cfg(feature = "markdown-preview")]
+#[cfg(all(unix, feature = "markdown-preview"))]
 #[test]
 #[ignore = "requires a GTK display (use xvfb-run)"]
 fn markdown_preview_renders_scrolls_and_exports() {

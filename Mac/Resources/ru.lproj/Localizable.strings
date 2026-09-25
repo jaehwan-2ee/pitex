@@ -42,6 +42,8 @@
 "preview.download" = "Сохранить копию PDF";
 "preview.markdown.unavailable" = "В этой сборке просмотр Markdown недоступен.";
 "preview.markdown.blocked_link" = "Pitex не открывает исполняемые файлы из просмотра.";
+"preview.markdown.runtime_missing" = "Для просмотра Markdown требуется Microsoft Edge WebView2 Runtime. Установите его с https://developer.microsoft.com/microsoft-edge/webview2/ и перезапустите Pitex.";
+"preview.markdown.pdf_failed" = "Pitex не удалось сохранить копию PDF.";
 
 "assistant.title" = "Ассистент";
 "assistant.sign_in" = "Войти";

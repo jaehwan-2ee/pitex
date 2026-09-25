@@ -42,6 +42,8 @@
 "preview.download" = "Lưu một bản sao PDF";
 "preview.markdown.unavailable" = "Bản dựng này không có xem trước Markdown.";
 "preview.markdown.blocked_link" = "Pitex sẽ không mở tệp thực thi từ bản xem trước.";
+"preview.markdown.runtime_missing" = "Xem trước Markdown cần Microsoft Edge WebView2 Runtime. Cài đặt từ https://developer.microsoft.com/microsoft-edge/webview2/ rồi khởi động lại Pitex.";
+"preview.markdown.pdf_failed" = "Pitex không lưu được bản sao PDF.";
 
 "assistant.title" = "Trợ lý";
 "assistant.sign_in" = "Đăng nhập";

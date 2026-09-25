@@ -42,6 +42,8 @@
 "preview.download" = "PDF 사본 저장";
 "preview.markdown.unavailable" = "이 빌드에서는 Markdown 미리보기를 사용할 수 없습니다.";
 "preview.markdown.blocked_link" = "Pitex는 미리보기에서 실행 파일을 열지 않습니다.";
+"preview.markdown.runtime_missing" = "Markdown 미리보기에는 Microsoft Edge WebView2 Runtime이 필요합니다. https://developer.microsoft.com/microsoft-edge/webview2/ 에서 설치한 후 Pitex를 다시 시작하세요.";
+"preview.markdown.pdf_failed" = "PDF 사본을 저장하지 못했습니다.";
 
 "assistant.title" = "어시스턴트";
 "assistant.sign_in" = "로그인";

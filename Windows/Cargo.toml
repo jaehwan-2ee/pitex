@@ -7,7 +7,9 @@ members = [
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.75"
+# webview2-com 0.39 / windows 0.62 (the Markdown preview engine) declare
+# rust-version 1.82 — the Windows build's floor.
+rust-version = "1.82"
 license = "PolyForm-Shield-1.0.0"
 
 [workspace.dependencies]

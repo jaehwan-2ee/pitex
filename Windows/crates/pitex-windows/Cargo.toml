@@ -12,5 +12,6 @@ path = "src/main.rs"
 # keeps the GTK 4.10 / libadwaita 1.4+ API level (all present in current
 # MSYS2), while the `vte` feature stays off — there is no VTE-GTK4 on
 # Windows, so the terminal pane uses the external-terminal fallback.
+# `markdown-preview` resolves to the WebView2 engine on this target.
 [dependencies]
-pitex-shell = { path = "../../../Linux/crates/pitex-shell", default-features = false, features = ["modern-gtk"] }
+pitex-shell = { path = "../../../Linux/crates/pitex-shell", default-features = false, features = ["modern-gtk", "markdown-preview"] }

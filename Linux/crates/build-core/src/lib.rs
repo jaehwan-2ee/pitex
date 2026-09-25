@@ -1537,17 +1537,28 @@ fn spawn(
     let mut envp: Vec<*mut i8> = env_c.iter().map(|s| s.as_ptr() as *mut i8).collect();
     envp.push(std::ptr::null_mut());
 
+    // ETXTBSY is transient here: another thread's posix_spawn child briefly
+    // holds a copy of every fd — including a write fd a sibling test/caller
+    // still has open on this executable — until it execs. Retry like Go's
+    // os/exec instead of failing a build on the fork→exec window.
     let mut pid: libc::pid_t = 0;
-    let spawn_code = unsafe {
-        libc::posix_spawn(
-            &mut pid,
-            executable_c.as_ptr(),
-            &actions,
-            &attributes,
-            argv.as_ptr(),
-            envp.as_ptr(),
-        )
-    };
+    let mut spawn_code = 0;
+    for attempt in 0..4 {
+        spawn_code = unsafe {
+            libc::posix_spawn(
+                &mut pid,
+                executable_c.as_ptr(),
+                &actions,
+                &attributes,
+                argv.as_ptr(),
+                envp.as_ptr(),
+            )
+        };
+        if spawn_code != libc::ETXTBSY {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5 << attempt));
+    }
     unsafe {
         libc::close(output_pipe[1]);
         libc::close(error_pipe[1]);

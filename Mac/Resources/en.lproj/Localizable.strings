@@ -42,6 +42,8 @@
 "preview.download" = "Save a Copy of the PDF";
 "preview.markdown.unavailable" = "Markdown preview isn't available in this build.";
 "preview.markdown.blocked_link" = "Pitex won't open executable files from the preview.";
+"preview.markdown.runtime_missing" = "Markdown preview needs the Microsoft Edge WebView2 Runtime. Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and restart Pitex.";
+"preview.markdown.pdf_failed" = "Pitex couldn't save the PDF copy.";
 
 "assistant.title" = "Assistant";
 "assistant.sign_in" = "Sign In";

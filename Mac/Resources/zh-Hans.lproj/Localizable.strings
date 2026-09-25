@@ -42,6 +42,8 @@
 "preview.download" = "保存 PDF 副本";
 "preview.markdown.unavailable" = "此构建不提供 Markdown 预览。";
 "preview.markdown.blocked_link" = "Pitex 不会从预览中打开可执行文件。";
+"preview.markdown.runtime_missing" = "Markdown 预览需要 Microsoft Edge WebView2 Runtime。请从 https://developer.microsoft.com/microsoft-edge/webview2/ 安装并重启 Pitex。";
+"preview.markdown.pdf_failed" = "Pitex 无法保存 PDF 副本。";
 
 "assistant.title" = "助手";
 "assistant.sign_in" = "登录";

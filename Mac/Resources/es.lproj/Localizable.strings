@@ -42,6 +42,8 @@
 "preview.download" = "Guardar una copia del PDF";
 "preview.markdown.unavailable" = "La vista previa de Markdown no está disponible en esta compilación.";
 "preview.markdown.blocked_link" = "Pitex no abrirá archivos ejecutables desde la vista previa.";
+"preview.markdown.runtime_missing" = "La vista previa de Markdown requiere Microsoft Edge WebView2 Runtime. Instálalo desde https://developer.microsoft.com/microsoft-edge/webview2/ y reinicia Pitex.";
+"preview.markdown.pdf_failed" = "Pitex no pudo guardar la copia del PDF.";
 
 "assistant.title" = "Asistente";
 "assistant.sign_in" = "Iniciar sesión";

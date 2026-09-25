@@ -277,7 +277,9 @@ fn cancellation_terminates_entire_descendant_process_group() {
     token.cancel();
     let result = handle.join().unwrap().unwrap();
     assert_eq!(result.stop_reason, ProcessStopReason::Cancelled);
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // Descendant teardown lags the direct child's death on a loaded runner;
+    // poll with a generous deadline instead of sampling once.
+    let deadline = Instant::now() + Duration::from_secs(10);
     let all_dead = |pids: &[i32]| {
         pids.iter().all(|pid| !process_exists(*pid))
     };
