@@ -1,0 +1,72 @@
+Mac/Sources/AppShell/PitexApp.swift
+  s_6dc90272bb6b27::t_05de3ca0863a8b 208,434,461,788,1741,1765
+  s_6dc90272bb6b27::t_6f19ae3257436d 153-156,324-327
+  s_6dc90272bb6b27::t_a857c640dd008d 246,1838-1844,1854-1855,1857
+  s_6dc90272bb6b27::t_bd4d7a2126195c 1596-1600
+  s_6dc90272bb6b27::t_0a2294ef843bc1 198-205,323,328
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_6dc90272bb6b27::t_a857c640dd008d 198,219-231,236-238,255-260,269,272,274,276-278,294
+Packages/TexApp/Tests/TexAppTests/FeatureStateTests.swift
+  s_6dc90272bb6b27::t_2c61f6a984ced7 152-167
+  s_6dc90272bb6b27::t_ed28d6435ef66a 126-127,135-136,139,142,147
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_6dc90272bb6b27::t_a857c640dd008d 316
+  s_6dc90272bb6b27::t_34b23a82cf82a7 371,395
+Mac/Sources/Features/RemoteSupport.swift
+  s_6dc90272bb6b27::t_3fe7a06d31f033 202,213,215,217,292
+  s_6dc90272bb6b27::t_05de3ca0863a8b 178,183,193-194,197-198,200-201,203-205,214,216,218-219
+Linux/crates/pitex-shell/src/model.rs
+  s_6dc90272bb6b27::t_bd4d7a2126195c 770-777,1345-1346,1452-1453,2324-2325
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_6dc90272bb6b27::t_3ef995a2935882 2666,2674
+  s_6dc90272bb6b27::t_a857c640dd008d 2465-2468,2484,2688
+Mac/Config/Info.plist
+  s_6dc90272bb6b27::t_1cd8fd0770d12c 20,22
+Linux/crates/pitex/Cargo.toml
+  s_6dc90272bb6b27::t_1cd8fd0770d12c 3
+Windows/crates/pitex-windows/Cargo.toml
+  s_6dc90272bb6b27::t_1cd8fd0770d12c 3
+Mac/Sources/Features/GitIntegrationView.swift
+  s_6dc90272bb6b27::t_05de3ca0863a8b 105-107
+Tools/check-remote-autosave.py
+  s_6dc90272bb6b27::t_a18f0d8606c39b 1-5,7-9,12-21,25-26,38-40,42-47,49-141,229-257,273-278,309
+  s_6dc90272bb6b27::t_a85fd124db59a9 199
+  s_6dc90272bb6b27::t_2493b86bf4f7ae 6,10-11,23,142-193,197-198,201-228,258-260,262-272
+  s_6dc90272bb6b27::t_1515877f034a90 41,48,261
+  s_6dc90272bb6b27::t_36afd9d2a552aa 194-196,200
+  s_6dc90272bb6b27::t_0686173d8b095b 27-37
+  s_6dc90272bb6b27::t_28a21293cbf637 22,24,279-308,310-313
+Mac/Sources/Features/WorkspaceView.swift
+  s_6dc90272bb6b27::t_a857c640dd008d 68,281
+  s_6dc90272bb6b27::t_34b23a82cf82a7 283
+Mac/Sources/Features/BuildSupport.swift
+  s_6dc90272bb6b27::t_bd4d7a2126195c 275-284
+Mac/Sources/Features/BottomConsoleView.swift
+  s_6dc90272bb6b27::t_2c61f6a984ced7 89
+Linux/crates/project-feature/src/lib.rs
+  s_6dc90272bb6b27::t_2c61f6a984ced7 456-467
+  s_6dc90272bb6b27::t_a857c640dd008d 8,246,280-292,295,297,320-323,330,333,335-338,453
+  s_6dc90272bb6b27::t_e65b42729f6b51 435,443,446,448-449,452,454-455
+Linux/Cargo.lock
+  s_6dc90272bb6b27::t_e03531db5ca19f 964
+README.md
+  s_6dc90272bb6b27::t_9cee1fe652015b 18-44
+Windows/Cargo.lock
+  s_6dc90272bb6b27::t_e3507751ce0413 1090
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "07d73e41e346b3d27d3003c30bfbb5b021e512e2",
+  "prompts": {},
+  "sessions": {
+    "s_6dc90272bb6b27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d8cf-d859-7ce0-b1cc-ecc8a142478d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
