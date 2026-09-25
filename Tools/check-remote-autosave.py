@@ -256,7 +256,7 @@ import Vision
                 for observation in request.results ?? [] where observation.boundingBox.minX < 0.28 {
                     guard let candidate = observation.topCandidates(1).first else { continue }
                     for name in ["Workspace", "Project", "TODOs", "4_journal", "figures", "intro.tex", "review.md"] {
-                        if let range = candidate.string.range(of: name), let box = try candidate.boundingBox(for: range),
+                        if let range = candidate.string.range(of: name, options: .caseInsensitive), let box = try candidate.boundingBox(for: range),
                            box.boundingBox.minX < 0.28 {
                             if rows[name] == nil || box.boundingBox.midY > rows[name]!.midY { rows[name] = box.boundingBox }
                         }
@@ -283,7 +283,7 @@ import Vision
             try require(expanded["figures"] != nil, "Workspace folder did not expand")
             try clickSidebar("Project", rows: expanded)
             let projectRows = try await sidebarSnapshot("project-tex")
-            try require(projectRows["4_journal"] == nil || projectRows["intro.tex"] != nil, "Project did not show dependencies")
+            try require(projectRows["intro.tex"] != nil, "Project did not show dependencies")
             await workspace.activateDocument(mirror.root.appendingPathComponent("4_journal/review.md"))
             let markdownRows = try await sidebarSnapshot("project-markdown")
             try require(markdownRows["review.md"] != nil, "Project omitted Markdown")

@@ -3693,6 +3693,7 @@ impl WorkspaceModel {
                         if let Some(root) = self.project_url.clone() {
                             let pdf_url = root.join(output_pdf);
                             self.refresh_synctex_binding(pdf_url.clone());
+                            self.rescan_project();
                             if switch_to_pdf {
                                 self.inspector_visible = true;
                             }

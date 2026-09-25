@@ -60,7 +60,25 @@ struct ProjectSidebarView: View {
 
             VStack(spacing: 0) {
                 ViewThatFits(in: .horizontal) {
-                    navigatorPicker.pickerStyle(.segmented).controlSize(.mini).fixedSize()
+                    HStack(spacing: 2) {
+                        ForEach(ProjectNavigatorSection.allCases, id: \.self) { section in
+                            Button { navigatorSection = section } label: {
+                                Text(section.titleKey)
+                                    .font(.caption)
+                                    .fixedSize()
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .foregroundStyle(navigatorSection == section ? Color.white : Color.primary)
+                                    .background(navigatorSection == section ? Color.accentColor : Color.clear,
+                                                in: RoundedRectangle(cornerRadius: 5))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(navigatorSection == section ? .isSelected : [])
+                        }
+                    }
+                    .padding(2)
+                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                    .fixedSize()
                     navigatorPicker.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .labelsHidden()

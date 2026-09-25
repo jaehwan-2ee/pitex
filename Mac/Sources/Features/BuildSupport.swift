@@ -577,6 +577,7 @@ extension WorkspaceModel {
                 latestBuiltPDFName = outputPDF
                 let pdfURL = root.appendingPathComponent(outputPDF).standardizedFileURL
                 await refreshSyncTeXBinding(pdfURL: pdfURL)
+                rescanProject()
                 if settings.switchToPDFOnBuild {
                     inspectorVisible = true
                 }
