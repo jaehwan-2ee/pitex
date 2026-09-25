@@ -1,0 +1,39 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_4d31655a55f0db 36,176-179,2950-2956,2958-2959,2961,4013-4014,4018-4021,6336
+Linux/crates/pitex-shell/src/git.rs
+  s_61259ddb619c79::t_f623463e655de5 5-10,13,17,20-39,42-44,50,52,54-61,63,71-76,79,88-196,198-209,211-216,218-219,232,234-235,237-240,246-247,249-250,254-256,258,261-264,266,268-269,274,285,288-291,293,295-296,304,343,346,410-411,413-414,417-419,421-425,438,441,444-450,452,454,459-462,464,467-475,481-482,485-486,489,492-493,496,498-499,513,516,518,526,528-529,544,547,549,557,560-562,587-588,590,593,599,609,611,619,635,648-769,773-777,779-787,789-791,818,912-914,918,923
+Linux/crates/pitex-shell/src/model.rs
+  s_61259ddb619c79::t_4f8b5de897201f 8,1030-1035,1160-1162,1196,1824-1885
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_c2f250bc7c6868 553,567-578
+Linux/crates/pitex-shell/tests/remote_live.rs
+  s_61259ddb619c79::t_e9add9ea1cb624 13-14,71-74,81-87,90,125-131,264-448
+Linux/crates/remote-core/src/lib.rs
+  s_61259ddb619c79::t_6d4256f784346f 877-890,1027-1063,1129-1163,3247-3328
+Linux/crates/remote-core/tests/remote_core.rs
+  s_61259ddb619c79::t_ec21ec7072cf6e 848-912
+Mac/Sources/Features/GitIntegrationView.swift
+  s_61259ddb619c79::t_7a4f902e86e9e0 4,28-43,105-108,111-118,125,127-129,148,151,161,165,179-182,184,253-254,260-262,271-280,296,313,342-345,374-375,435-437,457-460,609-616
+Packages/TexCore/Sources/RemoteCore/RemoteSync.swift
+  s_61259ddb619c79::t_66c4c57a8f9cbf 90-137
+Packages/TexCore/Sources/RemoteCore/SSHClient.swift
+  s_61259ddb619c79::t_3d6572fbe9c02d 216-232
+Packages/TexCore/Tests/TexCoreTests/RemoteCoreTests.swift
+  s_61259ddb619c79::t_3295decd784c6e 3,290-335,525-563
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "885287adf6af1de8f33a7fb6e1f9e7edbeb98c80",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
