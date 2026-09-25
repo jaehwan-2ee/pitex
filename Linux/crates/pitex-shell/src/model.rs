@@ -508,8 +508,8 @@ pub struct OpenedProject {
     pub files: Vec<PathBuf>,
     pub initial_url: PathBuf,
     pub session: DocumentSession,
-    /// `(resolve result, direct dependencies of the resolved main)`.
-    pub resolution: (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
+    /// Main-document resolution for the initially selected file.
+    pub resolution: Result<Option<PathBuf>, ResolutionError>,
     pub bibliography_items: Vec<BibliographyItem>,
     /// Project-wide `\label` scan — seeded into `label_scan_cache` so the
     /// first `refresh_structure` never re-reads the tree on the main thread.
@@ -525,7 +525,7 @@ pub struct OpenedProject {
 pub struct ActivatedDocument {
     pub url: PathBuf,
     pub session: DocumentSession,
-    pub resolution: (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
+    pub resolution: Result<Option<PathBuf>, ResolutionError>,
     pub bibliography_items: Vec<BibliographyItem>,
     pub label_scan: LabelScanCache,
     pub built_pdf: Option<Vec<u8>>,
@@ -964,9 +964,6 @@ pub struct WorkspaceModel {
     pub phase: WorkspacePhase,
     pub project_url: Option<PathBuf>,
     pub project_files: Vec<PathBuf>,
-    /// Direct dependencies of the build target, nested under it in the
-    /// project sidebar (`projectChildren`).
-    pub project_children: Vec<PathBuf>,
     /// Relative dir paths the user collapsed in the project tree. Entries
     /// for dirs that disappear on rescan are simply ignored.
     pub collapsed_project_dirs: std::collections::HashSet<String>,
@@ -1057,7 +1054,7 @@ pub struct WorkspaceModel {
     /// only when this changes instead of on every refresh_sidebar call.
     pub structure_revision: u64,
     cached_word_count: usize,
-    /// Bumped when `project_files`/`project_children`/the build target
+    /// Bumped when project files, selection, folders, or build-target badges
     /// change — the sidebar's file tree rebuilds only on a bump.
     pub files_revision: u64,
 
@@ -1114,7 +1111,6 @@ impl WorkspaceModel {
             phase: WorkspacePhase::NoProject,
             project_url: None,
             project_files: Vec::new(),
-            project_children: Vec::new(),
             collapsed_project_dirs: std::collections::HashSet::new(),
             open_documents: Vec::new(),
             active_document_url: None,
@@ -1334,16 +1330,14 @@ impl WorkspaceModel {
             Some(initial_text),
             &files,
             None,
-            None,
         );
         let built_pdf = resolution
-            .0
             .as_ref()
             .ok()
             .and_then(|m| m.as_ref())
             .and_then(|main| Self::built_pdf_bytes(&root, main));
         let bib_files = TeXProjectResolver::new().bibliography_files(
-            resolution.0.as_ref().ok().and_then(|m| m.as_deref()).or(Some(&initial_url)), &files);
+            resolution.as_ref().ok().and_then(|m| m.as_deref()).or(Some(&initial_url)), &files);
         Ok(OpenedProject {
             bibliography_items: Self::parse_bibliography(&bib_files, Some(&root)),
             label_scan: Self::scan_project_labels(&files),
@@ -1442,15 +1436,14 @@ impl WorkspaceModel {
                     Some(&url),
                     Some(text),
                     &files,
-                    pinned.as_deref(),
                     preferred.as_deref(),
                 );
                 let built_pdf = pinned
                     .as_ref()
-                    .or(resolution.0.as_ref().ok().and_then(|m| m.as_ref()))
+                    .or(resolution.as_ref().ok().and_then(|m| m.as_ref()))
                     .and_then(|main| Self::built_pdf_bytes(&root, main));
                 let bib_files = TeXProjectResolver::new().bibliography_files(
-                    pinned.as_deref().or(resolution.0.as_ref().ok().and_then(|m| m.as_deref())).or(Some(&url)), &files);
+                    pinned.as_deref().or(resolution.as_ref().ok().and_then(|m| m.as_deref())).or(Some(&url)), &files);
                 Ok(ActivatedDocument {
                     url,
                     session,
@@ -1475,6 +1468,7 @@ impl WorkspaceModel {
             self.registered_sessions.push(activated.session.clone());
         }
         self.active_document_url = Some(activated.url.clone());
+        self.files_revision += 1; // Refresh the active row even when its build target is unchanged.
         if !self.open_documents.contains(&activated.url) {
             self.open_documents.push(activated.url);
         }
@@ -1929,6 +1923,7 @@ impl WorkspaceModel {
         }
         self.open_documents.retain(|u| u != url);
         if self.active_document_url.as_deref() == Some(url) {
+            self.files_revision += 1;
             if let Some(next) = self.open_documents.first().cloned() {
                 self.active_document_url = None;
                 if let Some(session) = self.session_for_url(&next) {
@@ -1980,7 +1975,6 @@ impl WorkspaceModel {
             }
         }
         self.project_files.clear();
-        self.project_children.clear();
         self.files_revision += 1;
         self.open_documents.clear();
         self.outline_items.clear();
@@ -3270,33 +3264,25 @@ impl WorkspaceModel {
     }
 
     /// The expensive half of `refresh_build_target`: lexes every project
-    /// file to find the main document and its direct dependencies. Pure
+    /// file to find the main document. Pure
     /// with respect to `self` so workers can run it off the main thread.
     fn resolve_build_target(
         active_url: Option<&Path>,
         active_text: Option<String>,
         files: &[PathBuf],
-        pinned: Option<&Path>,
         preferred: Option<&Path>,
-    ) -> (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>) {
+    ) -> Result<Option<PathBuf>, ResolutionError> {
         let mut resolver = TeXProjectResolver::new();
         if let (Some(url), Some(text)) = (active_url, active_text) {
             resolver.active_text = Some((url.to_path_buf(), text));
         }
-        let result = resolver.resolve(active_url, files, preferred);
-        let main = pinned
-            .map(|p| p.to_path_buf())
-            .or_else(|| result.as_ref().ok().cloned().flatten());
-        let children = main
-            .map(|main| resolver.direct_dependencies(&main))
-            .unwrap_or_default();
-        (result, children)
+        resolver.resolve(active_url, files, preferred)
     }
 
     /// Applies a `resolve_build_target` result — the cheap, main-thread half.
     fn apply_build_resolution(
         &mut self,
-        (result, children): (Result<Option<PathBuf>, ResolutionError>, Vec<PathBuf>),
+        result: Result<Option<PathBuf>, ResolutionError>,
     ) {
         let previous_target = self.automatic_build_target.clone();
         match result {
@@ -3316,13 +3302,10 @@ impl WorkspaceModel {
                 self.build_target_message = Some(e.to_string());
             }
         }
-        // The project tree marks the build target and nests its children;
-        // every tab switch and build start resolves, so rebuild the tree
-        // (one widget + gesture per file) only when those actually moved.
-        if self.automatic_build_target != previous_target || self.project_children != children {
+        // Refresh the build-target badge only when it changes.
+        if self.automatic_build_target != previous_target {
             self.files_revision += 1;
         }
-        self.project_children = children;
     }
 
     /// `refreshBuildTarget` — resolve the main document for the active
@@ -3332,7 +3315,6 @@ impl WorkspaceModel {
             self.active_document_url.as_deref(),
             self.document_snapshot.as_ref().map(|s| s.text.clone()),
             &self.project_files,
-            self.pinned_build_target.as_deref(),
             self.automatic_build_target.as_deref(),
         );
         self.apply_build_resolution(resolution);

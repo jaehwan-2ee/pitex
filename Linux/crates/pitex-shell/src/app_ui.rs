@@ -101,10 +101,6 @@ pub struct UiHandles {
     pub todo_list: RefCell<Option<gtk4::ListBox>>,
     pub todo_add_button: RefCell<Option<gtk4::Button>>,
     pub project_list: RefCell<Option<gtk4::ListBox>>,
-    /// Compiled-artifact strip under the project list — the dashed divider
-    /// plus the same-stem PDF rows `extract_output_pdfs` pulled out.
-    pub project_output_sep: RefCell<Option<gtk4::Widget>>,
-    pub project_output_list: RefCell<Option<gtk4::ListBox>>,
     pub pin_button: RefCell<Option<gtk4::Button>>,
     /// `win.save` / `win.saveas` / `win.saveall` — enabled state mirrors the
     /// macOS File menu's `.disabled(...)` conditions.
@@ -2666,40 +2662,9 @@ impl AppState {
                             .replace('\\', "/")
                     })
                     .collect();
-                let rel_of = |url: &PathBuf| {
-                    root.as_ref()
-                        .and_then(|r| url.strip_prefix(r).ok().map(|p| p.to_path_buf()))
-                        .unwrap_or_else(|| url.clone())
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                };
-                let main_rel = self.model.build_source_url().map(|u| rel_of(&u));
-                let child_rels: Vec<String> = self
-                    .model
-                    .project_children
-                    .iter()
-                    .map(rel_of)
-                    .collect();
-                let tree = project_feature::nest_project_children(
-                    project_feature::build_project_file_tree(&rel_paths),
-                    &main_rel.clone().unwrap_or_default(),
-                    &child_rels,
-                );
-                let (tree, outputs) = project_feature::extract_output_pdfs(tree, main_rel.as_deref().unwrap_or(""));
+                let tree = project_feature::build_project_file_tree(&rel_paths);
                 for node in &tree {
                     append_project_node(list, node, 0, &root, &self.model);
-                }
-                if let (Some(sep), Some(output_list)) = (
-                    ui.project_output_sep.borrow().as_ref(),
-                    ui.project_output_list.borrow().as_ref(),
-                ) {
-                    clear_list(output_list);
-                    let has_outputs = !outputs.is_empty();
-                    sep.set_visible(has_outputs);
-                    output_list.set_visible(has_outputs);
-                    for node in &outputs {
-                        append_project_node(output_list, node, 0, &root, &self.model);
-                    }
                 }
             }
             }
@@ -4441,11 +4406,6 @@ fn append_project_node(
     });
     row.add_controller(gesture);
     list.append(&row);
-    // Dependency children nested by `nest_project_children` render one level
-    // deeper; files have no disclosure so they are always visible.
-    for child in node.children.as_deref().unwrap_or(&[]) {
-        append_project_node(list, child, depth + 1, root, model);
-    }
 }
 
 fn dialect_for(url: Option<&Path>) -> TeXDialect {
@@ -5719,37 +5679,6 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     project_scroll.set_child(Some(&project_list));
     ui.project_list.replace(Some(project_list));
     project_page.append(&project_scroll);
-
-    // Compiled artifacts — PDFs sharing the main document's stem sit pinned
-    // under the tree behind a dashed divider (the SwiftUI `outputPDFs`
-    // section in `ProjectSidebarView`). Hidden until `refresh_sidebar`
-    // finds matching outputs.
-    let output_sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-    output_sep.add_css_class("pitex-dash-sep");
-    output_sep.set_margin_start(10);
-    output_sep.set_margin_end(10);
-    output_sep.set_margin_top(4);
-    output_sep.set_visible(false);
-    let output_list = gtk4::ListBox::new();
-    output_list.set_selection_mode(gtk4::SelectionMode::None);
-    output_list.add_css_class("navigation-sidebar");
-    output_list.set_visible(false);
-    a11y(&output_list, "pitex.sidebar.outputs", "sidebar.project");
-    ui.project_output_sep.replace(Some(output_sep.clone().upcast()));
-    ui.project_output_list.replace(Some(output_list.clone()));
-    project_page.append(&output_sep);
-    project_page.append(&output_list);
-    if let Some(display) = gdk::Display::default() {
-        let provider = gtk4::CssProvider::new();
-        provider.load_from_data(
-            ".pitex-dash-sep { border-top: 1px dashed alpha(currentColor, 0.35); min-height: 0; }",
-        );
-        gtk4::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
 
     let project_stack = gtk4::Stack::new();
     project_stack.set_vexpand(true);

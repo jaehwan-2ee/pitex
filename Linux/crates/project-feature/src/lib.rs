@@ -299,179 +299,33 @@ fn sort_nodes(nodes: &mut Vec<ProjectFileNode>, labels: &HashMap<String, String>
     }
 }
 
-/// `nestProjectChildren` — reorders the built tree so the main document leads
-/// the root list and its direct dependencies (bibliographies, included
-/// chapters) nest one level beneath it. Missing `main` returns the tree
-/// unchanged; directories left empty by a move are pruned.
-pub fn nest_project_children(
-    mut tree: Vec<ProjectFileNode>,
-    main_rel: &str,
-    child_rels: &[String],
-) -> Vec<ProjectFileNode> {
-    let Some(mut main) = remove_node(&mut tree, main_rel) else {
-        return tree;
-    };
-    let mut children = main.children.take().unwrap_or_default();
-    for child in child_rels {
-        if let Some(node) = remove_node(&mut tree, child) {
-            children.push(node);
-        }
-    }
-    // Same-directory fallback only; explicit shared dependencies remain valid.
-    let bib_path = format!("{}.bib", main_rel.rsplit_once('.').map(|(s, _)| s).unwrap_or(main_rel));
-    if !children.iter().any(|n| n.path == bib_path) {
-        if let Some(node) = remove_node(&mut tree, &bib_path) { children.push(node); }
-    }
-    main.children = (!children.is_empty()).then_some(children);
-    tree.insert(0, main);
-    tree
-}
-
-/// Pins only the selected main document's PDF, using its full relative path.
-pub fn extract_output_pdfs(
-    mut tree: Vec<ProjectFileNode>,
-    main_rel: &str,
-) -> (Vec<ProjectFileNode>, Vec<ProjectFileNode>) {
-    if main_rel.is_empty() { return (tree, Vec::new()); }
-    let path = format!("{}.pdf", main_rel.rsplit_once('.').map(|(s, _)| s).unwrap_or(main_rel));
-    let output = remove_node(&mut tree, &path).into_iter().collect();
-    (tree, output)
-}
-
-/// Detaches the node with `path` wherever it sits, pruning directory nodes
-/// left empty by the removal.
-fn remove_node(nodes: &mut Vec<ProjectFileNode>, path: &str) -> Option<ProjectFileNode> {
-    if let Some(pos) = nodes.iter().position(|n| n.path == path) {
-        return Some(nodes.remove(pos));
-    }
-    for i in 0..nodes.len() {
-        let found = nodes[i]
-            .children
-            .as_mut()
-            .and_then(|c| remove_node(c, path));
-        if found.is_some() {
-            if nodes[i]
-                .children
-                .as_ref()
-                .map(|c| c.is_empty())
-                .unwrap_or(false)
-            {
-                nodes.remove(i);
-            }
-            return found;
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn paths(nodes: &[ProjectFileNode]) -> Vec<&str> {
-        nodes.iter().map(|n| n.path.as_str()).collect()
-    }
-
     #[test]
-    fn nest_project_children_moves_main_first_and_nests_children() {
-        let tree = build_project_file_tree(&[
-            "appendix.tex".into(),
-            "chapters/one.tex".into(),
-            "main.tex".into(),
-            "refs.bib".into(),
-        ]);
-        let nested = nest_project_children(
-            tree,
-            "main.tex",
-            &["refs.bib".into(), "chapters/one.tex".into()],
-        );
-        // Main leads the root list; unrelated files keep their place.
-        assert_eq!(paths(&nested), ["main.tex", "appendix.tex"]);
-        let main = &nested[0];
-        assert_eq!(
-            paths(main.children.as_deref().unwrap()),
-            ["refs.bib", "chapters/one.tex"]
-        );
-        // The directory emptied by the move is pruned.
-        assert!(nested.iter().all(|n| n.path != "chapters"));
-    }
-
-    #[test]
-    fn nest_project_children_nests_same_stem_bib_without_dependency() {
-        let tree = build_project_file_tree(&[
-            "manuscript.bib".into(),
-            "manuscript.tex".into(),
-            "other.bib".into(),
-        ]);
-        // No dependency list — the same-stem .bib still nests under the main
-        // document; differently-named .bib files stay at the root.
-        let nested = nest_project_children(tree, "manuscript.tex", &[]);
-        assert_eq!(paths(&nested), ["manuscript.tex", "other.bib"]);
-        assert_eq!(
-            paths(nested[0].children.as_deref().unwrap()),
-            ["manuscript.bib"]
-        );
-    }
-
-    #[test]
-    fn nest_project_children_without_main_is_noop() {
-        let tree = build_project_file_tree(&["a.tex".into(), "b.bib".into()]);
-        let nested = nest_project_children(tree.clone(), "main.tex", &["b.bib".into()]);
-        assert_eq!(nested, tree);
-    }
-
-    fn all_paths(nodes: &[ProjectFileNode]) -> Vec<String> {
-        nodes
-            .iter()
-            .flat_map(|n| {
-                let mut v = vec![n.path.clone()];
-                v.extend(all_paths(n.children.as_deref().unwrap_or(&[])));
-                v
-            })
-            .collect()
-    }
-
-    #[test]
-    fn extract_output_pdfs_keeps_other_manuscripts_in_their_folders() {
-        let tree = build_project_file_tree(&[
-            "main.tex".into(),
-            "main.pdf".into(),
-            "figures/diagram.pdf".into(),
-            "build/main.pdf".into(),
-            "refs.bib".into(),
-        ]);
-        let (filtered, outputs) = extract_output_pdfs(tree, "main.tex");
-        let mut out: Vec<&str> = outputs.iter().map(|n| n.path.as_str()).collect();
-        out.sort();
-        assert_eq!(out, ["main.pdf"]);
-        let remaining = all_paths(&filtered);
-        assert!(!remaining.iter().any(|p| p == "main.pdf"));
-        assert!(remaining.iter().any(|p| p == "build/main.pdf"));
-        assert!(remaining.iter().any(|p| p == "main.tex"));
-        assert!(remaining.iter().any(|p| p == "figures/diagram.pdf"));
-        assert!(filtered.iter().any(|n| n.name == "build"));
-    }
-
-    #[test]
-    fn duplicate_manuscripts_keep_their_own_bibliography_and_pdf() {
-        let files: Vec<String> = ["1_icml2026", "2_nips2026", "3_arxiv", "4_journal"].iter()
-            .flat_map(|dir| ["tex", "bib", "pdf"].map(|ext| format!("{dir}/manuscript.{ext}"))).collect();
-        let tree = nest_project_children(build_project_file_tree(&files), "4_journal/manuscript.tex", &[]);
-        assert_eq!(tree[0].name, "manuscript.tex (4_journal)");
-        assert_eq!(paths(tree[0].children.as_deref().unwrap()), ["4_journal/manuscript.bib"]);
-        assert_eq!(tree[0].children.as_ref().unwrap()[0].name, "manuscript.bib (4_journal)");
-        let (tree, outputs) = extract_output_pdfs(tree, "4_journal/manuscript.tex");
-        assert_eq!(paths(&outputs), ["4_journal/manuscript.pdf"]);
-        assert_eq!(outputs[0].name, "manuscript.pdf (4_journal)");
-        assert!(all_paths(&tree).contains(&"1_icml2026/manuscript.bib".into()));
-        assert!(all_paths(&tree).contains(&"1_icml2026/manuscript.pdf".into()));
-    }
-
-    #[test]
-    fn extract_output_pdfs_without_main_is_noop() {
-        let tree = build_project_file_tree(&["main.tex".into(), "main.pdf".into()]);
-        let (filtered, outputs) = extract_output_pdfs(tree.clone(), "");
-        assert_eq!(filtered, tree);
-        assert!(outputs.is_empty());
+    fn project_tree_keeps_all_file_types_in_their_directories() {
+        let directories = ["1_icml2026", "2_nips2026", "3_arxiv", "4_journal"];
+        let mut files: Vec<String> = directories.iter()
+            .flat_map(|dir| ["tex", "bib", "pdf", "md"].map(|ext| format!("{dir}/manuscript.{ext}"))).collect();
+        files.extend(["README.md".into(), "4_journal/figures/plot.pdf".into()]);
+        let tree = build_project_file_tree(&files);
+        assert_eq!(tree.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(),
+                   ["1_icml2026", "2_nips2026", "3_arxiv", "4_journal", "README.md"]);
+        for (index, directory) in directories.iter().enumerate() {
+            let folder = &tree[index];
+            assert!(folder.is_directory);
+            let children = folder.children.as_ref().unwrap();
+            let leaves: Vec<_> = children.iter().filter(|n| !n.is_directory).collect();
+            assert_eq!(leaves.iter().map(|n| n.path.clone()).collect::<Vec<_>>(),
+                       ["bib", "md", "pdf", "tex"].map(|ext| format!("{directory}/manuscript.{ext}")));
+            for leaf in leaves {
+                assert!(leaf.children.is_none());
+                assert_eq!(leaf.name, format!("{} ({directory})", leaf.path.rsplit('/').next().unwrap()));
+            }
+        }
+        let figures = &tree[3].children.as_ref().unwrap()[0];
+        assert_eq!(figures.path, "4_journal/figures");
+        assert_eq!(figures.children.as_ref().unwrap()[0].path, "4_journal/figures/plot.pdf");
     }
 }

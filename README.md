@@ -35,7 +35,9 @@ Key/agent authentication must already work without a password prompt.
   the device and sync state; returning to the window refreshes remote edits.
 - **Multiple manuscripts** stay distinguishable: duplicate names display
   their folder, such as `manuscript.tex (4_journal)`, and bibliography/PDF
-  associations follow the selected manuscript's path.
+  associations follow the selected manuscript's path. The Project tree always
+  preserves the folder hierarchy; opening a file highlights its existing row
+  without moving TeX, BibTeX, Markdown, or PDF files.
 
 Mirroring excludes VCS/dependency directories (including `.git`,
 `node_modules`, and `.venv`) and files of 50 MB or larger. Open projects

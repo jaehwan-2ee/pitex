@@ -229,17 +229,8 @@ final class WorkspaceModel: ObservableObject {
     @Published var bottomPanelVisible = false
     @Published var inspectorVisible = true
     /// File pinned as the build target; nil means "build the active document".
-    @Published var pinnedBuildTarget: URL? {
-        didSet { rebuildProjectTree() }
-    }
-    @Published internal(set) var automaticBuildTarget: URL? {
-        didSet { rebuildProjectTree() }
-    }
-    /// Direct dependencies of the build target, nested under it in the
-    /// project sidebar (`project_children`).
-    @Published internal(set) var projectChildren: [URL] = [] {
-        didSet { rebuildProjectTree() }
-    }
+    @Published var pinnedBuildTarget: URL?
+    @Published internal(set) var automaticBuildTarget: URL?
     /// Sidebar file tree, rebuilt only when its inputs change — computing it
     /// in the view body re-sorted the whole tree on every keystroke.
     @Published private(set) var projectTree: [ProjectFileNode] = []
@@ -973,7 +964,6 @@ final class WorkspaceModel: ObservableObject {
         syncTeXBinding = nil
         pinnedBuildTarget = nil
         automaticBuildTarget = nil
-        projectChildren = []
         buildTargetMessage = nil
         consoleSection = .assistant
         outlineItems = []
@@ -1853,11 +1843,7 @@ final class WorkspaceModel: ObservableObject {
         }
         let paths = projectFiles.map(relative)
         projectFileNames = projectFileLabels(paths)
-        projectTree = nestProjectChildren(
-            buildProjectFileTree(relativePaths: paths),
-            main: buildSourceURL().map(relative) ?? "",
-            children: projectChildren.map(relative)
-        )
+        projectTree = buildProjectFileTree(relativePaths: paths)
     }
 
     /// Re-enumerates the project tree (sidebar rescan button).
@@ -2086,7 +2072,6 @@ final class WorkspaceModel: ObservableObject {
             automaticBuildTarget = nil
             buildTargetMessage = error.localizedDescription
         }
-        projectChildren = buildSourceURL().map { resolver.directDependencies(main: $0) } ?? []
         resolverDiskCache = resolver.diskCache
     }
 

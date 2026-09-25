@@ -311,31 +311,15 @@ struct ProjectSidebarView: View {
 
             // ScrollView+VStack instead of List: NSTableView marks clicked
             // rows selected (accent wash) even without a selection binding —
-            // we want only our own active-file highlight. Only directories
-            // collapse; the main document's dependencies stay visible.
-            let project = extractOutputPDFs(workspace.projectTree, mainPath: workspace.buildSourceRelativePath() ?? "")
+            // we want only our own active-file highlight. The tree always
+            // follows the project's directories, independent of the build target.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    ProjectTreeRows(nodes: project.tree) { fileRow($0) }
+                    ProjectTreeRows(nodes: workspace.projectTree) { fileRow($0) }
                 }
                 .padding(.horizontal, 4)
             }
             .frame(minHeight: 80, idealHeight: 140, maxHeight: 220)
-
-            // The compiled PDF (main-stem .pdf) is pinned just above the
-            // project path, set off by a dotted separator — an artifact,
-            // not a source row.
-            if !project.outputs.isEmpty {
-                Rectangle()
-                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                    .foregroundStyle(.secondary)
-                    .frame(height: 1)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 3)
-                ForEach(project.outputs) { fileRow($0) }
-                    .padding(.horizontal, 4)
-                    .padding(.bottom, 4)
-            }
 
             if let path = workspace.projectURL?.path {
                 Text(verbatim: path)
@@ -398,7 +382,7 @@ struct ProjectSidebarView: View {
 
 }
 
-/// Files keep their dependency rows visible; only real directories disclose.
+/// Only directory nodes contain children and disclose.
 private struct ProjectTreeRows<FileRow: View>: View {
     let nodes: [ProjectFileNode]
     let fileRow: (ProjectFileNode) -> FileRow
@@ -410,10 +394,6 @@ private struct ProjectTreeRows<FileRow: View>: View {
                     ProjectFolderRow(node: node, fileRow: fileRow)
                 } else {
                     fileRow(node)
-                    if let children = node.children {
-                        ProjectTreeRows(nodes: children, fileRow: fileRow)
-                            .padding(.leading, 24)
-                    }
                 }
             }
         }

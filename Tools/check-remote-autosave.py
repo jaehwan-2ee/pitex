@@ -149,6 +149,7 @@ import Vision
                     input: Data("@article{\(folder), title={\(folder)}}\n".utf8))
                 _ = try await client.runChecked("printf 'test pdf' > \"$1/$2/manuscript.pdf\"", arguments: [root, folder])
             }
+            _ = try await client.runChecked("printf '# Review\\n' > \"$1/4_journal/review.md\"", arguments: [root])
             await workspace.pullRemote()
             let journal = mirror.root.appendingPathComponent("4_journal/manuscript.tex")
             await workspace.activateDocument(journal)
@@ -156,16 +157,25 @@ import Vision
                 workspace.bibliographyItems.map(\.key) == ["4_journal"]
             }
             try require(workspace.fileDisplayName(journal) == "manuscript.tex (4_journal)", "Duplicate tab label is ambiguous")
-            try require(workspace.projectTree.first?.children?.map(\.path) == ["4_journal/manuscript.bib"], "Wrong Bib nesting")
-            let outputs = extractOutputPDFs(workspace.projectTree, mainPath: workspace.buildSourceRelativePath() ?? "").outputs
-            try require(outputs.map(\.path) == ["4_journal/manuscript.pdf"], "Other manuscripts' PDFs were pinned")
+            let tree = workspace.projectTree
+            try require(tree.prefix(4).map(\.path) == ["1_icml2026", "2_nips2026", "3_arxiv", "4_journal"], "Main file moved ahead of its folder")
+            let journalChildren = tree.first { $0.path == "4_journal" }?.children ?? []
+            try require(journalChildren.map(\.path) == ["4_journal/manuscript.bib", "4_journal/manuscript.pdf", "4_journal/manuscript.tex", "4_journal/review.md"], "Files left their real directory")
+            try require(journalChildren.allSatisfy { !$0.isDirectory && $0.children == nil }, "Dependencies were nested under a file")
+            workspace.togglePinnedBuildTarget()
+            try require(workspace.projectTree == tree, "Pinning a build target rearranged the tree")
+            workspace.togglePinnedBuildTarget()
+            await workspace.activateDocument(mirror.root.appendingPathComponent("4_journal/review.md"))
+            try require(workspace.projectTree == tree, "Markdown activation rearranged the tree")
             await workspace.activateDocument(mirror.root.appendingPathComponent("1_icml2026/manuscript.bib"))
+            try require(workspace.projectTree == tree, "Bib activation rearranged the tree")
             try require(workspace.buildSourceRelativePath() == "1_icml2026/manuscript.tex", "Bib selected the wrong main")
             try await waitUntil("Bib keys did not follow the selected manuscript") {
                 workspace.bibliographyItems.map(\.key) == ["1_icml2026"]
             }
             await workspace.activateDocument(journal)
-            print("PASS duplicate TeX/Bib/PDF labels, ownership and citation scope")
+            try require(workspace.projectTree == tree, "TeX activation rearranged the tree")
+            print("PASS stable TeX/Bib/Markdown/PDF hierarchy across selection and pin changes; duplicate labels and citation scope")
 
             if ProcessInfo.processInfo.environment["PITEX_TEST_PI_TOOLS"] != nil {
                 let agent = workspace.agent!
