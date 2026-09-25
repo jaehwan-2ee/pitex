@@ -1,0 +1,25 @@
+Mac/Sources/Features/BuildSupport.swift
+  s_6dc90272bb6b27::t_29596192ed8655 580
+Tools/check-remote-autosave.py
+  s_6dc90272bb6b27::t_ab8299f791ffe1 259,286
+Linux/crates/pitex-shell/src/model.rs
+  s_6dc90272bb6b27::t_29596192ed8655 3696
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_6dc90272bb6b27::t_9c4e2396a8d5b0 63-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "102de1e12f8998e57b84e2f577eb51d2403f6e7d",
+  "prompts": {},
+  "sessions": {
+    "s_6dc90272bb6b27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d8cf-d859-7ce0-b1cc-ecc8a142478d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
