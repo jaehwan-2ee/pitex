@@ -1,0 +1,51 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 2665
+Mac/Sources/AppShell/PitexApp.swift
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 232-233,1846
+Mac/Config/Info.plist
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 20,22
+Windows/crates/pitex-windows/Cargo.toml
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 3
+Tools/check-remote-autosave.py
+  s_6dc90272bb6b27::t_4c58a291c00c2b 152,160-169,171,177-178
+Linux/crates/pitex-shell/src/model.rs
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 512,528,1057,1340,1443,1446,1471,1926,3267,3274,3279,3285,3305-3306
+  s_6dc90272bb6b27::t_b526fb39af4624 511
+Packages/TexApp/Tests/TexAppTests/FeatureStateTests.swift
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 125-140,142-144
+Tools/check-project-tree-ui.py
+  s_6dc90272bb6b27::t_4c58a291c00c2b 19-20,22,36,38,44,58-63,78,86,92-98,105-106,119
+  s_6dc90272bb6b27::t_9f1296824633dc 85
+Linux/crates/project-feature/src/lib.rs
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 307-329
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 314-315,318,385
+Linux/crates/pitex/Cargo.toml
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 3
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 219
+README.md
+  s_6dc90272bb6b27::t_54f3f6b7a52a8b 38-40
+Linux/Cargo.lock
+  s_6dc90272bb6b27::t_0e7dd354d1d3fe 964
+Linux/crates/pitex-shell/tests/tex_project_resolver.rs
+  s_6dc90272bb6b27::t_333c52521d49c4 231-269
+Windows/Cargo.lock
+  s_6dc90272bb6b27::t_422da1ca66315c 1090
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e9b898b7b024df01647380ba3a55f41e4b69039",
+  "prompts": {},
+  "sessions": {
+    "s_6dc90272bb6b27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d8cf-d859-7ce0-b1cc-ecc8a142478d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
