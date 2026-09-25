@@ -1,0 +1,59 @@
+Linux/Cargo.lock
+  s_61259ddb619c79::t_66cbb0ef2c3af6 86,324-348,375,414,818,839-840,904,1174-1183,1197-1207,1366-1482,1491-1508,1558-1566
+Linux/crates/pitex-shell/Cargo.toml
+  s_61259ddb619c79::t_663b185e74e2b1 39-49,56-59,64
+Linux/crates/pitex-shell/build.rs
+  s_61259ddb619c79::t_1ebf7e2a342d08 1-62
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_e2dced3ba62c2f 600-607
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  s_61259ddb619c79::t_b8640eff74ffe8 3-7,12-13,21-30,32,37-52,55-92,127,131-143,168-270,273-275,280-308,314,320-328,333,342-356,373-377,379,386,418-424,427-431,447-449,454,457,460-461,465,472,477,487,492-506,510-512,514,516-524,526,530-534,536-541,543-566,568,587-591,596-600,603-605,620,624-629,645-648,652,659,666,669-670,674,677-691,696,700,706,708,710,716,724,731-786
+Linux/crates/pitex-shell/src/markdown_preview/webkit6.rs
+  s_61259ddb619c79::t_5d1e6dbac55275 1-128
+Linux/crates/pitex-shell/src/markdown_preview/webview2.rs
+  s_61259ddb619c79::t_f4d2ca159a94f4 1-540
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_e0bc483c768f0a 1844
+Mac/Resources/en.lproj/Localizable.strings
+  s_61259ddb619c79::t_3af1edd61314f1 45-46
+Mac/Resources/es.lproj/Localizable.strings
+  s_61259ddb619c79::t_60c8093311ff2e 45-46
+Mac/Resources/ja.lproj/Localizable.strings
+  s_61259ddb619c79::t_9a84db548badfc 45-46
+Mac/Resources/ko.lproj/Localizable.strings
+  s_61259ddb619c79::t_d1132b1ce1ec73 45-46
+Mac/Resources/ru.lproj/Localizable.strings
+  s_61259ddb619c79::t_d359cf642fd545 45-46
+Mac/Resources/vi.lproj/Localizable.strings
+  s_61259ddb619c79::t_125c0cf69df59f 45-46
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_61259ddb619c79::t_173d305c7f5fec 45-46
+Tools/rust-target-dag.json
+  s_61259ddb619c79::t_8ed55be994f1e7 11,13,17-18
+Windows/Cargo.lock
+  s_61259ddb619c79::t_e03419d43f2d16 86,335-359,386,402-405,425,713-735,900-901,912,919-921,1001,1033-1045,1140-1165,1284-1293,1307-1317,1443-1592,1601-1618,1668-1676
+Windows/Cargo.toml
+  s_61259ddb619c79::t_743f833353a25d 10-12
+Windows/build.sh
+  s_61259ddb619c79::t_739207bae48e36 28-32
+Windows/crates/pitex-windows/Cargo.toml
+  s_61259ddb619c79::t_565ffafdd862cc 15,17
+Windows/crates/windows-platform/src/lib.rs
+  s_61259ddb619c79::t_e4167dc28d36c7 355-356,360-368,371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09462e043024c7671ca133aab50f931036c03dc2",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
