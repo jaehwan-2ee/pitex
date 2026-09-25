@@ -1,0 +1,44 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_61259ddb619c79::t_4d31655a55f0db 36,176-179,2950-2956,2958-2959,2961,4013-4014,4018-4021,6336
+Linux/crates/pitex-shell/src/git.rs
+  s_61259ddb619c79::t_f623463e655de5 5-10,13,17,20-39,42-44,50,52,54-61,63,71-76,79,88-196,198-209,211,224-228,230-231,244,246-247,249-252,258-259,261-262,266-268,270,273-276,278,280-281,286,297,300-303,305,307-308,316,355,358,422-423,425-426,429-431,433-437,450,453,456-462,464,466,471-474,476,479-487,493-494,497-498,501,504-505,508,510-511,525,528,530,538,540-541,556,559,561,569,572-574,599-600,602,605,611,621,623,631,647,660-781,785-789,791-799,801-803,830,924-926,930,935
+  s_61259ddb619c79::t_186e67dc996bb6 212-223
+Linux/crates/pitex-shell/src/model.rs
+  s_61259ddb619c79::t_4f8b5de897201f 8,1030-1035,1160-1162,1196,1824-1885
+Linux/crates/pitex-shell/src/panes.rs
+  s_61259ddb619c79::t_c2f250bc7c6868 553,567-578
+Linux/crates/pitex-shell/tests/remote_live.rs
+  s_61259ddb619c79::t_e9add9ea1cb624 13-14,71-74,81-87,90,125-131,264-448
+Linux/crates/remote-core/src/lib.rs
+  s_61259ddb619c79::t_6d4256f784346f 877-890,1027-1063,1129-1163,3247-3328
+Linux/crates/remote-core/tests/remote_core.rs
+  s_61259ddb619c79::t_ec21ec7072cf6e 848-912
+Mac/Sources/Features/GitIntegrationView.swift
+  s_61259ddb619c79::t_7a4f902e86e9e0 4,28-43,105-108,119-121,128,130-132,151,154,164,168,182-185,187,256-257,263-265,274-283,299,316,345-348,377-378,438-440,460-463,612-619
+  s_61259ddb619c79::t_1c7cf7abdbc17b 111-118
+Packages/TexCore/Sources/RemoteCore/RemoteSync.swift
+  s_61259ddb619c79::t_66c4c57a8f9cbf 90-137
+  s_61259ddb619c79::t_978ed7b5ad9189 433-437
+Packages/TexCore/Sources/RemoteCore/SSHClient.swift
+  s_61259ddb619c79::t_3d6572fbe9c02d 216-232
+Packages/TexCore/Tests/TexCoreTests/RemoteCoreTests.swift
+  s_61259ddb619c79::t_3295decd784c6e 3,290-335,525-563
+Linux/crates/pitex-shell/src/window_ipc.rs
+  s_61259ddb619c79::t_377e740a71f738 338-349,358,453
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5978286b3aa8cf0a76259f142f609f3b17d7f9c3",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
