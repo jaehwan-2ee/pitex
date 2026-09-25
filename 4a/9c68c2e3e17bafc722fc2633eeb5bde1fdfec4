@@ -1,0 +1,19 @@
+Linux/crates/pitex-shell/src/window_ipc.rs
+  s_61259ddb619c79::t_377e740a71f738 338-349,358,453
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4a9c68c2e3e17bafc722fc2633eeb5bde1fdfec4",
+  "prompts": {},
+  "sessions": {
+    "s_61259ddb619c79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026f2683-e1e2-431f-a335-8e11164110f9",
+        "model": "unknown"
+      },
+      "human_author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
