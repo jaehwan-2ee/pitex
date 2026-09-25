@@ -2462,6 +2462,10 @@ impl AppState {
             while let Some(child) = row.first_child() {
                 row.remove(&child);
             }
+            let relative = |url: &PathBuf| self.model.project_url.as_ref()
+                .and_then(|root| url.strip_prefix(root).ok()).unwrap_or(url)
+                .to_string_lossy().replace('\\', "/");
+            let labels = project_feature::project_file_labels(&self.model.project_files.iter().map(relative).collect::<Vec<_>>());
             for url in &self.model.open_documents {
                 let active = self.model.active_document_url.as_ref() == Some(url);
                 let is_dirty = self
@@ -2477,11 +2481,7 @@ impl AppState {
                 }
                 chip.set_margin_start(2);
                 chip.set_margin_end(2);
-                let title = gtk4::Label::new(Some(
-                    &url.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                ));
+                let title = gtk4::Label::new(labels.get(&relative(url)).map(String::as_str));
                 if is_dirty {
                     title.add_css_class("dim-label");
                 }
@@ -2663,7 +2663,7 @@ impl AppState {
                             .and_then(|r| url.strip_prefix(r).ok().map(|p| p.to_path_buf()))
                             .unwrap_or_else(|| url.clone())
                             .to_string_lossy()
-                            .into_owned()
+                            .replace('\\', "/")
                     })
                     .collect();
                 let rel_of = |url: &PathBuf| {
@@ -2671,7 +2671,7 @@ impl AppState {
                         .and_then(|r| url.strip_prefix(r).ok().map(|p| p.to_path_buf()))
                         .unwrap_or_else(|| url.clone())
                         .to_string_lossy()
-                        .into_owned()
+                        .replace('\\', "/")
                 };
                 let main_rel = self.model.build_source_url().map(|u| rel_of(&u));
                 let child_rels: Vec<String> = self
@@ -2685,15 +2685,7 @@ impl AppState {
                     &main_rel.clone().unwrap_or_default(),
                     &child_rels,
                 );
-                // Same-stem PDFs are build artifacts — pinned under the
-                // tree behind the dashed divider (`outputPDFs` in the
-                // SwiftUI sidebar).
-                let main_stem = main_rel
-                    .as_deref()
-                    .and_then(|p| Path::new(p).file_stem())
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let (tree, outputs) = project_feature::extract_output_pdfs(tree, &main_stem);
+                let (tree, outputs) = project_feature::extract_output_pdfs(tree, main_rel.as_deref().unwrap_or(""));
                 for node in &tree {
                     append_project_node(list, node, 0, &root, &self.model);
                 }

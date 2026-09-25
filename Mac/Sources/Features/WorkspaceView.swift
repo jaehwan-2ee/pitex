@@ -65,7 +65,7 @@ struct WorkspaceView: View {
                 .controlSize(.large)
             Text("workspace.open_project")
                 .font(.headline)
-            Text(verbatim: url.lastPathComponent)
+            Text(verbatim: workspace.fileDisplayName(url))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -278,8 +278,9 @@ struct WorkspaceView: View {
                         Button {
                             Task { await workspace.activateDocument(url) }
                         } label: {
-                            Text(verbatim: url.lastPathComponent)
+                            Text(verbatim: workspace.fileDisplayName(url))
                                 .lineLimit(1)
+                                .help(url.path)
                         }
                         .buttonStyle(.plain)
                         Button {

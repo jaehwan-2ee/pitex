@@ -150,7 +150,10 @@ actor NativeDocumentSessionPort: AppPorts.DocumentSessionPort {
 final class WorkspaceModel: ObservableObject {
     @Published internal(set) var phase: WorkspacePhase = .noProject
     @Published private(set) var projectURL: URL? {
-        didSet { rebuildProjectTree() }
+        didSet {
+            window?.title = projectURL?.lastPathComponent ?? "Pitex"
+            rebuildProjectTree()
+        }
     }
     @Published private(set) var projectFiles: [URL] = [] {
         didSet { rebuildProjectTree() }
@@ -192,9 +195,17 @@ final class WorkspaceModel: ObservableObject {
     let buildExecutor: WorkspaceBuildExecutor
     let buildOrchestrator: BuildOrchestrator
     /// Set while the project is a folder on another device (Open via SSH).
-    @Published var remote: RemoteWorkspace?
+    @Published var remote: RemoteWorkspace? {
+        didSet {
+            // Update native text in place: SwiftUI's subtitle transition
+            // overlaps short Syncing → Synced changes.
+            let subtitle = remote?.statusText ?? ""
+            if window?.subtitle != subtitle { window?.subtitle = subtitle }
+        }
+    }
     @Published var showingOpenViaSSH = false
     var remotePushTask: Task<Void, Never>?
+    var remotePushPending = false
     /// Cancel pressed before the orchestrator started (a remote build
     /// uploads the edits first).
     var buildCancelRequested = false
@@ -232,6 +243,7 @@ final class WorkspaceModel: ObservableObject {
     /// Sidebar file tree, rebuilt only when its inputs change — computing it
     /// in the view body re-sorted the whole tree on every keystroke.
     @Published private(set) var projectTree: [ProjectFileNode] = []
+    private(set) var projectFileNames: [String: String] = [:]
     @Published internal(set) var buildTargetMessage: String?
 
     /// Parsed-file cache handed to each refreshBuildTarget resolver so a
@@ -308,7 +320,12 @@ final class WorkspaceModel: ObservableObject {
 
     /// The window hosting this workspace — set by `WorkspaceWindow` so a
     /// Finder open routed here can bring it forward.
-    weak var window: NSWindow?
+    weak var window: NSWindow? {
+        didSet {
+            window?.title = projectURL?.lastPathComponent ?? "Pitex"
+            window?.subtitle = remote?.statusText ?? ""
+        }
+    }
 
     /// True when `url` is this window's project folder or lies inside it.
     func owns(_ url: URL) -> Bool {
@@ -414,6 +431,7 @@ final class WorkspaceModel: ObservableObject {
         MirrorWrites.shared.leave()
         do {
             try written.get()
+            schedulePush()
             if !projectFiles.contains(url) {
                 projectFiles.append(url)
                 projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
@@ -440,6 +458,7 @@ final class WorkspaceModel: ObservableObject {
             try written.get()
             if let root = projectURL,
                (try? Self.relativePath(for: url, root: root)) != nil {
+                schedulePush()
                 if !projectFiles.contains(url) {
                     projectFiles.append(url)
                     projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
@@ -766,6 +785,7 @@ final class WorkspaceModel: ObservableObject {
                 } else {
                     snapshot = await session.snapshot()
                 }
+                self?.schedulePush()
                 return SessionWriteResult(kind: .saved, snapshot: snapshot)
             case let .staleBaseline(conflict):
                 self?.lastOwnWrite[url] = previousOwnWrite
@@ -820,7 +840,6 @@ final class WorkspaceModel: ObservableObject {
         switch result.kind {
         case .saved:
             refreshGit()
-            schedulePush()
         case .saveConflict:
             syncTeXState = .stale("The source changed on disk; SyncTeX locations may be stale.")
         case .skipped:
@@ -1574,7 +1593,11 @@ final class WorkspaceModel: ObservableObject {
     private var bibliographyCache: (key: [String], items: [BibliographyItem])?
 
     private func refreshBibliography() {
-        let files = projectFiles.filter { $0.pathExtension.lowercased() == "bib" }
+        var resolver = TeXProjectResolver()
+        resolver.diskCache = resolverDiskCache
+        if let url = activeDocumentURL, let text = documentSnapshot?.text { resolver.activeText = (url, text) }
+        let files = resolver.bibliographyFiles(main: buildSourceURL() ?? activeDocumentURL, files: projectFiles)
+        resolverDiskCache = resolver.diskCache
         let key = files.map { file in
             let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
                 .contentModificationDate?.timeIntervalSince1970) ?? 0
@@ -1715,6 +1738,7 @@ final class WorkspaceModel: ObservableObject {
             ) { saved = true }
         }
         guard saved else { return }
+        schedulePush()
         await processDiskChange(url)
         refreshTodos()
     }
@@ -1738,6 +1762,7 @@ final class WorkspaceModel: ObservableObject {
             ) { saved = true }
         }
         guard saved else { return }
+        schedulePush()
         await processDiskChange(url)
         refreshTodos()
     }
@@ -1810,6 +1835,13 @@ final class WorkspaceModel: ObservableObject {
             return line + terminator
         }
     }
+    func fileDisplayName(_ url: URL) -> String {
+        guard let root = projectURL, let path = try? Self.relativePath(for: url, root: root) else {
+            return url.lastPathComponent
+        }
+        return projectFileNames[path.rawValue] ?? url.lastPathComponent
+    }
+
     private func rebuildProjectTree() {
         func relative(_ url: URL) -> String {
             guard let root = projectURL else { return url.lastPathComponent }
@@ -1819,8 +1851,10 @@ final class WorkspaceModel: ObservableObject {
             guard path.hasPrefix(prefix) else { return url.lastPathComponent }
             return String(path.dropFirst(prefix.count))
         }
+        let paths = projectFiles.map(relative)
+        projectFileNames = projectFileLabels(paths)
         projectTree = nestProjectChildren(
-            buildProjectFileTree(relativePaths: projectFiles.map(relative)),
+            buildProjectFileTree(relativePaths: paths),
             main: buildSourceURL().map(relative) ?? "",
             children: projectChildren.map(relative)
         )
@@ -2392,8 +2426,6 @@ private struct WorkspaceWindow: View {
             .frame(minWidth: 980, minHeight: 620)
             .background(WindowReader { workspace.window = $0 })
             .focusedSceneObject(workspace)
-            .navigationTitle(workspace.projectURL?.lastPathComponent ?? "Pitex")
-            .navigationSubtitle(workspace.remote?.statusText ?? "")
             .sheet(isPresented: $workspace.showingSettings) {
                 SettingsView(store: workspace.settings, workspace: workspace)
             }

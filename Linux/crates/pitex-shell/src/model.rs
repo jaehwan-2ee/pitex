@@ -767,6 +767,14 @@ impl TeXProjectResolver {
         self.direct_links(&file, &base)
     }
 
+    pub fn bibliography_files(&mut self, main: Option<&Path>, files: &[PathBuf]) -> Vec<PathBuf> {
+        let mut linked: Vec<_> = main.map(|m| self.dependencies(m)).unwrap_or_default().into_iter()
+            .filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("bib")).unwrap_or(false)).collect();
+        if !linked.is_empty() { linked.sort(); return linked; }
+        files.iter().filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("bib")).unwrap_or(false)
+            && main.map(|m| m.parent() == p.parent()).unwrap_or(true)).cloned().collect()
+    }
+
     fn dependencies(&mut self, main: &Path) -> HashSet<PathBuf> {
         let base = main.parent().map(Path::to_path_buf).unwrap_or_default();
         let mut visited = HashSet::new();
@@ -1334,15 +1342,8 @@ impl WorkspaceModel {
             .ok()
             .and_then(|m| m.as_ref())
             .and_then(|main| Self::built_pdf_bytes(&root, main));
-        let bib_files: Vec<PathBuf> = files
-            .iter()
-            .filter(|f| {
-                f.extension()
-                    .map(|e| e.eq_ignore_ascii_case("bib"))
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+        let bib_files = TeXProjectResolver::new().bibliography_files(
+            resolution.0.as_ref().ok().and_then(|m| m.as_deref()).or(Some(&initial_url)), &files);
         Ok(OpenedProject {
             bibliography_items: Self::parse_bibliography(&bib_files, Some(&root)),
             label_scan: Self::scan_project_labels(&files),
@@ -1448,15 +1449,8 @@ impl WorkspaceModel {
                     .as_ref()
                     .or(resolution.0.as_ref().ok().and_then(|m| m.as_ref()))
                     .and_then(|main| Self::built_pdf_bytes(&root, main));
-                let bib_files: Vec<PathBuf> = files
-                    .iter()
-                    .filter(|f| {
-                        f.extension()
-                            .map(|e| e.eq_ignore_ascii_case("bib"))
-                            .unwrap_or(false)
-                    })
-                    .cloned()
-                    .collect();
+                let bib_files = TeXProjectResolver::new().bibliography_files(
+                    pinned.as_deref().or(resolution.0.as_ref().ok().and_then(|m| m.as_deref())).or(Some(&url)), &files);
                 Ok(ActivatedDocument {
                     url,
                     session,
@@ -2327,12 +2321,8 @@ impl WorkspaceModel {
     }
 
     fn refresh_bibliography(&mut self) {
-        let files: Vec<PathBuf> = self.project_files.iter()
-            .filter(|file| {
-                file.extension().map(|e| e.eq_ignore_ascii_case("bib")).unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+        let main = self.build_source_url().or_else(|| self.active_document_url.clone());
+        let files = TeXProjectResolver::new().bibliography_files(main.as_deref(), &self.project_files);
         let metadata: Vec<_> = files.iter()
             .map(|file| {
                 let stamp = std::fs::metadata(file).ok().and_then(|m| {

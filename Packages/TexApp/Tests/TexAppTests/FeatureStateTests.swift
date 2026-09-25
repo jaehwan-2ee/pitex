@@ -123,8 +123,8 @@ final class FeatureStateTests: XCTestCase {
     }
 
     /// The main document's same-stem .pdf is a build artifact: the sidebar
-    /// pins it below the tree, at any depth, while other PDFs stay put.
-    func testExtractOutputPDFsPullsMainStemPDFAtAnyDepth() {
+    /// pins it below the tree while other manuscripts' PDFs stay put.
+    func testExtractOutputPDFsKeepsOtherManuscriptsInTheirFolders() {
         let tree = buildProjectFileTree(relativePaths: [
             "main.tex",
             "main.pdf",
@@ -132,22 +132,37 @@ final class FeatureStateTests: XCTestCase {
             "build/main.pdf",
             "refs.bib",
         ])
-        let (filtered, outputs) = extractOutputPDFs(tree, mainStem: "main")
-        XCTAssertEqual(outputs.map(\.path), ["build/main.pdf", "main.pdf"].sorted())
+        let (filtered, outputs) = extractOutputPDFs(tree, mainPath: "main.tex")
+        XCTAssertEqual(outputs.map(\.path), ["main.pdf"])
         let remaining = filtered.flatMap { flatten($0) }
         XCTAssertFalse(remaining.contains("main.pdf"))
-        XCTAssertFalse(remaining.contains("build/main.pdf"))
+        XCTAssertTrue(remaining.contains("build/main.pdf"))
         XCTAssertTrue(remaining.contains("main.tex"))
         XCTAssertTrue(remaining.contains("figures/diagram.pdf"))
-        // A directory emptied by the extraction is pruned, not left hollow.
-        XCTAssertNil(filtered.first { $0.name == "build" })
+        XCTAssertNotNil(filtered.first { $0.name == "build" })
     }
 
     func testExtractOutputPDFsWithoutMainIsNoop() {
         let tree = buildProjectFileTree(relativePaths: ["main.tex", "main.pdf"])
-        let (filtered, outputs) = extractOutputPDFs(tree, mainStem: "")
+        let (filtered, outputs) = extractOutputPDFs(tree, mainPath: "")
         XCTAssertEqual(filtered, tree)
         XCTAssertTrue(outputs.isEmpty)
+    }
+
+    func testDuplicateManuscriptsKeepTheirOwnBibliographyAndPDF() {
+        let paths = ["1_icml2026", "2_nips2026", "3_arxiv", "4_journal"].flatMap { directory in
+            ["tex", "bib", "pdf"].map { "\(directory)/manuscript.\($0)" }
+        }
+        let tree = nestProjectChildren(buildProjectFileTree(relativePaths: paths),
+                                       main: "4_journal/manuscript.tex", children: [])
+        XCTAssertEqual(tree[0].name, "manuscript.tex (4_journal)")
+        XCTAssertEqual(tree[0].children?.map(\.path), ["4_journal/manuscript.bib"])
+        XCTAssertEqual(tree[0].children?.first?.name, "manuscript.bib (4_journal)")
+        let (remaining, outputs) = extractOutputPDFs(tree, mainPath: "4_journal/manuscript.tex")
+        XCTAssertEqual(outputs.map(\.path), ["4_journal/manuscript.pdf"])
+        XCTAssertEqual(outputs.first?.name, "manuscript.pdf (4_journal)")
+        XCTAssertTrue(remaining.flatMap(flatten).contains("1_icml2026/manuscript.bib"))
+        XCTAssertTrue(remaining.flatMap(flatten).contains("1_icml2026/manuscript.pdf"))
     }
 
     private func flatten(_ node: ProjectFileNode) -> [String] {

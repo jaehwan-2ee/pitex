@@ -195,7 +195,7 @@ public func buildProjectFileTree(relativePaths: [String]) -> [ProjectFileNode] {
         guard !components.isEmpty else { continue }
         insert(components: components[...], prefix: "", into: &roots)
     }
-    return sorted(roots)
+    return sorted(roots, labels: projectFileLabels(relativePaths))
 }
 
 private func insert(components: ArraySlice<String>, prefix: String, into nodes: inout [ProjectFileNode]) {
@@ -216,13 +216,26 @@ private func insert(components: ArraySlice<String>, prefix: String, into nodes: 
     }
 }
 
-private func sorted(_ nodes: [ProjectFileNode]) -> [ProjectFileNode] {
+/// Duplicate basenames retain their project-relative folder, even after a
+/// dependency or output row has been moved out of that folder in the UI.
+public func projectFileLabels(_ paths: [String]) -> [String: String] {
+    let counts = Dictionary(grouping: paths, by: { ($0 as NSString).lastPathComponent })
+    return Dictionary(paths.map { path in
+        let name = (path as NSString).lastPathComponent
+        let parent = (path as NSString).deletingLastPathComponent
+        let label = counts[name, default: []].count > 1 ? "\(name) (\(parent.isEmpty ? "." : parent))" : name
+        return (path, label)
+    }, uniquingKeysWith: { first, _ in first })
+}
+
+private func sorted(_ nodes: [ProjectFileNode], labels: [String: String]) -> [ProjectFileNode] {
     nodes.sorted { lhs, rhs in
         if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
         return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
     }.map { node in
-        guard node.isDirectory else { return node }
-        return ProjectFileNode(path: node.path, name: node.name, isDirectory: true, children: sorted(node.children ?? []))
+        ProjectFileNode(path: node.path, name: node.isDirectory ? node.name : labels[node.path, default: node.name],
+                        isDirectory: node.isDirectory,
+                        children: node.children.map { sorted($0, labels: labels) })
     }
 }
 
@@ -239,13 +252,12 @@ public func nestProjectChildren(_ tree: [ProjectFileNode], main: String, childre
             nested.append(node)
         }
     }
-    // Same-stem .bib files nest under the main document even when dependency
-    // resolution missed them (indirect includes, stale children list).
-    let mainStem = (mainNode.name as NSString).deletingPathExtension
-    for bibPath in bibPaths(matching: mainStem, in: tree) where !nested.contains(where: { $0.path == bibPath }) {
-        if let node = removeNode(path: bibPath, from: &tree) {
-            nested.append(node)
-        }
+    // A fallback belongs only to this document's directory. Explicit
+    // dependency paths above may still point to a shared bibliography.
+    let bibPath = (main as NSString).deletingPathExtension + ".bib"
+    if !nested.contains(where: { $0.path == bibPath }),
+       let node = removeNode(path: bibPath, from: &tree) {
+        nested.append(node)
     }
     mainNode = ProjectFileNode(path: mainNode.path, name: mainNode.name,
                                isDirectory: mainNode.isDirectory,
@@ -254,45 +266,16 @@ public func nestProjectChildren(_ tree: [ProjectFileNode], main: String, childre
     return tree
 }
 
-/// All .bib file paths in the tree whose stem equals `stem`.
-private func bibPaths(matching stem: String, in nodes: [ProjectFileNode]) -> [String] {
-    nodes.flatMap { node -> [String] in
-        if node.isDirectory { return bibPaths(matching: stem, in: node.children ?? []) }
-        guard (node.name as NSString).pathExtension.lowercased() == "bib",
-              (node.name as NSString).deletingPathExtension == stem
-        else { return [] }
-        return [node.path]
-    }
-}
-
-/// Pulls the build output out of the file tree: `.pdf` files whose stem
-/// matches the main document's (`manuscript.tex` → `manuscript.pdf`, in
-/// whichever directory the build wrote it). The sidebar pins them below
-/// the tree — they are artifacts, not sources. Empty stem → no-op.
+/// Pins only the selected main document's PDF, using its full relative path.
 public func extractOutputPDFs(
     _ tree: [ProjectFileNode],
-    mainStem: String
+    mainPath: String
 ) -> (tree: [ProjectFileNode], outputs: [ProjectFileNode]) {
-    guard !mainStem.isEmpty else { return (tree, []) }
+    guard !mainPath.isEmpty else { return (tree, []) }
     var tree = tree
-    var outputs: [ProjectFileNode] = []
-    for path in pdfPaths(matching: mainStem, in: tree) {
-        if let node = removeNode(path: path, from: &tree) {
-            outputs.append(node)
-        }
-    }
-    return (tree, outputs)
-}
-
-/// All .pdf paths in the tree whose stem equals `stem`.
-private func pdfPaths(matching stem: String, in nodes: [ProjectFileNode]) -> [String] {
-    nodes.flatMap { node -> [String] in
-        if node.isDirectory { return pdfPaths(matching: stem, in: node.children ?? []) }
-        guard (node.name as NSString).pathExtension.lowercased() == "pdf",
-              (node.name as NSString).deletingPathExtension == stem
-        else { return [] }
-        return [node.path]
-    }
+    let path = (mainPath as NSString).deletingPathExtension + ".pdf"
+    let output = removeNode(path: path, from: &tree)
+    return (tree, output.map { [$0] } ?? [])
 }
 
 /// Detaches the node with `path` wherever it sits, pruning directory nodes
@@ -308,7 +291,7 @@ private func removeNode(path: String, from nodes: inout [ProjectFileNode]) -> Pr
             nodes.remove(at: index)
         } else {
             nodes[index] = ProjectFileNode(path: nodes[index].path, name: nodes[index].name,
-                                           isDirectory: true, children: children)
+                                           isDirectory: nodes[index].isDirectory, children: children)
         }
         return found
     }

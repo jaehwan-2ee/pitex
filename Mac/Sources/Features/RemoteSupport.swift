@@ -175,12 +175,12 @@ extension WorkspaceModel {
     @discardableResult
     func pushRemote() async -> String? {
         guard let current = remote else { return nil }
-        remote?.status = .syncing
+        if remote?.status != .syncing { remote?.status = .syncing }
         do {
             let report = try await current.sync.push()
             guard remote?.project == current.project else { return nil }
             remote?.conflicts = report.conflicts
-            remote?.status = .synced
+            if !remotePushPending { remote?.status = .synced }
             return nil
         } catch {
             if remote?.project == current.project {
@@ -190,17 +190,19 @@ extension WorkspaceModel {
         }
     }
 
-    /// Debounced push after a save — typing bursts save repeatedly with
-    /// autosave on. Only the wait is cancelled by a newer save, never a
-    /// transfer in flight (the next push queues behind it).
+    /// Saving already follows the Editor's Auto Save delay. Upload as soon
+    /// as it finishes; saves during a transfer request one follow-up pass.
     func schedulePush() {
         guard remote != nil else { return }
-        remotePushTask?.cancel()
+        remotePushPending = true
+        guard remotePushTask == nil else { return }
         remotePushTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled, let self else { return }
-            self.remotePushTask = nil
-            await self.pushRemote()
+            guard let self else { return }
+            defer { self.remotePushTask = nil }
+            while self.remotePushPending, self.remote != nil {
+                self.remotePushPending = false
+                await self.pushRemote()
+            }
         }
     }
 
@@ -208,10 +210,13 @@ extension WorkspaceModel {
     /// hold the window or the app (unsent edits stay in the mirror and go
     /// up on the next open).
     func flushRemote(timeout: Duration = .seconds(10)) async {
-        guard remote != nil else { return }
-        remotePushTask?.cancel()
-        remotePushTask = nil
-        let push = Task { await self.pushRemote() }
+        guard let current = remote else { return }
+        let scheduled = remotePushTask
+        let push = Task<String?, Never> {
+            await scheduled?.value
+            guard !Task.isCancelled, self.remote?.project == current.project else { return nil }
+            return await self.pushRemote()
+        }
         let once = ResumeOnce()
         await withCheckedContinuation { continuation in
             once.continuation = continuation
@@ -284,6 +289,7 @@ extension WorkspaceModel {
     /// Workspace teardown: last upload, then back to local builds.
     func endRemoteSession() async {
         await flushRemote()
+        remotePushPending = false
         remote = nil
         await buildExecutor.use(nil)
     }

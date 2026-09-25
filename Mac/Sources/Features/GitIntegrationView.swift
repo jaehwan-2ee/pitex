@@ -102,9 +102,9 @@ extension WorkspaceModel {
                 gitRefreshInFlight = false
                 if projectURL != projectRoot { refreshGit() }
             }
-            // Remote: flush local edits first so status/commit read the
-            // saved bytes; a failed push lands in `remote.status` (offline).
-            if remote != nil { _ = await pushRemote() }
+            // Saves upload immediately. Wait for that upload, but polling
+            // Git must not start another sync or change the sync status.
+            await remotePushTask?.value
             let top = await GitRunner.run(GitSupport.topLevelArgs, in: projectRoot, remote: remote?.sync)
             guard projectURL == projectRoot else { return }
             guard top.code == 0 else {
