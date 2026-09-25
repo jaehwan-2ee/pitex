@@ -1,0 +1,63 @@
+Mac/Resources/ja.lproj/Localizable.strings
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 126
+Mac/Sources/Features/BuildSupport.swift
+  s_6dc90272bb6b27::t_6a0c2f2653782a 295-297
+  s_6dc90272bb6b27::t_1f345848ca56b9 7,236,265-281,285-294,298-314
+  s_6dc90272bb6b27::t_36d22fe10a46f3 315-316
+Linux/crates/pitex-shell/src/model.rs
+  s_6dc90272bb6b27::t_765dd4631b6b34 2371-2381
+  s_6dc90272bb6b27::t_1f345848ca56b9 694,752-767,771-800,813,839
+  s_6dc90272bb6b27::t_6a0c2f2653782a 512,528,1013,1161,1381,1383,1389,1489,1493,1496,1994,2029,3336-3337,3342-3344,3350,3370,3373,3384
+Tools/check-remote-autosave.py
+  s_6dc90272bb6b27::t_85f94abead96a6 146-157,174-182,187-189,198,213,263-264,277,296
+  s_6dc90272bb6b27::t_98e3a19ef16009 209-212,244-262,265-276,278-295,297-298
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 15-20,23,62,64,71-80,83-85,92-99,314,317,340,346-357,419,431-434
+  s_6dc90272bb6b27::t_75c7464c358580 63
+Mac/Resources/ru.lproj/Localizable.strings
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 127
+Mac/Sources/AppShell/PitexApp.swift
+  s_6dc90272bb6b27::t_6a0c2f2653782a 237,928,969,2081-2083
+  s_6dc90272bb6b27::t_765dd4631b6b34 1593-1595
+Mac/Resources/vi.lproj/Localizable.strings
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 126
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 103,105-106,2653,2673-2687,4427-4429,5652-5653,5658,5692,5701-5732,5736,5739
+README.md
+  s_6dc90272bb6b27::t_765dd4631b6b34 38-45
+Mac/Resources/es.lproj/Localizable.strings
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 127
+Linux/crates/pitex-shell/tests/tex_project_resolver.rs
+  s_6dc90272bb6b27::t_0edfb8e228263b 249
+  s_6dc90272bb6b27::t_6a0c2f2653782a 255
+  s_6dc90272bb6b27::t_e06df26c91d84a 270-303
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 127
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_6dc90272bb6b27::t_0edfb8e228263b 240-270
+Mac/Resources/ko.lproj/Localizable.strings
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 126
+Linux/crates/project-feature/src/lib.rs
+  s_6dc90272bb6b27::t_0edfb8e228263b 302-341,392
+  s_6dc90272bb6b27::t_c3f859b4c0131e 371-391,393
+Mac/Resources/en.lproj/Localizable.strings
+  s_6dc90272bb6b27::t_72ba10d3b0cec7 126
+Packages/TexApp/Tests/TexAppTests/FeatureStateTests.swift
+  s_6dc90272bb6b27::t_d45fcb5c13fef8 146-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43c1341fe1bcf46192fc5b9c98ccd0082c277d2b",
+  "prompts": {},
+  "sessions": {
+    "s_6dc90272bb6b27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d8cf-d859-7ce0-b1cc-ecc8a142478d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
