@@ -684,6 +684,19 @@ fn stale_synctex_responses_never_rebind() {
 fn restore_binds_only_matched_pdf_and_metadata() {
     let mut fx = Fixture::open("bindingpair", "main.tex", "cp {file} {outdir}/main.pdf");
     let root = fx.model.project_url.clone().unwrap();
+    // The issued refresh messages are real — stamped id/root/pdf — only
+    // the parse result is fabricated, so no `synctex` binary is needed
+    // (as in `stale_synctex_responses_never_rebind`).
+    let bound = |pdf: &Path| -> Result<SyncTeXBinding, String> {
+        Ok(SyncTeXBinding {
+            revision: synctex_core::SyncTeXRevision::new("b", 1).unwrap(),
+            output_hash: "h".into(),
+            pdf_url: pdf.to_path_buf(),
+            project_root: root.clone(),
+            source_root: root.clone(),
+            source_paths: Default::default(),
+        })
+    };
     // Live artifact WITHOUT metadata; sibling WITH — the spaced-fixture
     // shape that reported "metadata could not be loaded".
     std::fs::write(root.join("main.pdf"), "%PDF-1.4 sibling").unwrap();
@@ -697,30 +710,30 @@ fn restore_binds_only_matched_pdf_and_metadata() {
     fx.model.latest_built_pdf_name = Some(".pitex-live/main/main.pdf".into());
 
     // Nothing retained yet → the sibling is picked as a complete pair:
-    // its bytes, its artifact name and its binding, all together.
+    // the issued refresh names the artifact whose bytes were published.
     fx.model.restore_built_preview();
     let message = pump(&mut fx.model, &fx.rx, |m| {
         matches!(m, WorkspaceMessage::BindingRefreshed { .. })
     });
-    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, result } = message else {
+    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, .. } = message else {
         unreachable!()
     };
-    fx.model.apply_binding_refreshed(id, broot, pdf.clone(), result);
-    assert_eq!(pdf, root.join("main.pdf"), "bound the sibling pair");
-    assert_eq!(
-        fx.model.synctex_binding.as_ref().map(|b| b.pdf_url.clone()),
-        Some(pdf.clone())
-    );
+    assert_eq!(broot, root);
+    assert_eq!(pdf, root.join("main.pdf"), "issued for the sibling pair");
     assert_eq!(
         fx.model.latest_built_pdf_name.as_deref(),
         Some("main.pdf"),
         "published the same artifact the binding targets"
     );
-    // The pair is coherent: retained bytes are the sibling's, not the
-    // live artifact's.
     assert_eq!(
         fx.model.retained_pdf.as_ref().map(|r| r.pdf.as_ref()),
         Some(&b"%PDF-1.4 sibling"[..])
+    );
+    // A successful binding answering the SAME issued artifact binds.
+    fx.model.apply_binding_refreshed(id, broot, pdf.clone(), bound(&pdf));
+    assert_eq!(
+        fx.model.synctex_binding.as_ref().map(|b| b.pdf_url.clone()),
+        Some(pdf)
     );
     assert!(matches!(
         fx.model.synctex_state,
@@ -741,11 +754,11 @@ fn restore_binds_only_matched_pdf_and_metadata() {
     let message = pump(&mut fx.model, &fx.rx, |m| {
         matches!(m, WorkspaceMessage::BindingRefreshed { .. })
     });
-    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, result } = message else {
+    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, .. } = message else {
         unreachable!()
     };
-    fx.model.apply_binding_refreshed(id, broot, pdf.clone(), result);
     assert_eq!(pdf, root.join(".pitex-live/main/main.pdf"));
+    fx.model.apply_binding_refreshed(id, broot, pdf.clone(), bound(&pdf));
     assert_eq!(
         fx.model.synctex_binding.as_ref().map(|b| b.pdf_url.clone()),
         Some(pdf)
@@ -770,8 +783,9 @@ fn retained_live_artifact_never_falls_back() {
     );
     let root = fx.model.project_url.clone().unwrap();
     // A real live run → its artifact is retained; the publish path
-    // issued a refresh against it which fails honestly (cp wrote no
-    // `.synctex` beside the live pdf).
+    // issued a refresh against it which fails honestly (no `.synctex`
+    // beside the live pdf — an `Err` result either way keeps the
+    // binding empty, so no `synctex` binary is needed).
     fx.edit("main.tex", "% live\n");
     fx.fire();
     let (_, outcome, _) = fx.finish_next();

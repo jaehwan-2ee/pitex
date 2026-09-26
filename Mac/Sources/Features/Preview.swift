@@ -307,14 +307,20 @@ private struct PDFDocumentView: NSViewRepresentable {
         // Capture BEFORE the swap: index and point come from the SAME
         // currentDestination — in continuous mode currentPage can differ
         // from currentDestination.page near page boundaries, and mixing
-        // them jumps. Index lookups run on the OLD document; asking the
-        // new one for the old page object yields NSNotFound.
+        // them jumps. index(for:) yields NSNotFound (not nil) for a page
+        // outside the old document — normalize it so the currentPage
+        // fallback can apply; a nil point never pairs a fallback index
+        // with a destination that resolved to no page.
         let destination = sameTarget ? view.currentDestination : nil
+        let destinationIndex = destination?.page
+            .flatMap { view.document?.index(for: $0) }
+            .flatMap { $0 == NSNotFound ? nil : $0 }
         let oldIndex = sameTarget
-            ? destination.flatMap { view.document?.index(for: $0.page) }
-                ?? view.currentPage.flatMap { view.document?.index(for: $0) }
+            ? destinationIndex ?? view.currentPage
+                .flatMap { view.document?.index(for: $0) }
+                .flatMap { $0 == NSNotFound ? nil : $0 }
             : nil
-        let point = destination?.point
+        let point = destinationIndex != nil ? destination?.point : nil
         let autoScales = view.autoScales
         let scaleFactor = view.scaleFactor
         context.coordinator.clearSyncHighlight()
