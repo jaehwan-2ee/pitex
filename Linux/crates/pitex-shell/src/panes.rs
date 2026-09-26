@@ -1730,7 +1730,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
 
     // Live compile — rebuilds on edits after an idle delay. The switch
     // and delay/follow rows persist the flat `pitex.pref.build.live*`
-    // keys; the scheduler reads them on each edit.
+    // keys; `apply_live_settings` pushes them into the scheduler so a
+    // toggle or delay change retires/re-arms live work immediately.
     let live_group = adw::PreferencesGroup::new();
     live_group.set_title(&tr(lang, "settings.compile.live"));
     let (live_auto_row, live_auto) = compat::switch_row(&tr(lang, "settings.compile.live_auto"));
@@ -1741,6 +1742,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         live_auto.connect_active_notify(move |r| {
             if let Ok(mut s) = state.try_borrow_mut() {
                 s.store.set_live_compile_enabled(r.is_active());
+                s.apply_live_settings();
             }
         });
     }
@@ -1753,6 +1755,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         live_delay.connect_value_notify(move |r| {
             if let Ok(mut s) = state.try_borrow_mut() {
                 s.store.set_live_compile_delay_milliseconds(r.value() as i64);
+                s.apply_live_settings();
             }
         });
     }

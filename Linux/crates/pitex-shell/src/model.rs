@@ -20,6 +20,10 @@ use build_core::{
     BuildPipeline, BuildTarget, BuildToolStage, LoginShellCommandPlan, ShellAuthority,
     ShellAuthoritySource, StreamingBuildExecutor, WorkingDirectoryPolicy,
 };
+use build_feature::live::{
+    LiveCompileScheduler, LiveCompletion, LiveRequest, LiveRunKind, LiveRunToken,
+    REMOTE_MIN_DELAY_MS,
+};
 use document_session_core::{
     AtomicDocumentStore, DiskContentHash, DocumentConflict, DocumentMutation, DocumentSaveOutcome,
     DocumentSaveState, DocumentSession, DocumentSessionRegistry,
@@ -256,8 +260,11 @@ pub enum WorkspaceMessage {
     SaveFinished { path: NormalizedRelativePath, result: SaveResult },
     PdfLoaded { hash: u64, info: Option<crate::pdf::PdfInfo> },
     PdfRendered { key: u64, raster: crate::pdf::RenderedPage },
-    BuildEvent(BuildEvent),
+    /// Streamed log/issue output — stamped with the owning build so a
+    /// superseded run cannot write into a newer run's console.
+    BuildEvent { build: BuildID, event: BuildEvent },
     BuildFinished {
+        build: BuildID,
         outcome: Result<BuildOutcome, String>,
         output_pdf: String,
     },
@@ -287,8 +294,9 @@ pub enum WorkspaceMessage {
         result: Result<Vec<String>, String>,
     },
     /// `prepareRemoteBuild` failed — the build stops before the executor
-    /// ran (upload error, or files changed on both sides).
-    RemoteBuildPrepFailed(String),
+    /// ran (upload error, or files changed on both sides). `build` keeps a
+    /// stale failure from cancelling a newer run's state.
+    RemoteBuildPrepFailed { build: BuildID, problem: String },
     ActivateFinished(Result<ActivatedDocument, String>),
     AgentActivityFinished,
     /// Git Integration refresh — `Ok(None)` means the project is not a
@@ -359,6 +367,61 @@ pub enum SaveResult {
     InterruptedWrite(String),
     /// The write landed but the session refused the commit.
     CommitFailed(String),
+}
+
+/// The in-flight build's identity — the worker's `BuildID` plus the
+/// live scheduler token that reserved the slot. `live` is `Some` for
+/// live runs and carries the isolated `.pitex-live` output context.
+#[derive(Debug, Clone)]
+pub struct ActiveRun {
+    pub build: BuildID,
+    pub token: LiveRunToken,
+    pub live: Option<LiveRunContext>,
+}
+
+/// Isolated-output context of a live run — project-root-relative
+/// `.pitex-live/<source stem>` directory and everything the target
+/// declaration and `{outdir}` substitution need.
+#[derive(Debug, Clone)]
+pub struct LiveRunContext {
+    /// `source_path` of the resolved build target, e.g. `manuscript/main.tex`.
+    pub source_relative: String,
+    /// `.pitex-live/manuscript/main` — `BuildTarget::build_directory_path`.
+    pub output_directory: String,
+    /// `.pitex-live/manuscript/main/main.pdf` — the required output.
+    pub output_pdf: String,
+}
+
+impl LiveRunContext {
+    /// File stem of the source — the basename of every generated artifact.
+    pub fn basename(&self) -> String {
+        Path::new(&self.source_relative)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "document".into())
+    }
+}
+
+impl LiveRunContext {
+    /// `.pitex-live/<relative source stem>/<basename>.pdf` — the shared
+    /// contract with the backend (`set_outputs` derives the device-side
+    /// directory from the required PDF path).
+    pub fn for_source(relative_source: &str) -> Self {
+        let stem = Path::new(relative_source)
+            .with_extension("")
+            .to_string_lossy()
+            .into_owned();
+        let base = Path::new(&stem)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "document".into());
+        let output_directory = format!(".pitex-live/{stem}");
+        Self {
+            source_relative: relative_source.to_string(),
+            output_pdf: format!("{output_directory}/{base}.pdf"),
+            output_directory,
+        }
+    }
 }
 
 /// Per-file write serialization for off-main saves, plus own-write
@@ -462,7 +525,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::SaveFinished { path, result } => write!(f, "SaveFinished({}, {result:?})", path.raw_value()),
             Self::PdfLoaded { .. } => write!(f, "PdfLoaded"),
             Self::PdfRendered { .. } => write!(f, "PdfRendered"),
-            Self::BuildEvent(_) => write!(f, "BuildEvent"),
+            Self::BuildEvent { .. } => write!(f, "BuildEvent"),
             Self::BuildFinished { .. } => write!(f, "BuildFinished"),
             Self::ForwardResult(_) => write!(f, "ForwardResult"),
             Self::InverseResult(_) => write!(f, "InverseResult"),
@@ -472,7 +535,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::RemotePushFinished { .. } => write!(f, "RemotePushFinished"),
             Self::RemotePullFinished { .. } => write!(f, "RemotePullFinished"),
             Self::RemoteResolveFinished { .. } => write!(f, "RemoteResolveFinished"),
-            Self::RemoteBuildPrepFailed(_) => write!(f, "RemoteBuildPrepFailed"),
+            Self::RemoteBuildPrepFailed { .. } => write!(f, "RemoteBuildPrepFailed"),
             Self::ActivateFinished(_) => write!(f, "ActivateFinished"),
             Self::AgentActivityFinished => write!(f, "AgentActivityFinished"),
             Self::GitRefreshed(_) => write!(f, "GitRefreshed"),
@@ -1037,7 +1100,36 @@ pub struct WorkspaceModel {
     pub build_cancel_requested: Arc<std::sync::atomic::AtomicBool>,
     pub synctex_runner: Arc<SyncTeXRunner>,
     pub registered_sessions: Vec<DocumentSession>,
-    pub active_build_id: Option<BuildID>,
+    /// The in-flight build, if any — its `BuildID` plus the scheduler
+    /// token that reserved it. Every `BuildEvent`/`BuildFinished` message
+    /// is gated against `run.build` so stale results cannot touch a newer
+    /// run's state.
+    pub active_run: Option<ActiveRun>,
+    /// Runs invalidated by a context switch while still in flight — their
+    /// completions must still reach the scheduler (frees the slot) even
+    /// though their results must never publish.
+    orphaned_runs: Vec<ActiveRun>,
+    /// Live-compile debounce/cancellation state machine — pure; the UI
+    /// drives it with a GLib timer and build completions.
+    pub live: LiveCompileScheduler,
+    /// `(path, content hash)` of the committed text the last live note
+    /// recorded. Save/snapshot republishes carry the same hash — only a
+    /// real text change may re-arm the debounce.
+    live_edit_signature: Option<(NormalizedRelativePath, DiskContentHash)>,
+    /// `(resolved build source, command)` captured when the pending edit
+    /// was noted — a target or command change before the timer fires
+    /// re-arms the edit against the new context instead of building the
+    /// stale one.
+    live_context_key: Option<(Option<PathBuf>, String)>,
+    /// `hasMarkedText` last seen by the UI — gates `completed()`'s
+    /// pending dispatch the same way `poll()` does.
+    pub live_composing: Cell<bool>,
+    /// Millisecond clock shared by every scheduler call — the UI installs
+    /// `glib::monotonic_time`; tests inject a cell.
+    live_now: std::rc::Rc<dyn Fn() -> u64>,
+    /// Last successfully published PDF state — restored when a superseded
+    /// or failed live run must leave the viewer on the previous artifact.
+    last_succeeded: Option<WorkspaceBuildState>,
     pub latest_built_pdf_name: Option<String>,
     pub synctex_binding: Option<SyncTeXBinding>,
 
@@ -1180,7 +1272,17 @@ impl WorkspaceModel {
             build_cancel_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             synctex_runner: Arc::new(SyncTeXRunner::new()),
             registered_sessions: Vec::new(),
-            active_build_id: None,
+            active_run: None,
+            orphaned_runs: Vec::new(),
+            live: LiveCompileScheduler::new(),
+            live_edit_signature: None,
+            live_context_key: None,
+            live_composing: Cell::new(false),
+            live_now: std::rc::Rc::new({
+                let epoch = std::time::Instant::now();
+                move || epoch.elapsed().as_millis() as u64
+            }),
+            last_succeeded: None,
             latest_built_pdf_name: None,
             synctex_binding: None,
             console_section: ConsoleSection::Assistant,
@@ -2018,6 +2120,10 @@ impl WorkspaceModel {
             let _ = self.files.end_access(lease);
         }
         self.read_write = true;
+        // Live work belongs to the closing workspace — pending edits die,
+        // a live run is asked to cancel, and its late completion is
+        // orphaned so the scheduler slot still frees.
+        self.invalidate_live();
         let root = self.project_url.take();
         let sessions = std::mem::take(&mut self.registered_sessions);
         if let Some(root) = root {
@@ -3014,9 +3120,9 @@ impl WorkspaceModel {
         };
         let runner = self.synctex_runner.clone();
         let build_id = self
-            .active_build_id
+            .active_run
             .as_ref()
-            .map(|b| b.raw_value.clone())
+            .map(|r| r.build.raw_value.clone())
             .unwrap_or_else(|| "existing-pdf".into());
         if let Some(sink) = self.sink() {
             std::thread::spawn(move || {
@@ -3063,6 +3169,29 @@ impl WorkspaceModel {
         std::fs::read(root.join(&name)).ok()
     }
 
+    /// Relative artifact paths the preview may restore, newest first —
+    /// the last published artifact (a live `.pitex-live` PDF after a live
+    /// build) wins over the conventional source-sibling PDF so document
+    /// navigation does not revert a live preview to an older manual PDF.
+    fn built_preview_candidates(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if let Some(name) = &self.latest_built_pdf_name {
+            names.push(name.clone());
+        }
+        if let (Some(root), Some(source)) = (&self.project_url, self.build_source_url()) {
+            if let Ok(relative) = Self::relative_path(&source, root) {
+                let sibling = Path::new(relative.raw_value())
+                    .with_extension("pdf")
+                    .to_string_lossy()
+                    .into_owned();
+                if !names.contains(&sibling) {
+                    names.push(sibling);
+                }
+            }
+        }
+        names
+    }
+
     /// `restoreBuiltPreview` — reopen the main document's PDF, including when
     /// a chapter or .bib file was opened first. Switching within that
     /// document keeps its preview.
@@ -3076,28 +3205,35 @@ impl WorkspaceModel {
         if self.is_building() {
             return;
         }
-        let (Some(root), Some(source)) =
-            (self.project_url.clone(), self.build_source_url())
-        else {
+        let Some(root) = self.project_url.clone() else {
             return;
         };
-        let Ok(relative) = Self::relative_path(&source, &root) else {
-            return;
-        };
-        let name = Path::new(relative.raw_value())
-            .with_extension("pdf")
-            .to_string_lossy()
-            .into_owned();
+        let names = self.built_preview_candidates();
+        let Some(name) = names.first().cloned() else { return };
         if self.latest_built_pdf_name.as_deref() == Some(name.as_str())
             && self.synctex_binding.is_some()
         {
             return;
         }
-        let pdf = root.join(&name);
-        let data = prefetched.or_else(|| std::fs::read(&pdf).ok());
+        // Try the freshest artifact first, then the sibling fallback.
+        let mut data = None;
+        let mut resolved = name.clone();
+        for candidate in &names {
+            let bytes = if candidate == &name {
+                prefetched.clone().or_else(|| std::fs::read(root.join(candidate)).ok())
+            } else {
+                std::fs::read(root.join(candidate)).ok()
+            };
+            if let Some(bytes) = bytes {
+                resolved = candidate.clone();
+                data = Some(bytes);
+                break;
+            }
+        }
+        let pdf = root.join(&resolved);
         match data {
             Some(data) if data.starts_with(b"%PDF") => {
-                self.latest_built_pdf_name = Some(name);
+                self.latest_built_pdf_name = Some(resolved);
                 self.build_state = WorkspaceBuildState::Succeeded {
                     hash: {
                         use std::hash::{Hash, Hasher};
@@ -3319,6 +3455,8 @@ impl WorkspaceModel {
         } else {
             Some(url)
         };
+        // A different build target retires pending/live work.
+        self.invalidate_live();
         // The pin badge is part of the tree.
         self.files_revision += 1;
         self.refresh_build_target();
@@ -3400,8 +3538,35 @@ impl WorkspaceModel {
             .map(|p| p.raw_value().to_string())
     }
 
-    /// `{file}` / `{filename}` placeholder expansion (verbatim).
-    pub fn substitute_command_placeholders(&self, template: &str) -> String {
+    /// `{file}` / `{filename}` / `{outdir}` placeholder expansion for
+    /// manual commands — `{file}`/`{filename}` keep the historical
+    /// verbatim semantics; the new `{outdir}` maps to the source's own
+    /// directory and is quoted for `shell` like a live substitution.
+    /// A `"{file}"`-style quoted span is replaced whole so quoting never
+    /// doubles up.
+    pub fn substitute_command_placeholders(&self, template: &str, shell: &str) -> String {
+        self.substitute_placeholders(template, "", shell, false)
+    }
+
+    /// Live-build expansion: `out_dir` is the isolated `.pitex-live`
+    /// directory and every value is quoted for `shell` — a live command
+    /// runs unattended, so a spaced path must not split.
+    pub fn substitute_command_placeholders_live(
+        &self,
+        template: &str,
+        out_dir: &str,
+        shell: &str,
+    ) -> String {
+        self.substitute_placeholders(template, out_dir, shell, true)
+    }
+
+    fn substitute_placeholders(
+        &self,
+        template: &str,
+        out_dir: &str,
+        shell: &str,
+        quoted: bool,
+    ) -> String {
         let relative = self
             .build_source_relative_path()
             .unwrap_or_else(|| "main.tex".into());
@@ -3409,25 +3574,266 @@ impl WorkspaceModel {
             .with_extension("")
             .to_string_lossy()
             .into_owned();
-        template
-            .replace("{file}", &relative)
-            .replace("{filename}", &stem)
+        let directory = if out_dir.is_empty() {
+            Path::new(&relative)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| ".".into())
+        } else {
+            out_dir.to_string()
+        };
+        let mut result = template.to_string();
+        for (key, raw) in [
+            ("{file}", relative.as_str()),
+            ("{filename}", stem.as_str()),
+            ("{outdir}", directory.as_str()),
+        ] {
+            // Already-quoted spans first — the template asked for quoting
+            // itself; replace the whole span so the value is quoted once.
+            result = result.replace(&format!("\"{key}\""), &Self::shell_quote(shell, raw));
+            result = result.replace(&format!("'{key}'"), &Self::shell_quote(shell, raw));
+            // `{file}`/`{filename}` stay verbatim for manual commands —
+            // quoting them changed existing user templates. `{outdir}` is
+            // new, so it gets quoting in every mode.
+            let value = if quoted || key == "{outdir}" {
+                Self::shell_quote(shell, raw)
+            } else {
+                raw.to_string()
+            };
+            result = result.replace(key, &value);
+        }
+        result
     }
 
-    /// `startBuild` — verbatim port: main-document session adoption, persist
-    /// dirty sessions before root discovery, generated-path declaration,
-    /// pipeline selection.
+    /// Shell-appropriate quoting: POSIX single-quote for POSIX shells and
+    /// PowerShell (literal there too), double-quote for `cmd.exe` where
+    /// single quotes are ordinary characters.
+    fn shell_quote(shell: &str, value: &str) -> String {
+        const SAFE: &[u8] = b"/._-=+:@%";
+        let clean = !value.is_empty()
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || SAFE.contains(&b));
+        if clean {
+            return value.to_string();
+        }
+        let exe = Path::new(shell)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(shell)
+            .to_ascii_lowercase();
+        if exe == "cmd" || exe == "cmd.exe" {
+            format!("\"{}\"", value.replace('"', "\"\""))
+        } else {
+            format!("'{}'", value.replace('\'', "'\"'\"'"))
+        }
+    }
+
+    /// The shipped Tectonic preset — not an engine stage, so a live build
+    /// rewrites it with an explicit isolated `--outdir {outdir}`.
+    pub const TECTONIC_PRESET_COMMAND: &'static str = "tectonic --synctex {file}";
+    const TECTONIC_LIVE_COMMAND: &'static str = "tectonic --synctex --outdir {outdir} {file}";
+
+    /// The command a live build actually runs: the shipped Tectonic
+    /// preset gets a known-safe `--outdir` rewrite; any other custom
+    /// command must already carry `{outdir}` or the run is rejected —
+    /// never a warn-and-run into the regular output directory.
+    pub fn live_effective_command(command_text: &str) -> Result<String, String> {
+        if command_text == Self::TECTONIC_PRESET_COMMAND {
+            Ok(Self::TECTONIC_LIVE_COMMAND.to_string())
+        } else if command_text.contains("{outdir}") {
+            Ok(command_text.to_string())
+        } else {
+            Err(format!(
+                "Live Compile needs an {{outdir}} placeholder in the custom build command so its output stays isolated — add {{outdir}} or choose a preset. Command: {command_text}"
+            ))
+        }
+    }
+
+    // ── Live compile bridge ──
+
+    /// Bounded retry while an IME composition or a live cancellation is
+    /// still in flight — the edit is held, never dropped.
+    const LIVE_RETRY_MS: u64 = 150;
+
+    /// Extensions whose edits can affect a TeX build.
+    const LIVE_SOURCE_EXTENSIONS: [&'static str; 8] =
+        ["tex", "sty", "cls", "bib", "bst", "def", "clo", "lco"];
+
+    /// The UI installs its monotonic clock (`glib::monotonic_time()/1000`)
+    /// so every scheduler call shares one time base; tests inject a cell.
+    pub fn set_live_clock(&mut self, clock: std::rc::Rc<dyn Fn() -> u64>) {
+        self.live_now = clock;
+    }
+    pub fn live_now_ms(&self) -> u64 {
+        (self.live_now)()
+    }
+
+    /// Pushes the persisted live settings into the scheduler — enabled
+    /// flag and effective delay (remote workspaces get the ≥1500 ms
+    /// floor). Returns the requests a toggle change produced (a live run
+    /// may need cancelling) for the caller to dispatch.
+    pub fn sync_live_settings(&mut self, store: &SettingsStore) -> Vec<LiveRequest> {
+        let delay = store.live_compile_delay_milliseconds().max(0) as u64;
+        self.live.set_delay(if self.remote.is_some() {
+            delay.max(REMOTE_MIN_DELAY_MS)
+        } else {
+            delay
+        });
+        self.live.set_enabled(store.live_compile_enabled())
+    }
+
+    /// A committed-session change arrived via `syncSnapshotFromSession`.
+    /// Only a real text change counts: saves and snapshot republishes
+    /// carry the same `(path, content hash)` and must not re-arm the
+    /// debounce — that is what stops an own-save → live-compile loop.
+    pub fn note_source_edit(&mut self, store: &SettingsStore) -> Vec<LiveRequest> {
+        // Borrow the snapshot's identity fields only — cloning the whole
+        // document text per keystroke was an O(document) pass the
+        // disabled-by-default feature must never cost.
+        let Some(snapshot) = self.document_snapshot.as_ref() else {
+            return Vec::new();
+        };
+        let extension = Path::new(snapshot.path.raw_value())
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        if !extension
+            .as_deref()
+            .map(|e| Self::LIVE_SOURCE_EXTENSIONS.contains(&e))
+            .unwrap_or(false)
+        {
+            return Vec::new();
+        }
+        let signature = (snapshot.path.clone(), snapshot.content_hash);
+        if self.live_edit_signature.as_ref() == Some(&signature) {
+            return Vec::new();
+        }
+        self.live_edit_signature = Some(signature);
+        self.live_context_key = Some((
+            self.build_source_url(),
+            self.build_command_text.trim().to_string(),
+        ));
+        let mut requests = self.sync_live_settings(store);
+        requests.extend(self.live.note_edit(self.live_now_ms()));
+        requests
+    }
+
+    /// Timer delay for the UI: the scheduler's original deadline (it must
+    /// not be reset by retries); an IME composition or an in-flight run —
+    /// live being cancelled or a manual build — retries at a bounded rate
+    /// instead of dropping the edit or busy-polling.
+    pub fn live_poll_delay(&self, composing: bool) -> Option<u64> {
+        let now = self.live_now_ms();
+        self.live.pending_deadline().map(|deadline| {
+            if deadline > now {
+                deadline - now
+            } else if composing || self.live.active().is_some() {
+                Self::LIVE_RETRY_MS
+            } else {
+                1
+            }
+        })
+    }
+
+    /// The GLib timer fired — forward to the scheduler.
+    pub fn poll_live(&mut self, composing: bool) -> Vec<LiveRequest> {
+        self.live_composing.set(composing);
+        self.live.poll(self.live_now_ms(), composing)
+    }
+
+    /// Performs the scheduler's requests — the only place runs start or
+    /// are asked to stop.
+    pub fn dispatch_live_requests(
+        &mut self,
+        requests: Vec<LiveRequest>,
+        store: &SettingsStore,
+        language: &'static str,
+    ) {
+        for request in requests {
+            match request {
+                LiveRequest::Cancel { .. } => self.cancel_build(),
+                LiveRequest::StartLive { token, .. } | LiveRequest::StartManual { token } => {
+                    self.start_build_impl(store, language, token)
+                }
+            }
+        }
+    }
+
+    /// A scheduler reservation ended before/without the process path —
+    /// releases the slot and dispatches queued work (queued manual, due
+    /// edit) through the normal completion path.
+    fn finish_run(&mut self, token: LiveRunToken, store: &SettingsStore, language: &'static str) {
+        if self.active_run.as_ref().map(|r| r.token) == Some(token) {
+            self.active_run = None;
+        }
+        let (_, requests) = self.live.completed(
+            token,
+            self.live_now_ms(),
+            self.live_composing.get(),
+        );
+        self.dispatch_live_requests(requests, store, language);
+    }
+
+    /// Workspace switch/close/target teardown: drops pending live work and
+    /// cancels a live run — the emitted `Cancel` goes through the same
+    /// `cancel_build` path the toolbar uses, so a remote run's upload
+    /// flag is set too. An in-flight run is kept as an orphan so its late
+    /// completion still frees the scheduler slot — its results just never
+    /// publish.
+    pub fn invalidate_live(&mut self) {
+        let requests = self.live.invalidate();
+        self.live_edit_signature = None;
+        self.live_context_key = None;
+        if let Some(run) = self.active_run.take() {
+            if self.live.active() == Some(run.token) {
+                self.orphaned_runs.push(run);
+            }
+        }
+        for request in requests {
+            if let LiveRequest::Cancel { .. } = request {
+                self.cancel_build();
+            }
+        }
+    }
+
+    /// `startBuild` — the manual entry point (toolbar, ⇧↩): routed through
+    /// the scheduler so a manual run queues behind a cancelling live run
+    /// and never overlaps it.
     pub fn start_build(&mut self, store: &SettingsStore, language: &'static str) {
+        let requests = self.live.request_manual();
+        self.dispatch_live_requests(requests, store, language);
+    }
+
+    /// The reserved half of `startBuild` — the scheduler already owns the
+    /// slot for `token`; every early exit completes the reservation so
+    /// queued work frees. Verbatim port: main-document session adoption,
+    /// persist dirty sessions before root discovery, generated-path
+    /// declaration, pipeline selection.
+    fn start_build_impl(
+        &mut self,
+        store: &SettingsStore,
+        language: &'static str,
+        token: LiveRunToken,
+    ) {
+        /// Every early return below must release the reservation.
+        macro_rules! bail {
+            ($($body:tt)*) => {{
+                $($body)*
+                self.finish_run(token, store, language);
+                return;
+            }};
+        }
         if self.is_building() {
-            return;
+            bail!();
         }
         if !matches!(self.phase, WorkspacePhase::Ready) {
-            return;
+            bail!();
         }
         // Root discovery must see edits to inactive main/preamble files too.
         if let Some(problem) = self.persist_dirty_sessions() {
-            self.build_state = WorkspaceBuildState::Failed(problem);
-            return;
+            bail!(self.build_state = WorkspaceBuildState::Failed(problem););
         }
         self.refresh_build_target();
         let (Some(root), Some(source_url)) =
@@ -3437,12 +3843,29 @@ impl WorkspaceModel {
                 .build_target_message
                 .clone()
                 .unwrap_or_else(|| WorkspaceBuildError::NoActiveDocument.to_string());
-            self.build_state = WorkspaceBuildState::Failed(reason.clone());
-            self.build_log_text = reason;
-            self.console_section = ConsoleSection::Log;
-            self.bottom_panel_visible = true;
-            return;
+            bail!(
+                self.build_state = WorkspaceBuildState::Failed(reason.clone());
+                self.build_log_text = reason;
+                self.console_section = ConsoleSection::Log;
+                self.bottom_panel_visible = token.kind == LiveRunKind::Manual;
+            );
         };
+        // The build target or command changed since the edit was noted —
+        // rebuild the debounce against the new context instead of
+        // compiling the stale one.
+        if token.kind == LiveRunKind::Live {
+            let key = (
+                Some(source_url.clone()),
+                self.build_command_text.trim().to_string(),
+            );
+            if self.live_context_key.as_ref() != Some(&key) {
+                self.live_context_key = Some(key);
+                let requests = self.live.note_edit(self.live_now_ms());
+                self.dispatch_live_requests(requests, store, language);
+                self.finish_run(token, store, language);
+                return;
+            }
+        }
         // Open a session for a main target that has none yet so its disk
         // baseline is tracked like every other open document.
         if Some(&source_url) != self.active_document_url.as_ref() {
@@ -3468,50 +3891,63 @@ impl WorkspaceModel {
             }
         }
         let Ok(relative) = Self::relative_path(&source_url, &root) else {
-            self.build_state =
-                WorkspaceBuildState::Unavailable(WorkspaceBuildError::NoActiveDocument.to_string());
-            return;
+            bail!(self.build_state =
+                WorkspaceBuildState::Unavailable(WorkspaceBuildError::NoActiveDocument.to_string()););
         };
         let has_session = self
             .registered_sessions
             .iter()
             .any(|s| s.path() == &relative);
         if !has_session {
-            self.build_state =
-                WorkspaceBuildState::Unavailable(WorkspaceBuildError::NoActiveDocument.to_string());
-            return;
+            bail!(self.build_state =
+                WorkspaceBuildState::Unavailable(WorkspaceBuildError::NoActiveDocument.to_string()););
         }
 
         let relative_source = relative.raw_value().to_string();
+        // Live runs compile into `.pitex-live/<source stem>/` so regular
+        // outputs, source discovery and remote sync stay untouched.
+        let live_ctx = (token.kind == LiveRunKind::Live)
+            .then(|| LiveRunContext::for_source(&relative_source));
         let stem = Path::new(&relative_source)
             .with_extension("")
             .to_string_lossy()
             .into_owned();
         let generated: HashSet<String> = Self::GENERATED_OUTPUT_EXTENSIONS
             .iter()
-            .map(|ext| format!("{stem}.{ext}"))
+            .map(|ext| match &live_ctx {
+                Some(ctx) => format!("{}/{}.{ext}", ctx.output_directory, ctx.basename()),
+                None => format!("{stem}.{ext}"),
+            })
             .collect();
         // `prepareRemoteBuild(outputs: generated.sorted(), required: pdf)`
         // — computed now; `generated` is consumed by `BuildTarget::new`.
+        let mut generated_with_dir = generated;
+        if let Some(ctx) = &live_ctx {
+            // `build_directory_path` must itself be a declared generated
+            // path (BuildTarget::new's source-deletion guard).
+            generated_with_dir.insert(ctx.output_directory.clone());
+        }
         let generated_sorted: Vec<String> = {
-            let mut sorted: Vec<String> = generated.iter().cloned().collect();
+            let mut sorted: Vec<String> = generated_with_dir.iter().cloned().collect();
             sorted.sort();
             sorted
         };
-        let output_pdf = format!("{stem}.pdf");
+        let output_pdf = live_ctx
+            .as_ref()
+            .map(|ctx| ctx.output_pdf.clone())
+            .unwrap_or_else(|| format!("{stem}.pdf"));
         let target = match BuildTarget::new(
             &root,
             relative_source.clone(),
             output_pdf.clone(),
-            generated,
-            None,
+            generated_with_dir,
+            live_ctx.as_ref().map(|ctx| ctx.output_directory.clone()),
         ) {
             Ok(t) => t,
             Err(_) => {
-                self.build_state = WorkspaceBuildState::Failed(format!(
+                bail!(self.build_state = WorkspaceBuildState::Failed(format!(
                     "The build target could not be constructed for {relative_source}."
-                ));
-                return;
+                )););
             }
         };
 
@@ -3521,11 +3957,44 @@ impl WorkspaceModel {
             BuildPipeline::single_pass(stage)
         } else if !command_text.is_empty() {
             if !build_prefs.custom_shell_acknowledged {
-                self.build_state = WorkspaceBuildState::Failed(
+                bail!(self.build_state = WorkspaceBuildState::Failed(
                     WorkspaceBuildError::CustomShellNotAcknowledged.to_string(),
-                );
-                return;
+                ););
             }
+            // Live custom commands must keep output isolated — a missing
+            // `{outdir}` is a configuration error, never a warn-and-run
+            // into the regular output directory.
+            let effective = if token.kind == LiveRunKind::Live {
+                match Self::live_effective_command(command_text.as_str()) {
+                    Ok(command) => command,
+                    Err(reason) => {
+                        bail!(
+                            self.build_state = WorkspaceBuildState::Failed(reason.clone());
+                            self.build_log_text = reason;
+                            self.console_section = ConsoleSection::Log;
+                        );
+                    }
+                }
+            } else {
+                command_text.clone()
+            };
+            let out_dir = live_ctx
+                .as_ref()
+                .map(|ctx| ctx.output_directory.as_str())
+                .unwrap_or("");
+            // Remote builds execute in the device's `/bin/sh` regardless
+            // of the local `customShellExecutable` — POSIX quoting there;
+            // cmd/PowerShell rules only apply to local Windows runs.
+            let shell = if self.remote.is_some() {
+                "/bin/sh".to_string()
+            } else {
+                store.custom_shell_executable()
+            };
+            let command = if token.kind == LiveRunKind::Live {
+                self.substitute_command_placeholders_live(&effective, out_dir, &shell)
+            } else {
+                self.substitute_command_placeholders(&effective, &shell)
+            };
             let authority = match ShellAuthority::new(
                 ShellAuthoritySource::UserConfiguration,
                 true,
@@ -3533,13 +4002,12 @@ impl WorkspaceModel {
             ) {
                 Ok(a) => a,
                 Err(e) => {
-                    self.build_state = WorkspaceBuildState::Failed(e.to_string());
-                    return;
+                    bail!(self.build_state = WorkspaceBuildState::Failed(e.to_string()););
                 }
             };
             match LoginShellCommandPlan::new(
-                store.custom_shell_executable(),
-                self.substitute_command_placeholders(&command_text),
+                shell,
+                command,
                 WorkingDirectoryPolicy::ProjectRoot,
                 build_core::EnvironmentPolicy::Inherit {
                     overrides: std::collections::HashMap::new(),
@@ -3548,9 +4016,8 @@ impl WorkspaceModel {
             ) {
                 Ok(plan) => BuildPipeline::Custom(plan),
                 Err(_) => {
-                    self.build_state =
-                        WorkspaceBuildState::Failed("The configured build command is not valid.".into());
-                    return;
+                    bail!(self.build_state =
+                        WorkspaceBuildState::Failed("The configured build command is not valid.".into()););
                 }
             }
         } else {
@@ -3563,16 +4030,18 @@ impl WorkspaceModel {
         };
 
         if let Err(e) = self.build_orchestrator.select(target, pipeline) {
-            self.build_state =
-                WorkspaceBuildState::Failed(format!("The build could not be configured: {e}"));
-            return;
+            bail!(self.build_state =
+                WorkspaceBuildState::Failed(format!("The build could not be configured: {e}")););
         }
         let Some(build_id) = BuildID::new(format!("build-{}", uuid_v4())).ok() else {
-            self.build_state =
-                WorkspaceBuildState::Failed("The build could not be started.".into());
-            return;
+            bail!(self.build_state =
+                WorkspaceBuildState::Failed("The build could not be started.".into()););
         };
-        self.active_build_id = Some(build_id.clone());
+        self.active_run = Some(ActiveRun {
+            build: build_id.clone(),
+            token,
+            live: live_ctx,
+        });
         self.invalidate_synctex_for_build();
         self.build_state = WorkspaceBuildState::Building;
         self.build_log_text.clear();
@@ -3592,6 +4061,7 @@ impl WorkspaceModel {
         cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
         if let Some(sink) = self.sink() {
             let handler_sink = sink.clone();
+            let handler_build = build_id.clone();
             std::thread::spawn(move || {
                 if let Some((sync, executor, mirror_root)) = remote_build {
                     // `prepareRemoteBuild` — the upload first, then tell the
@@ -3625,24 +4095,32 @@ impl WorkspaceModel {
                         }
                     };
                     if let Some(problem) = problem {
-                        let _ = sink.send(WorkspaceMessage::RemoteBuildPrepFailed(problem));
+                        let _ = sink.send(WorkspaceMessage::RemoteBuildPrepFailed {
+                            build: build_id.clone(),
+                            problem,
+                        });
                         return;
                     }
                     executor.set_outputs(generated_sorted, Some(output_pdf.clone()));
                     if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                        let _ = sink.send(WorkspaceMessage::RemoteBuildPrepFailed(
-                            "Build cancelled.".into(),
-                        ));
+                        let _ = sink.send(WorkspaceMessage::RemoteBuildPrepFailed {
+                            build: build_id.clone(),
+                            problem: "Build cancelled.".into(),
+                        });
                         return;
                     }
                 }
                 let outcome = orchestrator.build(
-                    build_id,
+                    build_id.clone(),
                     Arc::new(move |event| {
-                        let _ = handler_sink.send(WorkspaceMessage::BuildEvent(event));
+                        let _ = handler_sink.send(WorkspaceMessage::BuildEvent {
+                            build: handler_build.clone(),
+                            event,
+                        });
                     }),
                 );
                 let _ = sink.send(WorkspaceMessage::BuildFinished {
+                    build: build_id.clone(),
                     outcome: outcome.map_err(|e| e.to_string()),
                     output_pdf,
                 });
@@ -3650,8 +4128,13 @@ impl WorkspaceModel {
         }
     }
 
-    /// `handleBuildEvent` — verbatim.
-    pub fn apply_build_event(&mut self, event: BuildEvent) {
+    /// `handleBuildEvent` — verbatim, gated on the run that produced it:
+    /// a superseded live run cannot write into a newer run's console.
+    pub fn apply_build_event(&mut self, build: &BuildID, event: BuildEvent) {
+        let Some(run) = self.active_run.as_ref() else { return };
+        if &run.build != build || !self.live.accepts_active_result(run.token) {
+            return;
+        }
         match event {
             BuildEvent::Log(entry) => self.build_log_text.push_str(&entry.text),
             BuildEvent::Issue(record) => self.build_issues.push(record),
@@ -3660,16 +4143,83 @@ impl WorkspaceModel {
     }
 
     /// Terminal mapping + `switchToPDFOnBuild` / `jumpToCursorAfterBuild`
-    /// follow-ups. Returns `Some(pdf_path)` when the UI should also load the
-    /// built PDF (it needs the absolute path).
+    /// follow-ups. The scheduler is fed first — a superseded or orphaned
+    /// run still releases the slot and may dispatch queued work — while a
+    /// stale or superseded result never publishes. Returns `Some(pdf_path)`
+    /// when the UI should also load the built PDF (absolute path).
     pub fn apply_build_finished(
         &mut self,
+        build: BuildID,
         outcome: Result<BuildOutcome, String>,
         output_pdf: &str,
-        switch_to_pdf: bool,
-        jump_to_cursor: bool,
+        store: &SettingsStore,
+        language: &'static str,
     ) -> Option<PathBuf> {
-        self.active_build_id = None;
+        // Identify the finishing run — the current one, or an orphan whose
+        // completion must still free the scheduler slot.
+        let (run, current) = if self.active_run.as_ref().map(|r| &r.build) == Some(&build) {
+            (self.active_run.take().unwrap(), true)
+        } else if let Some(pos) = self.orphaned_runs.iter().position(|r| r.build == build) {
+            (self.orphaned_runs.remove(pos), false)
+        } else {
+            // Unknown or already-completed run — nothing to free, nothing
+            // to publish.
+            return None;
+        };
+        let mut follow_up = Vec::new();
+        let completion = if self.live.active() == Some(run.token) {
+            let (status, requests) = self.live.completed(
+                run.token,
+                self.live_now_ms(),
+                self.live_composing.get(),
+            );
+            follow_up = requests;
+            Some(status)
+        } else {
+            None
+        };
+        let superseded = matches!(completion, Some(LiveCompletion::Superseded(_)));
+        let published = if current {
+            self.publish_build_outcome(&run, outcome, output_pdf, superseded, store)
+        } else {
+            // Invalidated run draining late: the busy flag still belongs
+            // to it — release only that so follow-up builds are not stuck
+            // on `is_building`. Nothing from the old context publishes.
+            if self.is_building() {
+                self.restore_retained_state();
+            }
+            None
+        };
+        self.dispatch_live_requests(follow_up, store, language);
+        published
+    }
+
+    /// Applies the finished run's outcome to build state/UI-visible fields.
+    /// A superseded run — newer edits arrived — is short-circuited before
+    /// any issues/log/state mutation: its artifact, errors and binding
+    /// must never reach the UI; the last good PDF stays.
+    fn publish_build_outcome(
+        &mut self,
+        run: &ActiveRun,
+        outcome: Result<BuildOutcome, String>,
+        output_pdf: &str,
+        superseded: bool,
+        store: &SettingsStore,
+    ) -> Option<PathBuf> {
+        if superseded {
+            self.restore_last_succeeded();
+            return None;
+        }
+        // Live runs never steal the panel or jump on the manual-build
+        // settings — cursor following is opt-in via its own preference.
+        let (switch_to_pdf, jump_to_cursor) = if run.live.is_some() {
+            (false, store.live_compile_follow_cursor())
+        } else {
+            (
+                store.switch_to_pdf_on_build(),
+                store.jump_to_cursor_after_build(),
+            )
+        };
         match outcome {
             Ok(outcome) => {
                 self.build_issues = outcome.issues.clone();
@@ -3689,6 +4239,9 @@ impl WorkspaceModel {
                             pdf: pdf.into(),
                             log: self.build_log_text.clone(),
                         };
+                        self.last_succeeded = Some(self.build_state.clone());
+                        // The artifact path is the live output for a live
+                        // run, the sibling PDF otherwise.
                         self.latest_built_pdf_name = Some(output_pdf.to_string());
                         if let Some(root) = self.project_url.clone() {
                             let pdf_url = root.join(output_pdf);
@@ -3704,7 +4257,8 @@ impl WorkspaceModel {
                         }
                     }
                     BuildLifecycle::Cancelled { .. } => {
-                        self.build_state = WorkspaceBuildState::Failed("Build cancelled.".into());
+                        self.build_state =
+                            WorkspaceBuildState::Failed("Build cancelled.".into());
                     }
                     BuildLifecycle::Failed { exit_code, .. } => {
                         self.build_state = WorkspaceBuildState::Failed(format!(
@@ -3720,10 +4274,41 @@ impl WorkspaceModel {
                 }
             }
             Err(e) => {
+                // Infra/validation failure — no process ran, so the
+                // error itself is the log. Manual runs surface it in the
+                // console; a live failure never steals the panel or the
+                // selected section.
+                self.build_log_text = e.clone();
                 self.build_state = WorkspaceBuildState::Failed(e);
+                if run.live.is_none() {
+                    self.console_section = ConsoleSection::Log;
+                    self.bottom_panel_visible = true;
+                }
             }
         }
         None
+    }
+
+    /// Returns the viewer to the last good PDF after a superseded or
+    /// cancelled live run — the state `apply_build_finished` would have
+    /// clobbered.
+    fn restore_last_succeeded(&mut self) {
+        if let Some(state) = self.last_succeeded.clone() {
+            self.build_state = state;
+        } else {
+            self.build_state = WorkspaceBuildState::Failed("Build superseded.".into());
+        }
+    }
+
+    /// Idle state after a retired run drains — the last good PDF when one
+    /// exists, otherwise the pre-build placeholder. Used where no
+    /// outcome publishes at all (invalidated/orphaned completions).
+    fn restore_retained_state(&mut self) {
+        self.build_state = self.last_succeeded.clone().unwrap_or_else(|| {
+            WorkspaceBuildState::Unavailable(
+                "Build the main document to create its PDF preview.".into(),
+            )
+        });
     }
 
     pub fn cancel_build(&mut self) {
@@ -3756,8 +4341,9 @@ impl WorkspaceModel {
     }
 
     /// `runCustomCommand` (⌃⌘B) — runs the saved command line in the
-    /// terminal; requires the custom-shell acknowledgement.
-    pub fn run_custom_command(&mut self, acknowledged: bool) {
+    /// terminal; requires the custom-shell acknowledgement. `shell` picks
+    /// the `{outdir}` quoting rules.
+    pub fn run_custom_command(&mut self, acknowledged: bool, shell: &str) {
         let template = self.custom_command_text.trim().to_string();
         if template.is_empty() {
             return;
@@ -3770,7 +4356,7 @@ impl WorkspaceModel {
             self.bottom_panel_visible = true;
             return;
         }
-        let command = self.substitute_command_placeholders(&template);
+        let command = self.substitute_command_placeholders(&template, shell);
         if let Some(cb) = &mut self.on_terminal_send {
             cb(command);
         }
@@ -3811,6 +4397,9 @@ impl WorkspaceModel {
             .unwrap_or_else(|| store.default_custom_command());
     }
     pub fn persist_commands(&mut self, store: &mut SettingsStore) {
+        // A command edit retires pending/live work — a run started under
+        // the old command must not publish against the new one.
+        self.invalidate_live();
         let Some(root) = self.project_url.clone() else { return };
         let key = format!("commands.{}", standardize(root).display());
         let mut map = serde_json::Map::new();

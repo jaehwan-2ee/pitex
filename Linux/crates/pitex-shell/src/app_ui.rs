@@ -113,6 +113,9 @@ pub struct UiHandles {
     pub build_button: RefCell<Option<gtk4::Button>>,
     pub build_status: RefCell<Option<gtk4::Label>>,
     pub header_build_button: RefCell<Option<gtk4::Button>>,
+    /// Live-compile toggle next to the build button — mirrors
+    /// `live_compile_enabled` and retires live work immediately on toggle.
+    pub live_toggle: RefCell<Option<gtk4::ToggleButton>>,
     pub build_command_entry: RefCell<Option<gtk4::Entry>>,
     pub custom_command_entry: RefCell<Option<gtk4::Entry>>,
     pub console_section_dropdown: RefCell<Option<gtk4::DropDown>>,
@@ -324,6 +327,9 @@ impl AppState {
     fn new(store: SettingsStore, tx: Sender<WorkspaceMessage>, app_version: String) -> Self {
         let mut model = WorkspaceModel::new();
         model.set_event_sink(tx.clone());
+        model.set_live_clock(std::rc::Rc::new(|| {
+            (glib::monotonic_time().max(0) as u64) / 1_000
+        }));
         model.load_recents(&store);
         let appearance = AppearanceSettings::new(store.prefs());
         let language = resolve_language(appearance.language);
@@ -416,6 +422,7 @@ impl AppState {
     pub fn reload_imported_settings(&mut self) {
         self.store.reload();
         self.appearance.reload(self.store.prefs());
+        self.apply_live_settings();
     }
 
     /// Wire `WorkspaceModel.on_*` callbacks into the `Rc` side-effect cells.
@@ -898,6 +905,12 @@ impl AppState {
         if let Some(session) = self.active_session.clone() {
             self.model.document_snapshot = Some(session.snapshot());
         }
+        // Live compile — real text changes re-arm the debounce; saves and
+        // snapshot republishes carry the same content hash and skip it.
+        let requests = self.model.note_source_edit(&self.store);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.arm_live_timer();
         // Structure parse is debounced — it re-parses the whole document
         // and ran on every keystroke.
         self.schedule_structure_refresh();
@@ -905,6 +918,42 @@ impl AppState {
         self.model.sync_selection_attachment();
         self.schedule_autosave();
         self.schedule_rehighlight();
+    }
+
+    /// (Re)arm the live-compile debounce. The delay comes from the
+    /// scheduler's pending deadline — an IME composition or an in-flight
+    /// run retries at the scheduler's bounded rate instead of dropping
+    /// the edit.
+    fn arm_live_timer(&mut self) {
+        LIVE_SOURCE.with(|s| {
+            if let Some(id) = s.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let Some(delay) = self.model.live_poll_delay(composing) else {
+            return;
+        };
+        let id = glib::timeout_add_local_once(
+            Duration::from_millis(delay.max(1)),
+            live_timer_fire,
+        );
+        LIVE_SOURCE.with(|s| *s.borrow_mut() = Some(id));
+    }
+
+    /// Pushes live-compile settings into the scheduler and performs any
+    /// resulting requests — used by the settings rows, the toolbar toggle
+    /// and a settings import.
+    pub fn apply_live_settings(&mut self) {
+        let requests = self.model.sync_live_settings(&self.store);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.arm_live_timer();
+        self.refresh_build_ui();
     }
 
     /// `scheduleAutosave` — every edit cancels the pending timer and re-arms
@@ -1662,7 +1711,8 @@ impl AppState {
 
     pub fn run_custom_command_action(&mut self) {
         let acknowledged = self.store.settings.build.custom_shell_acknowledged;
-        self.model.run_custom_command(acknowledged);
+        let shell = self.store.custom_shell_executable();
+        self.model.run_custom_command(acknowledged, &shell);
         self.model.console_section = ConsoleSection::Terminal;
         self.refresh_console_visibility();
     }
@@ -3143,6 +3193,12 @@ impl AppState {
                 });
                 b.set_sensitive(building || self.model.build_unavailable_reason().is_none());
             }
+            if let Some(t) = ui.live_toggle.borrow().as_ref() {
+                let enabled = self.store.live_compile_enabled();
+                if t.is_active() != enabled {
+                    t.set_active(enabled);
+                }
+            }
             if let Some(label) = ui.build_status.borrow().as_ref() {
                 label.set_text(&match &self.model.build_state {
                     WorkspaceBuildState::Building => tr(self.language, "build.running"),
@@ -3865,8 +3921,8 @@ impl AppState {
                     }
                 }
             }
-            WorkspaceMessage::BuildEvent(event) => {
-                self.model.apply_build_event(event);
+            WorkspaceMessage::BuildEvent { build, event } => {
+                self.model.apply_build_event(&build, event);
                 if !self.build_ui_pending.replace(true) {
                     glib::timeout_add_local_once(Duration::from_millis(50), || {
                         STATE.with(|slot| {
@@ -3879,15 +3935,32 @@ impl AppState {
                     });
                 }
             }
-            WorkspaceMessage::BuildFinished { outcome, output_pdf } => {
+            WorkspaceMessage::BuildFinished {
+                build,
+                outcome,
+                output_pdf,
+            } => {
+                // The scheduler's completion gate must see the CURRENT
+                // IME state — a pending edit may not dispatch while the
+                // user is composing.
+                self.model.live_composing.set(
+                    self.editor
+                        .as_ref()
+                        .map(|e| e.has_marked_text())
+                        .unwrap_or(false),
+                );
                 self.model.apply_build_finished(
+                    build,
                     outcome,
                     &output_pdf,
-                    self.store.switch_to_pdf_on_build(),
-                    self.store.jump_to_cursor_after_build(),
+                    &self.store,
+                    self.language,
                 );
                 self.refresh_build_ui();
                 self.refresh_pdf_ui();
+                // A completed run may leave a newer pending edit waiting
+                // for its deadline.
+                self.arm_live_timer();
             }
             WorkspaceMessage::ForwardResult(result) => {
                 self.model.apply_forward_result(result);
@@ -3973,16 +4046,27 @@ impl AppState {
                 }
                 self.refresh_remote_status();
             }
-            WorkspaceMessage::RemoteBuildPrepFailed(problem) => {
-                // `prepareRemoteBuild` — the build ends before the executor
-                // ran; the message lands in the log console.
-                self.model.active_build_id = None;
-                self.model.build_state = WorkspaceBuildState::Failed(problem.clone());
-                self.model.build_log_text = problem;
-                self.model.console_section = ConsoleSection::Log;
-                self.model.bottom_panel_visible = true;
+            WorkspaceMessage::RemoteBuildPrepFailed { build, problem } => {
+                // `prepareRemoteBuild` — the run ends before the executor
+                // ran. Error publication lives in the model (a live
+                // failure never steals the console); here only the IME
+                // state is current so the completion gate is right.
+                self.model.live_composing.set(
+                    self.editor
+                        .as_ref()
+                        .map(|e| e.has_marked_text())
+                        .unwrap_or(false),
+                );
+                self.model.apply_build_finished(
+                    build,
+                    Err(problem),
+                    "",
+                    &self.store,
+                    self.language,
+                );
                 self.refresh_build_ui();
                 self.refresh_console_visibility();
+                self.arm_live_timer();
             }
             WorkspaceMessage::GitRefreshed(result) => {
                 if self.model.git_refresh_root.borrow_mut().take() != self.model.project_url {
@@ -4070,6 +4154,9 @@ thread_local! {
     /// The pending autosave `glib` source — removed and re-armed on every
     /// edit, which is the `autosaveTask?.cancel()` half of Swift's debounce.
     static AUTOSAVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// The pending live-compile debounce source — re-armed on every real
+    /// edit and after each fire/completion until no work is pending.
+    static LIVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
     /// Resolved UI language for `a11y` — readable without borrowing state.
     static LANG: Cell<&'static str> = const { Cell::new("en") };
     /// Pending post-edit re-highlight / structure-refresh sources.
@@ -4082,6 +4169,38 @@ thread_local! {
     static SCHEME_PATH_ADDED: Cell<bool> = const { Cell::new(false) };
     /// A selection-sync idle is queued (caret moves set two marks).
     static SELECTION_SYNC_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// One firing of the live-compile debounce: polls the scheduler and
+/// performs whatever it asks (start the newest revision). A borrowed
+/// state re-queues shortly — the edit is held, never dropped.
+fn live_timer_fire() {
+    LIVE_SOURCE.with(|s| s.borrow_mut().take());
+    let borrowed = STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else { return false };
+        let Ok(mut st) = state.try_borrow_mut() else { return true };
+        st.live_timer_attempt();
+        false
+    });
+    if borrowed {
+        glib::timeout_add_local_once(Duration::from_millis(150), live_timer_fire);
+    }
+}
+
+impl AppState {
+    fn live_timer_attempt(&mut self) {
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let requests = self.model.poll_live(composing);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.refresh_build_ui();
+        self.arm_live_timer();
+    }
 }
 
 /// One firing of the debounced remote push (`schedulePush`): uploads when
@@ -5821,6 +5940,24 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     }
     ui.header_build_button.replace(Some(build_btn.clone()));
     strip.append(&build_btn);
+
+    // Live-compile toggle — mirrors `live_compile_enabled`; toggling
+    // retires pending live work and cancels a live run immediately.
+    let live_toggle = gtk4::ToggleButton::new();
+    live_toggle.set_icon_name("media-record-symbolic");
+    compat::initial_tooltip(&live_toggle, &tr(lang, "toolbar.live_compile"));
+    a11y(&live_toggle, "pitex.toolbar.live_compile", "toolbar.live_compile");
+    live_toggle.set_active(state.borrow().store.live_compile_enabled());
+    {
+        let state = state.clone();
+        live_toggle.connect_toggled(move |b| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.store.set_live_compile_enabled(b.is_active());
+            s.apply_live_settings();
+        });
+    }
+    ui.live_toggle.replace(Some(live_toggle.clone()));
+    strip.append(&live_toggle);
 
     root.append(&strip);
 

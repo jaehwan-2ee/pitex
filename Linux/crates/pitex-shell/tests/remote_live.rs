@@ -19,6 +19,10 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Every test in this binary sets process-global `XDG_*` paths — run
+/// them serially so a neighbour can't swap the data store mid-write.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct TempDir(PathBuf);
 
 impl TempDir {
@@ -129,10 +133,12 @@ fn pump(
                 model.git_busy = false;
                 model.git_error = error.clone();
             }
-            WorkspaceMessage::RemoteBuildPrepFailed(problem) => {
+            WorkspaceMessage::RemoteBuildPrepFailed { problem, .. } => {
                 panic!("remote build preparation failed: {problem}");
             }
-            WorkspaceMessage::BuildEvent(event) => model.apply_build_event(event.clone()),
+            WorkspaceMessage::BuildEvent { build, event } => {
+                model.apply_build_event(build, event.clone())
+            }
             _ => {}
         }
         if want(&message) {
@@ -143,6 +149,7 @@ fn pump(
 
 #[test]
 fn live_workspace_round_trip() {
+    let _serial = SERIAL.lock().unwrap();
     let Some(connection) = live_connection() else {
         eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
         return;
@@ -246,12 +253,17 @@ fn live_workspace_round_trip() {
     let message = pump(&mut model, &rx, |m| {
         matches!(m, WorkspaceMessage::BuildFinished { .. })
     });
-    let WorkspaceMessage::BuildFinished { outcome, output_pdf } = message else {
+    let WorkspaceMessage::BuildFinished {
+        build,
+        outcome,
+        output_pdf,
+    } = message
+    else {
         unreachable!()
     };
     let outcome = outcome.unwrap_or_else(|e| panic!("remote build failed: {e}"));
     let pdf = model
-        .apply_build_finished(Ok(outcome), &output_pdf, false, false)
+        .apply_build_finished(build, Ok(outcome), &output_pdf, &store, "en")
         .expect("a successful remote build loads its PDF");
     assert_eq!(pdf, mirror.root().join("main.pdf"));
     assert_eq!(
@@ -262,6 +274,116 @@ fn live_workspace_round_trip() {
     model.close();
 }
 
+/// Live compile over SSH: the debounce takes the 1500 ms remote floor
+/// (not the configured 700), the run executes on the device, and its
+/// isolated output lands under `.pitex-live/` — never beside the source.
+#[test]
+fn live_workspace_live_compile() {
+    let _serial = SERIAL.lock().unwrap();
+    let Some(connection) = live_connection() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let data = TempDir::new("data");
+    std::env::set_var("XDG_DATA_HOME", data.path());
+    std::env::set_var("XDG_CONFIG_HOME", data.join("config"));
+    let mut store = SettingsStore::new(Preferences::standard());
+
+    let remote = TempDir::new("remote-live");
+    write(
+        &remote.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}\n",
+    );
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(connection.clone(), remote.path().to_str().unwrap()),
+        &RemoteMirror::default_store(),
+    )
+    .unwrap();
+    install_engine(&mirror, &connection);
+
+    let mut model = WorkspaceModel::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    model.set_event_sink(tx.clone());
+    model.open(mirror.root(), tx);
+    let message = pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::OpenFinished(_))
+    });
+    let WorkspaceMessage::OpenFinished(result) = message else {
+        unreachable!()
+    };
+    let opened = result.unwrap_or_else(|failure| match failure {
+        pitex_shell::model::OpenFailure::Error(error) => panic!("open failed: {error}"),
+        pitex_shell::model::OpenFailure::RemoteOpen { device, error } => {
+            panic!("remote open failed on {device}: {error}")
+        }
+    });
+    model.apply_open(&mut store, opened);
+    assert!(model.remote.is_some());
+
+    store.set_live_compile_enabled(true);
+    store.set_live_compile_delay_milliseconds(700);
+    store.settings.build.custom_shell_acknowledged = true;
+    // remote-core creates the isolated output directory on the device;
+    // a bare `cp` exercises that setup end to end.
+    model.build_command_text = "cp {file} {outdir}/main.pdf".to_string();
+    // Deterministic clock for the scheduler.
+    let now = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let moved = now.clone();
+    model.set_live_clock(std::rc::Rc::new(move || moved.get()));
+
+    // A real edit notes through the bridge: pending deadline is
+    // now+1500 — the remote floor, not the configured 700.
+    let session = model
+        .registered_sessions
+        .iter()
+        .find(|s| s.path().raw_value() == "main.tex")
+        .expect("main.tex session")
+        .clone();
+    let snap = session.snapshot();
+    session
+        .apply(
+            DocumentMutation::ReplaceRange {
+                utf16_offset: snap.text.encode_utf16().count(),
+                utf16_length: 0,
+                text: "% live remote\n".to_string(),
+            },
+            snap.revision,
+        )
+        .unwrap();
+    model.document_snapshot = Some(session.snapshot());
+    model.note_source_edit(&store);
+    assert_eq!(model.live.pending_deadline(), Some(1_500));
+    // 700 in — the remote floor has not elapsed yet.
+    now.set(700);
+    assert!(model.poll_live(false).is_empty());
+    // At 1500 the live run starts on the device.
+    now.set(1_500);
+    let requests = model.poll_live(false);
+    model.dispatch_live_requests(requests, &store, "en");
+    assert!(model.active_run.as_ref().is_some_and(|r| r.live.is_some()));
+    let message = pump(&mut model, &rx, |m| {
+        matches!(m, WorkspaceMessage::BuildFinished { .. })
+    });
+    let WorkspaceMessage::BuildFinished {
+        build,
+        outcome,
+        output_pdf,
+    } = message
+    else {
+        unreachable!()
+    };
+    let outcome = outcome.unwrap_or_else(|e| panic!("remote live build failed: {e}"));
+    assert_eq!(output_pdf, ".pitex-live/main/main.pdf");
+    model.apply_build_finished(build, Ok(outcome), &output_pdf, &store, "en");
+    // The artifact lives under .pitex-live on the device and was fetched
+    // back into the mirror; the sibling output was never written.
+    assert!(remote.join(".pitex-live/main/main.pdf").exists());
+    assert!(mirror.root().join(".pitex-live/main/main.pdf").exists());
+    assert!(!remote.join("main.pdf").exists());
+    assert!(!mirror.root().join("main.pdf").exists());
+    model.close();
+}
+
 /// The Git pane over SSH — the mirror has no `.git`, so every command the
 /// pane issues must run on the device: a refresh reports the device
 /// repo's status, a stage+commit runs there (the push inside carries the
@@ -269,6 +391,7 @@ fn live_workspace_round_trip() {
 /// the mirror.
 #[test]
 fn live_workspace_git() {
+    let _serial = SERIAL.lock().unwrap();
     let Some(connection) = live_connection() else {
         eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
         return;

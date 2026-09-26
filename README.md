@@ -122,6 +122,31 @@ Settings live under **Settings → Markdown** (right after the renamed
 22.04 and Windows builds don't include the preview yet — they show a
 "not available in this build" note instead.
 
+### Live compile
+
+Toggle **Live Compile** in the toolbar (or **Settings → Compile → Live
+Compile**) and Pitex rebuilds automatically when you pause typing. Each
+live build saves open edited files first — there is no shadow copy —
+then a short debounce decides whether newer edits already superseded it.
+
+- **Idle delay** is configurable from 200 ms to 10 s (default 700 ms).
+  Remote projects compile on the connected device and never go below a
+  1.5 s effective delay.
+- **Isolated output** — live builds write under `.pitex-live/` inside
+  the project root, so regular build artifacts, source discovery, and
+  remote sync stay untouched. A failed or superseded run keeps the last
+  good PDF on screen.
+- **While you keep typing** — a running live build is cancelled and the
+  newest edit wins; a manual build you start yourself always finishes
+  first and is never interrupted by typing.
+- **Custom commands** must keep their output isolated too: add the
+  `{outdir}` placeholder (e.g. `latexmk -pdf -outdir={outdir} {file}`)
+  or the live run stops with an explanatory message. The shipped
+  Tectonic preset is rewritten automatically; manual builds keep their
+  existing behavior.
+- **Follow cursor** (off by default) moves the PDF to the cursor after a
+  successful live build.
+
 ### Forward / Inverse SyncTeX
 
 Source and PDF stay locked together:
