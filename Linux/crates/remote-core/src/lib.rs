@@ -1349,6 +1349,7 @@ impl RemoteSyncRules {
             ".Trash",
             ".git",
             ".hg",
+            ".pitex-live",
             ".svn",
             ".venv",
             "__pycache__",
@@ -1361,6 +1362,13 @@ impl RemoteSyncRules {
         Self::pruned_names().contains(&name)
             || name.starts_with(".pitex-upload.")
             || (name.starts_with('.') && name.contains(".texspark-") && name.ends_with(".tmp"))
+    }
+
+    /// True when any `/`-separated component of `path` is excluded — a
+    /// fetched `.pitex-live/…` output lives in the mirror yet must never
+    /// enter ordinary pull/push planning (manifest or conflicts).
+    pub fn is_excluded_path(path: &str) -> bool {
+        path.split('/').any(Self::is_excluded)
     }
 
     /// A relative path from the remote is only ever used inside the mirror:
@@ -1619,6 +1627,21 @@ pub mod remote_scripts {
     /// is absent); 1 = a symlink, non-directory or unsearchable directory
     /// is in the way — nothing about PATH can be concluded or written.
     const ANCESTRY: &str = r#"a() { q=.; z=$1; while :; do case $z in */*) q=$q/${z%%/*}; z=${z#*/} ;; *) return 0 ;; esac; if [ -L "$q" ]; then return 1; elif [ -d "$q" ]; then [ -x "$q" ] || return 1; elif [ -e "$q" ]; then return 1; else return 2; fi; done; }"#;
+
+    /// Creates build output directories (the live `.pitex-live` tree) on
+    /// the device: `$1` is the remote root, the rest are relative
+    /// directories to `mkdir -p`, each printed as `D/path` once real. `a`
+    /// proves every existing ancestor is a real, searchable directory and
+    /// `[ -L ]` catches a redirected leaf — an output root or child
+    /// symlink, even one pointing inside the project, refuses with
+    /// `R/path` and exit 1 so the caller aborts before the compiler
+    /// writes a byte. A missing ancestor (exit 2) is what `mkdir -p`
+    /// fills in.
+    pub fn make_directories() -> String {
+        format!(
+            "cd -- \"$1\" || exit 3; shift; {ANCESTRY}; for p in \"$@\"; do case $p in ''|..|../*|*/../*|*/..|/*|./*|*/./*|*/.|.) printf 'R/%s\\n' \"$p\"; exit 1 ;; esac; a \"$p\" || [ $? = 2 ] || {{ printf 'R/%s\\n' \"$p\"; exit 1; }}; [ -L \"$p\" ] && {{ printf 'R/%s\\n' \"$p\"; exit 1; }}; mkdir -p -- \"$p\" 2>/dev/null || {{ printf 'R/%s\\n' \"$p\"; exit 1; }}; printf 'D/%s\\n' \"$p\"; done"
+        )
+    }
 
     /// `hash  ./path` for every mirrored file under $1. A file missing here
     /// is only a deletion candidate (`probe` decides).
@@ -1913,6 +1936,15 @@ impl RemoteSync {
     /// Remote → local.
     pub fn pull(&self) -> Result<SyncReport, SshError> {
         let mut inner = lock(&self.inner);
+        // Excluded subtrees (`.pitex-live`, `.git`…) can sit in a manifest
+        // or conflict list written before the rule existed: planning must
+        // not delete, upload or conflict with them.
+        inner
+            .manifest
+            .retain(|path, _| !RemoteSyncRules::is_excluded_path(path));
+        inner
+            .conflicts
+            .retain(|path| !RemoteSyncRules::is_excluded_path(path));
         let listing = self.client.run_checked(
             &remote_scripts::hash_tree(),
             &[self.remote_root().to_string()],
@@ -2065,6 +2097,13 @@ impl RemoteSync {
     /// the moment of the move; otherwise it is a conflict.
     pub fn push(&self) -> Result<SyncReport, SshError> {
         let mut inner = lock(&self.inner);
+        // See pull(): excluded subtrees never enter ordinary planning.
+        inner
+            .manifest
+            .retain(|path, _| !RemoteSyncRules::is_excluded_path(path));
+        inner
+            .conflicts
+            .retain(|path| !RemoteSyncRules::is_excluded_path(path));
         let changed: Vec<String> = {
             let local = self.local_hashes();
             let mut changed: Vec<String> = local
@@ -2154,7 +2193,12 @@ impl RemoteSync {
             for path in &safe {
                 let Some(file) = staged.get(path) else { continue };
                 sync.place(&file.url, path)?;
-                inner.manifest.insert(path.clone(), file.hash.clone());
+                // Excluded outputs (`.pitex-live/…`) are mirrored and
+                // returned but never recorded — ordinary sync must not
+                // track them as synced files.
+                if !RemoteSyncRules::is_excluded_path(path) {
+                    inner.manifest.insert(path.clone(), file.hash.clone());
+                }
                 inner.conflicts.remove(path);
                 fetched.push(path.clone());
             }
@@ -2785,6 +2829,10 @@ pub struct RemoteBuildExecutor {
     outputs: Mutex<Vec<String>>,
     /// The output a successful stage must deliver (the target's PDF).
     required_output: Mutex<Option<String>>,
+    /// `required`'s directory — the isolated `.pitex-live/<job>` tree to
+    /// create on the device before the compiler runs; None for manual
+    /// builds writing beside the sources.
+    output_directory: Mutex<Option<String>>,
     running: Mutex<HashMap<String, Arc<CancelScope>>>,
 }
 
@@ -2794,14 +2842,126 @@ impl RemoteBuildExecutor {
             sync,
             outputs: Mutex::new(Vec::new()),
             required_output: Mutex::new(None),
+            output_directory: Mutex::new(None),
             running: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn set_outputs(&self, paths: Vec<String>, required: Option<String>) {
         *lock(&self.outputs) = paths;
+        // Live builds only: a manual nested target (manuscript/main.pdf)
+        // keeps its in-place layout untouched.
+        *lock(&self.output_directory) = required
+            .as_deref()
+            .filter(|path| {
+                path.starts_with(&format!("{}/", build_core::BuildTarget::LIVE_DIRECTORY_NAME))
+            })
+            .and_then(|path| path.rfind('/').map(|index| path[..index].to_string()))
+            .filter(|directory| RemoteSyncRules::is_safe_relative_path(directory));
         *lock(&self.required_output) = required;
     }
+
+    /// The directory args for `remote_scripts::make_directories`, or None
+    /// when the build writes beside the sources (no output directory).
+    /// The orchestrator already prepared `output_directory` locally with
+    /// the nested include/aux layout, so its directories are replayed
+    /// verbatim; a standalone executor without that prepared tree falls
+    /// back to the mirror's and the source directory's `.tex` parents.
+    /// Every argument is a project-relative path revalidated against the
+    /// sync rules.
+    fn output_setup_directories(&self, request: &BuildProcessRequest) -> Option<Vec<String>> {
+        let output = lock(&self.output_directory).clone()?;
+        if !RemoteSyncRules::is_safe_relative_path(&output) {
+            return None;
+        }
+        let output_root = join_relative(&self.sync.mirror.root(), &output);
+        let relative = match unredirected_directory(&output_root, &self.sync.mirror.root()) {
+            Some(prepared) => scanned_directories(&prepared).0,
+            None => {
+                let mut found = scanned_directories(&self.sync.mirror.root()).1;
+                if request.source_directory != self.sync.mirror.root() {
+                    found.extend(scanned_directories(&request.source_directory).1);
+                }
+                found
+            }
+        };
+        let mut seen: HashSet<String> = [output.clone()].into_iter().collect();
+        let mut directories = vec![output.clone()];
+        for name in relative {
+            let path = format!("{output}/{name}");
+            if RemoteSyncRules::is_safe_relative_path(&path) && seen.insert(path.clone()) {
+                directories.push(path);
+            }
+        }
+        Some(directories)
+    }
+}
+
+/// `url` under `anchor`, `/`-separated — None when equal or outside.
+fn relative_path(url: &Path, anchor: &Path) -> Option<String> {
+    let relative = url.strip_prefix(anchor).ok()?;
+    if relative.as_os_str().is_empty() {
+        return None;
+    }
+    relative
+        .components()
+        .map(|c| c.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join("/"))
+}
+
+/// `url` only when every component below `anchor` exists as a real,
+/// non-symlinked directory — a redirected prepared output tree is never
+/// replayed onto the device.
+fn unredirected_directory(url: &Path, anchor: &Path) -> Option<PathBuf> {
+    let relative = url.strip_prefix(anchor).ok()?;
+    let mut current = anchor.to_path_buf();
+    for component in relative {
+        current.push(component);
+        let metadata = std::fs::symlink_metadata(&current).ok()?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return None;
+        }
+    }
+    Some(current)
+}
+
+/// One pass below `root`: every real directory (`.0`) plus those
+/// containing `.tex` files (`.1`), `/`-separated relative. Symlinked
+/// directories are neither descended nor listed; hidden and
+/// sync-excluded names skip.
+fn scanned_directories(root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut all = Vec::new();
+    let mut tex_parents = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else { continue };
+        let mut has_tex = false;
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') || RemoteSyncRules::is_excluded(&name) {
+                    continue;
+                }
+                stack.push(entry.path());
+            } else if kind.is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("tex"))
+            {
+                has_tex = true;
+            }
+        }
+        if let Some(relative) = relative_path(&directory, root) {
+            all.push(relative.clone());
+            if has_tex {
+                tex_parents.push(relative);
+            }
+        }
+    }
+    (all, tex_parents)
 }
 
 impl BuildProcessExecuting for RemoteBuildExecutor {
@@ -2872,15 +3032,66 @@ impl BuildProcessExecuting for RemoteBuildExecutor {
                 .chain(command)
                 .collect()
         };
+        // The cancel scope is registered BEFORE the first output callback
+        // so a cancel issued by that callback lands here; the check after
+        // the callback then stops all remote work — no setup, no engine.
+        let scope = Arc::new(CancelScope::new());
+        lock(&self.running).insert(request.build_id.raw_value.clone(), scope.clone());
         if request.stage_index == 0 {
             output(BuildProcessOutput {
                 channel: BuildLogChannel::System,
                 bytes: format!("Building on {device}: {directory}\n").into_bytes(),
             });
         }
-        let scope = Arc::new(CancelScope::new());
-        lock(&self.running).insert(request.build_id.raw_value.clone(), scope.clone());
+        if scope.is_cancelled() {
+            lock(&self.running).remove(&request.build_id.raw_value);
+            return Ok(BuildProcessResult { exit_code: 130 });
+        }
         let client = self.sync.client.clone();
+        // The isolated output tree (never files) is created on the device
+        // under this build's cancel scope, so a cancel during setup never
+        // reaches the compiler. A refused path — a symlink redirecting
+        // the live root or a child, even inside the project — fails the
+        // stage like a failed launch.
+        if let Some(directories) = self.output_setup_directories(request) {
+            let mut arguments = vec![remote_root.clone()];
+            arguments.extend(directories);
+            let mut transcript = String::new();
+            let prepared = client.stream(
+                &remote_scripts::make_directories(),
+                &arguments,
+                false,
+                &scope,
+                &mut |data: &[u8], _| {
+                    transcript.push_str(&String::from_utf8_lossy(data));
+                },
+            );
+            if scope.is_cancelled() || matches!(prepared, Err(SshError::Cancelled)) {
+                lock(&self.running).remove(&request.build_id.raw_value);
+                return Ok(BuildProcessResult { exit_code: 130 });
+            }
+            match prepared {
+                Ok(0) => {}
+                Ok(_) => {
+                    let detail = transcript
+                        .lines()
+                        .find_map(|line| line.strip_prefix("R/"))
+                        .map(|path| format!(": {path} redirected"))
+                        .unwrap_or_default();
+                    lock(&self.running).remove(&request.build_id.raw_value);
+                    return Err(BuildProcessExecutorError::LaunchFailed(format!(
+                        "The remote build output directory could not be prepared{detail}."
+                    )));
+                }
+                Err(error) => {
+                    lock(&self.running).remove(&request.build_id.raw_value);
+                    return Err(BuildProcessExecutorError::LaunchFailed(error.to_string()));
+                }
+            }
+        } else if scope.is_cancelled() {
+            lock(&self.running).remove(&request.build_id.raw_value);
+            return Ok(BuildProcessResult { exit_code: 130 });
+        }
         let mut arguments = vec![directory];
         arguments.extend(words);
         let mut emit = |data: &[u8], is_error: bool| {

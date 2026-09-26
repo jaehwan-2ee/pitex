@@ -113,6 +113,9 @@ pub struct UiHandles {
     pub build_button: RefCell<Option<gtk4::Button>>,
     pub build_status: RefCell<Option<gtk4::Label>>,
     pub header_build_button: RefCell<Option<gtk4::Button>>,
+    /// Live-compile toggle next to the build button — mirrors
+    /// `live_compile_enabled` and retires live work immediately on toggle.
+    pub live_toggle: RefCell<Option<gtk4::ToggleButton>>,
     pub build_command_entry: RefCell<Option<gtk4::Entry>>,
     pub custom_command_entry: RefCell<Option<gtk4::Entry>>,
     pub console_section_dropdown: RefCell<Option<gtk4::DropDown>>,
@@ -285,6 +288,12 @@ pub struct AppState {
     pub pdf_auto_fit: bool,
     /// Hash of the PDF byte buffer currently loaded in `pdf`.
     pub pdf_hash: u64,
+    /// Bumps on every workspace open AND close — reopening the same
+    /// project must reset the viewport even for identical PDF bytes.
+    pub workspace_epoch: u64,
+    /// `(workspace_epoch, retained.source)` of the rendered document —
+    /// viewport is preserved only while both match.
+    pdf_identity: Option<(u64, String)>,
     /// Set by the coordinator's activity callback; consumed after `handle`.
     pub agent_activity_pending: Rc<Cell<bool>>,
     /// Staged for the coordinator's persist-dirty-sessions callback.
@@ -324,6 +333,9 @@ impl AppState {
     fn new(store: SettingsStore, tx: Sender<WorkspaceMessage>, app_version: String) -> Self {
         let mut model = WorkspaceModel::new();
         model.set_event_sink(tx.clone());
+        model.set_live_clock(std::rc::Rc::new(|| {
+            (glib::monotonic_time().max(0) as u64) / 1_000
+        }));
         model.load_recents(&store);
         let appearance = AppearanceSettings::new(store.prefs());
         let language = resolve_language(appearance.language);
@@ -371,6 +383,8 @@ impl AppState {
             agent_config_generation: Cell::new(0),
             pdf_auto_fit: true,
             pdf_hash: 0,
+            workspace_epoch: 0,
+            pdf_identity: None,
             agent_activity_pending: Rc::new(Cell::new(false)),
             persist_result: Rc::new(RefCell::new(None)),
             context_cell: Rc::new(RefCell::new(Default::default())),
@@ -416,6 +430,7 @@ impl AppState {
     pub fn reload_imported_settings(&mut self) {
         self.store.reload();
         self.appearance.reload(self.store.prefs());
+        self.apply_live_settings();
     }
 
     /// Wire `WorkspaceModel.on_*` callbacks into the `Rc` side-effect cells.
@@ -576,11 +591,15 @@ impl AppState {
         desc
     }
 
-    /// Name of the rendered PDF, matching the built target (or active doc).
+    /// Name of the rendered PDF — the basename; the artifact's full
+    /// project-relative path stays in `latest_built_pdf_name` for fetch
+    /// and download.
     pub fn pdf_display_name(&self) -> String {
         self.model
             .latest_built_pdf_name
-            .clone()
+            .as_deref()
+            .and_then(|n| std::path::Path::new(n).file_name())
+            .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "document.pdf".into())
     }
 
@@ -898,6 +917,12 @@ impl AppState {
         if let Some(session) = self.active_session.clone() {
             self.model.document_snapshot = Some(session.snapshot());
         }
+        // Live compile — real text changes re-arm the debounce; saves and
+        // snapshot republishes carry the same content hash and skip it.
+        let requests = self.model.note_source_edit(&self.store);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.arm_live_timer();
         // Structure parse is debounced — it re-parses the whole document
         // and ran on every keystroke.
         self.schedule_structure_refresh();
@@ -905,6 +930,42 @@ impl AppState {
         self.model.sync_selection_attachment();
         self.schedule_autosave();
         self.schedule_rehighlight();
+    }
+
+    /// (Re)arm the live-compile debounce. The delay comes from the
+    /// scheduler's pending deadline — an IME composition or an in-flight
+    /// run retries at the scheduler's bounded rate instead of dropping
+    /// the edit.
+    fn arm_live_timer(&mut self) {
+        LIVE_SOURCE.with(|s| {
+            if let Some(id) = s.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let Some(delay) = self.model.live_poll_delay(composing) else {
+            return;
+        };
+        let id = glib::timeout_add_local_once(
+            Duration::from_millis(delay.max(1)),
+            live_timer_fire,
+        );
+        LIVE_SOURCE.with(|s| *s.borrow_mut() = Some(id));
+    }
+
+    /// Pushes live-compile settings into the scheduler and performs any
+    /// resulting requests — used by the settings rows, the toolbar toggle
+    /// and a settings import.
+    pub fn apply_live_settings(&mut self) {
+        let requests = self.model.sync_live_settings(&self.store);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.arm_live_timer();
+        self.refresh_build_ui();
     }
 
     /// `scheduleAutosave` — every edit cancels the pending timer and re-arms
@@ -1662,7 +1723,8 @@ impl AppState {
 
     pub fn run_custom_command_action(&mut self) {
         let acknowledged = self.store.settings.build.custom_shell_acknowledged;
-        self.model.run_custom_command(acknowledged);
+        let shell = self.store.custom_shell_executable();
+        self.model.run_custom_command(acknowledged, &shell);
         self.model.console_section = ConsoleSection::Terminal;
         self.refresh_console_visibility();
     }
@@ -1815,6 +1877,7 @@ impl AppState {
         // `agent?.shutdown(); agent = nil` — terminate the agent process with
         // the project; a reopen builds a fresh coordinator and subprocess.
         self.shutdown_agent();
+        self.workspace_epoch = self.workspace_epoch.wrapping_add(1);
         self.model.close();
         self.refresh_phase();
     }
@@ -3143,6 +3206,12 @@ impl AppState {
                 });
                 b.set_sensitive(building || self.model.build_unavailable_reason().is_none());
             }
+            if let Some(t) = ui.live_toggle.borrow().as_ref() {
+                let enabled = self.store.live_compile_enabled();
+                if t.is_active() != enabled {
+                    t.set_active(enabled);
+                }
+            }
             if let Some(label) = ui.build_status.borrow().as_ref() {
                 label.set_text(&match &self.model.build_state {
                     WorkspaceBuildState::Building => tr(self.language, "build.running"),
@@ -3183,33 +3252,52 @@ impl AppState {
     // ── refresh: PDF / synctex ─────────────────────────────────────────────
 
     pub fn refresh_pdf_ui(&mut self) {
-        // Hash computed once at `Succeeded` construction — hashing the PDF
-        // bytes per refresh (every keystroke) was an O(pdf) pass.
-        let pdf_hash = match &self.model.build_state {
-            WorkspaceBuildState::Succeeded { hash, .. } => Some(*hash),
-            _ => None,
-        };
-        match (pdf_hash, &self.pdf) {
-            (Some(hash), _) => {
-                let WorkspaceBuildState::Succeeded { pdf: data, .. } =
-                    &self.model.build_state
-                else {
-                    return;
-                };
-                if self.pdf_hash != hash {
+        // The viewer renders the retained artifact — decoupled from the
+        // latest run's status, so a failed/superseded live build never
+        // blanks the last good PDF.
+        let retained = self.model.retained_pdf.clone();
+        // Viewport is preserved only while the workspace AND the resolved
+        // source target are the same — a different main or a reopen
+        // resets page/zoom/scroll even for byte-identical PDFs. Identity
+        // is explicit: the model can swap target and artifact in one
+        // mutation without an observable `retained == None` between.
+        let identity = retained
+            .as_ref()
+            .map(|r| (self.workspace_epoch, r.source.clone()));
+        match retained {
+            Some(retained) => {
+                if self.pdf_identity != identity {
+                    self.pdf_page = 0;
+                    self.pdf_auto_fit = true;
                     self.pdf = None;
-                    self.pdf_hash = hash;
+                    self.pdf_hash = 0;
                     self.rendered_pdf_key.set(0);
-                    self.pdf_renderer.load(hash, data.clone());
+                    self.pdf_identity = identity;
+                    // A different target's raster must not linger as the
+                    // placeholder for the new document, and its scroll
+                    // offset must not carry over either — a cleared
+                    // picture keeps the scroller's last adjustments.
                     UI.with(|ui| {
                         if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
                             picture.set_paintable(None::<&gtk4::gdk::Paintable>);
                         }
+                        if let Some(scroll) = ui.pdf_scroll.borrow().as_ref() {
+                            for adj in [scroll.hadjustment(), scroll.vadjustment()] {
+                                adj.set_value(adj.lower());
+                            }
+                        }
                     });
-                    self.pdf_page = 0;
-                    self.pdf_auto_fit = true;
-                    // `clearSyncHighlight()` on document replacement — the old
-                    // page's marker must not linger over the new document.
+                }
+                if self.pdf_hash != retained.hash {
+                    self.pdf = None;
+                    self.pdf_hash = retained.hash;
+                    self.rendered_pdf_key.set(0);
+                    self.pdf_renderer.load(retained.hash, retained.pdf.clone());
+                    // Same target: the old raster stays on screen until
+                    // the new one is painted — no blank flash — and the
+                    // user's page, zoom mode and scroll position carry
+                    // over (the page is clamped in PdfLoaded if the
+                    // document shrank).
                     self.clear_synctex_highlight();
                 }
                 UI.with(|ui| {
@@ -3237,25 +3325,29 @@ impl AppState {
                         name.set_text(&self.pdf_display_name());
                     }
                 });
-                if self.store.switch_to_pdf_on_build() && !self.model.inspector_visible {
-                    self.model.inspector_visible = true;
-                    self.refresh_console_visibility();
-                }
                 self.render_pdf_page();
             }
-            (None, _) => {
+            None => {
                 if self.pdf_hash != 0 {
                     self.pdf = None;
                     self.pdf_hash = 0;
                     self.rendered_pdf_key.set(0);
                     self.pdf_renderer.load(0, std::sync::Arc::from([]));
                 }
+                // No artifact on screen — viewport and identity reset so a
+                // later document starts from page 1 fit-to-width.
+                self.pdf_page = 0;
+                self.pdf_auto_fit = true;
+                self.pdf_identity = None;
                 UI.with(|ui| {
                     if let Some(p) = ui.pdf_empty.borrow().as_ref() {
                         p.set_visible(true);
                     }
                     if let Some(s) = ui.pdf_scroll.borrow().as_ref() {
                         s.set_visible(false);
+                        for adj in [s.hadjustment(), s.vadjustment()] {
+                            adj.set_value(adj.lower());
+                        }
                     }
                     if let Some(t) = ui.pdf_toolbar.borrow().as_ref() {
                         t.set_visible(false);
@@ -3798,6 +3890,7 @@ impl AppState {
             WorkspaceMessage::OpenFinished(result) => match result {
                 Ok(opened) => {
                     let session = opened.session.clone();
+                    self.workspace_epoch = self.workspace_epoch.wrapping_add(1);
                     self.model.apply_open(&mut self.store, opened);
                     self.attach_session(session);
                     self.install_watchers();
@@ -3838,6 +3931,14 @@ impl AppState {
             },
             WorkspaceMessage::PdfLoaded { hash, info } => {
                 if self.pdf_hash == hash {
+                    // Clamp the preserved page when the new document is
+                    // shorter — a live rebuild can drop pages.
+                    if let Some(info) = &info {
+                        let last = info.page_count().saturating_sub(1);
+                        if self.pdf_page > last {
+                            self.pdf_page = last;
+                        }
+                    }
                     self.pdf = info;
                     self.rendered_pdf_key.set(0);
                     self.render_pdf_page();
@@ -3865,8 +3966,8 @@ impl AppState {
                     }
                 }
             }
-            WorkspaceMessage::BuildEvent(event) => {
-                self.model.apply_build_event(event);
+            WorkspaceMessage::BuildEvent { build, event } => {
+                self.model.apply_build_event(&build, event);
                 if !self.build_ui_pending.replace(true) {
                     glib::timeout_add_local_once(Duration::from_millis(50), || {
                         STATE.with(|slot| {
@@ -3879,27 +3980,54 @@ impl AppState {
                     });
                 }
             }
-            WorkspaceMessage::BuildFinished { outcome, output_pdf } => {
+            WorkspaceMessage::BuildFinished {
+                build,
+                outcome,
+                output_pdf,
+            } => {
+                // The scheduler's completion gate must see the CURRENT
+                // IME state — a pending edit may not dispatch while the
+                // user is composing.
+                self.model.live_composing.set(
+                    self.editor
+                        .as_ref()
+                        .map(|e| e.has_marked_text())
+                        .unwrap_or(false),
+                );
                 self.model.apply_build_finished(
+                    build,
                     outcome,
                     &output_pdf,
-                    self.store.switch_to_pdf_on_build(),
-                    self.store.jump_to_cursor_after_build(),
+                    &self.store,
+                    self.language,
                 );
                 self.refresh_build_ui();
                 self.refresh_pdf_ui();
+                // A completed run may leave a newer pending edit waiting
+                // for its deadline.
+                self.arm_live_timer();
             }
-            WorkspaceMessage::ForwardResult(result) => {
-                self.model.apply_forward_result(result);
+            WorkspaceMessage::ForwardResult {
+                request,
+                root,
+                pdf,
+                result,
+            } => {
+                self.model.apply_forward_result(request, root, pdf, result);
                 let highlight = self.highlight_cell.borrow_mut().take();
                 if let Some((page, x, y, w, h)) = highlight {
                     self.show_synctex_highlight(page, x, y, w, h);
                 }
                 self.refresh_synctex_status();
             }
-            WorkspaceMessage::InverseResult(result) => {
+            WorkspaceMessage::InverseResult {
+                request,
+                root,
+                pdf,
+                result,
+            } => {
                 if let Some(tx) = self.tx.clone() {
-                    self.model.apply_inverse_result(result, tx);
+                    self.model.apply_inverse_result(request, root, pdf, result, tx);
                 }
                 // `jumpTo(..., highlight: settings.inverseSyncHighlight)` —
                 // same-file inverse navigation lands here; a cross-file jump
@@ -3911,8 +4039,13 @@ impl AppState {
                 }
                 self.refresh_synctex_status();
             }
-            WorkspaceMessage::BindingRefreshed(result) => {
-                self.model.apply_binding_refreshed(result);
+            WorkspaceMessage::BindingRefreshed {
+                id,
+                root,
+                pdf,
+                result,
+            } => {
+                self.model.apply_binding_refreshed(id, root, pdf, result);
                 self.refresh_synctex_status();
             }
             WorkspaceMessage::DiskChanged(path) => {
@@ -3973,16 +4106,27 @@ impl AppState {
                 }
                 self.refresh_remote_status();
             }
-            WorkspaceMessage::RemoteBuildPrepFailed(problem) => {
-                // `prepareRemoteBuild` — the build ends before the executor
-                // ran; the message lands in the log console.
-                self.model.active_build_id = None;
-                self.model.build_state = WorkspaceBuildState::Failed(problem.clone());
-                self.model.build_log_text = problem;
-                self.model.console_section = ConsoleSection::Log;
-                self.model.bottom_panel_visible = true;
+            WorkspaceMessage::RemoteBuildPrepFailed { build, problem } => {
+                // `prepareRemoteBuild` — the run ends before the executor
+                // ran. Error publication lives in the model (a live
+                // failure never steals the console); here only the IME
+                // state is current so the completion gate is right.
+                self.model.live_composing.set(
+                    self.editor
+                        .as_ref()
+                        .map(|e| e.has_marked_text())
+                        .unwrap_or(false),
+                );
+                self.model.apply_build_finished(
+                    build,
+                    Err(problem),
+                    "",
+                    &self.store,
+                    self.language,
+                );
                 self.refresh_build_ui();
                 self.refresh_console_visibility();
+                self.arm_live_timer();
             }
             WorkspaceMessage::GitRefreshed(result) => {
                 if self.model.git_refresh_root.borrow_mut().take() != self.model.project_url {
@@ -4070,6 +4214,9 @@ thread_local! {
     /// The pending autosave `glib` source — removed and re-armed on every
     /// edit, which is the `autosaveTask?.cancel()` half of Swift's debounce.
     static AUTOSAVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// The pending live-compile debounce source — re-armed on every real
+    /// edit and after each fire/completion until no work is pending.
+    static LIVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
     /// Resolved UI language for `a11y` — readable without borrowing state.
     static LANG: Cell<&'static str> = const { Cell::new("en") };
     /// Pending post-edit re-highlight / structure-refresh sources.
@@ -4082,6 +4229,38 @@ thread_local! {
     static SCHEME_PATH_ADDED: Cell<bool> = const { Cell::new(false) };
     /// A selection-sync idle is queued (caret moves set two marks).
     static SELECTION_SYNC_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// One firing of the live-compile debounce: polls the scheduler and
+/// performs whatever it asks (start the newest revision). A borrowed
+/// state re-queues shortly — the edit is held, never dropped.
+fn live_timer_fire() {
+    LIVE_SOURCE.with(|s| s.borrow_mut().take());
+    let borrowed = STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else { return false };
+        let Ok(mut st) = state.try_borrow_mut() else { return true };
+        st.live_timer_attempt();
+        false
+    });
+    if borrowed {
+        glib::timeout_add_local_once(Duration::from_millis(150), live_timer_fire);
+    }
+}
+
+impl AppState {
+    fn live_timer_attempt(&mut self) {
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let requests = self.model.poll_live(composing);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.refresh_build_ui();
+        self.arm_live_timer();
+    }
 }
 
 /// One firing of the debounced remote push (`schedulePush`): uploads when
@@ -5821,6 +6000,24 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     }
     ui.header_build_button.replace(Some(build_btn.clone()));
     strip.append(&build_btn);
+
+    // Live-compile toggle — mirrors `live_compile_enabled`; toggling
+    // retires pending live work and cancels a live run immediately.
+    let live_toggle = gtk4::ToggleButton::new();
+    live_toggle.set_icon_name("media-record-symbolic");
+    compat::initial_tooltip(&live_toggle, &tr(lang, "toolbar.live_compile"));
+    a11y(&live_toggle, "pitex.toolbar.live_compile", "toolbar.live_compile");
+    live_toggle.set_active(state.borrow().store.live_compile_enabled());
+    {
+        let state = state.clone();
+        live_toggle.connect_toggled(move |b| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.store.set_live_compile_enabled(b.is_active());
+            s.apply_live_settings();
+        });
+    }
+    ui.live_toggle.replace(Some(live_toggle.clone()));
+    strip.append(&live_toggle);
 
     root.append(&strip);
 

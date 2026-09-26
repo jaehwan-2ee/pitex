@@ -355,6 +355,7 @@ fn remote_scripts_are_valid_single_line_sh() {
         remote_scripts::tar_out(),
         remote_scripts::list_directory(),
         remote_scripts::login_exec(),
+        remote_scripts::make_directories(),
     ] {
         assert!(!script.contains('\n'), "csh login shells need single-line scripts");
         let status = Command::new("/bin/sh")
@@ -379,6 +380,7 @@ fn remote_scripts_match_golden_fixtures() {
         ("tarOut.sh", remote_scripts::tar_out()),
         ("listDirectory.sh", remote_scripts::list_directory()),
         ("loginExec.sh", remote_scripts::login_exec()),
+        ("makeDirectories.sh", remote_scripts::make_directories()),
     ] {
         let expected = std::fs::read(dir.join(name))
             .unwrap_or_else(|e| panic!("fixture {name}: {e}"));
@@ -843,6 +845,392 @@ fn live_remote_build_streams_output_and_fetches_artifacts() {
     assert!(
         after_build.uploaded.is_empty(),
         "fetched outputs are in the manifest, not pending uploads"
+    );
+}
+
+/// A live build creates `.pitex-live/<job>` on the device with the
+/// nested tex-parent layout (paths with spaces included), the PDF
+/// downloads through explicit fetch, and ordinary sync never uploads,
+/// deletes or conflicts with the local live tree — even under a manifest
+/// entry written before the exclusion existed.
+#[cfg(unix)]
+#[test]
+fn live_output_tree_created_fetched_and_kept_out_of_sync() {
+    let Some(client) = live_client() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let remote = TempDir::new("remote");
+    let store = TempDir::new("store");
+    std::fs::create_dir_all(remote.join("manuscript/chapters/inner part")).unwrap();
+    write(&remote.join("manuscript/main.tex"), "doc");
+    write(&remote.join("manuscript/chapters/one.tex"), "one");
+    write(&remote.join("manuscript/chapters/inner part/two.tex"), "inner");
+    write(&remote.join("manuscript/logo.png"), "asset");
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.path().to_str().unwrap()),
+        store.path(),
+    )
+    .unwrap();
+    let sync = Arc::new(RemoteSync::new(mirror.clone(), client.clone(), None));
+    sync.pull().unwrap();
+    let executor = RemoteBuildExecutor::new(sync.clone());
+    let pdf = ".pitex-live/manuscript/main/main.pdf";
+    executor.set_outputs(vec![pdf.to_string()], Some(pdf.to_string()));
+    // A stand-in engine writing into the prepared output tree.
+    let plan = build_core::DirectCommandPlan::new(
+        "/bin/sh",
+        vec![
+            "-c".to_string(),
+            "cd manuscript && printf '%%PDF-live' > ../.pitex-live/manuscript/main/main.pdf"
+                .to_string(),
+        ],
+        build_core::WorkingDirectoryPolicy::ProjectRoot,
+        build_core::EnvironmentPolicy::Inherit {
+            overrides: HashMap::new(),
+        },
+    )
+    .unwrap();
+    let request = build_core::BuildProcessRequest {
+        build_id: build_core::BuildID::new("b1").unwrap(),
+        stage_index: 0,
+        command: build_core::BuildProcessCommand::Direct(plan),
+        project_root: mirror.root(),
+        source_directory: mirror.root().join("manuscript"),
+    };
+    let result = build_core::BuildProcessExecuting::execute(&executor, &request, &mut |_| {}).unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(read(&remote.join(pdf)).as_deref(), Some("%PDF-live"));
+    assert_eq!(
+        read(&mirror.root().join(pdf)).as_deref(),
+        Some("%PDF-live"),
+        "explicit fetch still downloads outputs under .pitex-live"
+    );
+    for directory in [
+        "manuscript",
+        "manuscript/chapters",
+        "manuscript/chapters/inner part",
+        "chapters",
+        "chapters/inner part",
+    ] {
+        assert!(
+            remote.join(&format!(".pitex-live/manuscript/main/{directory}")).is_dir(),
+            "{directory} is created for nested \\include aux files"
+        );
+    }
+
+    // A stale manifest entry from before `.pitex-live` was excluded must
+    // not let sync delete, upload or conflict the local output.
+    let manifest_path = mirror.manifest_path();
+    let mut manifest: HashMap<String, String> =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest.insert(pdf.to_string(), sha("stale"));
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(sync.push().unwrap().uploaded.is_empty());
+    assert!(!remote.join(".pitex-live-synced").exists());
+    assert_eq!(read(&remote.join(pdf)).as_deref(), Some("%PDF-live"));
+    let pulled = sync.pull().unwrap();
+    assert!(!pulled.deleted.iter().any(|p| p == pdf));
+    assert!(!pulled.conflicts.iter().any(|p| p == pdf));
+    assert!(mirror.root().join(pdf).is_file());
+    let manifest: HashMap<String, String> =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    assert!(!manifest.contains_key(pdf), "the seeded entry is scrubbed out of planning");
+}
+
+/// `.pitex-live` swapped for a symlink into the sources aborts the stage
+/// before the compiler runs — the manual PDF behind it is never
+/// overwritten.
+#[cfg(unix)]
+#[test]
+fn live_output_root_redirect_rejected() {
+    let Some(client) = live_client() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let remote = TempDir::new("remote");
+    let store = TempDir::new("store");
+    std::fs::create_dir_all(remote.join("manuscript")).unwrap();
+    write(&remote.join("manuscript/main.tex"), "doc");
+    write(&remote.join("manuscript/main.pdf"), "%PDF-manual");
+    // `.pitex-live` resolves inside the project: containment alone would
+    // let the "live" PDF overwrite the manual one.
+    std::os::unix::fs::symlink(remote.join("manuscript"), remote.join(".pitex-live")).unwrap();
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.path().to_str().unwrap()),
+        store.path(),
+    )
+    .unwrap();
+    let sync = Arc::new(RemoteSync::new(mirror.clone(), client.clone(), None));
+    sync.pull().unwrap();
+    let executor = RemoteBuildExecutor::new(sync.clone());
+    let pdf = ".pitex-live/manuscript/main/main.pdf";
+    executor.set_outputs(vec![pdf.to_string()], Some(pdf.to_string()));
+    let plan = build_core::DirectCommandPlan::new(
+        "/bin/sh",
+        vec![
+            "-c".to_string(),
+            "printf x > .pitex-live/manuscript/main/main.pdf".to_string(),
+        ],
+        build_core::WorkingDirectoryPolicy::ProjectRoot,
+        build_core::EnvironmentPolicy::Inherit {
+            overrides: HashMap::new(),
+        },
+    )
+    .unwrap();
+    let request = build_core::BuildProcessRequest {
+        build_id: build_core::BuildID::new("b1").unwrap(),
+        stage_index: 0,
+        command: build_core::BuildProcessCommand::Direct(plan),
+        project_root: mirror.root(),
+        source_directory: mirror.root().join("manuscript"),
+    };
+    assert!(
+        build_core::BuildProcessExecuting::execute(&executor, &request, &mut |_| {}).is_err(),
+        "a redirected output root must fail before the compiler runs"
+    );
+    assert_eq!(
+        read(&remote.join("manuscript/main.pdf")).as_deref(),
+        Some("%PDF-manual"),
+        "the sentinel behind the symlink survives"
+    );
+}
+
+/// A symlink planted INSIDE the output tree (`…/main/chapters ->
+/// manuscript/chapters`) is refused the same way.
+#[cfg(unix)]
+#[test]
+fn live_output_child_redirect_rejected() {
+    let Some(client) = live_client() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let remote = TempDir::new("remote");
+    let store = TempDir::new("store");
+    std::fs::create_dir_all(remote.join("manuscript/chapters")).unwrap();
+    std::fs::create_dir_all(remote.join(".pitex-live/manuscript/main")).unwrap();
+    write(&remote.join("manuscript/main.tex"), "doc");
+    write(&remote.join("manuscript/chapters/one.tex"), "one");
+    std::os::unix::fs::symlink(
+        remote.join("manuscript/chapters"),
+        remote.join(".pitex-live/manuscript/main/chapters"),
+    )
+    .unwrap();
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.path().to_str().unwrap()),
+        store.path(),
+    )
+    .unwrap();
+    let sync = Arc::new(RemoteSync::new(mirror.clone(), client.clone(), None));
+    sync.pull().unwrap();
+    let executor = RemoteBuildExecutor::new(sync.clone());
+    let pdf = ".pitex-live/manuscript/main/main.pdf";
+    executor.set_outputs(vec![pdf.to_string()], Some(pdf.to_string()));
+    let plan = build_core::DirectCommandPlan::new(
+        "/bin/sh",
+        vec![
+            "-c".to_string(),
+            "printf x > .pitex-live/manuscript/main/chapters/escape.pdf".to_string(),
+        ],
+        build_core::WorkingDirectoryPolicy::ProjectRoot,
+        build_core::EnvironmentPolicy::Inherit {
+            overrides: HashMap::new(),
+        },
+    )
+    .unwrap();
+    let request = build_core::BuildProcessRequest {
+        build_id: build_core::BuildID::new("b1").unwrap(),
+        stage_index: 0,
+        command: build_core::BuildProcessCommand::Direct(plan),
+        project_root: mirror.root(),
+        source_directory: mirror.root().join("manuscript"),
+    };
+    assert!(
+        build_core::BuildProcessExecuting::execute(&executor, &request, &mut |_| {}).is_err(),
+        "a redirected output child must fail before the compiler runs"
+    );
+    assert!(!remote.join("manuscript/chapters/escape.pdf").exists());
+    let mut entries: Vec<String> = std::fs::read_dir(remote.join("manuscript/chapters"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort_unstable();
+    assert_eq!(entries, ["one.tex"]);
+}
+
+/// A cancel landing during output setup or while the engine is still
+/// mid-write never publishes a PDF — remotely or in the mirror.
+#[cfg(unix)]
+#[test]
+fn live_cancel_before_engine_writes_publishes_nothing() {
+    let Some(client) = live_client() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let remote = TempDir::new("remote");
+    let store = TempDir::new("store");
+    std::fs::create_dir_all(remote.join("manuscript")).unwrap();
+    write(&remote.join("manuscript/main.tex"), "doc");
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.path().to_str().unwrap()),
+        store.path(),
+    )
+    .unwrap();
+    let sync = Arc::new(RemoteSync::new(mirror.clone(), client.clone(), None));
+    sync.pull().unwrap();
+    let executor = Arc::new(RemoteBuildExecutor::new(sync.clone()));
+    let pdf = ".pitex-live/manuscript/main/main.pdf";
+    executor.set_outputs(vec![pdf.to_string()], Some(pdf.to_string()));
+    // The engine sleeps before writing: any cancel up to that point
+    // (setup, spawn, or the write's countdown) leaves no artifact.
+    let plan = build_core::DirectCommandPlan::new(
+        "/bin/sh",
+        vec![
+            "-c".to_string(),
+            "sleep 5; printf '%PDF-late' > .pitex-live/manuscript/main/main.pdf".to_string(),
+        ],
+        build_core::WorkingDirectoryPolicy::ProjectRoot,
+        build_core::EnvironmentPolicy::Inherit {
+            overrides: HashMap::new(),
+        },
+    )
+    .unwrap();
+    let request = build_core::BuildProcessRequest {
+        build_id: build_core::BuildID::new("b1").unwrap(),
+        stage_index: 0,
+        command: build_core::BuildProcessCommand::Direct(plan),
+        project_root: mirror.root(),
+        source_directory: mirror.root().join("manuscript"),
+    };
+    let runner = executor.clone();
+    let worker = std::thread::spawn(move || {
+        build_core::BuildProcessExecuting::execute(runner.as_ref(), &request, &mut |_| {})
+    });
+    let build_id = build_core::BuildID::new("b1").unwrap();
+    while !worker.is_finished() {
+        build_core::BuildProcessExecuting::cancel(&*executor, &build_id);
+        std::thread::yield_now();
+    }
+    let status = worker.join().unwrap().map(|result| result.exit_code).unwrap_or(-1);
+    assert_eq!(status, 130);
+    assert!(
+        !remote.join(pdf).exists(),
+        "the remote compile never wrote its PDF"
+    );
+    assert!(
+        !mirror.root().join(pdf).exists(),
+        "nothing is fetched or published locally either"
+    );
+}
+
+/// The "Building on …" line is emitted after the cancel scope is
+/// registered, so a cancel issued by the output callback itself is
+/// already visible: no remote setup, no engine, no artifact.
+#[cfg(unix)]
+#[test]
+fn live_cancel_from_first_output_callback_skips_remote_work() {
+    let Some(client) = live_client() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let remote = TempDir::new("remote");
+    let store = TempDir::new("store");
+    std::fs::create_dir_all(remote.join("manuscript")).unwrap();
+    write(&remote.join("manuscript/main.tex"), "doc");
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.path().to_str().unwrap()),
+        store.path(),
+    )
+    .unwrap();
+    let sync = Arc::new(RemoteSync::new(mirror.clone(), client.clone(), None));
+    sync.pull().unwrap();
+    let executor = RemoteBuildExecutor::new(sync.clone());
+    let pdf = ".pitex-live/manuscript/main/main.pdf";
+    executor.set_outputs(vec![pdf.to_string()], Some(pdf.to_string()));
+    let plan = build_core::DirectCommandPlan::new(
+        "/bin/sh",
+        vec![
+            "-c".to_string(),
+            "printf '%PDF-late' > .pitex-live/manuscript/main/main.pdf".to_string(),
+        ],
+        build_core::WorkingDirectoryPolicy::ProjectRoot,
+        build_core::EnvironmentPolicy::Inherit {
+            overrides: HashMap::new(),
+        },
+    )
+    .unwrap();
+    let request = build_core::BuildProcessRequest {
+        build_id: build_core::BuildID::new("b1").unwrap(),
+        stage_index: 0,
+        command: build_core::BuildProcessCommand::Direct(plan),
+        project_root: mirror.root(),
+        source_directory: mirror.root().join("manuscript"),
+    };
+    let mut emit = |output: build_core::BuildProcessOutput| {
+        if output.channel == build_core::BuildLogChannel::System {
+            build_core::BuildProcessExecuting::cancel(&executor, &request.build_id);
+        }
+    };
+    let result = build_core::BuildProcessExecuting::execute(&executor, &request, &mut emit).unwrap();
+    assert_eq!(result.exit_code, 130);
+    assert!(
+        !remote.join(".pitex-live").exists(),
+        "remote output setup never ran"
+    );
+    assert!(!mirror.root().join(pdf).exists());
+}
+
+/// A manual nested target (required PDF outside `.pitex-live`) runs with
+/// no output setup at all — the remote tree stays untouched.
+#[cfg(unix)]
+#[test]
+fn live_manual_nested_target_runs_without_output_setup() {
+    let Some(client) = live_client() else {
+        eprintln!("skipped: PITEX_TEST_SSH_DESTINATION not set");
+        return;
+    };
+    let remote = TempDir::new("remote");
+    let store = TempDir::new("store");
+    std::fs::create_dir_all(remote.join("manuscript")).unwrap();
+    write(&remote.join("manuscript/main.tex"), "doc");
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.path().to_str().unwrap()),
+        store.path(),
+    )
+    .unwrap();
+    let sync = Arc::new(RemoteSync::new(mirror.clone(), client.clone(), None));
+    sync.pull().unwrap();
+    let executor = RemoteBuildExecutor::new(sync.clone());
+    executor.set_outputs(
+        vec!["manuscript/main.pdf".to_string()],
+        Some("manuscript/main.pdf".to_string()),
+    );
+    let plan = build_core::DirectCommandPlan::new(
+        "/bin/sh",
+        vec!["-c".to_string(), "printf '%%PDF-manual' > main.pdf".to_string()],
+        build_core::WorkingDirectoryPolicy::SourceDirectory,
+        build_core::EnvironmentPolicy::Inherit {
+            overrides: HashMap::new(),
+        },
+    )
+    .unwrap();
+    let request = build_core::BuildProcessRequest {
+        build_id: build_core::BuildID::new("b1").unwrap(),
+        stage_index: 0,
+        command: build_core::BuildProcessCommand::Direct(plan),
+        project_root: mirror.root(),
+        source_directory: mirror.root().join("manuscript"),
+    };
+    let result = build_core::BuildProcessExecuting::execute(&executor, &request, &mut |_| {}).unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        read(&mirror.root().join("manuscript/main.pdf")).as_deref(),
+        Some("%PDF-manual")
+    );
+    assert!(
+        !remote.join(".pitex-live").exists(),
+        "no live tree is prepared for a manual target"
     );
 }
 

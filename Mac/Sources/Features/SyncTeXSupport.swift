@@ -24,11 +24,15 @@ enum SyncTeXSupportError: LocalizedError {
     }
 }
 
-struct SyncTeXBinding: Sendable {
+struct SyncTeXBinding: Sendable, Equatable {
     let revision: SyncTeXRevision
     let outputHash: String
     let pdfURL: URL
     let projectRoot: URL
+    /// Directory recorded relative inputs resolve against — the known
+    /// main source's directory, never the (possibly `.pitex-live`) PDF
+    /// folder. The synctex CLI runs with this as its working directory.
+    let sourceRoot: URL
     let sourcePaths: [String: URL]
 }
 
@@ -54,7 +58,11 @@ actor SyncTeXRunner {
     ]
     private static let fieldOrder = ["Input", "Line", "Column", "Output", "Page", "x", "y", "h", "v", "W", "H"]
 
-    func refreshBinding(projectRoot: URL, pdfURL: URL, buildID: String) async throws -> SyncTeXBinding {
+    /// `mainRelativePath` is the project-relative main source the build
+    /// ran on — the known anchor the mapper uses instead of the PDF's
+    /// folder (a live build's output hides under `.pitex-live`).
+    func refreshBinding(projectRoot: URL, pdfURL: URL, buildID: String,
+                        mainRelativePath: String) async throws -> SyncTeXBinding {
         _ = try await resolvedTool()
         // synctex reports canonicalized paths (e.g. /private/tmp/... for a
         // project opened as /tmp/...), so the binding stores resolved URLs and
@@ -75,22 +83,27 @@ actor SyncTeXRunner {
         } else {
             metadata = try Data(contentsOf: plain)
         }
-        // Input tag 1 records the original main source. Preserve relative
-        // paths beneath that directory when a downloaded project is moved;
-        // never guess using just a chapter's filename.
+        // Input tag 1 records the original main source. Its absolute path
+        // on the build device minus the known project-relative main
+        // reveals the remote project root; a relative recording means the
+        // build ran here and inputs are already local anchors.
         let inputs = try SyncTeXTextParser.parse(Self.inputLines(metadata)).inputs
-        let originalMain = inputs.first { $0.tag == 1 }?.path.value
-        let originalDirectory = originalMain.map { ($0 as NSString).deletingLastPathComponent }
+        let recordedRoot = (inputs.first { $0.tag == 1 }?.path.value).flatMap {
+            SyncTeXSourceMapper.recordedProjectRoot(originalMain: $0, mainRelative: mainRelativePath)
+        }
         var sourcePaths: [String: URL] = [:]
         for input in inputs {
             let path = input.path.value
-            var relative = path
-            if path.hasPrefix("/"), let originalDirectory, path.hasPrefix(originalDirectory + "/") {
-                relative = String(path.dropFirst(originalDirectory.count + 1))
-            }
-            let mapped = URL(fileURLWithPath: relative, relativeTo: pdf.deletingLastPathComponent())
+            guard let relative = SyncTeXSourceMapper.projectRelativePath(
+                recordedPath: path,
+                projectRoot: root.path,
+                mainRelative: mainRelativePath,
+                recordedRoot: recordedRoot
+            ) else { continue }
+            let mapped = root.appendingPathComponent(relative)
                 .resolvingSymlinksInPath().standardizedFileURL
-            guard mapped.path.hasPrefix(root.path + "/"), FileManager.default.isReadableFile(atPath: mapped.path) else { continue }
+            guard mapped.path.hasPrefix(root.path + "/"),
+                  FileManager.default.isReadableFile(atPath: mapped.path) else { continue }
             sourcePaths[path] = mapped
         }
         return SyncTeXBinding(
@@ -98,6 +111,11 @@ actor SyncTeXRunner {
             outputHash: outputHash,
             pdfURL: pdf,
             projectRoot: root,
+            // Same anchor the mapper uses: the directory of the known
+            // main source (project root when the main sits at top level).
+            sourceRoot: root.appendingPathComponent(
+                (mainRelativePath as NSString).deletingLastPathComponent
+            ).standardizedFileURL,
             sourcePaths: sourcePaths
         )
     }
@@ -120,7 +138,9 @@ actor SyncTeXRunner {
                     "-i", "\(line):\(column):\(inputPath)",
                     "-o", binding.pdfURL.path,
                 ],
-                workingDirectory: .explicit(binding.pdfURL.deletingLastPathComponent().path)
+                // Recorded relative inputs resolve against the known
+                // source directory, not the PDF's (hidden live) folder.
+                workingDirectory: .explicit(binding.sourceRoot.path)
             ),
             projectRoot: binding.projectRoot,
             timeout: .seconds(15)
@@ -175,7 +195,7 @@ actor SyncTeXRunner {
                     "edit",
                     "-o", "\(page):\(point.x):\(point.y):\(binding.pdfURL.path)",
                 ],
-                workingDirectory: .explicit(binding.pdfURL.deletingLastPathComponent().path)
+                workingDirectory: .explicit(binding.sourceRoot.path)
             ),
             projectRoot: binding.projectRoot,
             timeout: .seconds(15)
@@ -292,9 +312,17 @@ actor SyncTeXRunner {
             // Leave invalid paths intact for the strict parser to reject.
             if (key == "Input" || key == "Output"), !value.contains("\\"), !value.contains("\0") {
                 let path = (try? NormalizedSourcePath(value).value) ?? value
-                let mapped = key == "Input" ? binding.sourcePaths[path] : nil
-                value = (mapped ?? URL(fileURLWithPath: value, relativeTo: binding.pdfURL.deletingLastPathComponent()))
-                    .resolvingSymlinksInPath().standardizedFileURL.path
+                if key == "Input" {
+                    // An input the mapper could not anchor stays raw — the
+                    // strict selector rejects it rather than following a
+                    // fabricated path under the hidden .pitex-live output.
+                    if let mapped = binding.sourcePaths[path] { value = mapped.path }
+                } else {
+                    // Output names the PDF itself; resolving it against its
+                    // own directory is correct even under .pitex-live.
+                    value = URL(fileURLWithPath: value, relativeTo: binding.pdfURL.deletingLastPathComponent())
+                        .resolvingSymlinksInPath().standardizedFileURL.path
+                }
             }
             if Self.allowedFields.contains(key) { fields[key] = value }
         }

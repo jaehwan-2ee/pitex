@@ -2,6 +2,8 @@ import AppKit
 import AppPorts
 import AppShell
 import BuildCore
+import BuildFeature
+import Combine
 import Darwin
 import DocumentSessionCore
 import EditorMacAdapter
@@ -36,6 +38,20 @@ enum WorkspaceSyncTeXState: Equatable {
     case current
     case stale(String)
     case ambiguous(String)
+}
+
+/// Bytes + identity of the last PDF a build published. Kept separately
+/// from `buildState` so building/failure/cancel states can change around
+/// it without the preview unmounting.
+struct RetainedPDF: Equatable {
+    /// PDF bytes as published — the preview renders these, not whatever
+    /// a later failed build may have left on disk.
+    var data: Data
+    /// Project-relative artifact path (may live under `.pitex-live`).
+    var artifactPath: String
+    /// Project-relative main source the build resolved — the identity
+    /// that decides whether a target switch invalidates this output.
+    var sourceTarget: String
 }
 
 /// Bottom console tabs: Assistant | Git Integration | Issues | Terminal |
@@ -167,7 +183,11 @@ final class WorkspaceModel: ObservableObject {
         didSet { observeEditorSelection() }
     }
     @Published private(set) var documentSnapshot: DocumentSessionCore.DocumentSnapshot? {
-        didSet { scheduleStructureRefresh(); scheduleAutosave() }
+        didSet {
+            scheduleStructureRefresh()
+            scheduleAutosave()
+            noteLiveCompileEdit(oldValue: oldValue)
+        }
     }
     @Published var buildLogText = ""
     /// Buffered build-log chunks; flushed into buildLogText on a ~100 ms
@@ -187,6 +207,10 @@ final class WorkspaceModel: ObservableObject {
     @Published var showingSettings = false
 
     private var documentLoadGeneration = UUID()
+    /// Identity of the mounted project — bumped by `close()`, which every
+    /// `open` passes through, so a reopen of the same path still fails a
+    /// previous build run's captured context.
+    var projectGeneration = UUID()
     var gitRefreshInFlight = false
     @Published private(set) var wordCount = 0
     let registry = DocumentSessionRegistry()
@@ -201,6 +225,8 @@ final class WorkspaceModel: ObservableObject {
             // overlaps short Syncing → Synced changes.
             let subtitle = remote?.statusText ?? ""
             if window?.subtitle != subtitle { window?.subtitle = subtitle }
+            // A remote project floors the live debounce at 1500 ms.
+            syncLiveScheduler()
         }
     }
     @Published var showingOpenViaSSH = false
@@ -209,6 +235,18 @@ final class WorkspaceModel: ObservableObject {
     /// Cancel pressed before the orchestrator started (a remote build
     /// uploads the edits first).
     var buildCancelRequested = false
+    /// Live-compile debounce state machine (BuildFeature): the workspace
+    /// feeds it millisecond timestamps and performs the `LiveRequest`s it
+    /// returns. Timer/dispatch glue lives in `BuildSupport`.
+    var liveScheduler = LiveCompileScheduler()
+    /// Token of the run currently holding the build slot, matched by
+    /// `cancelScheduledRun` — the scheduler can only cancel the run it
+    /// thinks is active.
+    var activeRunToken: LiveRunToken?
+    /// Debounce Task armed at `liveScheduler.pendingDeadline`.
+    var liveCompileTask: Task<Void, Never>?
+    /// Settings/import → scheduler sync (enable flag and delay changes).
+    private var liveSettingsObserver: AnyCancellable?
     let syncTeXRunner = SyncTeXRunner()
     let highlighter = SyntaxHighlighter()
     private(set) var agent: AgentCoordinator?
@@ -217,6 +255,17 @@ final class WorkspaceModel: ObservableObject {
     /// project like `agent` and shut down in `close()`.
     private(set) var completion: GhostCompletionCoordinator?
     private(set) var syncTeXBinding: SyncTeXBinding?
+    /// Epoch for SyncTeX work: bumped at every build start and at every
+    /// workspace/target switch so an in-flight refresh or query belonging
+    /// to an older build can never attach its result.
+    var syncTeXEpoch = UUID()
+    /// The last PDF a build actually produced — bytes for the preview, the
+    /// project-relative artifact path (which may hide under `.pitex-live`),
+    /// and the main source that produced it. Retained across building/
+    /// failure/cancel/off so the preview never unmounts mid-typing;
+    /// cleared on workspace close or a different resolved build target.
+    /// Chapters sharing the same main keep it.
+    @Published internal(set) var retainedPDF: RetainedPDF?
     var activeBuildID: BuildID?
     /// Name (relative to the project root) of the PDF produced by the most
     /// recent successful build; surfaced to the agent as preview context.
@@ -245,7 +294,14 @@ final class WorkspaceModel: ObservableObject {
     /// Recently opened documents/projects, shown in the tab bar's + menu.
     @Published private(set) var recentDocuments: [URL] = []
     /// Build command shown in the console bar, remembered per project.
-    @Published var buildCommandText = "xelatex -interaction=nonstopmode -synctex=1 {file}"
+    @Published var buildCommandText = "xelatex -interaction=nonstopmode -synctex=1 {file}" {
+        didSet {
+            persistCommands()
+            // A different command means different flags/outputs — live
+            // work compiled under the old one is dead.
+            performLiveRequests(liveScheduler.invalidate())
+        }
+    }
     /// Free-form terminal command run with ⌃⌘B, remembered per project.
     @Published var customCommandText = ""
     /// Accumulated terminal output shown in the console's Terminal tab.
@@ -303,6 +359,12 @@ final class WorkspaceModel: ObservableObject {
         let executor = WorkspaceBuildExecutor()
         buildExecutor = executor
         buildOrchestrator = BuildOrchestrator(executor: executor)
+        // objectWillChange fires inside the setter, so the sync is deferred
+        // one hop to read the stored value — covers Settings edits and
+        // settings imports (reload()) alike.
+        liveSettingsObserver = settings.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in self?.syncLiveScheduler() }
+        }
         loadRecents()
     }
 
@@ -613,6 +675,7 @@ final class WorkspaceModel: ObservableObject {
             // The pi subprocess stays unspawned until the Assistant panel
             // first appears (AgentPanel's .task calls prepare()).
             phase = .ready
+            syncLiveScheduler()
             await restoreBuiltPreview()
             recordRecent(selectedURL)
         } catch {
@@ -934,7 +997,13 @@ final class WorkspaceModel: ObservableObject {
     func close() async -> UUID {
         let generation = UUID()
         documentLoadGeneration = generation
+        projectGeneration = UUID()
         wordCount = 0
+        // Live compile belonged to the closing context: stop the debounce
+        // and retire live work — a running manual build keeps ownership.
+        liveCompileTask?.cancel()
+        liveCompileTask = nil
+        performLiveRequests(liveScheduler.invalidate())
         for url in fileWatchers.keys { stopWatcher(for: url) }
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
@@ -963,7 +1032,10 @@ final class WorkspaceModel: ObservableObject {
         agent = nil
         completion = nil
         latestBuiltPDFName = nil
+        retainedPDF = nil
         syncTeXBinding = nil
+        // Retire in-flight SyncTeX refreshes/queries with the workspace.
+        syncTeXEpoch = UUID()
         pinnedBuildTarget = nil
         automaticBuildTarget = nil
         documentProject = DocumentProject()
@@ -1117,21 +1189,36 @@ final class WorkspaceModel: ObservableObject {
 
     // MARK: - SyncTeX
 
-    func refreshSyncTeXBinding(pdfURL: URL) async {
+    /// `sourceRelativePath` is the project-relative main the build ran
+    /// on — the SyncTeX mapper anchors recorded inputs on it, never on
+    /// the (possibly hidden `.pitex-live`) PDF folder.
+    func refreshSyncTeXBinding(pdfURL: URL, sourceRelativePath: String) async {
         guard let root = projectURL else {
             syncTeXState = .unavailable("SyncTeX is unavailable until a successful build produces matching metadata.")
             return
         }
+        let context = projectGeneration
+        let epoch = syncTeXEpoch
         do {
-            syncTeXBinding = try await syncTeXRunner.refreshBinding(
+            let binding = try await syncTeXRunner.refreshBinding(
                 projectRoot: root,
                 pdfURL: pdfURL,
                 // A restored/existing PDF has no build identifier; the
                 // .synctex fingerprint still keeps stale results failing closed.
-                buildID: activeBuildID?.rawValue ?? "existing-pdf"
+                buildID: activeBuildID?.rawValue ?? "existing-pdf",
+                mainRelativePath: sourceRelativePath
             )
+            // The await may have raced a build start, workspace switch or
+            // target change — this binding belongs to the older context.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root else { return }
+            syncTeXBinding = binding
             syncTeXState = .current
         } catch {
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root else { return }
             syncTeXBinding = nil
             syncTeXState = .unavailable("SyncTeX metadata could not be loaded for this build.")
         }
@@ -1149,7 +1236,18 @@ final class WorkspaceModel: ObservableObject {
     private func restoreBuiltPreview() async {
         guard !isBuilding, let root = projectURL, let source = buildSourceURL(),
               let relative = try? Self.relativePath(for: source, root: root).rawValue else { return }
-        let name = (relative as NSString).deletingPathExtension + ".pdf"
+        // The retained artifact wins for its own target — a live build's
+        // PDF hides under .pitex-live and must not fall back to the manual
+        // sibling beside the source.
+        let name: String
+        if let retained = retainedPDF, retained.sourceTarget == relative {
+            name = retained.artifactPath
+        } else if let latest = latestBuiltPDFName,
+                  latest == Self.livePDFPath(forSourcePath: relative) {
+            name = latest
+        } else {
+            name = (relative as NSString).deletingPathExtension + ".pdf"
+        }
         if latestBuiltPDFName == name, syncTeXBinding != nil { return }
         let pdf = root.appendingPathComponent(name)
         guard let data = try? Data(contentsOf: pdf), data.starts(with: Data("%PDF".utf8)) else {
@@ -1161,12 +1259,32 @@ final class WorkspaceModel: ObservableObject {
             }
             return
         }
+        if let retained = retainedPDF, retained.artifactPath == name {
+            guard data == retained.data else {
+                // A failed/cancelled build may have left a torn artifact at
+                // this path — it is not the retained output, and its partial
+                // metadata must not lazily bind to the last good PDF.
+                syncTeXBinding = nil
+                syncTeXState = .unavailable("SyncTeX is unavailable until a successful build produces matching metadata.")
+                return
+            }
+            // Same bytes are already retained — nothing to republish.
+            // A lazy restore after a failed/cancelled/superseded run keeps
+            // the honest status and never binds metadata that run may have
+            // overwritten; binding resumes only on an accepted success.
+            return
+        }
+        retainedPDF = RetainedPDF(data: data, artifactPath: name, sourceTarget: relative)
         latestBuiltPDFName = name
         buildState = .succeeded(pdf: data, log: buildLogText)
-        await refreshSyncTeXBinding(pdfURL: pdf)
+        await refreshSyncTeXBinding(pdfURL: pdf, sourceRelativePath: relative)
     }
 
     func invalidateSyncTeXForBuild() {
+        // Bumping the epoch retires any in-flight refresh or query along
+        // with the published binding — a late result from the build that
+        // just superseded this state attaches to nothing.
+        syncTeXEpoch = UUID()
         syncTeXBinding = nil
         syncTeXState = .unavailable("SyncTeX will be refreshed after the build completes.")
     }
@@ -1195,6 +1313,8 @@ final class WorkspaceModel: ObservableObject {
             syncTeXState = .unavailable("SyncTeX requires a completed build.")
             return
         }
+        let epoch = syncTeXEpoch
+        let context = projectGeneration
         do {
             let match = try await syncTeXRunner.forward(
                 binding: binding,
@@ -1202,6 +1322,11 @@ final class WorkspaceModel: ObservableObject {
                 line: line,
                 column: column
             )
+            // The query may have raced a build start or binding refresh —
+            // its hit belongs to the older PDF and must not highlight.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  syncTeXBinding == binding else { return }
             NotificationCenter.default.post(
                 name: .syncTeXHighlightRequested,
                 object: self,
@@ -1214,6 +1339,11 @@ final class WorkspaceModel: ObservableObject {
                 ]
             )
         } catch let error as SyncTeXQueryError {
+            // A stale query's failure must not overwrite a newer
+            // binding's status.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  syncTeXBinding == binding else { return }
             switch error {
             case .staleResult: syncTeXState = .stale("SyncTeX results no longer match the current PDF.")
             case .ambiguousMatch(let count): syncTeXState = .ambiguous("\(count) matches; the source is ambiguous.")
@@ -1221,6 +1351,9 @@ final class WorkspaceModel: ObservableObject {
             default: syncTeXState = .stale("SyncTeX output could not be parsed.")
             }
         } catch {
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  syncTeXBinding == binding else { return }
             syncTeXState = .stale("SyncTeX lookup failed.")
         }
     }
@@ -1232,8 +1365,16 @@ final class WorkspaceModel: ObservableObject {
             NSLog("[SyncTeX] inverse dropped: no binding/root")
             return
         }
+        let epoch = syncTeXEpoch
+        let context = projectGeneration
         do {
             let match = try await syncTeXRunner.inverse(binding: binding, page: page, point: point)
+            // Inverse jumps mutate the editor — verify this result still
+            // belongs to the binding and workspace it was issued under.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root,
+                  syncTeXBinding == binding else { return }
             NSLog("[SyncTeX] inverse page=\(page) x=\(point.x) y=\(point.y) -> \(match.source.path.value):\(match.source.line)")
             let fileURL = root.appendingPathComponent(match.source.path.value).standardizedFileURL
             let resolved = fileURL.resolvingSymlinksInPath()
@@ -1244,10 +1385,21 @@ final class WorkspaceModel: ObservableObject {
             if resolved != activeDocumentURL?.resolvingSymlinksInPath() {
                 await activateDocument(fileURL)
             }
-            guard resolved == activeDocumentURL?.resolvingSymlinksInPath() else { return }
+            // activateDocument may have raced a workspace switch — the
+            // same path can be open under a different context, and this
+            // result must not jump in it.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root,
+                  syncTeXBinding == binding,
+                  resolved == activeDocumentURL?.resolvingSymlinksInPath() else { return }
             jumpTo(line: match.source.line, column: match.source.column, highlight: settings.inverseSyncHighlight)
         } catch let error as SyncTeXQueryError {
             NSLog("[SyncTeX] inverse error: \(error)")
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root,
+                  syncTeXBinding == binding else { return }
             switch error {
             case .staleResult: syncTeXState = .stale("SyncTeX results no longer match the current PDF.")
             case .ambiguousMatch(let count): syncTeXState = .ambiguous("\(count) matches; the PDF position is ambiguous.")
@@ -1975,6 +2127,11 @@ final class WorkspaceModel: ObservableObject {
         guard let url = activeDocumentURL, url.pathExtension.lowercased() == "tex" else { return }
         pinnedBuildTarget = pinnedBuildTarget == url ? nil : url
         refreshBuildTarget()
+        // Pin/unpin switches the build context: live work for the old
+        // target is dead, and its retained preview is not this target's.
+        performLiveRequests(liveScheduler.invalidate())
+        retainedPDF = nil
+        syncTeXEpoch = UUID()
         Task { await restoreBuiltPreview() }
     }
 
@@ -2051,19 +2208,27 @@ final class WorkspaceModel: ObservableObject {
         bottomPanelVisible = true
     }
 
-    /// Expands {file} / {filename} against the current build source.
-    func substituteCommandPlaceholders(_ template: String) -> String {
+    /// Expands {file} / {filename} / {outdir} against the current build
+    /// source. {file}/{filename} stay raw for compatibility with manual
+    /// templates (a user-quoted `"{file}"` keeps its quotes); {outdir}
+    /// becomes a single-quoted POSIX word and an already-quoted
+    /// `"{outdir}"`/`'{outdir}'` collapses to it rather than nesting.
+    /// One pass over the original template — a substituted value is
+    /// never rescanned.
+    func substituteCommandPlaceholders(_ template: String, outputDirectory: String = ".") -> String {
         let relative = buildSourceRelativePath() ?? "main.tex"
         let stem = (relative as NSString).deletingPathExtension
-        return template
-            .replacingOccurrences(of: "{file}", with: relative)
-            .replacingOccurrences(of: "{filename}", with: stem)
+        return BuildCommandPlaceholders.expand(
+            template, file: relative, filename: stem,
+            outdir: outputDirectory, quotePaths: false
+        )
     }
 
     /// Chapters and bibliography files share their owning main document.
     func buildSourceURL() -> URL? { pinnedBuildTarget ?? automaticBuildTarget }
 
     func refreshBuildTarget() {
+        let previousTarget = buildSourceURL()
         var resolver = TeXProjectResolver()
         resolver.diskCache = resolverDiskCache
         if let url = activeDocumentURL, let text = documentSnapshot?.text {
@@ -2082,6 +2247,16 @@ final class WorkspaceModel: ObservableObject {
                                                root: projectURL, files: projectFiles)
         if documentProject != project { documentProject = project }
         resolverDiskCache = resolver.diskCache
+        // Only a change of the resolved target retires live work — tab
+        // switches inside the same document keep pending edits alive.
+        if buildSourceURL() != previousTarget {
+            performLiveRequests(liveScheduler.invalidate())
+            // A different main means the retained PDF and any SyncTeX
+            // binding/refresh belong to the previous target.
+            retainedPDF = nil
+            syncTeXBinding = nil
+            syncTeXEpoch = UUID()
+        }
     }
 
     func buildSourceRelativePath() -> String? {
@@ -2173,6 +2348,13 @@ final class WorkspaceModel: ObservableObject {
             hash &*= 1_099_511_628_211
         }
         return "document-" + String(hash, radix: 16)
+    }
+
+    /// Monotonic uptime in milliseconds — the scheduler's caller-owned
+    /// clock. Not wall time: a clock adjustment must never move a deadline
+    /// backwards into a UInt64 underflow or fire the debounce early.
+    nonisolated static func nowMs() -> UInt64 {
+        UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
     }
 }
 

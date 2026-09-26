@@ -6,6 +6,8 @@ three-page document, including /tmp's macOS alias and an included source file.
 """
 from pathlib import Path
 import gzip
+import posixpath
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,7 +32,8 @@ struct SyncTeXCheck {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let pdf = root.appendingPathComponent("main.pdf")
         let runner = SyncTeXRunner()
-        let binding = try await runner.refreshBinding(projectRoot: root, pdfURL: pdf, buildID: "check")
+        let binding = try await runner.refreshBinding(projectRoot: root, pdfURL: pdf, buildID: "check",
+                                                      mainRelativePath: "main.tex")
 
         // The byte-level Input scan must produce exactly what decoding the
         // whole .synctex and filtering the lines produced before.
@@ -121,6 +124,56 @@ struct SyncTeXCheck {
             precondition(sourceHit?.0 == 105, "Editor inset must not shift the clicked source line")
         }
         print("PASS editor Cmd-click: scrolled text, gutter inset, upper/lower glyph halves")
+
+        // A live build's PDF hides under .pitex-live — the binding must
+        // still anchor recorded inputs on the source tree, not the PDF's
+        // hidden directory. The fixture was compiled with -output-directory
+        // so its .synctex sits beside the isolated PDF.
+        let livePdf = root.appendingPathComponent(".pitex-live/main/main.pdf")
+        let liveBinding = try await runner.refreshBinding(
+            projectRoot: root, pdfURL: livePdf, buildID: "live",
+            mainRelativePath: "main.tex")
+        precondition(liveBinding.sourcePaths.values.contains {
+            $0 == root.appendingPathComponent("main.tex").resolvingSymlinksInPath().standardizedFileURL
+        }, "live binding must map the main source, not the hidden output dir")
+        precondition(liveBinding.sourcePaths.values.contains {
+            $0 == root.appendingPathComponent("sections/child.tex").resolvingSymlinksInPath().standardizedFileURL
+        }, "live binding must map the included child source")
+        let liveForward = try await runner.forward(
+            binding: liveBinding, sourceURL: root.appendingPathComponent("sections/child.tex"),
+            line: 102, column: 0)
+        precondition(liveForward.pdf.page >= 1, "live forward sync must resolve a page")
+        print("PASS live binding: .pitex-live output maps inputs to the source tree")
+
+        // Synthetic relative-path variant: the fixture's absolute Input
+        // records were rewritten to ./-relative form (see the Python
+        // fixture below — actual xelatex here records absolute paths, so
+        // this exercises the relative-anchoring path deliberately). The
+        // synctex CLI must resolve them against the binding's sourceRoot
+        // (the project root for a top-level main), never the PDF's
+        // .pitex-live directory.
+        let relPdf = livePdf.deletingLastPathComponent().appendingPathComponent("relmain.pdf")
+        let relBinding = try await runner.refreshBinding(
+            projectRoot: root, pdfURL: relPdf, buildID: "rel",
+            mainRelativePath: "main.tex")
+        precondition(relBinding.sourceRoot.standardizedFileURL
+            == root.resolvingSymlinksInPath().standardizedFileURL,
+            "top-level main anchors sourceRoot at the project root")
+        // The rewrite must have produced relative recorded keys — if the
+        // transformation silently did nothing this check cannot pass.
+        precondition(relBinding.sourcePaths.keys.filter { !$0.hasPrefix("/") }.count >= 2,
+            "synthetic fixture must surface relative source keys for main and child")
+        let relForward = try await runner.forward(
+            binding: relBinding, sourceURL: root.appendingPathComponent("sections/child.tex"),
+            line: 102, column: 0)
+        precondition(relForward.pdf.page >= 1,
+            "relative inputs must resolve against the source directory, not the PDF dir")
+        let relInverse = try await runner.inverse(
+            binding: relBinding, page: relForward.pdf.page,
+            point: SyncTeXCore.PDFPoint(x: relForward.h, y: relForward.v))
+        precondition(relInverse.source.path.value == "sections/child.tex",
+            "relative inverse input must map back under the project root")
+        print("PASS relative inputs: forward+inverse anchored on sourceRoot, not PDF dir")
         window.orderOut(nil)
     }
 }
@@ -136,19 +189,86 @@ with tempfile.TemporaryDirectory(prefix="pitex-synctex-", dir="/tmp") as directo
     (root / "sections/child.tex").write_text("% child\n" + "\n" * 100 + "ChildTarget\\par\n")
     subprocess.run(["/Library/TeX/texbin/xelatex", "-synctex=1", "-interaction=nonstopmode",
                     "-halt-on-error", "main.tex"], cwd=root, check=True, stdout=subprocess.DEVNULL)
+    # The same project compiled into the isolated live output dir — the
+    # runner must map its .synctex inputs to the real source tree.
+    live_dir = root / ".pitex-live" / "main"
+    live_dir.mkdir(parents=True)
+    subprocess.run(["/Library/TeX/texbin/xelatex", "-synctex=1", "-interaction=nonstopmode",
+                    "-halt-on-error", "-output-directory", str(live_dir), "main.tex"],
+                   cwd=root, check=True, stdout=subprocess.DEVNULL)
+    # Synthetic relative-path variant: rewrite the live build's absolute
+    # Input records to ./-relative form so the runner's sourceRoot anchor
+    # is exercised end-to-end. This is a fabricated fixture — the actual
+    # xelatex on this toolchain records absolute cwd-prefixed Inputs —
+    # but relative records are the failure mode the mapper/runner must
+    # still handle (older engines, relocated remote metadata).
+    live_meta = gzip.decompress((live_dir / "main.synctex.gz").read_bytes()).decode()
+    # xelatex canonicalizes /tmp to /private/tmp on macOS — accept the
+    # recorded path under either the lexical or the resolved root.
+    # Recorded suffixes may carry "/./" (invocation-dir marker), so the
+    # stripped remainder is normalized before it becomes a ./-relative
+    # record; a suffix that escapes (../) is left absolute rather than
+    # fabricating a path that means something else.
+    rel_meta = live_meta
+    total = 0
+
+    def relativize(match):
+        global total
+        suffix = posixpath.normpath(match.group(2))
+        if suffix.startswith("../") or suffix == ".." or suffix.startswith("/"):
+            return match.group(0)
+        total += 1
+        return f"Input:{match.group(1)}:./{suffix}"
+
+    for recorded_root in {str(root), str(root.resolve())}:
+        rel_meta = re.sub(r"^Input:(\d+):" + re.escape(recorded_root) + r"/(.+)",
+                          relativize, rel_meta, flags=re.M)
+    rel_inputs = {l.split(":", 2)[2] for l in rel_meta.splitlines() if l.startswith("Input:")}
+    assert total >= 2 and "./main.tex" in rel_inputs and "./sections/child.tex" in rel_inputs, (
+        f"expected main+child rewritten to ./-relative, got {total} subs: {sorted(rel_inputs)}")
+    (live_dir / "relmain.synctex.gz").write_bytes(gzip.compress(rel_meta.encode()))
+    # The PDF must be THIS compile's output — the root build's main.pdf
+    # is a different run's bytes.
+    (live_dir / "relmain.pdf").write_bytes((live_dir / "main.pdf").read_bytes())
     # A decompressed copy lets the check compare the byte-level Input scan
     # against the old decode-then-filter expression. The name must not be
     # <name>.synctex — the runner and the synctex CLI pick that over the .gz.
     (root / "inputs-check.bin").write_bytes(gzip.decompress((root / "main.synctex.gz").read_bytes()))
-    # Keep the private PDF coordinator in the same compilation unit as its check.
+    # Keep the private coordinators in the same compilation unit as the
+    # check. Preview.swift contributes everything from PDFDocumentView on
+    # (incl. MarkdownPreviewView -> needs WebKit). EditorContainerView is
+    # sliced before its agent-runtime tail — GhostCompletionCoordinator
+    # pulls PiAgentProcess/AgentCoordinator (and thereby WorkspaceModel);
+    # the harness only exercises Coordinator.handleSyncClick, so a stub
+    # covers the four members the editor Coordinator touches.
     preview = (features / "Preview.swift").read_text()
+    editor = (features / "EditorContainerView.swift").read_text()
+    editor = editor[:editor.index("/// Copilot-style inline LaTeX completion")]
+    ghost_stub = '''
+/// Harness stand-in for the sliced-out agent coordinator — only the
+/// members EditorContainerView.Coordinator reads exist here.
+@MainActor
+final class GhostCompletionCoordinator {
+    weak var overlay: GhostCompletionOverlayView?
+    private(set) var suggestion: String?
+    func accept() -> Bool { false }
+    func dismiss() {}
+}
+'''
     (root / "Check.swift").write_text(
-        "import AppKit\nimport PDFKit\nimport SwiftUI\nimport SyncTeXCore\n"
-        + preview[preview.index("private struct PDFDocumentView:"):] + check
+        "import AppKit\nimport EditorMacAdapter\nimport LanguageCore\nimport PDFKit\n"
+        + "import SwiftUI\nimport SyncTeXCore\nimport TexDomain\nimport WebKit\n"
+        + preview[preview.index("private struct PDFDocumentView:"):]
+        + editor + ghost_stub + check
     )
     modules = ["BuildCore", "SyncTeXCore", "TexDomain", "DocumentSessionCore", "ProjectCore",
                "EditorMacAdapter", "EditorFeature", "AppPorts", "LanguageCore", "AICore"]
-    sources = ["SyncTeXSupport.swift", "EditorContainerView.swift", "EditorFolding.swift", "AppearanceTheme.swift"]
+    # SyntaxHighlighting.swift provides the real EditorAnalysis the
+    # editor Coordinator uses for line math — production source, not a
+    # stub. Its AppearanceSettings dependency comes from
+    # AppearanceTheme.swift.
+    sources = ["SyncTeXSupport.swift", "EditorFolding.swift",
+               "AppearanceTheme.swift", "SyntaxHighlighting.swift"]
     executable = root / "check"
     subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
                     "-target", "arm64-apple-macos15.0", "-module-cache-path", str(root / "cache"),

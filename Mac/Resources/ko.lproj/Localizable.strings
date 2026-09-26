@@ -115,6 +115,8 @@
 "accessibility.pdf_preview" = "PDF 미리보기";
 "accessibility.assistant" = "어시스턴트 대화";
 "accessibility.send_message" = "어시스턴트 메시지 보내기";
+"accessibility.on" = "켜짐";
+"accessibility.off" = "꺼짐";
 
 "build.issues" = "문제";
 
@@ -250,6 +252,12 @@
 "settings.compile.fallback_help" = "빌드 명령 필드가 비어 있을 때 사용됩니다. 위의 셸 승인이 필요합니다.";
 "settings.compile.make_default_editor" = ".tex 파일에 사용";
 "settings.compile.make_default_note" = "Pitex를 기본 .tex 편집기로 등록합니다 (더블 클릭으로 열기).";
+"settings.compile.live" = "실시간 컴파일";
+"settings.compile.live_auto" = "입력이 멈추면 자동으로 빌드";
+"settings.compile.live_auto_note" = "실시간 컴파일은 편집 중인 파일을 저장한 뒤 입력이 멈추면 자동으로 다시 빌드합니다.";
+"settings.compile.live_delay" = "유휴 지연 (ms)";
+"settings.compile.live_follow" = "실시간 빌드 후 PDF를 커서 위치로 이동";
+"toolbar.live_compile" = "실시간 컴파일";
 "settings.markdown.live_preview" = "실시간 미리보기";
 "settings.markdown.live_preview_note" = "입력하는 동안 미리보기를 업데이트합니다. 끄면 저장할 때 미리보기가 업데이트됩니다.";
 "settings.markdown.sync_scroll" = "스크롤 동기화";

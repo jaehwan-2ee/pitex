@@ -1,5 +1,7 @@
 //! Rust port of `Packages/TexApp/Sources/BuildFeature`.
 
+pub mod live;
+
 use build_core::{
     BuildCancellation, BuildID, BuildIssue, BuildLifecycle, BuildLogEntry, BuildToolTemplate,
     DirectCommandPlan, EnvironmentPolicy, LoginShellCommandPlan, ShellAuthority,

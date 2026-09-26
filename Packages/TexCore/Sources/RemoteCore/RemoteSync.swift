@@ -138,17 +138,26 @@ public struct RemoteMirror: Sendable, Hashable {
 }
 
 /// Which files are mirrored, applied identically on both sides: VCS and
-/// dependency trees, macOS litter, Pitex's own atomic-save temp files and
-/// anything ≥ 50 MB stay out.
+/// dependency trees, macOS litter, Pitex's own atomic-save temp files,
+/// live-build outputs (`.pitex-live` — fetched explicitly, never synced)
+/// and anything ≥ 50 MB stay out.
 public enum RemoteSyncRules {
     public static let prunedNames: Set<String> = [
         ".git", ".svn", ".hg", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".Trash",
+        ".pitex-live",
     ]
     public static let maximumFileSize = 50 * 1024 * 1024
 
     public static func isExcluded(name: String) -> Bool {
         prunedNames.contains(name) || name.hasPrefix(".pitex-upload.")
             || (name.hasPrefix(".") && name.contains(".texspark-") && name.hasSuffix(".tmp"))
+    }
+
+    /// True when any `/`-separated component of `path` is excluded — a
+    /// fetched `.pitex-live/…` output lives in the mirror yet must never
+    /// enter ordinary pull/push planning (manifest or conflicts).
+    public static func isExcludedPath(_ path: String) -> Bool {
+        path.split(separator: "/").contains { isExcluded(name: String($0)) }
     }
 
     /// A relative path from the remote is only ever used inside the mirror:
@@ -257,6 +266,19 @@ enum RemoteScripts {
     /// is in the way — nothing about PATH can be concluded or written.
     private static let ancestry =
         #"a() { q=.; z=$1; while :; do case $z in */*) q=$q/${z%%/*}; z=${z#*/} ;; *) return 0 ;; esac; if [ -L "$q" ]; then return 1; elif [ -d "$q" ]; then [ -x "$q" ] || return 1; elif [ -e "$q" ]; then return 1; else return 2; fi; done; }"#
+
+    /// Creates build output directories (the live `.pitex-live` tree) on
+    /// the device: `$1` is the remote root, the rest are relative
+    /// directories to `mkdir -p`, each printed as `D/path` once real. `a`
+    /// proves every existing ancestor is a real, searchable directory and
+    /// `[ -L ]` catches a redirected leaf — an output root or child
+    /// symlink, even one pointing inside the project, refuses with
+    /// `R/path` and exit 1 so the caller aborts before the compiler
+    /// writes a byte. A missing ancestor (exit 2) is what `mkdir -p`
+    /// fills in.
+    static let makeDirectories =
+        #"cd -- "$1" || exit 3; shift; "# + ancestry
+        + #"; for p in "$@"; do case $p in ''|..|../*|*/../*|*/..|/*|./*|*/./*|*/.|.) printf 'R/%s\n' "$p"; exit 1 ;; esac; a "$p" || [ $? = 2 ] || { printf 'R/%s\n' "$p"; exit 1; }; [ -L "$p" ] && { printf 'R/%s\n' "$p"; exit 1; }; mkdir -p -- "$p" 2>/dev/null || { printf 'R/%s\n' "$p"; exit 1; }; printf 'D/%s\n' "$p"; done"#
 
     /// `hash  ./path` for every mirrored file under $1. A file missing here
     /// is only a deletion candidate (`probe` decides).
@@ -494,6 +516,11 @@ public actor RemoteSync {
     public func pull() async throws -> SyncReport {
         await acquire()
         defer { release() }
+        // Excluded subtrees (`.pitex-live`, `.git`…) can sit in a manifest
+        // or conflict list written before the rule existed: planning must
+        // not delete, upload or conflict with them.
+        manifest = manifest.filter { !RemoteSyncRules.isExcludedPath($0.key) }
+        conflicts = conflicts.filter { !RemoteSyncRules.isExcludedPath($0) }
         let listing = try await client.runChecked(RemoteScripts.hashTree, arguments: [remoteRoot])
         let remote = RemoteScripts.parseHashes(listing.stdoutText)
         var local: [String: String] = [:]
@@ -555,6 +582,9 @@ public actor RemoteSync {
     public func push() async throws -> SyncReport {
         await acquire()
         defer { release() }
+        // See pull(): excluded subtrees never enter ordinary planning.
+        manifest = manifest.filter { !RemoteSyncRules.isExcludedPath($0.key) }
+        conflicts = conflicts.filter { !RemoteSyncRules.isExcludedPath($0) }
         let changed = localHashes().filter { manifest[$0.key] != $0.value }.keys.sorted()
         var report = SyncReport()
         report.conflicts = conflicts.sorted()
@@ -605,7 +635,12 @@ public actor RemoteSync {
             for path in safe {
                 guard let file = staged[path] else { continue }
                 try place(file.url, at: path)
-                manifest[path] = file.hash
+                // Excluded outputs (`.pitex-live/…`) are mirrored and
+                // returned but never recorded — ordinary sync must not
+                // track them as synced files.
+                if !RemoteSyncRules.isExcludedPath(path) {
+                    manifest[path] = file.hash
+                }
                 conflicts.remove(path)
                 fetched.append(path)
             }

@@ -89,8 +89,10 @@ struct Preview: View {
         VStack(spacing: 0) {
             syncTeXStatus
             Divider()
-            switch workspace.buildState {
-            case let .succeeded(pdfData, _):
+            // The retained PDF — last output a build actually published —
+            // keeps rendering through building/failed/cancelled states;
+            // the view only unmounts when no output exists at all.
+            if let retained = workspace.retainedPDF {
                 HStack(spacing: 8) {
                     Text(verbatim: pdfDisplayName)
                         .font(.caption.weight(.semibold))
@@ -106,7 +108,7 @@ struct Preview: View {
                     .help(String(localized: "preview.open_external"))
                     .accessibilityIdentifier("pitex.pdf.openExternal")
                     Button {
-                        downloadPDF(pdfData)
+                        downloadPDF(retained.data)
                     } label: {
                         Image(systemName: "arrow.down.circle")
                     }
@@ -117,8 +119,26 @@ struct Preview: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 Divider()
+                if case let .failed(reason) = workspace.buildState {
+                    // The last-good PDF stays up but the failure is
+                    // still visible — details live in Build Log/Issues.
+                    Text(verbatim: reason)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .accessibilityIdentifier("pitex.preview.buildError")
+                    Divider()
+                }
                 PDFDocumentView(
-                    data: pdfData,
+                    data: retained.data,
+                    // Identity is the workspace + resolved source, NOT the
+                    // artifact path: a manual main.pdf and a live
+                    // .pitex-live/main/main.pdf of the same source must keep
+                    // the viewport across the first auto build.
+                    target: "\(workspace.projectGeneration.uuidString)/\(retained.sourceTarget)",
                     workspace: workspace,
                     highlightSync: settings.forwardSyncHighlight,
                     onInverseSync: { page, point in
@@ -127,7 +147,7 @@ struct Preview: View {
                 )
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("pitex.pdf")
-            case .building, .failed, .unavailable:
+            } else {
                 ContentUnavailableView(
                     "preview.no_pdf",
                     systemImage: "doc.richtext",
@@ -158,15 +178,23 @@ struct Preview: View {
         .accessibilityIdentifier("pitex.synctexStatus")
     }
 
-    /// Name of the rendered PDF, matching the built target (or active doc).
+    /// Display name of the rendered PDF — the artifact's basename even
+    /// when the real file hides under `.pitex-live`.
     private var pdfDisplayName: String {
-        workspace.latestBuiltPDFName ?? "document.pdf"
+        guard let path = workspace.retainedPDF?.artifactPath ?? workspace.latestBuiltPDFName else {
+            return "document.pdf"
+        }
+        return (path as NSString).lastPathComponent
     }
 
     /// On-disk URL of the last built PDF — the SyncTeX binding carries it
-    /// once a build has succeeded.
+    /// once a build has succeeded; before binding it derives from the
+    /// retained artifact path (which may live under `.pitex-live`).
     private var pdfFileURL: URL? {
-        workspace.syncTeXBinding?.pdfURL
+        if let url = workspace.syncTeXBinding?.pdfURL { return url }
+        guard let root = workspace.projectURL,
+              let artifact = workspace.retainedPDF?.artifactPath else { return nil }
+        return root.appendingPathComponent(artifact)
     }
 
     /// Opens the built PDF in the system default PDF viewer (Preview.app).
@@ -211,6 +239,10 @@ struct Preview: View {
 
 private struct PDFDocumentView: NSViewRepresentable {
     let data: Data
+    /// Workspace + source identity of these bytes — a different build
+    /// source or a reopened workspace resets the view instead of
+    /// preserving a page index that belonged to another document.
+    let target: String
     /// Only this workspace's forward-sync highlights reach this view — every
     /// window has its own PDF, and the notification is app-wide.
     let workspace: AnyObject
@@ -240,6 +272,7 @@ private struct PDFDocumentView: NSViewRepresentable {
 
         context.coordinator.pdfView = view
         context.coordinator.renderedData = data
+        context.coordinator.renderedTarget = target
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.highlightSync = highlightSync
 
@@ -255,6 +288,7 @@ private struct PDFDocumentView: NSViewRepresentable {
     func updateNSView(_ view: PDFView, context: Context) {
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.highlightSync = highlightSync
+        let sameTarget = context.coordinator.renderedTarget == target
         // Fast path: Data is a value type over shared storage, so the same
         // buffer compares equal by base address without a multi-MB memcmp
         // on every SwiftUI pass. Distinct storage falls back to ==.
@@ -266,11 +300,48 @@ private struct PDFDocumentView: NSViewRepresentable {
             }
         // Rebuilding `view.document` resets the PDF to its first page, so
         // equal bytes — same storage or a byte-compare hit — must return
-        // early; only genuinely new build output reloads the view.
-        if unchanged || context.coordinator.renderedData == data { return }
+        // early; only genuinely new build output reloads the view. The
+        // identity must also match: same bytes under a DIFFERENT source
+        // still swap so renderedTarget advances and the position resets.
+        if sameTarget && (unchanged || context.coordinator.renderedData == data) { return }
+        // Capture BEFORE the swap: index and point come from the SAME
+        // currentDestination — in continuous mode currentPage can differ
+        // from currentDestination.page near page boundaries, and mixing
+        // them jumps. index(for:) yields NSNotFound (not nil) for a page
+        // outside the old document — normalize it so the currentPage
+        // fallback can apply; a nil point never pairs a fallback index
+        // with a destination that resolved to no page.
+        let destination = sameTarget ? view.currentDestination : nil
+        let destinationIndex = destination?.page
+            .flatMap { view.document?.index(for: $0) }
+            .flatMap { $0 == NSNotFound ? nil : $0 }
+        let oldIndex = sameTarget
+            ? destinationIndex ?? view.currentPage
+                .flatMap { view.document?.index(for: $0) }
+                .flatMap { $0 == NSNotFound ? nil : $0 }
+            : nil
+        let point = destinationIndex != nil ? destination?.point : nil
+        let autoScales = view.autoScales
+        let scaleFactor = view.scaleFactor
         context.coordinator.clearSyncHighlight()
         context.coordinator.renderedData = data
+        context.coordinator.renderedTarget = target
         view.document = PDFDocument(data: data)
+        guard sameTarget, let document = view.document, document.pageCount > 0 else { return }
+        view.autoScales = autoScales
+        if !autoScales { view.scaleFactor = scaleFactor }
+        if let oldIndex {
+            // The new document may be shorter — clamp the index, not a page.
+            let clamped = min(max(oldIndex, 0), document.pageCount - 1)
+            if let page = document.page(at: clamped) {
+                if let point {
+                    view.go(to: PDFDestination(page: page, at: point))
+                } else {
+                    // No destination was set — keep the page itself.
+                    view.go(to: page)
+                }
+            }
+        }
     }
 
     static func dismantleNSView(_ nsView: PDFView, coordinator: Coordinator) {
@@ -287,6 +358,10 @@ private struct PDFDocumentView: NSViewRepresentable {
     final class Coordinator: NSObject {
         weak var pdfView: PDFView?
         var renderedData = Data()
+        /// Workspace + source identity of the rendered document —
+        /// distinguishes a rebuild of the same target (preserve
+        /// position) from a target or workspace switch (reset).
+        var renderedTarget = ""
         var syncMonitor: Any?
         var onInverseSync: (Int, SyncTeXCore.PDFPoint) -> Void = { _, _ in }
         var highlightSync = false {
