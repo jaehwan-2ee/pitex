@@ -149,7 +149,8 @@ final class RemoteCoreTests: XCTestCase {
 
     func testRemoteScriptsAreValidSingleLineSh() throws {
         for script in [RemoteScripts.hashTree, RemoteScripts.probe, RemoteScripts.commitUpload,
-                       RemoteScripts.tarOut, RemoteScripts.listDirectory, RemoteScripts.loginExec] {
+                       RemoteScripts.tarOut, RemoteScripts.listDirectory, RemoteScripts.loginExec,
+                       RemoteScripts.makeDirectories] {
             XCTAssertFalse(script.contains("\n"), "csh login shells need single-line scripts")
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -177,6 +178,7 @@ final class RemoteCoreTests: XCTestCase {
             ("tarOut.sh", RemoteScripts.tarOut),
             ("listDirectory.sh", RemoteScripts.listDirectory),
             ("loginExec.sh", RemoteScripts.loginExec),
+            ("makeDirectories.sh", RemoteScripts.makeDirectories),
         ] {
             let fixture = try Data(contentsOf: fixtures.appendingPathComponent(name))
             XCTAssertEqual(
@@ -520,6 +522,251 @@ final class RemoteCoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("src/main.pdf"), encoding: .utf8), "%PDF-1.4")
         let afterBuild = try await sync.push()
         XCTAssertEqual(afterBuild.uploaded, [], "fetched outputs are in the manifest, not pending uploads")
+    }
+
+    // MARK: - Live output setup (real sshd)
+
+    /// A live build creates `.pitex-live/<job>` on the device with the
+    /// nested tex-parent layout (paths with spaces included), the PDF
+    /// downloads through explicit fetch, and ordinary sync never
+    /// uploads, deletes or conflicts with the local live tree — even
+    /// under a manifest entry written before the exclusion existed.
+    func testLiveOutputTreeCreatedFetchedAndKeptOutOfSync() async throws {
+        let client = try liveClient()
+        let fileManager = FileManager.default
+        let remote = fileManager.temporaryDirectory.appendingPathComponent("pitex-remote-\(UUID().uuidString)")
+        let store = fileManager.temporaryDirectory.appendingPathComponent("pitex-store-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: remote); try? fileManager.removeItem(at: store) }
+        try fileManager.createDirectory(at: remote.appendingPathComponent("manuscript/chapters/inner part"), withIntermediateDirectories: true)
+        try "doc".write(to: remote.appendingPathComponent("manuscript/main.tex"), atomically: true, encoding: .utf8)
+        try "one".write(to: remote.appendingPathComponent("manuscript/chapters/one.tex"), atomically: true, encoding: .utf8)
+        try "inner".write(to: remote.appendingPathComponent("manuscript/chapters/inner part/two.tex"), atomically: true, encoding: .utf8)
+        try "asset".write(to: remote.appendingPathComponent("manuscript/logo.png"), atomically: true, encoding: .utf8)
+        let mirror = try RemoteMirror.prepare(for: RemoteProject(connection: client.connection, remoteRoot: remote.path), store: store)
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        let executor = RemoteBuildExecutor(sync: sync)
+        let pdf = ".pitex-live/manuscript/main/main.pdf"
+        await executor.setOutputs([pdf], required: pdf)
+        // A stand-in engine writing into the prepared output tree.
+        let plan = try DirectCommandPlan(
+            executable: "/bin/sh",
+            arguments: ["-c", #"cd manuscript && printf '%%PDF-live' > ../.pitex-live/manuscript/main/main.pdf"#],
+            workingDirectory: .projectRoot)
+        let request = BuildProcessRequest(
+            buildID: try BuildID(rawValue: "b1"), stageIndex: 0, command: .direct(plan),
+            projectRoot: mirror.root, sourceDirectory: mirror.root.appendingPathComponent("manuscript"))
+        let result = try await executor.execute(request) { _ in }
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(try String(contentsOf: remote.appendingPathComponent(pdf), encoding: .utf8), "%PDF-live")
+        XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent(pdf), encoding: .utf8), "%PDF-live",
+                       "explicit fetch still downloads outputs under .pitex-live")
+        for directory in ["manuscript", "manuscript/chapters", "manuscript/chapters/inner part",
+                          "chapters", "chapters/inner part"] {
+            XCTAssertTrue(
+                fileManager.fileExists(atPath: remote.appendingPathComponent(".pitex-live/manuscript/main/\(directory)").path),
+                "\(directory) is created for nested \\include aux files")
+        }
+
+        // A stale manifest entry from before `.pitex-live` was excluded
+        // must not let sync delete, upload or conflict the local output.
+        let manifestURL = mirror.directory.appendingPathComponent("manifest.json")
+        var manifest = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: manifestURL))
+        manifest[pdf] = SHA256.hex(Data("stale".utf8))
+        try JSONEncoder().encode(manifest).write(to: manifestURL)
+        let pushed = try await sync.push()
+        XCTAssertEqual(pushed.uploaded, [])
+        XCTAssertFalse(fileManager.fileExists(atPath: remote.appendingPathComponent(".pitex-live-synced").path))
+        XCTAssertEqual(try String(contentsOf: remote.appendingPathComponent(pdf), encoding: .utf8), "%PDF-live",
+                       "the device copy is not synced either")
+        let pulled = try await sync.pull()
+        XCTAssertFalse(pulled.deleted.contains(pdf))
+        XCTAssertFalse(pulled.conflicts.contains(pdf))
+        XCTAssertTrue(fileManager.fileExists(atPath: mirror.root.appendingPathComponent(pdf).path))
+        manifest = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: manifestURL))
+        XCTAssertNil(manifest[pdf], "the seeded entry is scrubbed out of planning")
+    }
+
+    /// `.pitex-live` swapped for a symlink into the sources aborts the
+    /// stage before the compiler runs — the manual PDF behind it is
+    /// never overwritten.
+    func testLiveOutputRootRedirectRejected() async throws {
+        let client = try liveClient()
+        let fileManager = FileManager.default
+        let remote = fileManager.temporaryDirectory.appendingPathComponent("pitex-remote-\(UUID().uuidString)")
+        let store = fileManager.temporaryDirectory.appendingPathComponent("pitex-store-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: remote); try? fileManager.removeItem(at: store) }
+        try fileManager.createDirectory(at: remote.appendingPathComponent("manuscript"), withIntermediateDirectories: true)
+        try "doc".write(to: remote.appendingPathComponent("manuscript/main.tex"), atomically: true, encoding: .utf8)
+        try "%PDF-manual".write(to: remote.appendingPathComponent("manuscript/main.pdf"), atomically: true, encoding: .utf8)
+        // `.pitex-live` resolves inside the project: containment alone
+        // would let the "live" PDF overwrite the manual one.
+        try fileManager.createSymbolicLink(at: remote.appendingPathComponent(".pitex-live"),
+                                           withDestinationURL: remote.appendingPathComponent("manuscript"))
+        let mirror = try RemoteMirror.prepare(for: RemoteProject(connection: client.connection, remoteRoot: remote.path), store: store)
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        let executor = RemoteBuildExecutor(sync: sync)
+        let pdf = ".pitex-live/manuscript/main/main.pdf"
+        await executor.setOutputs([pdf], required: pdf)
+        let plan = try DirectCommandPlan(
+            executable: "/bin/sh",
+            arguments: ["-c", "printf x > .pitex-live/manuscript/main/main.pdf"],
+            workingDirectory: .projectRoot)
+        let request = BuildProcessRequest(
+            buildID: try BuildID(rawValue: "b1"), stageIndex: 0, command: .direct(plan),
+            projectRoot: mirror.root, sourceDirectory: mirror.root.appendingPathComponent("manuscript"))
+        do {
+            _ = try await executor.execute(request) { _ in }
+            XCTFail("a redirected output root must fail before the compiler runs")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: remote.appendingPathComponent("manuscript/main.pdf"), encoding: .utf8),
+                       "%PDF-manual", "the sentinel behind the symlink survives")
+    }
+
+    /// A symlink planted INSIDE the output tree (`…/main/chapters ->
+    /// manuscript/chapters`) is refused the same way.
+    func testLiveOutputChildRedirectRejected() async throws {
+        let client = try liveClient()
+        let fileManager = FileManager.default
+        let remote = fileManager.temporaryDirectory.appendingPathComponent("pitex-remote-\(UUID().uuidString)")
+        let store = fileManager.temporaryDirectory.appendingPathComponent("pitex-store-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: remote); try? fileManager.removeItem(at: store) }
+        try fileManager.createDirectory(at: remote.appendingPathComponent("manuscript/chapters"), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: remote.appendingPathComponent(".pitex-live/manuscript/main"), withIntermediateDirectories: true)
+        try "doc".write(to: remote.appendingPathComponent("manuscript/main.tex"), atomically: true, encoding: .utf8)
+        try "one".write(to: remote.appendingPathComponent("manuscript/chapters/one.tex"), atomically: true, encoding: .utf8)
+        try fileManager.createSymbolicLink(at: remote.appendingPathComponent(".pitex-live/manuscript/main/chapters"),
+                                           withDestinationURL: remote.appendingPathComponent("manuscript/chapters"))
+        let mirror = try RemoteMirror.prepare(for: RemoteProject(connection: client.connection, remoteRoot: remote.path), store: store)
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        let executor = RemoteBuildExecutor(sync: sync)
+        let pdf = ".pitex-live/manuscript/main/main.pdf"
+        await executor.setOutputs([pdf], required: pdf)
+        let plan = try DirectCommandPlan(
+            executable: "/bin/sh",
+            arguments: ["-c", "printf x > .pitex-live/manuscript/main/chapters/escape.pdf"],
+            workingDirectory: .projectRoot)
+        let request = BuildProcessRequest(
+            buildID: try BuildID(rawValue: "b1"), stageIndex: 0, command: .direct(plan),
+            projectRoot: mirror.root, sourceDirectory: mirror.root.appendingPathComponent("manuscript"))
+        do {
+            _ = try await executor.execute(request) { _ in }
+            XCTFail("a redirected output child must fail before the compiler runs")
+        } catch {}
+        XCTAssertFalse(fileManager.fileExists(atPath: remote.appendingPathComponent("manuscript/chapters/escape.pdf").path))
+        XCTAssertEqual(try fileManager.contentsOfDirectory(atPath: remote.appendingPathComponent("manuscript/chapters").path),
+                       ["one.tex"])
+    }
+
+    /// A cancel landing during output setup or while the engine is still
+    /// mid-write never publishes a PDF — remotely or in the mirror.
+    func testLiveCancelBeforeEngineWritesPublishesNothing() async throws {
+        let client = try liveClient()
+        let fileManager = FileManager.default
+        let remote = fileManager.temporaryDirectory.appendingPathComponent("pitex-remote-\(UUID().uuidString)")
+        let store = fileManager.temporaryDirectory.appendingPathComponent("pitex-store-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: remote); try? fileManager.removeItem(at: store) }
+        try fileManager.createDirectory(at: remote.appendingPathComponent("manuscript"), withIntermediateDirectories: true)
+        try "doc".write(to: remote.appendingPathComponent("manuscript/main.tex"), atomically: true, encoding: .utf8)
+        let mirror = try RemoteMirror.prepare(for: RemoteProject(connection: client.connection, remoteRoot: remote.path), store: store)
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        let executor = RemoteBuildExecutor(sync: sync)
+        let pdf = ".pitex-live/manuscript/main/main.pdf"
+        await executor.setOutputs([pdf], required: pdf)
+        // The engine sleeps before writing: any cancel up to that point
+        // (setup, spawn, or the write's countdown) leaves no artifact.
+        let plan = try DirectCommandPlan(
+            executable: "/bin/sh",
+            arguments: ["-c", "sleep 5; printf '%%PDF-late' > .pitex-live/manuscript/main/main.pdf"],
+            workingDirectory: .projectRoot)
+        let request = BuildProcessRequest(
+            buildID: try BuildID(rawValue: "b1"), stageIndex: 0, command: .direct(plan),
+            projectRoot: mirror.root, sourceDirectory: mirror.root.appendingPathComponent("manuscript"))
+        final class Done: @unchecked Sendable { var value = false }
+        let done = Done()
+        let runner = Task<Int32, Never> {
+            let result = try? await executor.execute(request) { _ in }
+            done.value = true
+            return result?.exitCode ?? -1
+        }
+        while !done.value {
+            await executor.cancel(buildID: request.buildID)
+            await Task.yield()
+        }
+        let status = await runner.value
+        XCTAssertEqual(status, 130)
+        XCTAssertFalse(fileManager.fileExists(atPath: remote.appendingPathComponent(pdf).path),
+                       "the remote compile never wrote its PDF")
+        XCTAssertFalse(fileManager.fileExists(atPath: mirror.root.appendingPathComponent(pdf).path),
+                       "nothing is fetched or published locally either")
+    }
+
+    /// The "Building on …" line is emitted inside the registered task, so
+    /// a cancel issued by the output callback itself is already visible:
+    /// no remote setup, no engine, no artifact.
+    func testLiveCancelFromFirstOutputCallbackSkipsRemoteWork() async throws {
+        let client = try liveClient()
+        let fileManager = FileManager.default
+        let remote = fileManager.temporaryDirectory.appendingPathComponent("pitex-remote-\(UUID().uuidString)")
+        let store = fileManager.temporaryDirectory.appendingPathComponent("pitex-store-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: remote); try? fileManager.removeItem(at: store) }
+        try fileManager.createDirectory(at: remote.appendingPathComponent("manuscript"), withIntermediateDirectories: true)
+        try "doc".write(to: remote.appendingPathComponent("manuscript/main.tex"), atomically: true, encoding: .utf8)
+        let mirror = try RemoteMirror.prepare(for: RemoteProject(connection: client.connection, remoteRoot: remote.path), store: store)
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        let executor = RemoteBuildExecutor(sync: sync)
+        let pdf = ".pitex-live/manuscript/main/main.pdf"
+        await executor.setOutputs([pdf], required: pdf)
+        let plan = try DirectCommandPlan(
+            executable: "/bin/sh",
+            arguments: ["-c", "printf '%%PDF-late' > .pitex-live/manuscript/main/main.pdf"],
+            workingDirectory: .projectRoot)
+        let request = BuildProcessRequest(
+            buildID: try BuildID(rawValue: "b1"), stageIndex: 0, command: .direct(plan),
+            projectRoot: mirror.root, sourceDirectory: mirror.root.appendingPathComponent("manuscript"))
+        let result = try await executor.execute(request) { output in
+            if output.channel == .system {
+                await executor.cancel(buildID: request.buildID)
+            }
+        }
+        XCTAssertEqual(result.exitCode, 130)
+        XCTAssertFalse(fileManager.fileExists(atPath: remote.appendingPathComponent(".pitex-live").path),
+                       "remote output setup never ran")
+        XCTAssertFalse(fileManager.fileExists(atPath: mirror.root.appendingPathComponent(pdf).path))
+    }
+
+    /// A manual nested target (required PDF outside `.pitex-live`) runs
+    /// with no output setup at all — the remote tree stays untouched.
+    func testLiveManualNestedTargetRunsWithoutOutputSetup() async throws {
+        let client = try liveClient()
+        let fileManager = FileManager.default
+        let remote = fileManager.temporaryDirectory.appendingPathComponent("pitex-remote-\(UUID().uuidString)")
+        let store = fileManager.temporaryDirectory.appendingPathComponent("pitex-store-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: remote); try? fileManager.removeItem(at: store) }
+        try fileManager.createDirectory(at: remote.appendingPathComponent("manuscript"), withIntermediateDirectories: true)
+        try "doc".write(to: remote.appendingPathComponent("manuscript/main.tex"), atomically: true, encoding: .utf8)
+        let mirror = try RemoteMirror.prepare(for: RemoteProject(connection: client.connection, remoteRoot: remote.path), store: store)
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        let executor = RemoteBuildExecutor(sync: sync)
+        await executor.setOutputs(["manuscript/main.pdf"], required: "manuscript/main.pdf")
+        let plan = try DirectCommandPlan(
+            executable: "/bin/sh",
+            arguments: ["-c", "printf '%%PDF-manual' > main.pdf"],
+            workingDirectory: .sourceDirectory)
+        let request = BuildProcessRequest(
+            buildID: try BuildID(rawValue: "b1"), stageIndex: 0, command: .direct(plan),
+            projectRoot: mirror.root, sourceDirectory: mirror.root.appendingPathComponent("manuscript"))
+        let result = try await executor.execute(request) { _ in }
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("manuscript/main.pdf"), encoding: .utf8),
+                       "%PDF-manual")
+        XCTAssertFalse(fileManager.fileExists(atPath: remote.appendingPathComponent(".pitex-live").path),
+                       "no live tree is prepared for a manual target")
     }
 
     /// `runGit` through the private sshd: a device repo reports its

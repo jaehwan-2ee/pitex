@@ -323,6 +323,8 @@ public actor BuildOrchestrator {
                 for (index, stage) in stages.enumerated() {
                     try ensureNotCancelled(id: id)
                     await eventHandler(.stageStarted(index: index, tool: stage.tool))
+                    // The callback itself may cancel; never launch after it.
+                    try ensureNotCancelled(id: id)
                     let plan = try commandPlan(for: stage.tool, target: target)
                     let request = BuildProcessRequest(
                         buildID: id,
@@ -342,6 +344,8 @@ public actor BuildOrchestrator {
             case let .custom(command):
                 try ensureNotCancelled(id: id)
                 await eventHandler(.stageStarted(index: 0, tool: nil))
+                // The callback itself may cancel; never launch after it.
+                try ensureNotCancelled(id: id)
                 let request = BuildProcessRequest(
                     buildID: id,
                     stageIndex: 0,

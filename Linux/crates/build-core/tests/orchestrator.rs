@@ -1117,3 +1117,54 @@ fn cancel_racing_build_start_does_not_panic_or_wedge() {
         let _ = handle.join().unwrap();
     }
 }
+
+/// A cancel triggered by the `StageStarted` callback itself wins before
+/// the stage launches — the executor is never invoked at all.
+#[test]
+fn stage_started_cancellation_prevents_executor() {
+    let fixture = Fixture::new(&[]);
+    let fake = Arc::new(FakeExecutor::new(vec![Behavior::Success {
+        chunks: vec![],
+        pdf: Some(b"must-not-run".to_vec()),
+    }]));
+    let orchestrator = Arc::new(BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake))));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::single_pass(BuildToolStage::Pdflatex),
+        )
+        .unwrap();
+
+    // A reentrant cancel on the callback's own thread would deadlock the
+    // handler lock, so a helper thread cancels while the callback spins
+    // until the flag is visible — the post-event guard then
+    // deterministically refuses to launch.
+    let canceller = Arc::clone(&orchestrator);
+    let handler: EventHandler = Arc::new(move |event| {
+        if !matches!(event, BuildEvent::StageStarted { .. }) {
+            return;
+        }
+        let orchestrator = Arc::clone(&canceller);
+        std::thread::spawn(move || {
+            let _ = orchestrator.cancel(0);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !matches!(canceller.current_lifecycle(), Some(BuildLifecycle::Cancelling)) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the cancel never landed"
+            );
+            std::thread::yield_now();
+        }
+    });
+    let outcome = orchestrator
+        .build(BuildID::new("stage-cancel").unwrap(), handler)
+        .unwrap();
+
+    assert!(matches!(
+        outcome.lifecycle,
+        BuildLifecycle::Cancelled { .. }
+    ));
+    assert_eq!(fake.request_count(), 0);
+    assert!(!fixture.output_url.exists());
+}

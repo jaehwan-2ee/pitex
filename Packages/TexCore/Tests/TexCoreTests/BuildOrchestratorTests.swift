@@ -149,6 +149,30 @@ final class BuildOrchestratorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.outputURL.path))
     }
 
+    /// A cancel from inside the `stageStarted` callback itself wins before
+    /// the stage launches — the executor is never invoked at all.
+    func testStageStartedCancellationPreventsExecutor() async throws {
+        let fixture = try Fixture()
+        let executor = FakeExecutor(behaviors: [
+            .success(chunks: [], pdf: Data("must-not-run".utf8))
+        ])
+        let orchestrator = BuildOrchestrator(executor: executor)
+        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.pdflatex))
+
+        let outcome = try await orchestrator.build(id: try BuildID(rawValue: "stage-cancel")) { event in
+            if case .stageStarted = event {
+                try? await orchestrator.cancel(gracePeriodMilliseconds: 0)
+            }
+        }
+
+        guard case .cancelled = outcome.lifecycle else {
+            return XCTFail("A stageStarted cancel must win before the stage launches")
+        }
+        let requestCount = await executor.requestCount()
+        XCTAssertEqual(requestCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.outputURL.path))
+    }
+
     func testPartialPDFCannotReplaceLastSuccessfulPDF() async throws {
         let fixture = try Fixture()
         let executor = FakeExecutor(behaviors: [

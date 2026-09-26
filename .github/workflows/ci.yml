@@ -205,6 +205,11 @@ jobs:
       - name: Windows command environment and batch path checks
         run: cargo test -p build-core --test command_environment
         working-directory: Windows
+      # The orchestrator suite is the build scheduler's deterministic
+      # tests — native coverage for the relative live-output path logic.
+      - name: Build scheduler orchestration (relative live outputs)
+        run: cargo test -p build-core --test orchestrator
+        working-directory: Windows
       - run: cargo build -p pitex-windows
         working-directory: Windows
       # terminal-core is a member of the Linux workspace only; the manifest

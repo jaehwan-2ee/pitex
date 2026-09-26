@@ -2347,6 +2347,8 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
                             index,
                             tool: Some(stage.tool),
                         });
+                        // The callback itself may cancel; never launch after it.
+                        self.ensure_not_cancelled(&id)?;
                         let plan = command_plan_for(stage.tool, &target)?;
                         let request = BuildProcessRequest {
                             build_id: id.clone(),
@@ -2371,6 +2373,8 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
                         index: 0,
                         tool: None,
                     });
+                    // The callback itself may cancel; never launch after it.
+                    self.ensure_not_cancelled(&id)?;
                     let request = BuildProcessRequest {
                         build_id: id.clone(),
                         stage_index: 0,
