@@ -1,0 +1,20 @@
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 1970-2000,2261-2263,2275,2291-2308,2341,2770-2779,2787-2796,2804-2813,2832-2843,2852,2860,2870-2904,2924-3032
+Linux/crates/build-core/tests/orchestrator.rs
+  h_d73c695d83f4a7 55-83,121,126-129,138,173-185,199,201-203,227,238,262,778-1119
+Packages/TexCore/Sources/BuildCore/BuildOrchestrator.swift
+  h_d73c695d83f4a7 32-35,76-95,276-291,320,534,536,538,544,546,548,552-575,589-659
+Packages/TexCore/Tests/TexCoreTests/BuildOrchestratorTests.swift
+  h_d73c695d83f4a7 253-445,469-489,506,508,510,568-574,584-589
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "065165cff56983fb9b537f76da4f93233e805609",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
