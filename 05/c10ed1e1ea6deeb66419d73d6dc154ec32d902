@@ -1,0 +1,36 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 208-212
+Fixtures/expected/remote-scripts/hashTree.sh
+  h_d73c695d83f4a7 1
+Fixtures/expected/remote-scripts/makeDirectories.sh
+  h_d73c695d83f4a7 1
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 2350-2351,2376-2377
+Linux/crates/build-core/tests/orchestrator.rs
+  h_d73c695d83f4a7 1120-1170
+Linux/crates/remote-core/src/lib.rs
+  h_d73c695d83f4a7 1352,1367-1373,1631-1645,1939-1947,2100-2106,2196-2201,2832-2835,2845,2852-2860,2863-2964,3035-3039,3046-3049,3051-3094
+Linux/crates/remote-core/tests/remote_core.rs
+  h_d73c695d83f4a7 358,383,851-1236
+Packages/TexCore/Sources/BuildCore/BuildOrchestrator.swift
+  h_d73c695d83f4a7 326-327,347-348
+Packages/TexCore/Sources/RemoteCore/RemoteBuildExecutor.swift
+  h_d73c695d83f4a7 16-19,29-37,81,83-108,149-231
+Packages/TexCore/Sources/RemoteCore/RemoteSync.swift
+  h_d73c695d83f4a7 141-143,147,156-162,270-282,519-523,585-587,638-643
+Packages/TexCore/Tests/TexCoreTests/BuildOrchestratorTests.swift
+  h_d73c695d83f4a7 152-175
+Packages/TexCore/Tests/TexCoreTests/RemoteCoreTests.swift
+  h_d73c695d83f4a7 152-153,181,527-771
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05c10ed1e1ea6deeb66419d73d6dc154ec32d902",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
