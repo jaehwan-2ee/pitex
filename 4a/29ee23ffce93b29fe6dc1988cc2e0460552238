@@ -1,0 +1,44 @@
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_6dc90272bb6b27::t_bf063c4dcd6b73 29-38,68-69,71-84,86-87,90-98,100-113,362-363,370
+Packages/TexApp/Tests/TexAppTests/FeatureStateTests.swift
+  s_6dc90272bb6b27::t_bf063c4dcd6b73 139,154
+Linux/crates/project-feature/src/lib.rs
+  s_6dc90272bb6b27::t_bf063c4dcd6b73 246,292,296,363,381
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_6dc90272bb6b27::t_bf063c4dcd6b73 198,219,230,235,237
+Tools/check-sidebar-ui.py
+  s_6dc90272bb6b27::t_91d27bca79c817 38-48,54-58,95-101,103-106,108
+  s_6dc90272bb6b27::t_b589baa895fb6c 90,102,113,115,123
+  s_6dc90272bb6b27::t_70526d624f5740 126-145
+  s_6dc90272bb6b27::t_4d75f6eea68bb4 2,16-33,79-82,87-89,91-94,107,109-112,114,116-122,162,181-184,194,196
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_6dc90272bb6b27::t_bf063c4dcd6b73 5513-5517,5544-5545,5654,5751-5760
+Linux/Cargo.lock
+  s_6dc90272bb6b27::t_cd07bf91d5b1bd 964
+Linux/crates/pitex/Cargo.toml
+  s_6dc90272bb6b27::t_5b3f40fda822a2 3
+Mac/Config/Info.plist
+  s_6dc90272bb6b27::t_c9cf78f5aa8be1 20,22
+README.md
+  s_6dc90272bb6b27::t_37f889849ea2c1 36-37,45-47
+Windows/Cargo.lock
+  s_6dc90272bb6b27::t_63f3c7541fd9f6 1090
+Windows/crates/pitex-windows/Cargo.toml
+  s_6dc90272bb6b27::t_afeb5472e5a7b8 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4a29ee23ffce93b29fe6dc1988cc2e0460552238",
+  "prompts": {},
+  "sessions": {
+    "s_6dc90272bb6b27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d8cf-d859-7ce0-b1cc-ecc8a142478d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
