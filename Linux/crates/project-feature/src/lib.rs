@@ -243,7 +243,7 @@ pub fn build_project_file_tree(relative_paths: &[String]) -> Vec<ProjectFileNode
         }
         insert(&components, "", &mut roots);
     }
-    sort_nodes(&mut roots, &project_file_labels(relative_paths));
+    sort_nodes(&mut roots);
     roots
 }
 
@@ -289,12 +289,11 @@ pub fn project_file_labels(paths: &[String]) -> HashMap<String, String> {
     }).collect()
 }
 
-fn sort_nodes(nodes: &mut Vec<ProjectFileNode>, labels: &HashMap<String, String>) {
+fn sort_nodes(nodes: &mut Vec<ProjectFileNode>) {
     nodes.sort_by(|a, b| (b.is_directory, a.name.to_lowercase()).cmp(&(a.is_directory, b.name.to_lowercase())));
     for node in nodes.iter_mut() {
-        if !node.is_directory { node.name = labels[&node.path].clone(); }
         if let Some(children) = node.children.as_mut() {
-            sort_nodes(children, labels);
+            sort_nodes(children);
         }
     }
 }
@@ -361,7 +360,7 @@ mod tests {
                        ["bib", "md", "pdf", "tex"].map(|ext| format!("{directory}/manuscript.{ext}")));
             for leaf in leaves {
                 assert!(leaf.children.is_none());
-                assert_eq!(leaf.name, format!("{} ({directory})", leaf.path.rsplit('/').next().unwrap()));
+                assert_eq!(leaf.name, leaf.path.rsplit('/').next().unwrap());
             }
         }
         let figures = &tree[3].children.as_ref().unwrap()[0];
@@ -379,6 +378,7 @@ mod tests {
         let project = build_document_project("paper/main.tex", &paths, &links);
         assert_eq!(project.tree.len(), 1);
         assert_eq!(project.tree[0].path, "paper/main.tex");
+        assert_eq!(project.tree[0].name, "main.tex (paper)");
         let children = project.tree[0].children.as_ref().unwrap();
         assert_eq!(children.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(), ["paper/intro.tex", "paper/refs.bib"]);
         let nested = children[0].children.as_ref().unwrap();

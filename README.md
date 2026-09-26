@@ -33,8 +33,8 @@ Key/agent authentication must already work without a password prompt.
 - **Conflict protection** keeps files changed on both sides for review.
   Offline edits stay in the local mirror for a later sync. The window shows
   the device and sync state; returning to the window refreshes remote edits.
-- **Multiple manuscripts** stay distinguishable: duplicate names display
-  their folder, such as `manuscript.tex (4_journal)`, and bibliography/PDF
+- **Multiple manuscripts** stay distinguishable: duplicate names in Project
+  and editor tabs display their folder, such as `manuscript.tex (4_journal)`, and bibliography/PDF
   associations follow the selected manuscript's path.
 
 The sidebar offers **Workspace / Project / TODOs**, with **Workspace** selected
@@ -42,7 +42,9 @@ by default. Workspace preserves the opened folder's hierarchy and highlights
 the current file in place. Project shows the current manuscript's nested TeX,
 BibTeX, and figure dependencies, with its compiled PDF separated below; an
 active Markdown document appears as its own project. Switching tabs preserves
-Workspace folder expansion.
+Workspace folder expansion. Drag the divider between document structure and
+Workspace / Project / TODOs to adjust their heights. Workspace uses plain file
+names within the folder tree and fills the available height.
 
 Mirroring excludes VCS/dependency directories (including `.git`,
 `node_modules`, and `.venv`) and files of 50 MB or larger. Open projects

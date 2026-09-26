@@ -136,7 +136,7 @@ final class FeatureStateTests: XCTestCase {
             XCTAssertEqual(leaves.map(\.path), ["bib", "md", "pdf", "tex"].map { "\(directory)/manuscript.\($0)" })
             for leaf in leaves {
                 XCTAssertNil(leaf.children)
-                XCTAssertEqual(leaf.name, "\((leaf.path as NSString).lastPathComponent) (\(directory))")
+                XCTAssertEqual(leaf.name, (leaf.path as NSString).lastPathComponent)
             }
         }
         let figures = tree[3].children?.first
@@ -151,6 +151,7 @@ final class FeatureStateTests: XCTestCase {
                      "paper/deep.tex": ["paper/main.tex"]]
         let project = buildDocumentProject(main: "paper/main.tex", paths: paths, dependencies: links)
         XCTAssertEqual(project.tree.map(\.path), ["paper/main.tex"])
+        XCTAssertEqual(project.tree[0].name, "main.tex (paper)")
         let children = project.tree[0].children ?? []
         XCTAssertEqual(children.map(\.path), ["paper/intro.tex", "paper/refs.bib"])
         XCTAssertEqual(children[0].children?.map(\.path), ["paper/deep.tex", "paper/chart.pdf"])

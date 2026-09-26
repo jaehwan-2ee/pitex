@@ -5510,6 +5510,11 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     a11y(&root, "pitex.projectOutline", "sidebar.outline");
     root.set_size_request(170, -1); // macOS sidebar minWidth parity
 
+    let structure = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    structure.set_size_request(-1, 120);
+    let navigator = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    navigator.set_size_request(-1, 160);
+
     // Section picker (segmented → DropDown is the compact GTK equivalent).
     let section_items = [
         tr(lang, "sidebar.outline"),
@@ -5536,8 +5541,8 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         });
     }
     ui.sidebar_section_dropdown.replace(Some(sections.clone()));
-    root.append(&sections);
-    root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    structure.append(&sections);
+    structure.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
 
     // Section content stack.
     let stack = gtk4::Stack::new();
@@ -5646,8 +5651,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
 
     stack.set_visible_child_name("outline");
     ui.sidebar_stack.replace(Some(stack.clone()));
-    root.append(&stack);
-    root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    structure.append(&stack);
 
     // Workspace, Project and TODOs switch independently of document structure.
     let workspace_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -5744,8 +5748,16 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     project_switcher.set_margin_top(6);
     project_switcher.set_margin_bottom(6);
     a11y(&project_switcher, "pitex.sidebar.projectSection", "sidebar.project");
-    root.append(&project_switcher);
-    root.append(&project_stack);
+    navigator.append(&project_switcher);
+    navigator.append(&project_stack);
+    let split = gtk4::Paned::new(gtk4::Orientation::Vertical);
+    split.set_start_child(Some(&structure));
+    split.set_end_child(Some(&navigator));
+    split.set_shrink_start_child(false);
+    split.set_shrink_end_child(false);
+    split.set_position(350);
+    split.set_vexpand(true);
+    root.append(&split);
     root.upcast()
 }
 
