@@ -29,6 +29,10 @@ public enum BuildPipeline: Hashable, Codable, Sendable {
 }
 
 public struct BuildTarget: Hashable, Sendable {
+    /// The live-build output root: every artifact of a live build sits
+    /// under `.pitex-live/`, excluded from remote sync.
+    public static let liveDirectoryName = ".pitex-live"
+
     public let projectRoot: URL
     public let sourcePath: String
     public let outputPDFPath: String
@@ -67,6 +71,26 @@ public struct BuildTarget: Hashable, Sendable {
         self.outputPDFPath = outputPDFPath
         self.declaredGeneratedPaths = declaredGeneratedPaths
         self.buildDirectoryPath = buildDirectoryPath
+    }
+
+    /// The live-build layout: `.pitex-live/<source stem path>/<stem>.pdf` —
+    /// `main.tex` targets `.pitex-live/main/main.pdf`,
+    /// `manuscript/main.tex` targets `.pitex-live/manuscript/main/main.pdf`.
+    public static func live(projectRoot: URL, sourcePath: String) throws -> BuildTarget {
+        try validateRelative(sourcePath)
+        let source = sourcePath as NSString
+        let directory = source.deletingLastPathComponent
+        let stem = (source.lastPathComponent as NSString).deletingPathExtension
+        let job = directory.isEmpty ? stem : directory + "/" + stem
+        let build = liveDirectoryName + "/" + job
+        let pdf = build + "/" + stem + ".pdf"
+        return try BuildTarget(
+            projectRoot: projectRoot,
+            sourcePath: sourcePath,
+            outputPDFPath: pdf,
+            declaredGeneratedPaths: [build, pdf],
+            buildDirectoryPath: build
+        )
     }
 
     fileprivate static func validateRelative(_ path: String) throws {
@@ -249,7 +273,22 @@ public actor BuildOrchestrator {
         logSequence = 0
         await eventHandler(.lifecycle(.running(startedAtMilliseconds: started)))
 
-        let outputURL = try target.url(for: target.outputPDFPath)
+        let outputURL: URL
+        do {
+            outputURL = try target.url(for: target.outputPDFPath)
+        } catch {
+            // A setup error still clears the active build before throwing.
+            _ = await finish(
+                id: id,
+                lifecycle: BuildLifecycle.failed(
+                    exitCode: nil,
+                    finishedAtMilliseconds: nowMilliseconds()
+                ),
+                disposition: .noPDF(partialOutputWasDiscarded: false),
+                eventHandler: eventHandler
+            )
+            throw error
+        }
         var preexistingPDF: Data?
         if fileManager.fileExists(atPath: outputURL.path) {
             do {
@@ -278,6 +317,7 @@ public actor BuildOrchestrator {
         var stageFailure: BuildOrchestratorError?
 
         do {
+            try prepareBuildDirectory(for: target)
             switch pipeline {
             case let .stages(stages):
                 for (index, stage) in stages.enumerated() {
@@ -491,22 +531,46 @@ public actor BuildOrchestrator {
     private func commandPlan(for tool: BuildToolStage, target: BuildTarget) throws -> DirectCommandPlan {
         switch tool {
         case .xelatex:
-            return try DirectCommandPlan(executable: "xelatex", arguments: ["-synctex=1", "-interaction=nonstopmode", "-file-line-error", target.sourcePath])
+            return try DirectCommandPlan(executable: "xelatex", arguments: ["-synctex=1", "-interaction=nonstopmode", "-file-line-error"] + outputDirectoryArguments(for: target) + [target.sourcePath])
         case .pdflatex:
-            return try DirectCommandPlan(executable: "pdflatex", arguments: ["-synctex=1", "-interaction=nonstopmode", "-file-line-error", target.sourcePath])
+            return try DirectCommandPlan(executable: "pdflatex", arguments: ["-synctex=1", "-interaction=nonstopmode", "-file-line-error"] + outputDirectoryArguments(for: target) + [target.sourcePath])
         case .lualatex:
-            return try DirectCommandPlan(executable: "lualatex", arguments: ["-synctex=1", "--interaction=nonstopmode", "--file-line-error", target.sourcePath])
+            return try DirectCommandPlan(executable: "lualatex", arguments: ["-synctex=1", "--interaction=nonstopmode", "--file-line-error"] + outputDirectoryArguments(for: target) + [target.sourcePath])
         case .latexmk, .latexmkXeLaTeX, .latexmkLuaLaTeX:
             let engine = tool == .latexmkXeLaTeX ? "-pdfxe" : (tool == .latexmkLuaLaTeX ? "-pdflua" : "-pdf")
             // latexmk owns bibliography/index dependencies and reruns. -cd
             // keeps relative inputs and output files beside the main source,
             // even when the workspace contains a nested manuscript directory.
-            return try DirectCommandPlan(executable: "latexmk", arguments: [engine, "-cd", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", target.sourcePath])
+            return try DirectCommandPlan(executable: "latexmk", arguments: [engine, "-cd", "-synctex=1", "-interaction=nonstopmode", "-file-line-error"] + outdirArguments(for: target) + [target.sourcePath])
         case .bibtex:
-            return try DirectCommandPlan(executable: "bibtex", arguments: [jobName(target.sourcePath)])
+            return try DirectCommandPlan(executable: "bibtex", arguments: [jobName(for: target)])
         case .makeindex:
-            return try DirectCommandPlan(executable: "makeindex", arguments: [jobName(target.sourcePath)])
+            return try DirectCommandPlan(executable: "makeindex", arguments: [jobName(for: target)])
         }
+    }
+
+    /// Engines run from the project root, where the build directory is
+    /// already a usable relative path. Arguments stay relative so the
+    /// identical plan can execute remotely under a different root.
+    private func outputDirectoryArguments(for target: BuildTarget) -> [String] {
+        guard let directory = target.buildDirectoryPath else { return [] }
+        return ["-output-directory=\(directory)"]
+    }
+
+    /// latexmk's -cd changes into the source directory first, so -outdir
+    /// must climb back out: one "../" per source-directory component.
+    private func outdirArguments(for target: BuildTarget) -> [String] {
+        guard let directory = target.buildDirectoryPath else { return [] }
+        let depth = target.sourcePath.split(separator: "/").count - 1
+        return ["-outdir=\(String(repeating: "../", count: depth))\(directory)"]
+    }
+
+    private func jobName(for target: BuildTarget) -> String {
+        guard let directory = target.buildDirectoryPath else {
+            return jobName(target.sourcePath)
+        }
+        let stem = ((target.sourcePath as NSString).lastPathComponent as NSString).deletingPathExtension
+        return directory + "/" + stem
     }
 
     private func jobName(_ sourcePath: String) -> String {
@@ -520,6 +584,77 @@ public actor BuildOrchestrator {
     private func sourceDirectory(for target: BuildTarget) throws -> URL {
         let sourceURL = try target.url(for: target.sourcePath)
         return sourceURL.deletingLastPathComponent()
+    }
+
+    /// Creates the build directory and mirrors the source subdirectories a
+    /// nested \include needs: TeX engines and latexmk 4.83 do not create
+    /// nested directories inside -output-directory/-outdir, so a chapter
+    /// aux fails to open without them. Engine stages run from the project
+    /// root and latexmk's -cd runs from the source directory, so both
+    /// relative views are mirrored.
+    private func prepareBuildDirectory(for target: BuildTarget) throws {
+        guard let directory = target.buildDirectoryPath else { return }
+        // The lexical path, checked before target.url resolves it — a
+        // symlinked output root must be caught before its resolved
+        // destination is used.
+        try requireUnredirected(
+            target.projectRoot.appendingPathComponent(directory),
+            relativePath: directory
+        )
+        let outputURL = try target.url(for: directory)
+        try fileManager.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        try mirrorTeXSubdirectories(of: target.projectRoot, into: outputURL)
+        let sourceURL = try sourceDirectory(for: target)
+        if sourceURL.path != target.projectRoot.path {
+            try mirrorTeXSubdirectories(of: sourceURL, into: outputURL)
+        }
+    }
+
+    /// A prepared output path must be exactly where it claims: any symlink
+    /// below the resolved project root — the output root or a mirrored
+    /// child — redirects artifacts outside the live output tree or back
+    /// into the source tree, and is rejected before anything is written.
+    private func requireUnredirected(_ candidate: URL, relativePath: String) throws {
+        let lexical = candidate.standardizedFileURL
+        guard lexical.resolvingSymlinksInPath().path == lexical.path else {
+            throw BuildOrchestratorError.pathTraversal(relativePath)
+        }
+    }
+
+    /// Dependency caches that never hold project TeX sources and are too
+    /// large to scan on every build.
+    private static let prunedSubdirectoryNames: Set<String> = [
+        "node_modules", "__pycache__", "venv",
+    ]
+
+    /// Mirrors each directory that directly contains .tex files (with its
+    /// ancestors) so chapter aux paths under the output directory exist.
+    /// Hidden directories, directory symlinks, pruned dependency trees,
+    /// and the output subtree itself are never entered.
+    private func mirrorTeXSubdirectories(of root: URL, into outputURL: URL) throws {
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for case let url as URL in enumerator {
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values.isDirectory == true {
+                if values.isSymbolicLink == true
+                    || url.path == outputURL.path
+                    || Self.prunedSubdirectoryNames.contains(url.lastPathComponent) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            guard url.pathExtension == "tex",
+                  url.path.hasPrefix(root.path + "/") else { continue }
+            let relative = String(url.deletingLastPathComponent().path.dropFirst(root.path.count + 1))
+            guard !relative.isEmpty else { continue }
+            let destination = outputURL.appendingPathComponent(relative)
+            try requireUnredirected(destination, relativePath: relative)
+            try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        }
     }
 
     private func outputChanged(at url: URL, comparedWith previous: Data?) -> Bool {

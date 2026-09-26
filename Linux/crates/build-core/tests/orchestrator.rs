@@ -52,6 +52,35 @@ impl Fixture {
             target,
         }
     }
+
+    /// A nested-source project built into `.pitex-live/`.
+    fn live(source_path: &str) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "BuildOrchestratorTests-{}-{nanos}",
+            std::process::id()
+        ));
+        let source_url = root.join(source_path);
+        std::fs::create_dir_all(source_url.parent().unwrap()).unwrap();
+        std::fs::write(&source_url, "source").unwrap();
+        let target = BuildTarget::live(&root, source_path).unwrap();
+        let output_url = target.project_root.join(&target.output_pdf_path);
+        Self {
+            root,
+            source_url,
+            output_url,
+            target,
+        }
+    }
+
+    /// Paths resolved the way `BuildTarget` sees them (project root has
+    /// symlinks resolved at initialization).
+    fn resolved(&self, relative_path: &str) -> PathBuf {
+        self.target.project_root.join(relative_path)
+    }
 }
 
 impl Drop for Fixture {
@@ -89,10 +118,15 @@ struct FakeExecutor {
     state: Mutex<FakeState>,
     started: Condvar,
     resumed: Condvar,
+    pdf_path: String,
 }
 
 impl FakeExecutor {
     fn new(behaviors: Vec<Behavior>) -> Self {
+        Self::with_pdf_path(behaviors, "main.pdf")
+    }
+
+    fn with_pdf_path(behaviors: Vec<Behavior>, pdf_path: &str) -> Self {
         Self {
             state: Mutex::new(FakeState {
                 behaviors: behaviors.into(),
@@ -101,6 +135,7 @@ impl FakeExecutor {
             }),
             started: Condvar::new(),
             resumed: Condvar::new(),
+            pdf_path: pdf_path.to_string(),
         }
     }
 
@@ -135,6 +170,19 @@ impl FakeExecutor {
             .collect()
     }
 
+    fn direct_arguments(&self) -> Vec<Vec<String>> {
+        self.state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .filter_map(|r| match &r.command {
+                BuildProcessCommand::Direct(plan) => Some(plan.arguments.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn shell_commands(&self) -> Vec<String> {
         self.state
             .lock()
@@ -148,9 +196,11 @@ impl FakeExecutor {
             .collect()
     }
 
-    fn write_pdf(data: &Option<Vec<u8>>, request: &BuildProcessRequest) {
+    fn write_pdf(&self, data: &Option<Vec<u8>>, request: &BuildProcessRequest) {
         if let Some(data) = data {
-            std::fs::write(request.project_root.join("main.pdf"), data).unwrap();
+            let path = request.project_root.join(&self.pdf_path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, data).unwrap();
         }
     }
 }
@@ -174,7 +224,7 @@ impl BuildProcessExecuting for FakeExecutor {
                 for chunk in chunks {
                     output(chunk);
                 }
-                Self::write_pdf(&pdf, request);
+                self.write_pdf(&pdf, request);
                 Ok(BuildProcessResult { exit_code: 0 })
             }
             Behavior::Failure {
@@ -185,7 +235,7 @@ impl BuildProcessExecuting for FakeExecutor {
                 for chunk in chunks {
                     output(chunk);
                 }
-                Self::write_pdf(&partial_pdf, request);
+                self.write_pdf(&partial_pdf, request);
                 Ok(BuildProcessResult { exit_code })
             }
             Behavior::ToolMissing(tool) => Err(BuildProcessExecutorError::ToolNotFound(tool)),
@@ -209,7 +259,7 @@ impl BuildProcessExecuting for FakeExecutor {
         let mut state = self.state.lock().unwrap();
         if let Some((pending_request, partial_pdf)) = state.pending.take() {
             if pending_request.build_id == *build_id {
-                Self::write_pdf(&partial_pdf, &pending_request);
+                self.write_pdf(&partial_pdf, &pending_request);
             }
             self.resumed.notify_all();
         }
@@ -723,5 +773,347 @@ fn latexmk_stages_pass_engine_flag_and_change_to_source_directory() {
                 "main.tex"
             ]
         );
+    }
+}
+
+#[test]
+fn live_target_passes_relative_output_paths_to_every_tool() {
+    let fixture = Fixture::live("manuscript/main.tex");
+    let fake = Arc::new(FakeExecutor::with_pdf_path(
+        vec![
+            Behavior::Success {
+                chunks: vec![],
+                pdf: None,
+            },
+            Behavior::Success {
+                chunks: vec![],
+                pdf: None,
+            },
+            Behavior::Success {
+                chunks: vec![],
+                pdf: Some(b"pdf".to_vec()),
+            },
+        ],
+        ".pitex-live/manuscript/main/main.pdf",
+    ));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake)));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::Stages(vec![
+                BuildStagePlan {
+                    tool: BuildToolStage::Latexmk,
+                },
+                BuildStagePlan {
+                    tool: BuildToolStage::Pdflatex,
+                },
+                BuildStagePlan {
+                    tool: BuildToolStage::Bibtex,
+                },
+            ]),
+        )
+        .unwrap();
+
+    orchestrator
+        .build(
+            BuildID::new("live-args").unwrap(),
+            EventRecorder::new().handler(),
+        )
+        .unwrap();
+
+    let arguments = fake.direct_arguments();
+    // latexmk -cd enters manuscript/, so -outdir climbs back out with a
+    // relative path that also works on a remote host.
+    assert_eq!(
+        arguments[0],
+        [
+            "-pdf",
+            "-cd",
+            "-synctex=1",
+            "-interaction=nonstopmode",
+            "-file-line-error",
+            "-outdir=../.pitex-live/manuscript/main",
+            "manuscript/main.tex"
+        ]
+    );
+    assert_eq!(
+        arguments[1],
+        [
+            "-synctex=1",
+            "-interaction=nonstopmode",
+            "-file-line-error",
+            "-output-directory=.pitex-live/manuscript/main",
+            "manuscript/main.tex"
+        ]
+    );
+    assert_eq!(arguments[2], [".pitex-live/manuscript/main/main"]);
+}
+
+#[test]
+fn unset_build_directory_keeps_existing_arguments() {
+    let fixture = Fixture::new(&[]);
+    let fake = Arc::new(FakeExecutor::new(vec![
+        Behavior::Success {
+            chunks: vec![],
+            pdf: None,
+        },
+        Behavior::Success {
+            chunks: vec![],
+            pdf: None,
+        },
+        Behavior::Success {
+            chunks: vec![],
+            pdf: Some(b"pdf".to_vec()),
+        },
+    ]));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake)));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::Stages(vec![
+                BuildStagePlan {
+                    tool: BuildToolStage::Pdflatex,
+                },
+                BuildStagePlan {
+                    tool: BuildToolStage::Latexmk,
+                },
+                BuildStagePlan {
+                    tool: BuildToolStage::Bibtex,
+                },
+            ]),
+        )
+        .unwrap();
+
+    orchestrator
+        .build(
+            BuildID::new("plain-args").unwrap(),
+            EventRecorder::new().handler(),
+        )
+        .unwrap();
+
+    let arguments = fake.direct_arguments();
+    assert_eq!(
+        arguments[0],
+        [
+            "-synctex=1",
+            "-interaction=nonstopmode",
+            "-file-line-error",
+            "main.tex"
+        ]
+    );
+    assert_eq!(
+        arguments[1],
+        [
+            "-pdf",
+            "-cd",
+            "-synctex=1",
+            "-interaction=nonstopmode",
+            "-file-line-error",
+            "main.tex"
+        ]
+    );
+    assert_eq!(arguments[2], ["main"]);
+}
+
+#[test]
+fn live_build_isolates_outputs_and_mirrors_only_tex_subdirectories() {
+    let fixture = Fixture::live("manuscript/main.tex");
+    // A chapter that needs an aux directory under the output root.
+    std::fs::create_dir_all(fixture.resolved("manuscript/chapters")).unwrap();
+    std::fs::write(fixture.resolved("manuscript/chapters/chapter.tex"), "chapter").unwrap();
+    // Non-TeX content and a dependency cache must not be mirrored.
+    std::fs::create_dir_all(fixture.resolved("manuscript/assets")).unwrap();
+    std::fs::write(fixture.resolved("manuscript/assets/logo.png"), "png").unwrap();
+    std::fs::create_dir_all(fixture.resolved("node_modules/pkg")).unwrap();
+    std::fs::write(fixture.resolved("node_modules/pkg/x.tex"), "vendored").unwrap();
+    // A manual PDF beside the source is left untouched.
+    let manual_pdf = fixture.resolved("manuscript/main.pdf");
+    std::fs::write(&manual_pdf, "manual").unwrap();
+
+    let fake = Arc::new(FakeExecutor::with_pdf_path(
+        vec![Behavior::Success {
+            chunks: vec![],
+            pdf: Some(b"live-pdf".to_vec()),
+        }],
+        ".pitex-live/manuscript/main/main.pdf",
+    ));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake)));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::single_pass(BuildToolStage::Latexmk),
+        )
+        .unwrap();
+
+    let outcome = orchestrator
+        .build(
+            BuildID::new("live").unwrap(),
+            EventRecorder::new().handler(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome.artifact_disposition,
+        BuildArtifactDisposition::ReplacedWithSuccessfulPDF
+    );
+    let output = fixture.resolved(".pitex-live/manuscript/main");
+    assert_eq!(
+        std::fs::read(output.join("main.pdf")).unwrap(),
+        b"live-pdf".to_vec()
+    );
+    // Mirrored for latexmk's -cd view and for engines at the root.
+    assert!(output.join("chapters").is_dir());
+    assert!(output.join("manuscript/chapters").is_dir());
+    assert!(!output.join("assets").exists());
+    assert!(!output.join("manuscript/assets").exists());
+    assert!(!output.join("node_modules").exists());
+    assert_eq!(std::fs::read(&manual_pdf).unwrap(), b"manual".to_vec());
+}
+
+#[test]
+fn output_child_symlink_escape_is_rejected() {
+    let fixture = Fixture::live("manuscript/main.tex");
+    std::fs::create_dir_all(fixture.resolved("manuscript/chapters")).unwrap();
+    std::fs::write(fixture.resolved("manuscript/chapters/chapter.tex"), "chapter").unwrap();
+    let output = fixture.resolved(".pitex-live/manuscript/main");
+    std::fs::create_dir_all(&output).unwrap();
+    let escape = std::env::temp_dir().join(format!("escape-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&escape);
+    std::fs::create_dir(&escape).unwrap();
+    std::os::unix::fs::symlink(&escape, output.join("chapters")).unwrap();
+
+    let fake = Arc::new(FakeExecutor::new(vec![Behavior::Success {
+        chunks: vec![],
+        pdf: Some(b"pdf".to_vec()),
+    }]));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake)));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::single_pass(BuildToolStage::Pdflatex),
+        )
+        .unwrap();
+
+    let error = orchestrator
+        .build(
+            BuildID::new("escape").unwrap(),
+            EventRecorder::new().handler(),
+        )
+        .unwrap_err();
+    assert_eq!(error, BuildOrchestratorError::PathTraversal("chapters".into()));
+    assert_eq!(fake.request_count(), 0);
+    assert_eq!(std::fs::read_dir(&escape).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(&escape);
+}
+
+#[test]
+fn output_root_symlink_redirect_is_rejected_and_manual_pdf_survives() {
+    let fixture = Fixture::live("manuscript/main.tex");
+    let manual_pdf = fixture.resolved("manuscript/main.pdf");
+    std::fs::write(&manual_pdf, "manual").unwrap();
+    std::fs::create_dir_all(fixture.resolved(".pitex-live/manuscript")).unwrap();
+    // An in-project redirect: .pitex-live/manuscript/main -> manuscript.
+    std::os::unix::fs::symlink(
+        fixture.resolved("manuscript"),
+        fixture.resolved(".pitex-live/manuscript/main"),
+    )
+    .unwrap();
+
+    let fake = Arc::new(FakeExecutor::new(vec![Behavior::Success {
+        chunks: vec![],
+        pdf: Some(b"pdf".to_vec()),
+    }]));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake)));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::single_pass(BuildToolStage::Pdflatex),
+        )
+        .unwrap();
+
+    let error = orchestrator
+        .build(
+            BuildID::new("redirect").unwrap(),
+            EventRecorder::new().handler(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        BuildOrchestratorError::PathTraversal(".pitex-live/manuscript/main".into())
+    );
+    assert_eq!(fake.request_count(), 0);
+    assert_eq!(std::fs::read(&manual_pdf).unwrap(), b"manual".to_vec());
+}
+
+#[test]
+fn build_directory_setup_failure_clears_active_for_retry() {
+    let fixture = Fixture::live("manuscript/main.tex");
+    // A regular file where a directory must be created.
+    std::fs::write(fixture.resolved(".pitex-live"), "blocker").unwrap();
+
+    let fake = Arc::new(FakeExecutor::with_pdf_path(
+        vec![Behavior::Success {
+            chunks: vec![],
+            pdf: Some(b"pdf".to_vec()),
+        }],
+        ".pitex-live/manuscript/main/main.pdf",
+    ));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake)));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::single_pass(BuildToolStage::Pdflatex),
+        )
+        .unwrap();
+
+    orchestrator
+        .build(
+            BuildID::new("blocked").unwrap(),
+            EventRecorder::new().handler(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        orchestrator.last_outcome().unwrap().artifact_disposition,
+        BuildArtifactDisposition::NoPDF {
+            partial_output_was_discarded: false
+        }
+    );
+
+    std::fs::remove_file(fixture.resolved(".pitex-live")).unwrap();
+    let outcome = orchestrator
+        .build(
+            BuildID::new("retry").unwrap(),
+            EventRecorder::new().handler(),
+        )
+        .unwrap();
+    assert_eq!(
+        outcome.artifact_disposition,
+        BuildArtifactDisposition::ReplacedWithSuccessfulPDF
+    );
+}
+
+#[test]
+fn cancel_racing_build_start_does_not_panic_or_wedge() {
+    for _ in 0..16 {
+        let fixture = Fixture::new(&[]);
+        let fake = Arc::new(FakeExecutor::new(vec![Behavior::Success {
+            chunks: vec![],
+            pdf: Some(b"pdf".to_vec()),
+        }]));
+        let orchestrator = Arc::new(BuildOrchestrator::new(FakeExecutorRef(Arc::clone(&fake))));
+        orchestrator
+            .select(
+                fixture.target.clone(),
+                BuildPipeline::single_pass(BuildToolStage::Pdflatex),
+            )
+            .unwrap();
+        let worker = Arc::clone(&orchestrator);
+        let handle = std::thread::spawn(move || {
+            worker.build(BuildID::new("race").unwrap(), EventRecorder::new().handler())
+        });
+        // May land before or after `active` is installed; either way the
+        // build thread must return, never panic on a stale lifecycle read.
+        let _ = orchestrator.cancel(0);
+        let _ = handle.join().unwrap();
     }
 }

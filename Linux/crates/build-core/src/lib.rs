@@ -1967,6 +1967,37 @@ impl BuildTarget {
         })
     }
 
+    /// The live-build output root: every artifact of a live build sits
+    /// under `.pitex-live/`, excluded from remote sync.
+    pub const LIVE_DIRECTORY_NAME: &'static str = ".pitex-live";
+
+    /// The live-build layout: `.pitex-live/<source stem path>/<stem>.pdf` —
+    /// `main.tex` targets `.pitex-live/main/main.pdf`,
+    /// `manuscript/main.tex` targets `.pitex-live/manuscript/main/main.pdf`.
+    pub fn live(project_root: &Path, source_path: impl Into<String>) -> Result<Self, BuildOrchestratorError> {
+        let source_path = source_path.into();
+        Self::validate_relative(&source_path)?;
+        let (directory, base) = match source_path.rfind('/') {
+            Some(slash) => (&source_path[..slash], &source_path[slash + 1..]),
+            None => ("", source_path.as_str()),
+        };
+        let stem = deleting_path_extension(base);
+        let job = if directory.is_empty() {
+            stem.clone()
+        } else {
+            format!("{directory}/{stem}")
+        };
+        let build = format!("{}/{job}", Self::LIVE_DIRECTORY_NAME);
+        let pdf = format!("{build}/{stem}.pdf");
+        Self::new(
+            project_root,
+            source_path,
+            pdf.clone(),
+            [build.clone(), pdf].into_iter().collect(),
+            Some(build),
+        )
+    }
+
     pub fn validate_relative(path: &str) -> Result<(), BuildOrchestratorError> {
         if path.is_empty()
             || path.starts_with('/')
@@ -2227,6 +2258,9 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
         id: BuildID,
         event_handler: EventHandler,
     ) -> Result<BuildOutcome, BuildOrchestratorError> {
+        // Captured before `active` is installed: re-reading the lifecycle
+        // after unlock could see a concurrent cancel's Cancelling instead.
+        let started = now_milliseconds();
         let (target, pipeline) = {
             let mut state = self.state.lock().unwrap();
             if state.active.is_some() {
@@ -2238,7 +2272,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
             state.active = Some(ActiveBuild {
                 id: id.clone(),
                 lifecycle: BuildLifecycle::Running {
-                    started_at_milliseconds: now_milliseconds(),
+                    started_at_milliseconds: started,
                 },
                 cancellation_requested: false,
                 parser: BuildLogParser::new(&target.project_root),
@@ -2250,15 +2284,28 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
             state.log_sequence = 0;
             (target, pipeline)
         };
-        let started = match self.current_lifecycle() {
-            Some(BuildLifecycle::Running { started_at_milliseconds }) => started_at_milliseconds,
-            _ => unreachable!(),
-        };
         self.emit(BuildEvent::Lifecycle(BuildLifecycle::Running {
             started_at_milliseconds: started,
         }));
 
-        let output_url = target.url(&target.output_pdf_path)?;
+        let output_url = match target.url(&target.output_pdf_path) {
+            Ok(url) => url,
+            Err(error) => {
+                // A setup error still clears the active build before returning.
+                let lifecycle = BuildLifecycle::Failed {
+                    exit_code: None,
+                    finished_at_milliseconds: now_milliseconds(),
+                };
+                let _ = self.finish(
+                    &id,
+                    lifecycle,
+                    BuildArtifactDisposition::NoPDF {
+                        partial_output_was_discarded: false,
+                    },
+                );
+                return Err(error);
+            }
+        };
         let mut preexisting_pdf: Option<Vec<u8>> = None;
         if output_url.exists() {
             match std::fs::read(&output_url) {
@@ -2291,6 +2338,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
         }
 
         let run_result = (|| -> Result<(), BuildOrchestratorError> {
+            prepare_build_directory(&target)?;
             match &pipeline {
                 BuildPipeline::Stages(stages) => {
                     for (index, stage) in stages.iter().enumerate() {
@@ -2719,12 +2767,16 @@ fn command_plan_for(
     let plan = match tool {
         BuildToolStage::Xelatex => DirectCommandPlan::new(
             "xelatex",
-            vec![
-                "-synctex=1".into(),
-                "-interaction=nonstopmode".into(),
-                "-file-line-error".into(),
-                source,
-            ],
+            [
+                vec![
+                    "-synctex=1".into(),
+                    "-interaction=nonstopmode".into(),
+                    "-file-line-error".into(),
+                ],
+                output_directory_arguments(target),
+                vec![source],
+            ]
+            .concat(),
             WorkingDirectoryPolicy::ProjectRoot,
             EnvironmentPolicy::Inherit {
                 overrides: HashMap::new(),
@@ -2732,12 +2784,16 @@ fn command_plan_for(
         ),
         BuildToolStage::Pdflatex => DirectCommandPlan::new(
             "pdflatex",
-            vec![
-                "-synctex=1".into(),
-                "-interaction=nonstopmode".into(),
-                "-file-line-error".into(),
-                source,
-            ],
+            [
+                vec![
+                    "-synctex=1".into(),
+                    "-interaction=nonstopmode".into(),
+                    "-file-line-error".into(),
+                ],
+                output_directory_arguments(target),
+                vec![source],
+            ]
+            .concat(),
             WorkingDirectoryPolicy::ProjectRoot,
             EnvironmentPolicy::Inherit {
                 overrides: HashMap::new(),
@@ -2745,12 +2801,16 @@ fn command_plan_for(
         ),
         BuildToolStage::Lualatex => DirectCommandPlan::new(
             "lualatex",
-            vec![
-                "-synctex=1".into(),
-                "--interaction=nonstopmode".into(),
-                "--file-line-error".into(),
-                source,
-            ],
+            [
+                vec![
+                    "-synctex=1".into(),
+                    "--interaction=nonstopmode".into(),
+                    "--file-line-error".into(),
+                ],
+                output_directory_arguments(target),
+                vec![source],
+            ]
+            .concat(),
             WorkingDirectoryPolicy::ProjectRoot,
             EnvironmentPolicy::Inherit {
                 overrides: HashMap::new(),
@@ -2769,14 +2829,18 @@ fn command_plan_for(
             // even when the workspace contains a nested manuscript directory.
             DirectCommandPlan::new(
                 "latexmk",
-                vec![
-                    engine.into(),
-                    "-cd".into(),
-                    "-synctex=1".into(),
-                    "-interaction=nonstopmode".into(),
-                    "-file-line-error".into(),
-                    source,
-                ],
+                [
+                    vec![
+                        engine.into(),
+                        "-cd".into(),
+                        "-synctex=1".into(),
+                        "-interaction=nonstopmode".into(),
+                        "-file-line-error".into(),
+                    ],
+                    latexmk_outdir_arguments(target),
+                    vec![source],
+                ]
+                .concat(),
                 WorkingDirectoryPolicy::ProjectRoot,
                 EnvironmentPolicy::Inherit {
                     overrides: HashMap::new(),
@@ -2785,7 +2849,7 @@ fn command_plan_for(
         }
         BuildToolStage::Bibtex => DirectCommandPlan::new(
             "bibtex",
-            vec![job_name(&target.source_path)],
+            vec![job_name_for(target)],
             WorkingDirectoryPolicy::ProjectRoot,
             EnvironmentPolicy::Inherit {
                 overrides: HashMap::new(),
@@ -2793,7 +2857,7 @@ fn command_plan_for(
         ),
         BuildToolStage::Makeindex => DirectCommandPlan::new(
             "makeindex",
-            vec![job_name(&target.source_path)],
+            vec![job_name_for(target)],
             WorkingDirectoryPolicy::ProjectRoot,
             EnvironmentPolicy::Inherit {
                 overrides: HashMap::new(),
@@ -2801,6 +2865,41 @@ fn command_plan_for(
         ),
     };
     plan.map_err(|e| BuildOrchestratorError::ProcessError(format!("{e:?}")))
+}
+
+/// Engines run from the project root, where the build directory is already
+/// a usable relative path. Arguments stay relative so the identical plan
+/// can execute remotely under a different root.
+fn output_directory_arguments(target: &BuildTarget) -> Vec<String> {
+    target
+        .build_directory_path
+        .as_ref()
+        .map(|directory| vec![format!("-output-directory={directory}")])
+        .unwrap_or_default()
+}
+
+/// latexmk's `-cd` changes into the source directory first, so `-outdir`
+/// must climb back out: one `../` per source-directory component.
+fn latexmk_outdir_arguments(target: &BuildTarget) -> Vec<String> {
+    let Some(directory) = &target.build_directory_path else {
+        return vec![];
+    };
+    let depth = target.source_path.matches('/').count();
+    vec![format!("-outdir={}{directory}", "../".repeat(depth))]
+}
+
+fn job_name_for(target: &BuildTarget) -> String {
+    match &target.build_directory_path {
+        Some(directory) => {
+            let base = target
+                .source_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&target.source_path);
+            format!("{directory}/{}", deleting_path_extension(base))
+        }
+        None => job_name(&target.source_path),
+    }
 }
 
 fn job_name(source_path: &str) -> String {
@@ -2820,6 +2919,115 @@ fn source_directory_for(target: &BuildTarget) -> Result<PathBuf, BuildOrchestrat
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| target.project_root.clone()))
+}
+
+/// Creates the build directory and mirrors the source subdirectories a
+/// nested \include needs: TeX engines and latexmk 4.83 do not create
+/// nested directories inside -output-directory/-outdir, so a chapter aux
+/// fails to open without them. Engine stages run from the project root
+/// and latexmk's -cd runs from the source directory, so both relative
+/// views are mirrored.
+fn prepare_build_directory(target: &BuildTarget) -> Result<(), BuildOrchestratorError> {
+    let Some(directory) = &target.build_directory_path else {
+        return Ok(());
+    };
+    // The lexical path, checked before target.url resolves it — a
+    // symlinked output root must be caught before its resolved
+    // destination is used.
+    require_unredirected(&target.project_root.join(directory), directory)?;
+    let output_url = target.url(directory)?;
+    std::fs::create_dir_all(&output_url).map_err(|error| {
+        BuildOrchestratorError::ProcessError(format!(
+            "unable to create build directory {directory}: {error}"
+        ))
+    })?;
+    mirror_tex_subdirectories(&target.project_root, &output_url)?;
+    let source_dir = source_directory_for(target)?;
+    if source_dir != target.project_root {
+        mirror_tex_subdirectories(&source_dir, &output_url)?;
+    }
+    Ok(())
+}
+
+/// A prepared output path must be exactly where it claims: any symlink
+/// below the resolved project root — the output root or a mirrored
+/// child — redirects artifacts outside the live output tree or back
+/// into the source tree, and is rejected before anything is written.
+fn require_unredirected(candidate: &Path, relative_path: &str) -> Result<(), BuildOrchestratorError> {
+    let lexical = standardized_path(candidate);
+    if resolving_symlinks_in_path(&lexical) != lexical {
+        return Err(BuildOrchestratorError::PathTraversal(
+            relative_path.to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Dependency caches that never hold project TeX sources and are too
+/// large to scan on every build.
+const PRUNED_SUBDIRECTORY_NAMES: &[&str] = &["node_modules", "__pycache__", "venv"];
+
+/// Mirrors each directory that directly contains .tex files (with its
+/// ancestors) so chapter aux paths under the output directory exist.
+/// Hidden directories, directory symlinks, pruned dependency trees, and
+/// the output subtree itself are never entered.
+fn mirror_tex_subdirectories(root: &Path, output_url: &Path) -> Result<(), BuildOrchestratorError> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).map_err(|error| {
+            BuildOrchestratorError::ProcessError(format!(
+                "unable to scan {}: {error}",
+                dir.display()
+            ))
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                BuildOrchestratorError::ProcessError(format!(
+                    "unable to scan {}: {error}",
+                    dir.display()
+                ))
+            })?;
+            // DirEntry::file_type does not follow symlinks — a linked
+            // directory is never entered.
+            let file_type = entry.file_type().map_err(|error| {
+                BuildOrchestratorError::ProcessError(format!(
+                    "unable to stat {}: {error}",
+                    entry.path().display()
+                ))
+            })?;
+            let path = entry.path();
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with('.')
+                    && !path.starts_with(output_url)
+                    && !PRUNED_SUBDIRECTORY_NAMES.contains(&name.as_ref())
+                {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if path.extension().map(|e| e == "tex") != Some(true) {
+                continue;
+            }
+            let Some(parent) = path.parent() else { continue };
+            let Ok(relative) = parent.strip_prefix(root) else {
+                continue;
+            };
+            if relative.as_os_str().is_empty() {
+                continue;
+            }
+            let destination = output_url.join(relative);
+            require_unredirected(&destination, &relative.to_string_lossy())?;
+            std::fs::create_dir_all(&destination).map_err(|error| {
+                BuildOrchestratorError::ProcessError(format!(
+                    "unable to mirror {}: {error}",
+                    relative.display()
+                ))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn output_changed(url: &Path, previous: Option<&[u8]>) -> bool {

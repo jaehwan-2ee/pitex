@@ -250,6 +250,199 @@ final class BuildOrchestratorTests: XCTestCase {
             buildDirectoryPath: "build"
         ))
     }
+
+    func testLiveTargetPassesRelativeOutputPathsToEveryTool() async throws {
+        let fixture = try Fixture(liveSourcePath: "manuscript/main.tex")
+        let executor = FakeExecutor(
+            behaviors: [
+                .success(chunks: [], pdf: nil),
+                .success(chunks: [], pdf: nil),
+                .success(chunks: [], pdf: Data("pdf".utf8)),
+            ],
+            pdfPath: ".pitex-live/manuscript/main/main.pdf"
+        )
+        let orchestrator = BuildOrchestrator(executor: executor)
+        try await orchestrator.select(
+            target: fixture.target,
+            pipeline: .stages([.init(.latexmk), .init(.pdflatex), .init(.bibtex)])
+        )
+
+        _ = try await orchestrator.build(id: try BuildID(rawValue: "live-args"))
+
+        let arguments = await executor.directArguments()
+        // latexmk -cd enters manuscript/, so -outdir climbs back out with
+        // a relative path that also works on a remote host.
+        XCTAssertEqual(arguments[0], [
+            "-pdf", "-cd", "-synctex=1", "-interaction=nonstopmode",
+            "-file-line-error", "-outdir=../.pitex-live/manuscript/main",
+            "manuscript/main.tex",
+        ])
+        XCTAssertEqual(arguments[1], [
+            "-synctex=1", "-interaction=nonstopmode", "-file-line-error",
+            "-output-directory=.pitex-live/manuscript/main",
+            "manuscript/main.tex",
+        ])
+        XCTAssertEqual(arguments[2], [".pitex-live/manuscript/main/main"])
+    }
+
+    func testUnsetBuildDirectoryKeepsExistingArguments() async throws {
+        let fixture = try Fixture()
+        let executor = FakeExecutor(behaviors: [
+            .success(chunks: [], pdf: nil),
+            .success(chunks: [], pdf: nil),
+            .success(chunks: [], pdf: Data("pdf".utf8)),
+        ])
+        let orchestrator = BuildOrchestrator(executor: executor)
+        try await orchestrator.select(
+            target: fixture.target,
+            pipeline: .stages([.init(.pdflatex), .init(.latexmk), .init(.bibtex)])
+        )
+
+        _ = try await orchestrator.build(id: try BuildID(rawValue: "plain-args"))
+
+        let arguments = await executor.directArguments()
+        XCTAssertEqual(arguments[0], [
+            "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex",
+        ])
+        XCTAssertEqual(arguments[1], [
+            "-pdf", "-cd", "-synctex=1", "-interaction=nonstopmode",
+            "-file-line-error", "main.tex",
+        ])
+        XCTAssertEqual(arguments[2], ["main"])
+    }
+
+    func testLiveBuildIsolatesOutputsAndMirrorsOnlyTeXSubdirectories() async throws {
+        let fixture = try Fixture(liveSourcePath: "manuscript/main.tex")
+        let fileManager = FileManager.default
+        // A chapter that needs an aux directory under the output root.
+        try fileManager.createDirectory(
+            at: fixture.resolved("manuscript/chapters"),
+            withIntermediateDirectories: true
+        )
+        try Data("chapter".utf8).write(to: fixture.resolved("manuscript/chapters/chapter.tex"))
+        // Non-TeX content and a dependency cache must not be mirrored.
+        try fileManager.createDirectory(
+            at: fixture.resolved("manuscript/assets"),
+            withIntermediateDirectories: true
+        )
+        try Data("png".utf8).write(to: fixture.resolved("manuscript/assets/logo.png"))
+        try fileManager.createDirectory(
+            at: fixture.resolved("node_modules/pkg"),
+            withIntermediateDirectories: true
+        )
+        try Data("vendored".utf8).write(to: fixture.resolved("node_modules/pkg/x.tex"))
+        // A manual PDF beside the source is left untouched.
+        let manualPDF = fixture.resolved("manuscript/main.pdf")
+        try Data("manual".utf8).write(to: manualPDF)
+
+        let executor = FakeExecutor(
+            behaviors: [.success(chunks: [], pdf: Data("live-pdf".utf8))],
+            pdfPath: ".pitex-live/manuscript/main/main.pdf"
+        )
+        let orchestrator = BuildOrchestrator(executor: executor)
+        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.latexmk))
+
+        let outcome = try await orchestrator.build(id: try BuildID(rawValue: "live"))
+
+        XCTAssertEqual(outcome.artifactDisposition, .replacedWithSuccessfulPDF)
+        let output = fixture.resolved(".pitex-live/manuscript/main")
+        XCTAssertEqual(try Data(contentsOf: output.appendingPathComponent("main.pdf")), Data("live-pdf".utf8))
+        // Mirrored for latexmk's -cd view and for engines at the root.
+        XCTAssertTrue(fileManager.fileExists(atPath: output.appendingPathComponent("chapters").path))
+        XCTAssertTrue(fileManager.fileExists(atPath: output.appendingPathComponent("manuscript/chapters").path))
+        XCTAssertFalse(fileManager.fileExists(atPath: output.appendingPathComponent("assets").path))
+        XCTAssertFalse(fileManager.fileExists(atPath: output.appendingPathComponent("manuscript/assets").path))
+        XCTAssertFalse(fileManager.fileExists(atPath: output.appendingPathComponent("node_modules").path))
+        XCTAssertEqual(try Data(contentsOf: manualPDF), Data("manual".utf8))
+    }
+
+    func testOutputChildSymlinkEscapeIsRejected() async throws {
+        let fixture = try Fixture(liveSourcePath: "manuscript/main.tex")
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: fixture.resolved("manuscript/chapters"),
+            withIntermediateDirectories: true
+        )
+        try Data("chapter".utf8).write(to: fixture.resolved("manuscript/chapters/chapter.tex"))
+        let output = fixture.resolved(".pitex-live/manuscript/main")
+        try fileManager.createDirectory(at: output, withIntermediateDirectories: true)
+        let escape = fileManager.temporaryDirectory
+            .appendingPathComponent("escape-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: escape, withIntermediateDirectories: false)
+        defer { try? fileManager.removeItem(at: escape) }
+        try fileManager.createSymbolicLink(
+            atPath: output.appendingPathComponent("chapters").path,
+            withDestinationPath: escape.path
+        )
+
+        let executor = FakeExecutor(behaviors: [.success(chunks: [], pdf: Data("pdf".utf8))])
+        let orchestrator = BuildOrchestrator(executor: executor)
+        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.pdflatex))
+
+        await XCTAssertThrowsErrorAsync(
+            try await orchestrator.build(id: try BuildID(rawValue: "escape"))
+        ) { error in
+            XCTAssertEqual(error as? BuildOrchestratorError, .pathTraversal("chapters"))
+        }
+        let requestCount = await executor.requestCount()
+        XCTAssertEqual(requestCount, 0)
+        XCTAssertEqual(try fileManager.contentsOfDirectory(atPath: escape.path), [])
+    }
+
+    func testOutputRootSymlinkRedirectIsRejectedAndManualPDFSurvives() async throws {
+        let fixture = try Fixture(liveSourcePath: "manuscript/main.tex")
+        let fileManager = FileManager.default
+        let manualPDF = fixture.resolved("manuscript/main.pdf")
+        try Data("manual".utf8).write(to: manualPDF)
+        try fileManager.createDirectory(
+            at: fixture.resolved(".pitex-live/manuscript"),
+            withIntermediateDirectories: true
+        )
+        // An in-project redirect: .pitex-live/manuscript/main -> manuscript.
+        try fileManager.createSymbolicLink(
+            atPath: fixture.resolved(".pitex-live/manuscript/main").path,
+            withDestinationPath: fixture.resolved("manuscript").path
+        )
+
+        let executor = FakeExecutor(behaviors: [.success(chunks: [], pdf: Data("pdf".utf8))])
+        let orchestrator = BuildOrchestrator(executor: executor)
+        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.pdflatex))
+
+        await XCTAssertThrowsErrorAsync(
+            try await orchestrator.build(id: try BuildID(rawValue: "redirect"))
+        ) { error in
+            XCTAssertEqual(
+                error as? BuildOrchestratorError,
+                .pathTraversal(".pitex-live/manuscript/main")
+            )
+        }
+        let requestCount = await executor.requestCount()
+        XCTAssertEqual(requestCount, 0)
+        XCTAssertEqual(try Data(contentsOf: manualPDF), Data("manual".utf8))
+    }
+
+    func testBuildDirectorySetupFailureClearsActiveForRetry() async throws {
+        let fixture = try Fixture(liveSourcePath: "manuscript/main.tex")
+        // A regular file where a directory must be created.
+        try Data("blocker".utf8).write(to: fixture.resolved(".pitex-live"))
+
+        let executor = FakeExecutor(
+            behaviors: [.success(chunks: [], pdf: Data("pdf".utf8))],
+            pdfPath: ".pitex-live/manuscript/main/main.pdf"
+        )
+        let orchestrator = BuildOrchestrator(executor: executor)
+        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.pdflatex))
+
+        await XCTAssertThrowsErrorAsync(
+            try await orchestrator.build(id: try BuildID(rawValue: "blocked"))
+        )
+        let failedOutcome = await orchestrator.lastOutcome()
+        XCTAssertEqual(failedOutcome?.artifactDisposition, .noPDF(partialOutputWasDiscarded: false))
+
+        try FileManager.default.removeItem(at: fixture.resolved(".pitex-live"))
+        let outcome = try await orchestrator.build(id: try BuildID(rawValue: "retry"))
+        XCTAssertEqual(outcome.artifactDisposition, .replacedWithSuccessfulPDF)
+    }
 }
 
 private struct Fixture {
@@ -273,6 +466,27 @@ private struct Fixture {
             buildDirectoryPath: extraGenerated.contains("build") ? "build" : nil
         )
     }
+
+    /// A nested-source project built into `.pitex-live/`.
+    init(liveSourcePath: String) throws {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BuildOrchestratorTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        sourceURL = root.appendingPathComponent(liveSourcePath)
+        try FileManager.default.createDirectory(
+            at: sourceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("source".utf8).write(to: sourceURL)
+        target = try BuildTarget.live(projectRoot: root, sourcePath: liveSourcePath)
+        outputURL = target.projectRoot.appendingPathComponent(target.outputPDFPath)
+    }
+
+    /// Paths resolved the way `BuildTarget` sees them (project root has
+    /// symlinks resolved at initialization).
+    func resolved(_ relativePath: String) -> URL {
+        target.projectRoot.appendingPathComponent(relativePath)
+    }
 }
 
 private actor FakeExecutor: BuildProcessExecuting {
@@ -289,9 +503,11 @@ private actor FakeExecutor: BuildProcessExecuting {
     private var pendingRequest: BuildProcessRequest?
     private var pendingPartialPDF: Data?
     private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private let pdfPath: String
 
-    init(behaviors: [Behavior]) {
+    init(behaviors: [Behavior], pdfPath: String = "main.pdf") {
         self.behaviors = behaviors
+        self.pdfPath = pdfPath
     }
 
     func execute(
@@ -349,6 +565,13 @@ private actor FakeExecutor: BuildProcessExecuting {
         }
     }
 
+    func directArguments() -> [[String]] {
+        requests.compactMap {
+            if case let .direct(plan) = $0.command { return plan.arguments }
+            return nil
+        }
+    }
+
     func shellCommands() -> [String] {
         requests.compactMap {
             if case let .loginShell(plan) = $0.command { return plan.command }
@@ -358,7 +581,12 @@ private actor FakeExecutor: BuildProcessExecuting {
 
     private func write(_ data: Data?, for request: BuildProcessRequest) throws {
         guard let data else { return }
-        try data.write(to: request.projectRoot.appendingPathComponent("main.pdf"), options: .atomic)
+        let url = request.projectRoot.appendingPathComponent(pdfPath)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: url, options: .atomic)
     }
 }
 
