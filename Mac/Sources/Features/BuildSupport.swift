@@ -422,25 +422,230 @@ extension WorkspaceModel {
         "snm", "vrb", "xdv", "lof", "lot",
     ]
 
-    /// Builds the active document with the configured engine. Dirty open
-    /// documents are saved first so the compiler sees what the editor shows.
+    /// Extensions whose edits can move the compiled output — a Markdown or
+    /// figure change in the same project never schedules a live build.
+    static let liveCompileExtensions: Set<String> = [
+        "tex", "ltx", "dtx", "sty", "cls", "clo", "def", "bib", "bst",
+    ]
+
+    /// Builds the active document with the configured engine. The request
+    /// goes through the live-compile scheduler — manual work never
+    /// overlaps a live run, it queues behind its cancellation instead.
     func startBuild() async {
-        guard !isBuilding else { return }
-        guard case .ready = phase else { return }
+        performLiveRequests(liveScheduler.requestManual())
+    }
+
+    func cancelBuild() async {
+        // A remote build may still be uploading, with nothing running yet
+        // for the orchestrator to cancel.
+        if isBuilding { buildCancelRequested = true }
+        try? await buildOrchestrator.cancel()
+    }
+
+    var isBuilding: Bool {
+        if case .building = buildState { return true }
+        return false
+    }
+
+    // MARK: - Live-compile scheduling
+
+    /// `.pitex-live/<source stem>/<basename>.pdf` — the live build's
+    /// private output path for a project-relative source, never beside
+    /// the source (and hidden, so it stays out of the project tree).
+    static func livePDFPath(forSourcePath relative: String) -> String {
+        let stem = (relative as NSString).deletingPathExtension
+        let base = ((relative as NSString).lastPathComponent as NSString).deletingPathExtension
+        return ".pitex-live/\(stem)/\(base).pdf"
+    }
+
+    /// The console's tectonic preset — it has no engine stage but honours
+    /// `--outdir`, so a live build rewrites it rather than demanding
+    /// `{outdir}` from a built-in command line.
+    static let tectonicPreset = "tectonic --synctex {file}"
+
+    /// Scheduler → world: perform every emitted request. Starts run on
+    /// their own Task so a dispatch inside `completed` never nests the
+    /// next build inside the finishing one; the slot is already reserved
+    /// inside the scheduler either way. Also re-arms the debounce — every
+    /// scheduler mutation can move the pending deadline.
+    func performLiveRequests(_ requests: [LiveRequest]) {
+        for request in requests {
+            switch request {
+            case let .cancel(token):
+                Task { await cancelScheduledRun(token) }
+            case let .startLive(token, _), let .startManual(token):
+                Task { await runBuild(token: token) }
+            }
+        }
+        armLiveCompileTimer()
+    }
+
+    /// `documentSnapshot` didSet hook: a snapshot that changed the
+    /// document's bytes counts as an edit. A save-only revision bump (same
+    /// contentHash) and a document switch (different documentID) are not
+    /// edits — a pending live edit survives its save and tab hops. Only
+    /// TeX-relevant sources schedule; a Markdown edit in the same project
+    /// cannot move the compiled PDF.
+    func noteLiveCompileEdit(oldValue: DocumentSessionCore.DocumentSnapshot?) {
+        guard let snapshot = documentSnapshot,
+              oldValue?.documentID == snapshot.documentID,
+              oldValue?.contentHash != snapshot.contentHash,
+              Self.liveCompileExtensions.contains(
+                  (snapshot.path.rawValue as NSString).pathExtension.lowercased()
+              ) else { return }
+        performLiveRequests(liveScheduler.noteEdit(nowMs: Self.nowMs()))
+    }
+
+    /// Settings/toolbar/remote → scheduler: enable flag and effective
+    /// delay (a remote workspace never debounces under 1500 ms — the
+    /// upload and device round-trip dominate anything shorter). Toggle-off
+    /// cancels live work through the normal request path; a pending
+    /// deadline re-derives from the new delay.
+    func syncLiveScheduler() {
+        let configured = UInt64(clamping: settings.liveCompileDelayMilliseconds)
+        liveScheduler.setDelay(remote != nil
+            ? max(configured, LiveCompileScheduler.remoteMinDelayMs)
+            : configured)
+        performLiveRequests(liveScheduler.setEnabled(settings.liveCompileEnabled))
+    }
+
+    /// Re-arms the debounce Task at the scheduler's pending deadline — the
+    /// caller-owned timer the contract requires. The deadline is always
+    /// re-read, so a newer edit slides the wait without extra bookkeeping.
+    /// While a run holds the slot its completion dispatches a due pending
+    /// edit itself — arming here would only refire empty polls at 0 ms.
+    func armLiveCompileTimer() {
+        liveCompileTask?.cancel()
+        liveCompileTask = nil
+        guard liveScheduler.active == nil,
+              let deadline = liveScheduler.pendingDeadline else { return }
+        let now = Self.nowMs()
+        let wait = deadline > now ? deadline - now : 0
+        liveCompileTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(wait))
+            guard let self, !Task.isCancelled else { return }
+            self.fireLivePoll()
+        }
+    }
+
+    /// Debounce fired: poll with the real clock and the editor's IME flag.
+    /// Composition keeps the edit pending — retry shortly instead of
+    /// dropping it. A run holding the slot needs no timer: its completion
+    /// dispatches the pending edit.
+    private func fireLivePoll() {
+        let composing = environment?.editor.hasMarkedText ?? false
+        performLiveRequests(liveScheduler.poll(nowMs: Self.nowMs(), composing: composing))
+        guard composing,
+              liveScheduler.active == nil,
+              liveScheduler.pendingDeadline != nil else { return }
+        liveCompileTask?.cancel()
+        liveCompileTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, !Task.isCancelled else { return }
+            self.fireLivePoll()
+        }
+    }
+
+    /// `.cancel(token)` — always for the live run holding the slot; the
+    /// scheduler never cancels manual work. A start whose Task has not
+    /// begun already fails its `acceptsActiveResult` guard inside
+    /// `runBuild` and completes itself, freeing the slot for queued work.
+    private func cancelScheduledRun(_ token: LiveRunToken) async {
+        guard activeRunToken == token else { return }
+        buildCancelRequested = true
+        try? await buildOrchestrator.cancel()
+    }
+
+    /// `completed(token)` — the contract's once-per-started-run call: it
+    /// frees the slot, classifies the run and dispatches whatever queued
+    /// behind it (queued manual first, then a live edit whose deadline
+    /// already elapsed — no second debounce after a cancellation).
+    private func finishScheduledRun(_ token: LiveRunToken) {
+        if activeRunToken == token { activeRunToken = nil }
+        let composing = environment?.editor.hasMarkedText ?? false
+        let (status, requests) = liveScheduler.completed(
+            token: token, nowMs: Self.nowMs(), composing: composing
+        )
+        // The slot is free now — a stale completion must not clear a newer
+        // run's id, so nil it before any dispatched start assigns its own.
+        activeBuildID = nil
+        if status != .current(token), liveScheduler.active == nil, isBuilding {
+            // Superseded with no follow-up dispatched — drop the busy
+            // state this run set without publishing its artifacts.
+            buildState = .unavailable("The build was superseded by newer input.")
+        }
+        performLiveRequests(requests)
+    }
+
+    /// The run still owns this workspace's slot and context: same mounted
+    /// project (a close/reopen reusing the path fails it), same root, and
+    /// the scheduler still accepts its results.
+    private func runStillCurrent(_ token: LiveRunToken, context: UUID, root: URL) -> Bool {
+        projectGeneration == context
+            && projectURL == root
+            && liveScheduler.acceptsActiveResult(token)
+    }
+
+    /// One scheduled run. The slot was reserved before this Task ran, so
+    /// every early failure completes the token — dirty open documents are
+    /// saved first so the compiler sees what the editor shows.
+    private func runBuild(token: LiveRunToken) async {
+        // The scheduler may have superseded this start before the Task ran
+        // (newer edit, manual request, invalidation): complete immediately
+        // so queued work dispatches; a token that is not ours is left alone.
+        guard liveScheduler.acceptsActiveResult(token) else {
+            if liveScheduler.active == token { finishScheduledRun(token) }
+            return
+        }
+        let live = token.kind == .live
+        guard case .ready = phase, let root = projectURL else {
+            finishScheduledRun(token)
+            return
+        }
+        // Captured before the FIRST await: a close/reopen reusing the same
+        // path bumps the generation and fails every later check below.
+        let context = projectGeneration
+        activeRunToken = token
+        buildCancelRequested = false
+        // Mark building before any await so Cancel covers the save/prep
+        // phase too, not just the compiler run itself.
+        buildState = .building
+        buildLogText = ""
+        pendingLogText = ""
+        pendingBuildIssues = []
+        buildIssues = []
+        invalidateSyncTeXForBuild()
+        guard let buildID = try? BuildID(rawValue: "build-\(UUID().uuidString.lowercased())") else {
+            buildState = .failed("The build could not be started.")
+            finishScheduledRun(token)
+            return
+        }
+        activeBuildID = buildID
         // Root discovery must see edits to inactive main/preamble files too.
         if let problem = await persistDirtySessions() {
-            buildState = .failed(problem)
+            if runStillCurrent(token, context: context, root: root) {
+                buildState = .failed(problem)
+            }
+            finishScheduledRun(token)
+            return
+        }
+        guard runStillCurrent(token, context: context, root: root) else {
+            finishScheduledRun(token)
             return
         }
         refreshBuildTarget()
         guard case .ready = phase,
-              let root = projectURL,
               let sourceURL = buildSourceURL() else {
             let reason = buildTargetMessage ?? WorkspaceBuildError.noActiveDocument.localizedDescription
-            buildState = .failed(reason)
-            buildLogText = reason
-            consoleSection = .log
-            bottomPanelVisible = true
+            if runStillCurrent(token, context: context, root: root) {
+                buildState = .failed(reason)
+                buildLogText = reason
+            }
+            if !live {
+                consoleSection = .log
+                bottomPanelVisible = true
+            }
+            finishScheduledRun(token)
             return
         }
         if sourceURL != activeDocumentURL,
@@ -458,37 +663,61 @@ extension WorkspaceModel {
                let session = try? await registry.open(
                    projectRoot: root, file: file,
                    initialText: text, diskBaselineHash: .hashing(text)
-               ) {
+               ), runStillCurrent(token, context: context, root: root) {
                 registeredSessions.append(session)
             }
+        }
+        guard runStillCurrent(token, context: context, root: root) else {
+            finishScheduledRun(token)
+            return
         }
         guard let sourceSession = registeredSessions.first(where: { session in
             (try? Self.relativePath(for: sourceURL, root: root)) == session.path
         }) else {
             buildState = .unavailable(WorkspaceBuildError.noActiveDocument.localizedDescription)
+            finishScheduledRun(token)
             return
         }
         let snapshot = await sourceSession.snapshot()
-        guard !isBuilding else {
-            buildState = .unavailable(WorkspaceBuildError.buildAlreadyRunning.localizedDescription)
+        guard runStillCurrent(token, context: context, root: root) else {
+            finishScheduledRun(token)
             return
         }
 
         let relativeSource = snapshot.path.rawValue
         let stem = (relativeSource as NSString).deletingPathExtension
         var generated = Set<String>()
-        for ext in Self.generatedOutputExtensions {
-            generated.insert("\(stem).\(ext)")
+        let outputPDF: String
+        var buildDirectory: String?
+        if live {
+            // Live products stay out of the project outputs. The directory
+            // is declared too, so the backend may create/clean it whole.
+            outputPDF = Self.livePDFPath(forSourcePath: relativeSource)
+            let directory = (outputPDF as NSString).deletingLastPathComponent
+            let base = ((relativeSource as NSString).lastPathComponent as NSString).deletingPathExtension
+            buildDirectory = directory
+            generated.insert(directory)
+            for ext in Self.generatedOutputExtensions {
+                generated.insert("\(directory)/\(base).\(ext)")
+            }
+        } else {
+            outputPDF = "\(stem).pdf"
+            for ext in Self.generatedOutputExtensions {
+                generated.insert("\(stem).\(ext)")
+            }
         }
-        let outputPDF = "\(stem).pdf"
 
         guard let target = try? BuildTarget(
             projectRoot: root,
             sourcePath: relativeSource,
             outputPDFPath: outputPDF,
-            declaredGeneratedPaths: generated
+            declaredGeneratedPaths: generated,
+            buildDirectoryPath: buildDirectory
         ) else {
-            buildState = .failed("The build target could not be constructed for \(relativeSource).")
+            if runStillCurrent(token, context: context, root: root) {
+                buildState = .failed("The build target could not be constructed for \(relativeSource).")
+            }
+            finishScheduledRun(token)
             return
         }
 
@@ -502,12 +731,40 @@ extension WorkspaceModel {
             pipeline = .singlePass(stage)
         } else if !commandText.isEmpty {
             guard buildPreferences.customShellAcknowledged else {
-                buildState = .failed(WorkspaceBuildError.customShellNotAcknowledged.localizedDescription)
+                if runStillCurrent(token, context: context, root: root) {
+                    buildState = .failed(WorkspaceBuildError.customShellNotAcknowledged.localizedDescription)
+                }
+                finishScheduledRun(token)
                 return
             }
+            let template: String
+            if live {
+                if commandText == Self.tectonicPreset {
+                    template = "tectonic --synctex --outdir {outdir} {file}"
+                } else {
+                    // A custom command that cannot place its outputs would
+                    // write beside the source — refuse it for live builds.
+                    guard commandText.contains("{outdir}") else {
+                        if runStillCurrent(token, context: context, root: root) {
+                            buildState = .failed("A custom live compile command must direct its outputs with {outdir}.")
+                        }
+                        finishScheduledRun(token)
+                        return
+                    }
+                    template = commandText
+                }
+            } else {
+                template = commandText
+            }
+            // {outdir} maps the run's own output folder — the source
+            // directory for a manual build, .pitex-live/… for a live one.
+            let outdir = buildDirectory ?? (stem as NSString).deletingLastPathComponent
+            let command = substituteCommandPlaceholders(
+                template, outputDirectory: outdir.isEmpty ? "." : outdir
+            )
             guard let plan = try? LoginShellCommandPlan(
                 shellExecutable: settings.customShellExecutable,
-                command: substituteCommandPlaceholders(commandText),
+                command: command,
                 workingDirectory: .projectRoot,
                 authority: try! ShellAuthority(
                     source: .userConfiguration,
@@ -515,7 +772,10 @@ extension WorkspaceModel {
                     disclosure: "User-configured build command executed via a login shell."
                 )
             ) else {
-                buildState = .failed("The configured build command is not valid.")
+                if runStillCurrent(token, context: context, root: root) {
+                    buildState = .failed("The configured build command is not valid.")
+                }
+                finishScheduledRun(token)
                 return
             }
             pipeline = .custom(plan)
@@ -531,83 +791,122 @@ extension WorkspaceModel {
         do {
             try await buildOrchestrator.select(target: target, pipeline: pipeline)
         } catch {
-            buildState = .failed("The build could not be configured: \(error.localizedDescription)")
+            if runStillCurrent(token, context: context, root: root) {
+                buildState = .failed("The build could not be configured: \(error.localizedDescription)")
+            }
+            finishScheduledRun(token)
             return
         }
 
-        guard let buildID = try? BuildID(rawValue: "build-\(UUID().uuidString.lowercased())") else {
-            buildState = .failed("The build could not be started.")
-            return
-        }
-        activeBuildID = buildID
-        invalidateSyncTeXForBuild()
-        buildState = .building
-        buildLogText = ""
-        pendingLogText = ""
-        pendingBuildIssues = []
-        buildIssues = []
         // A remote project compiles on its device: pending edits go up
         // first, and the executor brings these outputs back afterwards.
-        buildCancelRequested = false
         if remote != nil {
-            if let problem = await prepareRemoteBuild(outputs: generated.sorted(), required: outputPDF) {
-                buildState = .failed(problem)
-                buildLogText = problem
-                consoleSection = .log
-                bottomPanelVisible = true
-                activeBuildID = nil
+            // Only files are fetched back — the declared directory entry
+            // exists for BuildTarget validation, not for download.
+            let fetchOutputs = generated.filter { $0 != buildDirectory }.sorted()
+            if let problem = await prepareRemoteBuild(outputs: fetchOutputs, required: outputPDF) {
+                if runStillCurrent(token, context: context, root: root) {
+                    buildState = .failed(problem)
+                    buildLogText = problem
+                }
+                if !live {
+                    consoleSection = .log
+                    bottomPanelVisible = true
+                }
+                finishScheduledRun(token)
                 return
             }
-            guard !buildCancelRequested else {
-                buildState = .failed("Build cancelled.")
-                activeBuildID = nil
+            guard !buildCancelRequested,
+                  runStillCurrent(token, context: context, root: root) else {
+                if buildCancelRequested,
+                   runStillCurrent(token, context: context, root: root) {
+                    buildState = .failed("Build cancelled.")
+                }
+                finishScheduledRun(token)
                 return
             }
         }
+
+        // A superseded or cancelled token must not launch a process —
+        // this gates the save/prep phase for local runs the way the
+        // remote branch already gates post-upload.
+        guard runStillCurrent(token, context: context, root: root),
+              !buildCancelRequested else {
+            if buildCancelRequested,
+               runStillCurrent(token, context: context, root: root) {
+                buildState = .failed("Build cancelled.")
+            }
+            finishScheduledRun(token)
+            return
+        }
+
         let orchestrator = buildOrchestrator
         do {
             let outcome = try await orchestrator.build(id: buildID) { [weak self] event in
-                await self?.handleBuildEvent(event)
+                await self?.handleBuildEvent(event, token: token, buildID: buildID)
             }
-            flushBuildLog()
+            flushBuildLog(for: token)
+            // Publish only while the scheduler still accepts this run's
+            // results and the workspace is unchanged — a superseded live
+            // run clears its busy state but never lands its artifacts.
             switch outcome.lifecycle {
             case .succeeded:
+                guard runStillCurrent(token, context: context, root: root) else { break }
                 let pdfData = await orchestrator.successfulPDF() ?? Data()
+                // The await may have raced a newer edit — verify again
+                // before this run's PDF is allowed to publish.
+                guard runStillCurrent(token, context: context, root: root) else { break }
                 buildState = .succeeded(pdf: pdfData, log: buildLogText)
                 latestBuiltPDFName = outputPDF
                 let pdfURL = root.appendingPathComponent(outputPDF).standardizedFileURL
                 await refreshSyncTeXBinding(pdfURL: pdfURL)
+                guard runStillCurrent(token, context: context, root: root) else { break }
                 rescanProject()
-                if settings.switchToPDFOnBuild {
-                    inspectorVisible = true
-                }
-                if settings.jumpToCursorAfterBuild {
-                    await syncForward()
+                if live {
+                    if settings.liveCompileFollowCursor {
+                        await syncForward()
+                    }
+                } else {
+                    if settings.switchToPDFOnBuild {
+                        inspectorVisible = true
+                    }
+                    if settings.jumpToCursorAfterBuild {
+                        await syncForward()
+                    }
                 }
             case .cancelled:
-                buildState = .failed("Build cancelled.")
+                if runStillCurrent(token, context: context, root: root) {
+                    buildState = .failed("Build cancelled.")
+                }
             case let .failed(exitCode, _):
-                buildState = .failed("Build failed\(exitCode.map { " (exit \($0))" } ?? "").")
+                if runStillCurrent(token, context: context, root: root) {
+                    buildState = .failed("Build failed\(exitCode.map { " (exit \($0))" } ?? "").")
+                }
             case .queued, .running, .cancelling:
-                buildState = .failed("The build ended in an unexpected state.")
+                if runStillCurrent(token, context: context, root: root) {
+                    buildState = .failed("The build ended in an unexpected state.")
+                }
             }
         } catch {
-            flushBuildLog()
-            buildState = .failed(String(describing: error))
+            flushBuildLog(for: token)
+            if runStillCurrent(token, context: context, root: root) {
+                buildState = .failed(String(describing: error))
+            }
         }
-        activeBuildID = nil
+        finishScheduledRun(token)
     }
 
-    func cancelBuild() async {
-        // A remote build may still be uploading, with nothing running yet
-        // for the orchestrator to cancel.
-        if isBuilding { buildCancelRequested = true }
-        try? await buildOrchestrator.cancel()
-    }
-
-    var isBuilding: Bool {
-        if case .building = buildState { return true }
-        return false
+    /// End of run: publish the buffered tail only while the run's output
+    /// is still accepted; a superseded run's leftovers are dropped, not
+    /// flushed into the next run's log.
+    private func flushBuildLog(for token: LiveRunToken) {
+        if liveScheduler.acceptsActiveResult(token) {
+            flushBuildLog()
+        } else {
+            pendingLogText = ""
+            pendingBuildIssues = []
+            logFlushScheduled = false
+        }
     }
 
     /// Log chunks and issue records accumulate here and flush on a ~100 ms
@@ -620,6 +919,7 @@ extension WorkspaceModel {
         guard !logFlushScheduled else { return }
         logFlushScheduled = true
         let buildID = activeBuildID
+        let token = activeRunToken
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(100))
             guard let self else { return }
@@ -630,6 +930,13 @@ extension WorkspaceModel {
                 if !self.pendingLogText.isEmpty || !self.pendingBuildIssues.isEmpty {
                     self.scheduleLogFlush()
                 }
+                return
+            }
+            // A run superseded during the 100 ms window loses its tail too.
+            guard let token, self.liveScheduler.acceptsActiveResult(token) else {
+                self.logFlushScheduled = false
+                self.pendingLogText = ""
+                self.pendingBuildIssues = []
                 return
             }
             self.flushBuildLog()
@@ -648,7 +955,11 @@ extension WorkspaceModel {
         }
     }
 
-    private func handleBuildEvent(_ event: BuildEvent) async {
+    /// Streams one build event into the buffered log/issues — only while
+    /// its run still owns the slot: a superseded live run's late output
+    /// must not surface under a newer build.
+    private func handleBuildEvent(_ event: BuildEvent, token: LiveRunToken, buildID: BuildID) async {
+        guard activeBuildID == buildID, liveScheduler.acceptsActiveResult(token) else { return }
         switch event {
         case let .log(entry):
             pendingLogText += entry.text

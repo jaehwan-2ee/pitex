@@ -2,6 +2,8 @@ import AppKit
 import AppPorts
 import AppShell
 import BuildCore
+import BuildFeature
+import Combine
 import Darwin
 import DocumentSessionCore
 import EditorMacAdapter
@@ -167,7 +169,11 @@ final class WorkspaceModel: ObservableObject {
         didSet { observeEditorSelection() }
     }
     @Published private(set) var documentSnapshot: DocumentSessionCore.DocumentSnapshot? {
-        didSet { scheduleStructureRefresh(); scheduleAutosave() }
+        didSet {
+            scheduleStructureRefresh()
+            scheduleAutosave()
+            noteLiveCompileEdit(oldValue: oldValue)
+        }
     }
     @Published var buildLogText = ""
     /// Buffered build-log chunks; flushed into buildLogText on a ~100 ms
@@ -187,6 +193,10 @@ final class WorkspaceModel: ObservableObject {
     @Published var showingSettings = false
 
     private var documentLoadGeneration = UUID()
+    /// Identity of the mounted project — bumped by `close()`, which every
+    /// `open` passes through, so a reopen of the same path still fails a
+    /// previous build run's captured context.
+    var projectGeneration = UUID()
     var gitRefreshInFlight = false
     @Published private(set) var wordCount = 0
     let registry = DocumentSessionRegistry()
@@ -201,6 +211,8 @@ final class WorkspaceModel: ObservableObject {
             // overlaps short Syncing → Synced changes.
             let subtitle = remote?.statusText ?? ""
             if window?.subtitle != subtitle { window?.subtitle = subtitle }
+            // A remote project floors the live debounce at 1500 ms.
+            syncLiveScheduler()
         }
     }
     @Published var showingOpenViaSSH = false
@@ -209,6 +221,18 @@ final class WorkspaceModel: ObservableObject {
     /// Cancel pressed before the orchestrator started (a remote build
     /// uploads the edits first).
     var buildCancelRequested = false
+    /// Live-compile debounce state machine (BuildFeature): the workspace
+    /// feeds it millisecond timestamps and performs the `LiveRequest`s it
+    /// returns. Timer/dispatch glue lives in `BuildSupport`.
+    var liveScheduler = LiveCompileScheduler()
+    /// Token of the run currently holding the build slot, matched by
+    /// `cancelScheduledRun` — the scheduler can only cancel the run it
+    /// thinks is active.
+    var activeRunToken: LiveRunToken?
+    /// Debounce Task armed at `liveScheduler.pendingDeadline`.
+    var liveCompileTask: Task<Void, Never>?
+    /// Settings/import → scheduler sync (enable flag and delay changes).
+    private var liveSettingsObserver: AnyCancellable?
     let syncTeXRunner = SyncTeXRunner()
     let highlighter = SyntaxHighlighter()
     private(set) var agent: AgentCoordinator?
@@ -245,7 +269,14 @@ final class WorkspaceModel: ObservableObject {
     /// Recently opened documents/projects, shown in the tab bar's + menu.
     @Published private(set) var recentDocuments: [URL] = []
     /// Build command shown in the console bar, remembered per project.
-    @Published var buildCommandText = "xelatex -interaction=nonstopmode -synctex=1 {file}"
+    @Published var buildCommandText = "xelatex -interaction=nonstopmode -synctex=1 {file}" {
+        didSet {
+            persistCommands()
+            // A different command means different flags/outputs — live
+            // work compiled under the old one is dead.
+            performLiveRequests(liveScheduler.invalidate())
+        }
+    }
     /// Free-form terminal command run with ⌃⌘B, remembered per project.
     @Published var customCommandText = ""
     /// Accumulated terminal output shown in the console's Terminal tab.
@@ -303,6 +334,12 @@ final class WorkspaceModel: ObservableObject {
         let executor = WorkspaceBuildExecutor()
         buildExecutor = executor
         buildOrchestrator = BuildOrchestrator(executor: executor)
+        // objectWillChange fires inside the setter, so the sync is deferred
+        // one hop to read the stored value — covers Settings edits and
+        // settings imports (reload()) alike.
+        liveSettingsObserver = settings.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in self?.syncLiveScheduler() }
+        }
         loadRecents()
     }
 
@@ -613,6 +650,7 @@ final class WorkspaceModel: ObservableObject {
             // The pi subprocess stays unspawned until the Assistant panel
             // first appears (AgentPanel's .task calls prepare()).
             phase = .ready
+            syncLiveScheduler()
             await restoreBuiltPreview()
             recordRecent(selectedURL)
         } catch {
@@ -934,7 +972,13 @@ final class WorkspaceModel: ObservableObject {
     func close() async -> UUID {
         let generation = UUID()
         documentLoadGeneration = generation
+        projectGeneration = UUID()
         wordCount = 0
+        // Live compile belonged to the closing context: stop the debounce
+        // and retire live work — a running manual build keeps ownership.
+        liveCompileTask?.cancel()
+        liveCompileTask = nil
+        performLiveRequests(liveScheduler.invalidate())
         for url in fileWatchers.keys { stopWatcher(for: url) }
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
@@ -1149,7 +1193,12 @@ final class WorkspaceModel: ObservableObject {
     private func restoreBuiltPreview() async {
         guard !isBuilding, let root = projectURL, let source = buildSourceURL(),
               let relative = try? Self.relativePath(for: source, root: root).rawValue else { return }
-        let name = (relative as NSString).deletingPathExtension + ".pdf"
+        // A live build's PDF lives under .pitex-live — reattach it when it
+        // is the most recent product instead of looking beside the source.
+        let liveName = Self.livePDFPath(forSourcePath: relative)
+        let name = latestBuiltPDFName == liveName
+            ? liveName
+            : (relative as NSString).deletingPathExtension + ".pdf"
         if latestBuiltPDFName == name, syncTeXBinding != nil { return }
         let pdf = root.appendingPathComponent(name)
         guard let data = try? Data(contentsOf: pdf), data.starts(with: Data("%PDF".utf8)) else {
@@ -1975,6 +2024,9 @@ final class WorkspaceModel: ObservableObject {
         guard let url = activeDocumentURL, url.pathExtension.lowercased() == "tex" else { return }
         pinnedBuildTarget = pinnedBuildTarget == url ? nil : url
         refreshBuildTarget()
+        // Pin/unpin switches the build context: live work for the old
+        // target is dead.
+        performLiveRequests(liveScheduler.invalidate())
         Task { await restoreBuiltPreview() }
     }
 
@@ -2051,19 +2103,23 @@ final class WorkspaceModel: ObservableObject {
         bottomPanelVisible = true
     }
 
-    /// Expands {file} / {filename} against the current build source.
-    func substituteCommandPlaceholders(_ template: String) -> String {
+    /// Expands {file} / {filename} / {outdir} against the current build
+    /// source. {outdir} receives a shell-quoted POSIX path — a project
+    /// folder may live under a directory with spaces.
+    func substituteCommandPlaceholders(_ template: String, outputDirectory: String = ".") -> String {
         let relative = buildSourceRelativePath() ?? "main.tex"
         let stem = (relative as NSString).deletingPathExtension
         return template
             .replacingOccurrences(of: "{file}", with: relative)
             .replacingOccurrences(of: "{filename}", with: stem)
+            .replacingOccurrences(of: "{outdir}", with: "'\(outputDirectory.replacingOccurrences(of: "'", with: "'\\''"))'")
     }
 
     /// Chapters and bibliography files share their owning main document.
     func buildSourceURL() -> URL? { pinnedBuildTarget ?? automaticBuildTarget }
 
     func refreshBuildTarget() {
+        let previousTarget = buildSourceURL()
         var resolver = TeXProjectResolver()
         resolver.diskCache = resolverDiskCache
         if let url = activeDocumentURL, let text = documentSnapshot?.text {
@@ -2082,6 +2138,11 @@ final class WorkspaceModel: ObservableObject {
                                                root: projectURL, files: projectFiles)
         if documentProject != project { documentProject = project }
         resolverDiskCache = resolver.diskCache
+        // Only a change of the resolved target retires live work — tab
+        // switches inside the same document keep pending edits alive.
+        if buildSourceURL() != previousTarget {
+            performLiveRequests(liveScheduler.invalidate())
+        }
     }
 
     func buildSourceRelativePath() -> String? {
@@ -2173,6 +2234,13 @@ final class WorkspaceModel: ObservableObject {
             hash &*= 1_099_511_628_211
         }
         return "document-" + String(hash, radix: 16)
+    }
+
+    /// Monotonic uptime in milliseconds — the scheduler's caller-owned
+    /// clock. Not wall time: a clock adjustment must never move a deadline
+    /// backwards into a UInt64 underflow or fire the debounce early.
+    nonisolated static func nowMs() -> UInt64 {
+        UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
     }
 }
 

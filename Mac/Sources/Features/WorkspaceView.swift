@@ -230,6 +230,16 @@ struct WorkspaceView: View {
             .disabled(workspace.buildUnavailableReason != nil && !workspace.isBuilding)
             .help(workspace.buildUnavailableReason ?? String(localized: "build.start"))
             .accessibilityIdentifier("pitex.build")
+
+            Button {
+                settingsStore.liveCompileEnabled.toggle()
+            } label: {
+                Image(systemName: settingsStore.liveCompileEnabled ? "bolt.fill" : "bolt")
+            }
+            .buttonStyle(.borderless)
+            .help(String(localized: "toolbar.live_compile"))
+            .accessibilityLabel(String(localized: "toolbar.live_compile"))
+            .accessibilityIdentifier("pitex.toolbar.liveCompile")
         }
         .padding(.horizontal, 6)
         .frame(height: 34)
