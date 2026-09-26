@@ -13,6 +13,7 @@ use pitex_shell::model::{
     ConsoleSection, WorkspaceBuildState, WorkspaceMessage, WorkspaceModel,
 };
 use pitex_shell::settings::{Preferences, SettingsStore};
+use pitex_shell::synctex::SyncTeXBinding;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -219,6 +220,12 @@ fn live_compile_scenarios() {
     superseded_failure_keeps_last_good();
     stale_results_never_publish();
     invalidate_then_next_build_starts();
+    retained_pdf_survives_current_failure();
+    stale_prep_failure_dispatches_queued_replacement();
+    composition_at_completion_holds_dispatch();
+    stale_synctex_responses_never_rebind();
+    restore_binds_only_matched_pdf_and_metadata();
+    retained_live_artifact_never_falls_back();
     custom_without_outdir_rejected();
     tectonic_preset_and_quoting();
 }
@@ -355,15 +362,19 @@ fn superseded_failure_keeps_last_good() {
     fx.edit("main.tex", "% third\n");
     let (_, outcome, _) = fx.finish_next();
     let _ = outcome; // cp fails — exactly what we want superseded.
-    // The superseded failure never published: the retained PDF and its
-    // artifact name are intact. (The third edit is pending but not yet
-    // due on the frozen clock, so nothing dispatched past it.)
+    // The superseded failure never published: the status is an honest
+    // "Build superseded." while the retained PDF keeps the last-good
+    // bytes and its artifact name intact — no fake Succeeded, no stale
+    // issues. (The third edit is pending but not yet due on the frozen
+    // clock, so nothing dispatched past it.)
     match &fx.model.build_state {
-        WorkspaceBuildState::Succeeded { pdf, .. } => {
-            assert_eq!(&pdf[..], &good_pdf[..])
+        WorkspaceBuildState::Failed(reason) => {
+            assert_eq!(reason, "Build superseded.")
         }
-        other => panic!("expected retained Succeeded, got {other:?}"),
+        other => panic!("expected Failed(\"Build superseded.\"), got {other:?}"),
     }
+    let retained = fx.model.retained_pdf.clone().expect("retained pdf");
+    assert_eq!(&retained.pdf[..], &good_pdf[..]);
     assert_eq!(fx.model.latest_built_pdf_name, good_name);
     // Its own debounced run still fires on time — drain it.
     fx.fire();
@@ -439,8 +450,14 @@ fn invalidate_then_next_build_starts() {
     assert!(fx.model.active_run.is_none());
     let (finished_id, _, _) = fx.finish_next();
     assert_eq!(finished_id, retired.build);
-    // Busy state from the retired run was released — nothing published.
+    // Busy state from the retired run was released — nothing published;
+    // status is an honest "Build cancelled." while the retained artifact
+    // (if any) stays in the viewer.
     assert!(!fx.model.is_building());
+    match &fx.model.build_state {
+        WorkspaceBuildState::Failed(reason) => assert_eq!(reason, "Build cancelled."),
+        other => panic!("expected Failed(\"Build cancelled.\"), got {other:?}"),
+    }
     // Next build actually starts — the whole point of the fix.
     fx.edit("main.tex", "% second\n");
     fx.fire();
@@ -452,6 +469,381 @@ fn invalidate_then_next_build_starts() {
     // A manual build after invalidation works the same way.
     fx.model.start_build(&fx.store, "en");
     let _ = fx.finish_next();
+}
+
+/// A CURRENT failure keeps the honest Failed status and issues while the
+/// retained last-good artifact stays untouched for the viewer.
+fn retained_pdf_survives_current_failure() {
+    let mut fx = Fixture::open("retained", "main.tex", "cp {file} {outdir}/main.pdf");
+    fx.edit("main.tex", "% good\n");
+    fx.fire();
+    let (_, outcome, _) = fx.finish_next();
+    outcome.unwrap_or_else(|e| panic!("live build failed: {e}"));
+    let retained = fx.model.retained_pdf.clone().expect("retained pdf");
+    let artifact = fx.model.latest_built_pdf_name.clone();
+
+    // The same run's next build fails outright — it is the current run,
+    // so the status and log publish, but the retained bytes/name do not
+    // move.
+    fx.model.build_command_text = "cp /definitely/missing {outdir}/main.pdf".into();
+    fx.edit("main.tex", "% bad\n");
+    fx.fire();
+    let _ = fx.finish_next();
+    assert!(
+        matches!(fx.model.build_state, WorkspaceBuildState::Failed(_)),
+        "expected Failed, got {:?}",
+        fx.model.build_state
+    );
+    let after = fx.model.retained_pdf.clone().expect("retained pdf kept");
+    assert_eq!(after.pdf, retained.pdf);
+    assert_eq!(fx.model.latest_built_pdf_name, artifact);
+}
+
+/// An orphaned run finishing with an infrastructure error publishes
+/// nothing — no error text in the log — and the queued live replacement
+/// still dispatches.
+fn stale_prep_failure_dispatches_queued_replacement() {
+    let mut fx = Fixture::open(
+        "staleprep",
+        "main.tex",
+        "sleep 1 && cp {file} {outdir}/main.pdf",
+    );
+    fx.edit("main.tex", "% first\n");
+    fx.fire();
+    assert!(fx.model.is_building());
+    let retired = fx.model.active_run.clone().expect("run started");
+    fx.model.invalidate_live();
+    let log_before = fx.model.build_log_text.clone();
+    // A newer edit is already due by the time the orphan's error lands —
+    // the finish itself must dispatch the replacement run.
+    fx.edit("main.tex", "% second\n");
+    fx.now.set(fx.now.get() + 700);
+    let message = pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::BuildFinished { .. })
+    });
+    let WorkspaceMessage::BuildFinished {
+        build,
+        outcome,
+        output_pdf,
+    } = message
+    else {
+        unreachable!()
+    };
+    assert_eq!(build, retired.build);
+    // Simulate the prep failure the remote path would produce.
+    fx.model.apply_build_finished(
+        build,
+        Err("remote prep failed".into()),
+        &output_pdf,
+        &fx.store,
+        "en",
+    );
+    let _ = outcome;
+    // Nothing from the stale error published — the queued run is the one
+    // now building.
+    assert_eq!(fx.model.build_log_text, log_before);
+    assert!(fx.model.is_building());
+    assert_ne!(
+        fx.model.active_run.as_ref().map(|r| r.build.clone()),
+        Some(retired.build)
+    );
+    let (_, outcome, _) = fx.finish_next();
+    outcome.unwrap_or_else(|e| panic!("replacement build failed: {e}"));
+}
+
+/// An IME composition active at completion holds the pending dispatch —
+/// the scheduler's `composing` flag at that instant decides, not a stale
+/// snapshot from build start.
+fn composition_at_completion_holds_dispatch() {
+    let mut fx = Fixture::open("imefinish", "main.tex", "cp {file} {outdir}/main.pdf");
+    fx.edit("main.tex", "% first\n");
+    fx.fire();
+    assert!(fx.model.is_building());
+    // Composition starts while the run is active and a second edit lands;
+    // wind past its deadline so it is due when the run completes.
+    fx.model.live_composing.set(true);
+    fx.edit("main.tex", "% second\n");
+    fx.now.set(fx.now.get() + 700);
+    let (_, outcome, _) = fx.finish_next();
+    outcome.unwrap_or_else(|e| panic!("live build failed: {e}"));
+    // Completed with composing=true → the due edit stays pending; no
+    // overlapping run started.
+    assert!(fx.model.active_run.is_none());
+    assert!(fx.model.live.pending_deadline().is_some());
+    // Once composition ends the held edit fires immediately — the
+    // original deadline already passed.
+    fx.model.live_composing.set(false);
+    let requests = fx.model.poll_live(false);
+    assert_eq!(requests.len(), 1);
+    fx.model
+        .dispatch_live_requests(requests, &fx.store, "en");
+    assert!(fx.model.is_building());
+    let _ = fx.finish_next();
+}
+
+/// Stamped SyncTeX responses are dropped once the context moved on — a
+/// newer build, a different artifact, or a different workspace root —
+/// so a late worker reply can't rebind an old PDF or move the cursor.
+/// Refresh/query ids come from the real message pump.
+fn stale_synctex_responses_never_rebind() {
+    let mut fx = Fixture::open("stalestx", "main.tex", "cp {file} {outdir}/main.pdf");
+    let root = fx.model.project_url.clone().unwrap();
+    let pdf = root.join("main.pdf");
+    std::fs::write(&pdf, "%PDF-1.4 fake").unwrap();
+    fx.model.latest_built_pdf_name = Some("main.pdf".into());
+    let binding = || SyncTeXBinding {
+        revision: synctex_core::SyncTeXRevision::new("b", 1).unwrap(),
+        output_hash: "h".into(),
+        pdf_url: pdf.clone(),
+        project_root: root.clone(),
+        source_root: root.clone(),
+        source_paths: Default::default(),
+    };
+    // Issue a real refresh and capture its stamped response id.
+    let refresh_id = |fx: &mut Fixture| -> u64 {
+        fx.model.refresh_synctex_binding(pdf.clone());
+        let message = pump(&mut fx.model, &fx.rx, |m| {
+            matches!(m, WorkspaceMessage::BindingRefreshed { .. })
+        });
+        let WorkspaceMessage::BindingRefreshed { id, .. } = message else {
+            unreachable!()
+        };
+        id
+    };
+
+    // The response answering the newest refresh binds; a fabricated Ok
+    // stands in for real metadata.
+    let id = refresh_id(&mut fx);
+    fx.model
+        .apply_binding_refreshed(id, root.clone(), pdf.clone(), Ok(binding()));
+    assert!(fx.model.synctex_binding.is_some(), "current refresh rejected");
+
+    // A refresh issued right before a new build: its late response must
+    // not rebind once the build invalidated SyncTeX.
+    let old_id = refresh_id(&mut fx);
+    fx.model.invalidate_synctex_for_build();
+    assert!(fx.model.synctex_binding.is_none());
+    fx.model
+        .apply_binding_refreshed(old_id, root.clone(), pdf.clone(), Ok(binding()));
+    assert!(fx.model.synctex_binding.is_none(), "stale refresh rebound");
+
+    // A response naming a different artifact under the newest id is
+    // equally stale.
+    let new_id = refresh_id(&mut fx);
+    fx.model.apply_binding_refreshed(
+        new_id,
+        root.clone(),
+        root.join(".pitex-live/main/main.pdf"),
+        Ok(binding()),
+    );
+    assert!(fx.model.synctex_binding.is_none(), "wrong artifact bound");
+    // Same id, another workspace's root — rejected.
+    fx.model.apply_binding_refreshed(
+        new_id,
+        PathBuf::from("/other"),
+        pdf.clone(),
+        Ok(binding()),
+    );
+    assert!(fx.model.synctex_binding.is_none(), "foreign root bound");
+
+    // Query stamps: rebind, issue a real forward query, then a build
+    // makes its late result stale — state must not move.
+    let id = refresh_id(&mut fx);
+    fx.model
+        .apply_binding_refreshed(id, root.clone(), pdf.clone(), Ok(binding()));
+    fx.model.sync_forward_at(1, 0);
+    let message = pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::ForwardResult { .. })
+    });
+    let WorkspaceMessage::ForwardResult {
+        request, root: qroot, pdf: qpdf, ..
+    } = message
+    else {
+        unreachable!()
+    };
+    fx.model.invalidate_synctex_for_build();
+    let state_before = format!("{:?}", fx.model.synctex_state);
+    fx.model.apply_forward_result(
+        request,
+        qroot,
+        qpdf,
+        Err("stale".into()),
+    );
+    assert_eq!(
+        format!("{:?}", fx.model.synctex_state),
+        state_before,
+        "stale query result mutated state"
+    );
+}
+
+/// Displayed artifact and SyncTeX binding are always the same file.
+/// On the very first restore a different candidate is only chosen as a
+/// complete pair (bytes + artifact + metadata together); once a live
+/// artifact is retained there is no fallback to sibling metadata, and a
+/// failed/canceled run never lazily rebinds onto retained bytes.
+fn restore_binds_only_matched_pdf_and_metadata() {
+    let mut fx = Fixture::open("bindingpair", "main.tex", "cp {file} {outdir}/main.pdf");
+    let root = fx.model.project_url.clone().unwrap();
+    // Live artifact WITHOUT metadata; sibling WITH — the spaced-fixture
+    // shape that reported "metadata could not be loaded".
+    std::fs::write(root.join("main.pdf"), "%PDF-1.4 sibling").unwrap();
+    std::fs::write(
+        root.join("main.synctex"),
+        format!("SyncTeX Version:1\nInput:1:{}/main.tex\n", root.display()),
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join(".pitex-live/main")).unwrap();
+    std::fs::write(root.join(".pitex-live/main/main.pdf"), "%PDF-1.4 live").unwrap();
+    fx.model.latest_built_pdf_name = Some(".pitex-live/main/main.pdf".into());
+
+    // Nothing retained yet → the sibling is picked as a complete pair:
+    // its bytes, its artifact name and its binding, all together.
+    fx.model.restore_built_preview();
+    let message = pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::BindingRefreshed { .. })
+    });
+    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, result } = message else {
+        unreachable!()
+    };
+    fx.model.apply_binding_refreshed(id, broot, pdf.clone(), result);
+    assert_eq!(pdf, root.join("main.pdf"), "bound the sibling pair");
+    assert_eq!(
+        fx.model.synctex_binding.as_ref().map(|b| b.pdf_url.clone()),
+        Some(pdf.clone())
+    );
+    assert_eq!(
+        fx.model.latest_built_pdf_name.as_deref(),
+        Some("main.pdf"),
+        "published the same artifact the binding targets"
+    );
+    // The pair is coherent: retained bytes are the sibling's, not the
+    // live artifact's.
+    assert_eq!(
+        fx.model.retained_pdf.as_ref().map(|r| r.pdf.as_ref()),
+        Some(&b"%PDF-1.4 sibling"[..])
+    );
+    assert!(matches!(
+        fx.model.synctex_state,
+        pitex_shell::model::WorkspaceSyncTeXState::Current
+    ));
+
+    // Metadata on BOTH candidates now: a fresh restore prefers the
+    // first candidate — the live artifact — as a coherent pair.
+    std::fs::write(
+        root.join(".pitex-live/main/main.synctex"),
+        format!("SyncTeX Version:1\nInput:1:{}/main.tex\n", root.display()),
+    )
+    .unwrap();
+    fx.model.retained_pdf = None;
+    fx.model.latest_built_pdf_name = None;
+    fx.model.synctex_binding = None;
+    fx.model.restore_built_preview();
+    let message = pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::BindingRefreshed { .. })
+    });
+    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, result } = message else {
+        unreachable!()
+    };
+    fx.model.apply_binding_refreshed(id, broot, pdf.clone(), result);
+    assert_eq!(pdf, root.join(".pitex-live/main/main.pdf"));
+    assert_eq!(
+        fx.model.synctex_binding.as_ref().map(|b| b.pdf_url.clone()),
+        Some(pdf)
+    );
+    assert_eq!(
+        fx.model.retained_pdf.as_ref().map(|r| r.pdf.as_ref()),
+        Some(&b"%PDF-1.4 live"[..]),
+        "retained bytes belong to the bound artifact, never mixed"
+    );
+}
+
+/// Once a live artifact is retained, restore never swaps to sibling
+/// metadata: only the retained artifact itself may resolve; without its
+/// own `.synctex` the honest result is Unavailable.
+fn retained_live_artifact_never_falls_back() {
+    // The artifact must carry a `%PDF` prefix — restore rejects
+    // non-PDF bytes. (printf: %% escapes a literal %.)
+    let mut fx = Fixture::open(
+        "nofallback",
+        "main.tex",
+        "printf '%%PDF-1.4 live\\n' > {outdir}/main.pdf",
+    );
+    let root = fx.model.project_url.clone().unwrap();
+    // A real live run → its artifact is retained; the publish path
+    // issued a refresh against it which fails honestly (cp wrote no
+    // `.synctex` beside the live pdf).
+    fx.edit("main.tex", "% live\n");
+    fx.fire();
+    let (_, outcome, _) = fx.finish_next();
+    outcome.unwrap_or_else(|e| panic!("live build failed: {e}"));
+    assert_eq!(
+        fx.model.retained_pdf.as_ref().map(|r| r.artifact.as_str()),
+        Some(".pitex-live/main/main.pdf")
+    );
+    let message = pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::BindingRefreshed { .. })
+    });
+    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, result } = message else {
+        unreachable!()
+    };
+    assert_eq!(pdf, root.join(".pitex-live/main/main.pdf"));
+    fx.model.apply_binding_refreshed(id, broot, pdf, result);
+    assert!(fx.model.synctex_binding.is_none());
+
+    // A sibling with valid metadata appears — restore must still only
+    // resolve the retained artifact, not the sibling pair.
+    std::fs::write(root.join("main.pdf"), "%PDF-1.4 sibling").unwrap();
+    std::fs::write(
+        root.join("main.synctex"),
+        format!("SyncTeX Version:1\nInput:1:{}/main.tex\n", root.display()),
+    )
+    .unwrap();
+    fx.model.restore_built_preview();
+    let message = pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::BindingRefreshed { .. })
+    });
+    let WorkspaceMessage::BindingRefreshed { id, root: broot, pdf, result } = message else {
+        unreachable!()
+    };
+    assert_eq!(
+        pdf,
+        root.join(".pitex-live/main/main.pdf"),
+        "refresh stays on the retained artifact, not the sibling"
+    );
+    fx.model.apply_binding_refreshed(id, broot, pdf, result);
+    assert!(fx.model.synctex_binding.is_none());
+    assert_eq!(
+        fx.model.latest_built_pdf_name.as_deref(),
+        Some(".pitex-live/main/main.pdf"),
+        "retained artifact stays on screen"
+    );
+
+    // After a failed/canceled run restore must not lazily rebind
+    // metadata onto the retained bytes at all — even when a `.synctex`
+    // shows up next to it.
+    std::fs::write(
+        root.join(".pitex-live/main/main.synctex"),
+        format!("SyncTeX Version:1\nInput:1:{}/main.tex\n", root.display()),
+    )
+    .unwrap();
+    fx.model.build_state = WorkspaceBuildState::Failed("Build cancelled.".into());
+    fx.model.restore_built_preview();
+    // No refresh was issued — nothing to apply; the retained artifact
+    // and honest status are untouched.
+    assert!(rx_is_empty(&fx.rx));
+    assert!(fx.model.synctex_binding.is_none());
+    assert!(matches!(
+        fx.model.build_state,
+        WorkspaceBuildState::Failed(ref r) if r == "Build cancelled."
+    ));
+    assert_eq!(
+        fx.model.retained_pdf.as_ref().map(|r| r.artifact.as_str()),
+        Some(".pitex-live/main/main.pdf")
+    );
+}
+
+fn rx_is_empty(rx: &Receiver<WorkspaceMessage>) -> bool {
+    rx.recv_timeout(Duration::from_millis(300)).is_err()
 }
 
 fn custom_without_outdir_rejected() {

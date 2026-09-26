@@ -268,9 +268,24 @@ pub enum WorkspaceMessage {
         outcome: Result<BuildOutcome, String>,
         output_pdf: String,
     },
-    ForwardResult(Result<SyncTeXQueryCandidate, String>),
-    InverseResult(Result<SyncTeXQueryCandidate, String>),
-    BindingRefreshed(Result<SyncTeXBinding, String>),
+    ForwardResult {
+        request: u64,
+        root: PathBuf,
+        pdf: PathBuf,
+        result: Result<SyncTeXQueryCandidate, String>,
+    },
+    InverseResult {
+        request: u64,
+        root: PathBuf,
+        pdf: PathBuf,
+        result: Result<SyncTeXQueryCandidate, String>,
+    },
+    BindingRefreshed {
+        id: u64,
+        root: PathBuf,
+        pdf: PathBuf,
+        result: Result<SyncTeXBinding, String>,
+    },
     /// A watched file changed on disk (debounce handled by the UI monitor).
     DiskChanged(PathBuf),
     OpenFinished(Result<OpenedProject, OpenFailure>),
@@ -377,6 +392,26 @@ pub struct ActiveRun {
     pub build: BuildID,
     pub token: LiveRunToken,
     pub live: Option<LiveRunContext>,
+    /// Project-relative source the run compiles — recorded at start so a
+    /// published artifact stays pinned to the target it came from even
+    /// if the active document moves mid-build.
+    pub source: String,
+}
+
+/// The last build artifact accepted for the viewer — independent of the
+/// latest run's status, so a failed, superseded or cancelled run never
+/// blanks the last good PDF. Retired when the workspace or the build
+/// target changes; a chapter switch under the same main keeps it.
+#[derive(Debug, Clone)]
+pub struct RetainedPdf {
+    /// Project-relative artifact path (`.pitex-live/main/main.pdf` or
+    /// `main.pdf`) — also the fetch/download handle.
+    pub artifact: String,
+    /// Project-relative build source this artifact came from.
+    pub source: String,
+    /// Bytes + precomputed hash the viewer renders.
+    pub pdf: Arc<[u8]>,
+    pub hash: u64,
 }
 
 /// Isolated-output context of a live run — project-root-relative
@@ -527,9 +562,9 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::PdfRendered { .. } => write!(f, "PdfRendered"),
             Self::BuildEvent { .. } => write!(f, "BuildEvent"),
             Self::BuildFinished { .. } => write!(f, "BuildFinished"),
-            Self::ForwardResult(_) => write!(f, "ForwardResult"),
-            Self::InverseResult(_) => write!(f, "InverseResult"),
-            Self::BindingRefreshed(_) => write!(f, "BindingRefreshed"),
+            Self::ForwardResult { .. } => write!(f, "ForwardResult"),
+            Self::InverseResult { .. } => write!(f, "InverseResult"),
+            Self::BindingRefreshed { .. } => write!(f, "BindingRefreshed"),
             Self::DiskChanged(p) => write!(f, "DiskChanged({p:?})"),
             Self::OpenFinished(_) => write!(f, "OpenFinished"),
             Self::RemotePushFinished { .. } => write!(f, "RemotePushFinished"),
@@ -1127,11 +1162,20 @@ pub struct WorkspaceModel {
     /// Millisecond clock shared by every scheduler call — the UI installs
     /// `glib::monotonic_time`; tests inject a cell.
     live_now: std::rc::Rc<dyn Fn() -> u64>,
-    /// Last successfully published PDF state — restored when a superseded
-    /// or failed live run must leave the viewer on the previous artifact.
-    last_succeeded: Option<WorkspaceBuildState>,
+    /// The last artifact accepted for the viewer — carries its own
+    /// bytes/hash/source identity so a failed or superseded run never
+    /// blanks the preview. `latest_built_pdf_name` mirrors
+    /// `retained.artifact` and stays the fetch/display handle.
+    pub retained_pdf: Option<RetainedPdf>,
     pub latest_built_pdf_name: Option<String>,
     pub synctex_binding: Option<SyncTeXBinding>,
+    /// Stamps issued `refreshBinding` calls — a build start or context
+    /// switch bumps it, so a late `BindingRefreshed` for an old
+    /// artifact/workspace is dropped instead of rebinding.
+    binding_refresh_seq: Cell<u64>,
+    /// Stamps issued forward/inverse queries — newest request wins; a
+    /// build/context invalidation drops anything still in flight.
+    synctex_query_seq: Cell<u64>,
 
     pub console_section: ConsoleSection,
     pub sidebar_section: SidebarSection,
@@ -1282,9 +1326,11 @@ impl WorkspaceModel {
                 let epoch = std::time::Instant::now();
                 move || epoch.elapsed().as_millis() as u64
             }),
-            last_succeeded: None,
+            retained_pdf: None,
             latest_built_pdf_name: None,
             synctex_binding: None,
+            binding_refresh_seq: Cell::new(0),
+            synctex_query_seq: Cell::new(0),
             console_section: ConsoleSection::Assistant,
             sidebar_section: SidebarSection::Outline,
             sidebar_visible: true,
@@ -2159,6 +2205,10 @@ impl WorkspaceModel {
         self.bibliography_cache_key = None;
         self.structure_revision += 1;
         self.synctex_binding = None;
+        // The retained artifact belongs to this workspace — the next
+        // open must not inherit its PDF.
+        self.retained_pdf = None;
+        self.latest_built_pdf_name = None;
         self.pinned_build_target = None;
         self.automatic_build_target = None;
         self.build_target_message = None;
@@ -3124,17 +3174,57 @@ impl WorkspaceModel {
             .as_ref()
             .map(|r| r.build.raw_value.clone())
             .unwrap_or_else(|| "existing-pdf".into());
+        // The source directory the engine ran in — relative Input paths
+        // resolve against it, not the artifact's `.pitex-live` directory.
+        let main_relative = self
+            .build_source_relative_path()
+            .unwrap_or_else(|| "main.tex".into());
+        let id = self.binding_refresh_seq.get().wrapping_add(1);
+        self.binding_refresh_seq.set(id);
         if let Some(sink) = self.sink() {
             std::thread::spawn(move || {
                 let result = runner
-                    .refresh_binding(&root, &pdf_url, &build_id)
+                    .refresh_binding(&root, &pdf_url, &build_id, &main_relative)
                     .map_err(|e| e.to_string());
-                let _ = sink.send(WorkspaceMessage::BindingRefreshed(result));
+                let _ = sink.send(WorkspaceMessage::BindingRefreshed {
+                    id,
+                    root,
+                    pdf: pdf_url,
+                    result,
+                });
             });
         }
     }
 
-    pub fn apply_binding_refreshed(&mut self, result: Result<SyncTeXBinding, String>) {
+    /// The pdf this workspace's viewer currently publishes.
+    pub fn published_pdf_url(&self) -> Option<PathBuf> {
+        Some(
+            self.project_url
+                .as_ref()?
+                .join(self.latest_built_pdf_name.as_deref()?),
+        )
+    }
+
+    /// Accept a `BindingRefreshed` only while it still answers the newest
+    /// issued refresh for the artifact on screen in this workspace. The
+    /// bound pdf is always the published artifact — restore binds the
+    /// same candidate it displays, never mixed pairs.
+    fn binding_response_current(&self, id: u64, root: &Path, pdf: &Path) -> bool {
+        id == self.binding_refresh_seq.get()
+            && self.project_url.as_deref() == Some(root)
+            && self.published_pdf_url().as_deref() == Some(pdf)
+    }
+
+    pub fn apply_binding_refreshed(
+        &mut self,
+        id: u64,
+        root: PathBuf,
+        pdf: PathBuf,
+        result: Result<SyncTeXBinding, String>,
+    ) {
+        if !self.binding_response_current(id, &root, &pdf) {
+            return;
+        }
         match result {
             Ok(binding) => {
                 self.synctex_binding = Some(binding);
@@ -3169,14 +3259,39 @@ impl WorkspaceModel {
         std::fs::read(root.join(&name)).ok()
     }
 
-    /// Relative artifact paths the preview may restore, newest first —
+    /// Record the artifact the viewer retains. `latest_built_pdf_name`
+    /// mirrors `retained.artifact` — the fetch/display/download handle.
+    fn set_retained_pdf(&mut self, artifact: String, source: String, bytes: Vec<u8>) {
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut h);
+            h.finish()
+        };
+        self.latest_built_pdf_name = Some(artifact.clone());
+        self.retained_pdf = Some(RetainedPdf {
+            artifact,
+            source,
+            pdf: bytes.into(),
+            hash,
+        });
+    }
+
+    /// Relative artifact paths the preview may restore, freshest first:
     /// the last published artifact (a live `.pitex-live` PDF after a live
-    /// build) wins over the conventional source-sibling PDF so document
-    /// navigation does not revert a live preview to an older manual PDF.
+    /// build), then the current source's own live artifact, then the
+    /// source-sibling PDF — never the sibling before a live output just
+    /// because it sits in a different directory.
     fn built_preview_candidates(&self) -> Vec<String> {
-        let mut names = Vec::new();
+        let mut names: Vec<String> = Vec::new();
         if let Some(name) = &self.latest_built_pdf_name {
             names.push(name.clone());
+        }
+        if let Some(relative) = self.build_source_relative_path() {
+            let live = LiveRunContext::for_source(&relative).output_pdf;
+            if !names.contains(&live) {
+                names.push(live);
+            }
         }
         if let (Some(root), Some(source)) = (&self.project_url, self.build_source_url()) {
             if let Ok(relative) = Self::relative_path(&source, root) {
@@ -3205,6 +3320,14 @@ impl WorkspaceModel {
         if self.is_building() {
             return;
         }
+        // A failed/canceled run may have left a different `%PDF` on disk —
+        // the retained bytes and the honest status stay exactly as they
+        // are, and no lazy rebind happens on top of them.
+        if self.retained_pdf.is_some()
+            && matches!(self.build_state, WorkspaceBuildState::Failed(_))
+        {
+            return;
+        }
         let Some(root) = self.project_url.clone() else {
             return;
         };
@@ -3215,16 +3338,47 @@ impl WorkspaceModel {
         {
             return;
         }
-        // Try the freshest artifact first, then the sibling fallback.
-        let mut data = None;
-        let mut resolved = name.clone();
-        for candidate in &names {
-            let bytes = if candidate == &name {
-                prefetched.clone().or_else(|| std::fs::read(root.join(candidate)).ok())
+        // `prefetched` holds the conventional sibling's bytes (read
+        // off-thread at open/activate) — it is only valid for that one
+        // candidate, never for `.pitex-live` or another artifact.
+        let prefetched_name = self.build_source_relative_path().map(|rel| {
+            Path::new(&rel)
+                .with_extension("pdf")
+                .to_string_lossy()
+                .into_owned()
+        });
+        let read_pdf = |candidate: &str| -> Option<Vec<u8>> {
+            let bytes = if Some(candidate) == prefetched_name.as_deref() {
+                prefetched
+                    .clone()
+                    .or_else(|| std::fs::read(root.join(candidate)).ok())
             } else {
                 std::fs::read(root.join(candidate)).ok()
+            }?;
+            bytes.starts_with(b"%PDF").then_some(bytes)
+        };
+        // The artifact on screen and the SyncTeX binding are always the
+        // SAME file — never mixed pairs whose page geometry can differ.
+        // A retained artifact restores itself or reports Unavailable;
+        // only the very first restore may pick a different candidate, and
+        // then it publishes that candidate's bytes + artifact + metadata
+        // together (the sibling pair when the live output has no
+        // `.synctex`).
+        let selected: Vec<String> = if let Some(retained) = &self.retained_pdf {
+            vec![retained.artifact.clone()]
+        } else {
+            let has_metadata = |n: &String| {
+                let p = root.join(n);
+                p.with_extension("synctex.gz").exists() || p.with_extension("synctex").exists()
             };
-            if let Some(bytes) = bytes {
+            let mut ordered = names.clone();
+            ordered.sort_by_key(|n| !has_metadata(n));
+            ordered
+        };
+        let mut data = None;
+        let mut resolved = name.clone();
+        for candidate in &selected {
+            if let Some(bytes) = read_pdf(candidate) {
                 resolved = candidate.clone();
                 data = Some(bytes);
                 break;
@@ -3233,22 +3387,35 @@ impl WorkspaceModel {
         let pdf = root.join(&resolved);
         match data {
             Some(data) if data.starts_with(b"%PDF") => {
-                self.latest_built_pdf_name = Some(resolved);
-                self.build_state = WorkspaceBuildState::Succeeded {
-                    hash: {
-                        use std::hash::{Hash, Hasher};
-                        let mut h = std::collections::hash_map::DefaultHasher::new();
-                        data.hash(&mut h);
-                        h.finish()
-                    },
-                    pdf: data.into(),
-                    log: self.build_log_text.clone(),
-                };
-                self.refresh_synctex_binding(pdf);
+                let source = self
+                    .build_source_relative_path()
+                    .unwrap_or_else(|| "main.tex".into());
+                self.set_retained_pdf(resolved, source, data.clone());
+                // Status stays honest: a failed run keeps `Failed` while
+                // the viewer still shows the retained artifact — only a
+                // neutral state is upgraded to Succeeded.
+                if !matches!(
+                    self.build_state,
+                    WorkspaceBuildState::Failed(_) | WorkspaceBuildState::Building
+                ) {
+                    self.build_state = WorkspaceBuildState::Succeeded {
+                        hash: self.retained_pdf.as_ref().map(|r| r.hash).unwrap_or(0),
+                        pdf: data.into(),
+                        log: self.build_log_text.clone(),
+                    };
+                }
+                // After a failed/canceled run the disk metadata may be
+                // mid-rewrite or no longer match the retained bytes —
+                // never lazily rebind onto them; a fresh successful build
+                // binds explicitly.
+                if !matches!(self.build_state, WorkspaceBuildState::Failed(_)) {
+                    self.refresh_synctex_binding(pdf);
+                }
             }
             _ => {
                 if self.latest_built_pdf_name.as_deref() != Some(name.as_str()) {
                     self.latest_built_pdf_name = None;
+                    self.retained_pdf = None;
                     self.synctex_binding = None;
                     self.build_state = WorkspaceBuildState::Unavailable(
                         "Build the main document to create its PDF preview.".into(),
@@ -3262,9 +3429,13 @@ impl WorkspaceModel {
     }
 
     /// `invalidateSyncTeXForBuild` — a starting build makes previous
-    /// fingerprint/PDF-hash bindings stale by definition.
+    /// fingerprint/PDF-hash bindings stale by definition. Bumping both
+    /// sequence stamps retires every in-flight refresh/query so a late
+    /// response can't mutate the new run's binding or cursor.
     pub fn invalidate_synctex_for_build(&mut self) {
         self.synctex_binding = None;
+        self.binding_refresh_seq.set(self.binding_refresh_seq.get().wrapping_add(1));
+        self.synctex_query_seq.set(self.synctex_query_seq.get().wrapping_add(1));
         self.synctex_state = WorkspaceSyncTeXState::Unavailable(
             "SyncTeX will be refreshed after the build completes.".into(),
         );
@@ -3301,17 +3472,44 @@ impl WorkspaceModel {
             return;
         };
         let runner = self.synctex_runner.clone();
+        let root = binding.project_root.clone();
+        let pdf = binding.pdf_url.clone();
+        let request = self.synctex_query_seq.get().wrapping_add(1);
+        self.synctex_query_seq.set(request);
         if let Some(sink) = self.sink() {
             std::thread::spawn(move || {
                 let result = runner
                     .forward(&binding, &url, line as i64, column as i64)
                     .map_err(|e| e.to_string());
-                let _ = sink.send(WorkspaceMessage::ForwardResult(result));
+                let _ = sink.send(WorkspaceMessage::ForwardResult {
+                    request,
+                    root,
+                    pdf,
+                    result,
+                });
             });
         }
     }
 
-    pub fn apply_forward_result(&mut self, result: Result<SyncTeXQueryCandidate, String>) {
+    /// A stamped query response is current only while it answers the
+    /// newest issued request for the artifact on screen — anything older
+    /// (superseded request, invalidated build, workspace switch) drops.
+    fn query_response_current(&self, request: u64, root: &Path, pdf: &Path) -> bool {
+        request == self.synctex_query_seq.get()
+            && self.project_url.as_deref() == Some(root)
+            && self.published_pdf_url().as_deref() == Some(pdf)
+    }
+
+    pub fn apply_forward_result(
+        &mut self,
+        request: u64,
+        root: PathBuf,
+        pdf: PathBuf,
+        result: Result<SyncTeXQueryCandidate, String>,
+    ) {
+        if !self.query_response_current(request, &root, &pdf) {
+            return;
+        }
         match result {
             Ok(m) => {
                 if let Some(cb) = &mut self.on_synctex_highlight {
@@ -3345,21 +3543,36 @@ impl WorkspaceModel {
         self.ensure_synctex_binding();
         let Some(binding) = self.synctex_binding.clone() else { return };
         let runner = self.synctex_runner.clone();
+        let root = binding.project_root.clone();
+        let pdf = binding.pdf_url.clone();
+        let request = self.synctex_query_seq.get().wrapping_add(1);
+        self.synctex_query_seq.set(request);
         if let Some(sink) = self.sink() {
             std::thread::spawn(move || {
                 let result = runner
                     .inverse(&binding, page, &point)
                     .map_err(|e| e.to_string());
-                let _ = sink.send(WorkspaceMessage::InverseResult(result));
+                let _ = sink.send(WorkspaceMessage::InverseResult {
+                    request,
+                    root,
+                    pdf,
+                    result,
+                });
             });
         }
     }
 
     pub fn apply_inverse_result(
         &mut self,
+        request: u64,
+        root: PathBuf,
+        pdf: PathBuf,
         result: Result<SyncTeXQueryCandidate, String>,
         sink: Sender<WorkspaceMessage>,
     ) {
+        if !self.query_response_current(request, &root, &pdf) {
+            return;
+        }
         match result {
             Ok(m) => {
                 let Some(root) = self.project_url.clone() else { return };
@@ -3509,6 +3722,18 @@ impl WorkspaceModel {
             self.files_revision += 1;
         }
         self.document_project = project;
+        // A different build target retires the retained artifact — its
+        // PDF belongs to the old main; a chapter switch under the same
+        // main leaves `source` matching and keeps it.
+        if self
+            .retained_pdf
+            .as_ref()
+            .is_some_and(|r| Some(r.source.as_str()) != self.build_source_relative_path().as_deref())
+        {
+            self.retained_pdf = None;
+            self.latest_built_pdf_name = None;
+            self.synctex_binding = None;
+        }
     }
 
     /// `refreshBuildTarget` — resolve the main document for the active
@@ -3583,25 +3808,55 @@ impl WorkspaceModel {
         } else {
             out_dir.to_string()
         };
-        let mut result = template.to_string();
-        for (key, raw) in [
-            ("{file}", relative.as_str()),
-            ("{filename}", stem.as_str()),
-            ("{outdir}", directory.as_str()),
-        ] {
-            // Already-quoted spans first — the template asked for quoting
-            // itself; replace the whole span so the value is quoted once.
-            result = result.replace(&format!("\"{key}\""), &Self::shell_quote(shell, raw));
-            result = result.replace(&format!("'{key}'"), &Self::shell_quote(shell, raw));
-            // `{file}`/`{filename}` stay verbatim for manual commands —
-            // quoting them changed existing user templates. `{outdir}` is
-            // new, so it gets quoting in every mode.
-            let value = if quoted || key == "{outdir}" {
-                Self::shell_quote(shell, raw)
-            } else {
-                raw.to_string()
-            };
-            result = result.replace(key, &value);
+        // One pass over the ORIGINAL template — substituted values are
+        // never rescanned, so a file name literally containing
+        // "{outdir}"/"{filename}" (or nested quotes) cannot be rewritten
+        // by a later replacement step. Longest match first: a quoted
+        // span wins over the bare token, `{filename}` over `{file}`.
+        const KEYS: [(&str, usize); 3] = [("{filename}", 1), ("{outdir}", 2), ("{file}", 0)];
+        let raws = [relative.as_str(), stem.as_str(), directory.as_str()];
+        let mut result = String::with_capacity(template.len());
+        let mut i = 0;
+        while i < template.len() {
+            let rest = &template[i..];
+            let mut matched = false;
+            for quote in ['"', '\''] {
+                for (key, slot) in KEYS {
+                    let span = format!("{quote}{key}{quote}");
+                    if rest.starts_with(&span) {
+                        result.push_str(&Self::shell_quote(shell, raws[slot]));
+                        i += span.len();
+                        matched = true;
+                        break;
+                    }
+                }
+                if matched {
+                    break;
+                }
+            }
+            if matched {
+                continue;
+            }
+            for (key, slot) in KEYS {
+                if rest.starts_with(key) {
+                    // `{file}`/`{filename}` stay verbatim for manual
+                    // commands — quoting them changed existing templates.
+                    // `{outdir}` is new, so it gets quoting in every mode.
+                    if quoted || key == "{outdir}" {
+                        result.push_str(&Self::shell_quote(shell, raws[slot]));
+                    } else {
+                        result.push_str(raws[slot]);
+                    }
+                    i += key.len();
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                let ch = rest.chars().next().unwrap();
+                result.push(ch);
+                i += ch.len_utf8();
+            }
         }
         result
     }
@@ -3786,6 +4041,11 @@ impl WorkspaceModel {
         let requests = self.live.invalidate();
         self.live_edit_signature = None;
         self.live_context_key = None;
+        // In-flight binding/query responses belong to the old context.
+        self.binding_refresh_seq
+            .set(self.binding_refresh_seq.get().wrapping_add(1));
+        self.synctex_query_seq
+            .set(self.synctex_query_seq.get().wrapping_add(1));
         if let Some(run) = self.active_run.take() {
             if self.live.active() == Some(run.token) {
                 self.orphaned_runs.push(run);
@@ -4041,6 +4301,7 @@ impl WorkspaceModel {
             build: build_id.clone(),
             token,
             live: live_ctx,
+            source: relative_source.clone(),
         });
         self.invalidate_synctex_for_build();
         self.build_state = WorkspaceBuildState::Building;
@@ -4207,7 +4468,9 @@ impl WorkspaceModel {
         store: &SettingsStore,
     ) -> Option<PathBuf> {
         if superseded {
-            self.restore_last_succeeded();
+            // Superseded by newer input — nothing publishes, not even its
+            // issues; the retained last-good PDF stays on screen.
+            self.build_state = WorkspaceBuildState::Failed("Build superseded.".into());
             return None;
         }
         // Live runs never steal the panel or jump on the manual-build
@@ -4229,24 +4492,25 @@ impl WorkspaceModel {
                             .build_orchestrator
                             .successful_pdf()
                             .unwrap_or_default();
+                        self.set_retained_pdf(
+                            output_pdf.to_string(),
+                            run.source.clone(),
+                            pdf.clone(),
+                        );
+                        let hash = self.retained_pdf.as_ref().map(|r| r.hash).unwrap_or(0);
                         self.build_state = WorkspaceBuildState::Succeeded {
-                            hash: {
-                                use std::hash::{Hash, Hasher};
-                                let mut h = std::collections::hash_map::DefaultHasher::new();
-                                pdf.hash(&mut h);
-                                h.finish()
-                            },
+                            hash,
                             pdf: pdf.into(),
                             log: self.build_log_text.clone(),
                         };
-                        self.last_succeeded = Some(self.build_state.clone());
-                        // The artifact path is the live output for a live
-                        // run, the sibling PDF otherwise.
-                        self.latest_built_pdf_name = Some(output_pdf.to_string());
                         if let Some(root) = self.project_url.clone() {
                             let pdf_url = root.join(output_pdf);
                             self.refresh_synctex_binding(pdf_url.clone());
-                            self.rescan_project();
+                            // A live run only produced hidden outputs —
+                            // the project file set didn't change.
+                            if run.live.is_none() {
+                                self.rescan_project();
+                            }
                             if switch_to_pdf {
                                 self.inspector_visible = true;
                             }
@@ -4289,26 +4553,11 @@ impl WorkspaceModel {
         None
     }
 
-    /// Returns the viewer to the last good PDF after a superseded or
-    /// cancelled live run — the state `apply_build_finished` would have
-    /// clobbered.
-    fn restore_last_succeeded(&mut self) {
-        if let Some(state) = self.last_succeeded.clone() {
-            self.build_state = state;
-        } else {
-            self.build_state = WorkspaceBuildState::Failed("Build superseded.".into());
-        }
-    }
-
-    /// Idle state after a retired run drains — the last good PDF when one
-    /// exists, otherwise the pre-build placeholder. Used where no
-    /// outcome publishes at all (invalidated/orphaned completions).
+    /// Idle state after a retired run drains — reports the cancellation
+    /// honestly; the retained PDF keeps the last good page on screen
+    /// regardless of status.
     fn restore_retained_state(&mut self) {
-        self.build_state = self.last_succeeded.clone().unwrap_or_else(|| {
-            WorkspaceBuildState::Unavailable(
-                "Build the main document to create its PDF preview.".into(),
-            )
-        });
+        self.build_state = WorkspaceBuildState::Failed("Build cancelled.".into());
     }
 
     pub fn cancel_build(&mut self) {

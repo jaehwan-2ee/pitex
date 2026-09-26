@@ -15,7 +15,7 @@ use build_core::{
 use synctex_core::{
     ExactSyncTeXQuerySelector, ForwardSyncQuery, InverseSyncQuery, NormalizedSourcePath,
     PDFLocation, PDFPoint, SourceLocation, SyncTeXOutputBinding, SyncTeXQueryCandidate,
-    SyncTeXQueryParser, SyncTeXRevision, SyncTeXTextParser,
+    SyncTeXQueryParser, SyncTeXRevision, SyncTeXInput,
 };
 
 use crate::model::standardize;
@@ -59,6 +59,11 @@ pub struct SyncTeXBinding {
     pub output_hash: String,
     pub pdf_url: PathBuf,
     pub project_root: PathBuf,
+    /// Absolute directory the build was invoked in — the base every
+    /// recorded *relative* `Input:` path resolves against. For a
+    /// `.pitex-live` output this is the source's directory, never the
+    /// PDF's directory.
+    pub source_root: PathBuf,
     /// Raw `Input:` path → relocated file under the project root.
     pub source_paths: HashMap<String, PathBuf>,
 }
@@ -108,11 +113,16 @@ impl SyncTeXRunner {
 
     /// `refreshBinding` — resolved root/pdf + SHA-256 output hash + the
     /// `.synctex` fingerprint (first 8 digest bytes, big-endian).
+    /// `main_relative` is the project-relative build source
+    /// ("manuscript/main.tex"): recorded *relative* inputs resolve
+    /// against its directory — the directory the engine ran in — never
+    /// the PDF's output directory.
     pub fn refresh_binding(
         &self,
         project_root: &Path,
         pdf_url: &Path,
         build_id: &str,
+        main_relative: &str,
     ) -> Result<SyncTeXBinding, SyncTeXSupportError> {
         self.resolved_tool()?;
         let root = standardize(project_root.to_path_buf());
@@ -135,59 +145,45 @@ impl SyncTeXRunner {
         } else {
             std::fs::read(&plain).map_err(|_| SyncTeXSupportError::MissingMetadata)?
         };
-        // Input tag 1 records the original main source. Preserve relative
-        // paths beneath that directory when a downloaded project is moved;
-        // never guess using just a chapter's filename.
         let text = String::from_utf8_lossy(&metadata);
-        let input_lines = text
-            .lines()
-            .filter(|l| l.starts_with("Input:"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let inputs = SyncTeXTextParser::parse(&input_lines)
-            .map_err(|_| SyncTeXSupportError::MissingMetadata)?
-            .inputs;
-        let original_main = inputs
-            .iter()
-            .find(|i| i.tag == 1)
-            .map(|i| i.path.value.clone());
-        let original_dir = original_main.as_ref().map(|p| {
-            Path::new(p)
-                .parent()
-                .map(|d| d.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        });
-        let pdf_dir = pdf.parent().map(Path::to_path_buf).unwrap_or_default();
-        let mut source_paths = HashMap::new();
-        for input in &inputs {
-            let path = input.path.value.clone();
-            let mut relative = path.clone();
-            if path.starts_with('/') {
-                if let Some(dir) = &original_dir {
-                    if path.starts_with(&format!("{dir}/")) {
-                        relative = path[dir.len() + 1..].to_string();
-                    }
-                }
-            }
-            let mapped = standardize(if Path::new(&relative).is_absolute() {
-                PathBuf::from(&relative)
-            } else {
-                pdf_dir.join(&relative)
+        // Parse inputs line by line — one malformed or unresolvable entry
+        // (a relative path with a leading `..`, an empty path) is skipped
+        // rather than discarding the whole metadata file.
+        let mut inputs: Vec<SyncTeXInput> = Vec::new();
+        let mut seen_tags = std::collections::HashSet::new();
+        for line in text.lines().filter(|l| l.starts_with("Input:")) {
+            let body = &line["Input:".len()..];
+            let parsed = body.find(':').and_then(|separator| {
+                let tag = body[..separator].trim().parse::<i64>().ok()?;
+                let path = NormalizedSourcePath::new(body[separator + 1..].trim()).ok()?;
+                seen_tags.insert(tag).then(|| SyncTeXInput { tag, path })
             });
-            let under_root = mapped
-                .to_string_lossy()
-                .starts_with(&format!("{}/", root.to_string_lossy()));
-            if !under_root || std::fs::File::open(&mapped).is_err() {
-                continue;
+            if let Some(input) = parsed {
+                inputs.push(input);
             }
-            source_paths.insert(path, mapped);
         }
+        if inputs.is_empty() {
+            return Err(SyncTeXSupportError::MissingMetadata);
+        }
+        inputs.sort_by_key(|i| i.tag);
+        // The directory the engine was invoked in — `.` components
+        // normalized, `..` kept only where they can't escape the root.
+        let source_root = standardize(root.join(
+            Path::new(main_relative)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ));
+        let original_root = derive_original_root(main_relative, &inputs);
+        let source_paths =
+            map_source_paths(&root, &source_root, original_root.as_deref(), &inputs);
         Ok(SyncTeXBinding {
             revision: SyncTeXRevision::new(build_id, fingerprint)
                 .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?,
             output_hash,
             pdf_url: pdf,
             project_root: root,
+            source_root,
             source_paths,
         })
     }
@@ -209,11 +205,6 @@ impl SyncTeXRunner {
             .find(|(_, v)| **v == resolved_source)
             .map(|(k, _)| k.clone())
             .unwrap_or_else(|| resolved_source.to_string_lossy().into_owned());
-        let pdf_dir = binding
-            .pdf_url
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
         let plan = DirectCommandPlan::new(
             synctex,
             vec![
@@ -223,7 +214,9 @@ impl SyncTeXRunner {
                 "-o".into(),
                 binding.pdf_url.to_string_lossy().into_owned(),
             ],
-            WorkingDirectoryPolicy::Explicit(pdf_dir),
+            // The CLI resolves recorded relative Input paths against the
+            // working directory — the invocation directory, not the PDF's.
+            WorkingDirectoryPolicy::Explicit(binding.source_root.to_string_lossy().into_owned()),
             EnvironmentPolicy::Inherit {
                 overrides: Default::default(),
             },
@@ -296,11 +289,6 @@ impl SyncTeXRunner {
     ) -> Result<SyncTeXQueryCandidate, SyncTeXSupportError> {
         let synctex = self.resolved_tool()?;
         self.validate(binding)?;
-        let pdf_dir = binding
-            .pdf_url
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
         let plan = DirectCommandPlan::new(
             synctex,
             vec![
@@ -313,7 +301,7 @@ impl SyncTeXRunner {
                     binding.pdf_url.to_string_lossy()
                 ),
             ],
-            WorkingDirectoryPolicy::Explicit(pdf_dir),
+            WorkingDirectoryPolicy::Explicit(binding.source_root.to_string_lossy().into_owned()),
             EnvironmentPolicy::Inherit {
                 overrides: Default::default(),
             },
@@ -467,11 +455,6 @@ impl SyncTeXRunner {
                 let path = NormalizedSourcePath::new(&value)
                     .map(|p| p.value)
                     .unwrap_or_else(|_| value.clone());
-                let pdf_dir = binding
-                    .pdf_url
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_default();
                 let mapped = if key == "Input" {
                     binding.source_paths.get(&path).cloned()
                 } else {
@@ -481,7 +464,7 @@ impl SyncTeXRunner {
                     if Path::new(&value).is_absolute() {
                         PathBuf::from(&value)
                     } else {
-                        pdf_dir.join(&value)
+                        binding.source_root.join(&value)
                     }
                 });
                 value = standardize(candidate).to_string_lossy().into_owned();
@@ -610,11 +593,259 @@ fn is_executable(path: &str) -> bool {
 
 // ─── SHA-256 (reuses the shared implementation in tex-domain) ───────────────
 
+/// Lexical normalization of a *recorded* path string — `.`/`..` resolved
+/// against `/` separators regardless of the host. SyncTeX metadata
+/// records POSIX paths on remote devices and native paths locally;
+/// cross-referencing them must never depend on the client's separators.
+fn normalize_recorded(raw: &str) -> String {
+    let slashed = raw.replace('\\', "/");
+    let absolute = slashed.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in slashed.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.last().is_some_and(|p| *p != "..") {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push("..");
+                }
+            }
+            p => parts.push(p),
+        }
+    }
+    format!("{}{}", if absolute { "/" } else { "" }, parts.join("/"))
+}
+
+/// The project root recorded on the build device — remote builds write
+/// device paths. Input 1 is the original main source: normalize its
+/// `.`/`..` segments lexically, then strip the known project-relative
+/// main. The derivation works on the recorded STRING (`/`-separated)
+/// so a POSIX device path maps identically on every client platform —
+/// never guessed by basename.
+fn derive_original_root(main_relative: &str, inputs: &[SyncTeXInput]) -> Option<String> {
+    let suffix = format!("/{}", main_relative.replace('\\', "/"));
+    let normalized = inputs
+        .iter()
+        .find(|i| i.tag == 1)
+        .map(|i| normalize_recorded(&i.path.value))?;
+    normalized.strip_suffix(&suffix).map(str::to_string)
+}
+
+/// Relocate every recorded `Input:` path into the project root.
+/// Containment uses native `Path` components; remote-root suffix
+/// matching uses the recorded `/`-separated string — the two never mix.
+/// Mapped targets must exist on disk and stay inside the root.
+fn map_source_paths(
+    root: &Path,
+    source_root: &Path,
+    original_root: Option<&str>,
+    inputs: &[SyncTeXInput],
+) -> HashMap<String, PathBuf> {
+    let mut source_paths = HashMap::new();
+    for input in inputs {
+        let raw = input.path.value.clone();
+        let mapped = if Path::new(&raw).is_absolute() {
+            // Native-absolute — a local path on this client's platform
+            // (and on Unix the remote POSIX path parses the same way, so
+            // it falls through to the remote-root suffix when it isn't
+            // under the local root).
+            let normalized = standardize(PathBuf::from(&raw));
+            if normalized.starts_with(root) {
+                normalized
+            } else {
+                let recorded = normalize_recorded(&raw);
+                match original_root
+                    .and_then(|o| recorded.strip_prefix(&format!("{o}/")))
+                {
+                    Some(tail) => standardize(root.join(tail)),
+                    None => continue,
+                }
+            }
+        } else if raw.starts_with('/') {
+            // Rooted POSIX but not native-absolute — the signature of a
+            // remote device path read on a Windows client. Normalize it
+            // lexically and map through the remote original root.
+            let recorded = normalize_recorded(&raw);
+            match original_root
+                .and_then(|o| recorded.strip_prefix(&format!("{o}/")))
+            {
+                Some(tail) => standardize(root.join(tail)),
+                None => continue,
+            }
+        } else {
+            // Relative input — recorded relative to the invocation
+            // directory, not the PDF directory.
+            standardize(source_root.join(&raw))
+        };
+        if !mapped.starts_with(root) || std::fs::File::open(&mapped).is_err() {
+            continue;
+        }
+        source_paths.insert(raw, mapped);
+    }
+    source_paths
+}
+
 fn sha256_hex(data: &[u8]) -> String {
     tex_domain::sha256(data)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    /// Self-contained project tree under /tmp; removed on drop.
+    struct Dir(PathBuf);
+    impl Dir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "pitex-stx-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn write(&self, rel: &str, text: &str) -> PathBuf {
+            let path = self.0.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, text).unwrap();
+            path
+        }
+    }
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn input(tag: i64, path: &str) -> SyncTeXInput {
+        SyncTeXInput {
+            tag,
+            path: NormalizedSourcePath::new(path).unwrap(),
+        }
+    }
+
+    /// A Windows-local absolute spelling for assertions — on Unix the
+    /// native absolute form is the POSIX path itself; on Windows the
+    /// remote POSIX inputs below still exercise the host-lexical branch.
+    /// These tests build `SyncTeXInput`s directly and exercise the pure
+    /// mapping functions, so they run on Windows CI without a synctex
+    /// binary.
+    #[test]
+    fn nested_relative_inputs_use_invocation_directory() {
+        let dir = Dir::new("nested");
+        dir.write("manuscript/main.tex", "main");
+        dir.write("manuscript/sections/intro.tex", "nested");
+        // Same spelling under the project root — must NOT win.
+        dir.write("sections/intro.tex", "collider");
+        dir.write("shared/common.tex", "common");
+        let root = standardize(dir.0.clone());
+        let source_root = standardize(root.join("manuscript"));
+        let root_slash = root.to_string_lossy().replace('\\', "/");
+        let inputs = vec![
+            input(1, &format!("{root_slash}/manuscript/./main.tex")),
+            input(2, "sections/intro.tex"),
+            input(3, &format!("{root_slash}/manuscript/../shared/common.tex")),
+            input(4, &format!("{root_slash}/manuscript/sections/intro.tex")),
+            input(5, &format!("{root_slash}/sections/intro.tex")),
+        ];
+        let original = derive_original_root("manuscript/main.tex", &inputs);
+        assert_eq!(original.as_deref(), Some(root_slash.as_str()));
+        let paths = map_source_paths(&root, &source_root, original.as_deref(), &inputs);
+        // Relative input → manuscript/sections/intro.tex, not the root
+        // collider.
+        assert_eq!(
+            paths["sections/intro.tex"],
+            root.join("manuscript").join("sections").join("intro.tex")
+        );
+        // Absolute input under the root keeps identity — the root
+        // collider is only reached through its own absolute spelling.
+        assert_eq!(
+            paths[&format!("{root_slash}/sections/intro.tex")],
+            root.join("sections").join("intro.tex")
+        );
+        // `../` inside an absolute input normalizes to the shared sibling.
+        assert_eq!(
+            paths[&format!("{root_slash}/shared/common.tex")],
+            root.join("shared").join("common.tex")
+        );
+    }
+
+    /// Remote metadata records device paths. Input 1 — normalized for
+    /// `.`/`..` first — pins the original project root; every other
+    /// remote-absolute input maps into the local mirror by exact suffix
+    /// (nested mains, `../shared` siblings) while paths outside that
+    /// root are rejected. POSIX device spellings map identically on a
+    /// Windows client, where they are not native-absolute.
+    #[test]
+    fn remote_absolute_inputs_map_by_original_root_suffix() {
+        let dir = Dir::new("remote");
+        dir.write("manuscript/main.tex", "main");
+        dir.write("manuscript/sections/intro.tex", "nested");
+        dir.write("shared/common.tex", "common");
+        let root = standardize(dir.0.clone());
+        let source_root = standardize(root.join("manuscript"));
+        let inputs = vec![
+            input(1, "/device/./proj/manuscript/main.tex"),
+            input(2, "/device/proj/manuscript/sections/intro.tex"),
+            input(3, "/device/proj/manuscript/../shared/common.tex"),
+            input(4, "/elsewhere/proj/manuscript/sections/intro.tex"),
+            input(5, "/device/proj/../outside.tex"),
+        ];
+        let original = derive_original_root("manuscript/main.tex", &inputs);
+        assert_eq!(original.as_deref(), Some("/device/proj"));
+        let paths = map_source_paths(&root, &source_root, original.as_deref(), &inputs);
+        assert_eq!(
+            paths["/device/proj/manuscript/sections/intro.tex"],
+            root.join("manuscript").join("sections").join("intro.tex")
+        );
+        // Normalized: /device/proj/shared/common.tex → root/shared/...
+        assert_eq!(
+            paths["/device/proj/shared/common.tex"],
+            root.join("shared").join("common.tex")
+        );
+        // Outside the derived remote root — and the `..` escape — never
+        // map, even to a file that exists locally.
+        assert!(!paths.contains_key("/elsewhere/proj/manuscript/sections/intro.tex"));
+        assert!(!paths.contains_key("/device/outside.tex"));
+    }
+
+    /// Inputs that normalize outside the project root are rejected even
+    /// when the target exists on disk — absolute `..` escapes and
+    /// unresolvable relative paths alike.
+    #[test]
+    fn escaping_inputs_are_rejected() {
+        let dir = Dir::new("escape");
+        dir.write("manuscript/main.tex", "main");
+        let root = standardize(dir.0.clone());
+        let source_root = standardize(root.join("manuscript"));
+        // A real file one level above the root.
+        let outside = dir.0.parent().unwrap().join("escape-target.tex");
+        std::fs::write(&outside, "outside").unwrap();
+        let root_slash = root.to_string_lossy().replace('\\', "/");
+        let inputs = vec![
+            input(1, &format!("{root_slash}/manuscript/main.tex")),
+            input(2, &format!("{root_slash}/../escape-target.tex")),
+        ];
+        let original = derive_original_root("manuscript/main.tex", &inputs);
+        let paths = map_source_paths(&root, &source_root, original.as_deref(), &inputs);
+        // The main mapped; the absolute escape did not.
+        assert_eq!(paths.len(), 1);
+        assert!(!paths
+            .values()
+            .any(|p| p.ends_with("escape-target.tex")));
+        // A relative input carrying leading `..` can't even be
+        // constructed — NormalizedSourcePath rejects it upstream.
+        assert!(NormalizedSourcePath::new("../../../escape-target.tex").is_err());
+        let _ = std::fs::remove_file(&outside);
+    }
 }
 
 #[cfg(test)]

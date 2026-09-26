@@ -145,7 +145,9 @@ then a short debounce decides whether newer edits already superseded it.
   Tectonic preset is rewritten automatically; manual builds keep their
   existing behavior.
 - **Follow cursor** (off by default) moves the PDF to the cursor after a
-  successful live build.
+  successful live build. Forward/inverse SyncTeX keeps working against
+  the isolated live artifact — the preview keeps your page, zoom and
+  scroll position across rebuilds.
 
 ### Forward / Inverse SyncTeX
 
