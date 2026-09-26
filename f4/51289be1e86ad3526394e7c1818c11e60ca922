@@ -1,0 +1,16 @@
+Linux/crates/pitex-shell/tests/live_compile.rs
+  h_d73c695d83f4a7 687-699,713,718,721-722,732-737,757,761,786-788
+Mac/Sources/Features/Preview.swift
+  h_d73c695d83f4a7 310-313,315-317,319-321,323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f451289be1e86ad3526394e7c1818c11e60ca922",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
