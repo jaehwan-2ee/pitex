@@ -1,0 +1,22 @@
+Tools/check-sidebar-ui.py
+  s_6dc90272bb6b27::t_b26f2a328b0c1a 59-62,67,157-158,160-162,164-170
+  s_6dc90272bb6b27::t_37f5d303ab2f32 159,163
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_6dc90272bb6b27::t_b26f2a328b0c1a 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed1e2b18d3c1024bc88ed199fca7497344196bb2",
+  "prompts": {},
+  "sessions": {
+    "s_6dc90272bb6b27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d8cf-d859-7ce0-b1cc-ecc8a142478d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
