@@ -224,7 +224,7 @@ jobs:
         working-directory: Windows
       # SyncTeX path mapping (host-dependent separators) — lib-only, no GUI.
       - name: SyncTeX path mapping
-        run: cargo test -p pitex-shell --lib synctex::
+        run: "cargo test -p pitex-shell --lib synctex::"
         working-directory: Windows
       - run: cargo build -p pitex-windows
         working-directory: Windows
