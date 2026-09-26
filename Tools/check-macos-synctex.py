@@ -263,7 +263,12 @@ final class GhostCompletionCoordinator {
     )
     modules = ["BuildCore", "SyncTeXCore", "TexDomain", "DocumentSessionCore", "ProjectCore",
                "EditorMacAdapter", "EditorFeature", "AppPorts", "LanguageCore", "AICore"]
-    sources = ["SyncTeXSupport.swift", "EditorFolding.swift", "AppearanceTheme.swift"]
+    # SyntaxHighlighting.swift provides the real EditorAnalysis the
+    # editor Coordinator uses for line math — production source, not a
+    # stub. Its AppearanceSettings dependency comes from
+    # AppearanceTheme.swift.
+    sources = ["SyncTeXSupport.swift", "EditorFolding.swift",
+               "AppearanceTheme.swift", "SyntaxHighlighting.swift"]
     executable = root / "check"
     subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
                     "-target", "arm64-apple-macos15.0", "-module-cache-path", str(root / "cache"),
