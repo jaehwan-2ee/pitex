@@ -1,0 +1,40 @@
+Linux/crates/build-feature/src/lib.rs
+  h_d73c695d83f4a7 3-4
+Linux/crates/build-feature/src/live.rs
+  h_d73c695d83f4a7 1-689
+Linux/crates/pitex-shell/src/panes.rs
+  h_d73c695d83f4a7 1731-1773
+Linux/crates/pitex-shell/src/settings.rs
+  h_d73c695d83f4a7 178-208,1014-1051
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 253-258
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 253-258
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 253-258
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 253-258
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 253-258
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 253-258
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 253-258
+Mac/Sources/Features/SettingsView.swift
+  h_d73c695d83f4a7 28-49,138-140,177-181,416-429
+Packages/TexApp/Sources/BuildFeature/LiveCompileScheduler.swift
+  h_d73c695d83f4a7 1-336
+Packages/TexApp/Tests/TexAppTests/LiveCompileSchedulerTests.swift
+  h_d73c695d83f4a7 1-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3973fe8f31d394a7e0d47348065f8bdeac12751",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
