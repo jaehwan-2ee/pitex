@@ -116,6 +116,8 @@
 "accessibility.pdf_preview" = "Предпросмотр PDF";
 "accessibility.assistant" = "Диалог с ассистентом";
 "accessibility.send_message" = "Отправить сообщение ассистенту";
+"accessibility.on" = "Вкл";
+"accessibility.off" = "Выкл";
 
 "build.issues" = "Проблемы";
 

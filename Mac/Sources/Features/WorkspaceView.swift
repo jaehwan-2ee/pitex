@@ -239,6 +239,10 @@ struct WorkspaceView: View {
             .buttonStyle(.borderless)
             .help(String(localized: "toolbar.live_compile"))
             .accessibilityLabel(String(localized: "toolbar.live_compile"))
+            .accessibilityValue(settingsStore.liveCompileEnabled
+                ? String(localized: "accessibility.on")
+                : String(localized: "accessibility.off"))
+            .accessibilityAddTraits(settingsStore.liveCompileEnabled ? .isSelected : [])
             .accessibilityIdentifier("pitex.toolbar.liveCompile")
         }
         .padding(.horizontal, 6)

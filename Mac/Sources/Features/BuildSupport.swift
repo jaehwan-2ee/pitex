@@ -561,13 +561,16 @@ extension WorkspaceModel {
     /// behind it (queued manual first, then a live edit whose deadline
     /// already elapsed — no second debounce after a cancellation).
     private func finishScheduledRun(_ token: LiveRunToken) {
-        if activeRunToken == token { activeRunToken = nil }
         let composing = environment?.editor.hasMarkedText ?? false
         let (status, requests) = liveScheduler.completed(
             token: token, nowMs: Self.nowMs(), composing: composing
         )
-        // The slot is free now — a stale completion must not clear a newer
-        // run's id, so nil it before any dispatched start assigns its own.
+        // A stale completion owns nothing — a newer run may already hold
+        // the slot and its build id; touch no state and dispatch nothing.
+        guard status != .stale else { return }
+        if activeRunToken == token { activeRunToken = nil }
+        // The slot is free now — nil the id before any dispatched start
+        // assigns its own.
         activeBuildID = nil
         if status != .current(token), liveScheduler.active == nil, isBuilding {
             // Superseded with no follow-up dispatched — drop the busy
@@ -637,13 +640,16 @@ extension WorkspaceModel {
         guard case .ready = phase,
               let sourceURL = buildSourceURL() else {
             let reason = buildTargetMessage ?? WorkspaceBuildError.noActiveDocument.localizedDescription
+            // Every UI side effect sits inside the context check: a manual
+            // run retired by a workspace close must not open panels in the
+            // new project any more than it may write the error state.
             if runStillCurrent(token, context: context, root: root) {
                 buildState = .failed(reason)
                 buildLogText = reason
-            }
-            if !live {
-                consoleSection = .log
-                bottomPanelVisible = true
+                if !live {
+                    consoleSection = .log
+                    bottomPanelVisible = true
+                }
             }
             finishScheduledRun(token)
             return
@@ -674,7 +680,9 @@ extension WorkspaceModel {
         guard let sourceSession = registeredSessions.first(where: { session in
             (try? Self.relativePath(for: sourceURL, root: root)) == session.path
         }) else {
-            buildState = .unavailable(WorkspaceBuildError.noActiveDocument.localizedDescription)
+            if runStillCurrent(token, context: context, root: root) {
+                buildState = .unavailable(WorkspaceBuildError.noActiveDocument.localizedDescription)
+            }
             finishScheduledRun(token)
             return
         }
@@ -759,9 +767,23 @@ extension WorkspaceModel {
             // {outdir} maps the run's own output folder — the source
             // directory for a manual build, .pitex-live/… for a live one.
             let outdir = buildDirectory ?? (stem as NSString).deletingLastPathComponent
-            let command = substituteCommandPlaceholders(
-                template, outputDirectory: outdir.isEmpty ? "." : outdir
-            )
+            let command: String
+            if live {
+                // Live placeholders are always quoted POSIX words — a
+                // spaced or apostrophed source name must survive the
+                // login shell, and "{outdir}" collapses instead of
+                // nesting inside the user's own quotes.
+                command = BuildCommandPlaceholders.expand(
+                    template,
+                    file: relativeSource,
+                    filename: stem,
+                    outdir: outdir.isEmpty ? "." : outdir
+                )
+            } else {
+                command = substituteCommandPlaceholders(
+                    template, outputDirectory: outdir.isEmpty ? "." : outdir
+                )
+            }
             guard let plan = try? LoginShellCommandPlan(
                 shellExecutable: settings.customShellExecutable,
                 command: command,
@@ -808,10 +830,10 @@ extension WorkspaceModel {
                 if runStillCurrent(token, context: context, root: root) {
                     buildState = .failed(problem)
                     buildLogText = problem
-                }
-                if !live {
-                    consoleSection = .log
-                    bottomPanelVisible = true
+                    if !live {
+                        consoleSection = .log
+                        bottomPanelVisible = true
+                    }
                 }
                 finishScheduledRun(token)
                 return
@@ -858,10 +880,18 @@ extension WorkspaceModel {
                 guard runStillCurrent(token, context: context, root: root) else { break }
                 buildState = .succeeded(pdf: pdfData, log: buildLogText)
                 latestBuiltPDFName = outputPDF
+                // Bytes + artifact + source identity survive the next
+                // build's status churn — this is what the preview retains.
+                retainedPDF = RetainedPDF(
+                    data: pdfData, artifactPath: outputPDF,
+                    sourceTarget: relativeSource
+                )
                 let pdfURL = root.appendingPathComponent(outputPDF).standardizedFileURL
-                await refreshSyncTeXBinding(pdfURL: pdfURL)
+                await refreshSyncTeXBinding(pdfURL: pdfURL, sourceRelativePath: relativeSource)
                 guard runStillCurrent(token, context: context, root: root) else { break }
-                rescanProject()
+                // Live outputs hide under .pitex-live — rescanning the
+                // whole project on every debounced success is wasted work.
+                if !live { rescanProject() }
                 if live {
                     if settings.liveCompileFollowCursor {
                         await syncForward()

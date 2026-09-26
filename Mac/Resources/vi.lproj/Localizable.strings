@@ -115,6 +115,8 @@
 "accessibility.pdf_preview" = "Xem trước PDF";
 "accessibility.assistant" = "Hội thoại trợ lý";
 "accessibility.send_message" = "Gửi tin nhắn cho trợ lý";
+"accessibility.on" = "Bật";
+"accessibility.off" = "Tắt";
 
 "build.issues" = "Vấn đề";
 

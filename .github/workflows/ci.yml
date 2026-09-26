@@ -79,6 +79,15 @@ jobs:
         run: python3 Tools/check-editor-performance.py
       - name: Fold layout checks
         run: python3 Tools/check-fold-layout.py
+      # BasicTeX puts xelatex at the harness's hardcoded
+      # /Library/TeX/texbin path; texbin joins PATH because xelatex execs
+      # xdvipdfmx through it. The article-class fixture needs no tlmgr.
+      - name: Install BasicTeX
+        run: |
+          brew install --cask basictex
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
+      - name: Native SyncTeX harness
+        run: python3 Tools/check-macos-synctex.py build/Build/Products/Release
 
   rust:
     name: Rust workspace
@@ -209,6 +218,13 @@ jobs:
       # tests — native coverage for the relative live-output path logic.
       - name: Build scheduler orchestration (relative live outputs)
         run: cargo test -p build-core --test orchestrator
+        working-directory: Windows
+      - name: Build feature scheduler
+        run: cargo test -p build-feature
+        working-directory: Windows
+      # SyncTeX path mapping (host-dependent separators) — lib-only, no GUI.
+      - name: SyncTeX path mapping
+        run: cargo test -p pitex-shell --lib synctex::
         working-directory: Windows
       - run: cargo build -p pitex-windows
         working-directory: Windows

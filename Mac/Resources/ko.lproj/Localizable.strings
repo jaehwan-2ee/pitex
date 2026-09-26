@@ -115,6 +115,8 @@
 "accessibility.pdf_preview" = "PDF 미리보기";
 "accessibility.assistant" = "어시스턴트 대화";
 "accessibility.send_message" = "어시스턴트 메시지 보내기";
+"accessibility.on" = "켜짐";
+"accessibility.off" = "꺼짐";
 
 "build.issues" = "문제";
 

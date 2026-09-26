@@ -116,6 +116,8 @@
 "accessibility.pdf_preview" = "PDF 预览";
 "accessibility.assistant" = "助手对话";
 "accessibility.send_message" = "发送助手消息";
+"accessibility.on" = "开";
+"accessibility.off" = "关";
 
 "build.issues" = "问题";
 

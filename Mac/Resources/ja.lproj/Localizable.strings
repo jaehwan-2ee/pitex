@@ -115,6 +115,8 @@
 "accessibility.pdf_preview" = "PDFプレビュー";
 "accessibility.assistant" = "アシスタントの会話";
 "accessibility.send_message" = "アシスタントメッセージを送信";
+"accessibility.on" = "オン";
+"accessibility.off" = "オフ";
 
 "build.issues" = "問題";
 

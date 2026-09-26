@@ -116,6 +116,8 @@
 "accessibility.pdf_preview" = "Vista previa de PDF";
 "accessibility.assistant" = "Conversación del asistente";
 "accessibility.send_message" = "Enviar mensaje al asistente";
+"accessibility.on" = "Activado";
+"accessibility.off" = "Desactivado";
 
 "build.issues" = "Problemas";
 
