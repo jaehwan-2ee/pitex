@@ -56,10 +56,15 @@ import Vision
             try await Task.sleep(for: .milliseconds(50))
         }
         precondition(workspace.todoItems.count == 1, "TODO parsing did not finish: \(workspace.todoItems.count)")
+        // Distinct dark/light theme accents must reach the custom navigator buttons.
+        let tint = language == "en"
+            ? NSColor(srgbRed: 0.55, green: 0.67, blue: 0.93, alpha: 1)
+            : NSColor(srgbRed: 0.84, green: 0.23, blue: 0.29, alpha: 1)
         let host = NSHostingView(rootView: HStack(alignment: .top) {
             ProjectSidebarView(workspace: workspace).frame(width: 280, height: 650)
             SymbolsPaletteView(onInsert: { _ in }).frame(width: 320, height: 320)
         }.padding(10).background(Color(nsColor: .windowBackgroundColor))
+            .tint(Color(nsColor: tint))
             .environment(\.locale, Locale(identifier: language)))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 700),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -149,6 +154,20 @@ import Vision
         precondition(!expected.contains { $0.hasPrefix("editor.") })
         let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
         host.cacheDisplay(in: host.bounds, to: bitmap)
+        let workspaceTitle = Bundle.main.localizedString(forKey: "sidebar.workspace", value: nil, table: nil)
+        let tab = try snapshot().filter { $0.0 == workspaceTitle }.max { $0.1.midY < $1.1.midY }!.1
+        let pixels = bitmap.converting(to: .sRGB, renderingIntent: .default)!
+        var tintedPixels = 0
+        for y in Int((1 - tab.maxY) * Double(bitmap.pixelsHigh))..<Int((1 - tab.minY) * Double(bitmap.pixelsHigh)) {
+            for x in Int(tab.minX * Double(bitmap.pixelsWide))..<Int(tab.maxX * Double(bitmap.pixelsWide)) {
+                guard let color = pixels.colorAt(x: x, y: y) else { continue }
+                if abs(color.redComponent - tint.redComponent) < 0.04 &&
+                    abs(color.greenComponent - tint.greenComponent) < 0.04 &&
+                    abs(color.blueComponent - tint.blueComponent) < 0.04 { tintedPixels += 1 }
+            }
+        }
+        precondition(tintedPixels > 30, "Selected Workspace button ignored the theme tint: \(tintedPixels) pixels")
+        print("PASS \(language): selected navigator button uses the inherited theme tint")
         try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("sidebar-\(language).png"))
         // Read the rendered picker, so Text(String) regressing to a raw key
         // fails even though every translation is still present in the bundle.

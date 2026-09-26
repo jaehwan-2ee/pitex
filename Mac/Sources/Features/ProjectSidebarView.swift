@@ -80,7 +80,7 @@ struct ProjectSidebarView: View {
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
                                 .foregroundStyle(navigatorSection == section ? Color.white : Color.primary)
-                                .background(navigatorSection == section ? Color.accentColor : Color.clear,
+                                .background(navigatorSection == section ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear),
                                             in: RoundedRectangle(cornerRadius: 5))
                         }
                         .buttonStyle(.plain)
