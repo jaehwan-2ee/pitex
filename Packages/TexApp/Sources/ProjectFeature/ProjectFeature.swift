@@ -195,7 +195,7 @@ public func buildProjectFileTree(relativePaths: [String]) -> [ProjectFileNode] {
         guard !components.isEmpty else { continue }
         insert(components: components[...], prefix: "", into: &roots)
     }
-    return sorted(roots, labels: projectFileLabels(relativePaths))
+    return sorted(roots)
 }
 
 private func insert(components: ArraySlice<String>, prefix: String, into nodes: inout [ProjectFileNode]) {
@@ -216,7 +216,7 @@ private func insert(components: ArraySlice<String>, prefix: String, into nodes: 
     }
 }
 
-/// Duplicate basenames include their project-relative folder in tree and tab labels.
+/// Duplicate basenames include their folder in Project and editor tab labels.
 public func projectFileLabels(_ paths: [String]) -> [String: String] {
     let counts = Dictionary(grouping: paths, by: { ($0 as NSString).lastPathComponent })
     return Dictionary(paths.map { path in
@@ -227,14 +227,14 @@ public func projectFileLabels(_ paths: [String]) -> [String: String] {
     }, uniquingKeysWith: { first, _ in first })
 }
 
-private func sorted(_ nodes: [ProjectFileNode], labels: [String: String]) -> [ProjectFileNode] {
+private func sorted(_ nodes: [ProjectFileNode]) -> [ProjectFileNode] {
     nodes.sorted { lhs, rhs in
         if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
         return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
     }.map { node in
-        ProjectFileNode(path: node.path, name: node.isDirectory ? node.name : labels[node.path, default: node.name],
+        ProjectFileNode(path: node.path, name: node.name,
                         isDirectory: node.isDirectory,
-                        children: node.children.map { sorted($0, labels: labels) })
+                        children: node.children.map { sorted($0) })
     }
 }
 

@@ -26,6 +26,16 @@ struct ProjectSidebarView: View {
     @State private var editingTodoText = ""
 
     var body: some View {
+        VSplitView {
+            structurePane
+                .frame(minHeight: 120, idealHeight: 350, maxHeight: .infinity)
+            navigatorPane
+                .frame(minHeight: 160, idealHeight: 280, maxHeight: .infinity)
+        }
+        .accessibilityIdentifier("pitex.projectOutline")
+    }
+
+    private var structurePane: some View {
         VStack(spacing: 0) {
             // Segments clip their labels once the column gets narrow, so
             // fall back to a compact menu picker below the fit width.
@@ -55,56 +65,54 @@ struct ProjectSidebarView: View {
             Divider()
 
             sectionContent
+        }
+    }
 
-            Divider()
-
-            VStack(spacing: 0) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 2) {
-                        ForEach(ProjectNavigatorSection.allCases, id: \.self) { section in
-                            Button { navigatorSection = section } label: {
-                                Text(section.titleKey)
-                                    .font(.caption)
-                                    .fixedSize()
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .foregroundStyle(navigatorSection == section ? Color.white : Color.primary)
-                                    .background(navigatorSection == section ? Color.accentColor : Color.clear,
-                                                in: RoundedRectangle(cornerRadius: 5))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityAddTraits(navigatorSection == section ? .isSelected : [])
+    private var navigatorPane: some View {
+        VStack(spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 2) {
+                    ForEach(ProjectNavigatorSection.allCases, id: \.self) { section in
+                        Button { navigatorSection = section } label: {
+                            Text(section.titleKey)
+                                .font(.caption)
+                                .fixedSize()
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .foregroundStyle(navigatorSection == section ? Color.white : Color.primary)
+                                .background(navigatorSection == section ? Color.accentColor : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 5))
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(navigatorSection == section ? .isSelected : [])
                     }
-                    .padding(2)
-                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                    .fixedSize()
-                    navigatorPicker.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .labelsHidden()
-                .controlSize(.small)
-                .padding(6)
-                .accessibilityIdentifier("pitex.sidebar.projectSection")
+                .padding(2)
+                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                .fixedSize()
+                navigatorPicker.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .padding(6)
+            .accessibilityIdentifier("pitex.sidebar.projectSection")
 
-                // Keep each page mounted so switching tabs preserves folder disclosure state.
-                ZStack(alignment: .top) {
-                    fileSection(isWorkspace: true)
-                        .opacity(navigatorSection == .workspace ? 1 : 0)
-                        .allowsHitTesting(navigatorSection == .workspace)
-                        .accessibilityHidden(navigatorSection != .workspace)
-                    fileSection(isWorkspace: false)
-                        .opacity(navigatorSection == .project ? 1 : 0)
-                        .allowsHitTesting(navigatorSection == .project)
-                        .accessibilityHidden(navigatorSection != .project)
-                    todosPane
-                        .frame(minHeight: 120, idealHeight: 180, maxHeight: 280)
-                        .opacity(navigatorSection == .todos ? 1 : 0)
-                        .allowsHitTesting(navigatorSection == .todos)
-                        .accessibilityHidden(navigatorSection != .todos)
-                }
+            // Keep each page mounted so switching tabs preserves folder disclosure state.
+            ZStack(alignment: .top) {
+                fileSection(isWorkspace: true)
+                    .opacity(navigatorSection == .workspace ? 1 : 0)
+                    .allowsHitTesting(navigatorSection == .workspace)
+                    .accessibilityHidden(navigatorSection != .workspace)
+                fileSection(isWorkspace: false)
+                    .opacity(navigatorSection == .project ? 1 : 0)
+                    .allowsHitTesting(navigatorSection == .project)
+                    .accessibilityHidden(navigatorSection != .project)
+                todosPane
+                    .opacity(navigatorSection == .todos ? 1 : 0)
+                    .allowsHitTesting(navigatorSection == .todos)
+                    .accessibilityHidden(navigatorSection != .todos)
             }
         }
-        .accessibilityIdentifier("pitex.projectOutline")
     }
 
     private var navigatorPicker: some View {
@@ -351,15 +359,15 @@ struct ProjectSidebarView: View {
 
             // ScrollView+VStack instead of List: NSTableView marks clicked
             // rows selected (accent wash) even without a selection binding —
-            // we want only our own active-file highlight. The tree always
-            // follows the project's directories, independent of the build target.
+            // we want only our own active-file highlight. Workspace follows
+            // directories; Project follows the active document's dependencies.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ProjectTreeRows(nodes: isWorkspace ? workspace.projectTree : workspace.documentProject.tree) { fileRow($0) }
                 }
                 .padding(.horizontal, 4)
             }
-            .frame(minHeight: 80, idealHeight: 140, maxHeight: 220)
+            .frame(minHeight: 60, maxHeight: .infinity)
 
             if !isWorkspace, !workspace.documentProject.outputs.isEmpty {
                 Rectangle()
