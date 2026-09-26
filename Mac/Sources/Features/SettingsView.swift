@@ -25,6 +25,28 @@ final class SettingsStore: ObservableObject {
     @Published var jumpToCursorAfterBuild: Bool {
         didSet { UserDefaults.standard.set(jumpToCursorAfterBuild, forKey: "pitex.pref.build.jumpToCursorAfterBuild") }
     }
+    /// `pitex.pref.build.liveCompile*` — rebuild automatically once typing
+    /// pauses. Live builds save open edited files first and write into the
+    /// project's `.pitex-live/` directory, never the regular outputs.
+    /// (Same key names on Linux/Windows.)
+    static let liveCompileDelayRange = 200...10_000
+    @Published var liveCompileEnabled: Bool {
+        didSet { UserDefaults.standard.set(liveCompileEnabled, forKey: "pitex.pref.build.liveCompileEnabled") }
+    }
+    /// Idle milliseconds before a live build starts, clamped 200…10000.
+    @Published var liveCompileDelayMilliseconds: Int {
+        didSet {
+            let clamped = min(max(liveCompileDelayMilliseconds, Self.liveCompileDelayRange.lowerBound),
+                              Self.liveCompileDelayRange.upperBound)
+            if clamped != liveCompileDelayMilliseconds { liveCompileDelayMilliseconds = clamped }
+            UserDefaults.standard.set(liveCompileDelayMilliseconds,
+                                      forKey: "pitex.pref.build.liveCompileDelayMilliseconds")
+        }
+    }
+    /// SyncTeX moves the PDF to the caret after a successful live build.
+    @Published var liveCompileFollowCursor: Bool {
+        didSet { UserDefaults.standard.set(liveCompileFollowCursor, forKey: "pitex.pref.build.liveCompileFollowCursor") }
+    }
     @Published var restoreSession: Bool {
         didSet { UserDefaults.standard.set(restoreSession, forKey: "pitex.pref.editor.restoreSession") }
     }
@@ -113,6 +135,9 @@ final class SettingsStore: ObservableObject {
         customShellExecutable = "/bin/zsh"
         switchToPDFOnBuild = true
         jumpToCursorAfterBuild = true
+        liveCompileEnabled = false
+        liveCompileDelayMilliseconds = 700
+        liveCompileFollowCursor = false
         restoreSession = true
         codeFolding = true
         minimap = true
@@ -149,6 +174,11 @@ final class SettingsStore: ObservableObject {
         customShellExecutable = defaults.string(forKey: "customShellExecutable") ?? "/bin/zsh"
         switchToPDFOnBuild = defaults.object(forKey: "pitex.pref.build.switchToPDFOnBuild") as? Bool ?? true
         jumpToCursorAfterBuild = defaults.object(forKey: "pitex.pref.build.jumpToCursorAfterBuild") as? Bool ?? true
+        liveCompileEnabled = defaults.bool(forKey: "pitex.pref.build.liveCompileEnabled")
+        let liveDelay = defaults.object(forKey: "pitex.pref.build.liveCompileDelayMilliseconds") as? Int ?? 700
+        liveCompileDelayMilliseconds = min(max(liveDelay, Self.liveCompileDelayRange.lowerBound),
+                                           Self.liveCompileDelayRange.upperBound)
+        liveCompileFollowCursor = defaults.bool(forKey: "pitex.pref.build.liveCompileFollowCursor")
         restoreSession = defaults.object(forKey: "pitex.pref.editor.restoreSession") as? Bool ?? true
         codeFolding = defaults.object(forKey: "pitex.pref.editor.codeFolding") as? Bool ?? true
         minimap = defaults.object(forKey: "pitex.pref.editor.minimap") as? Bool ?? true
@@ -382,6 +412,20 @@ struct SettingsView: View {
                     value: passesBinding,
                     in: 1...10
                 )
+            }
+            Section("settings.compile.live") {
+                Toggle("settings.compile.live_auto", isOn: $store.liveCompileEnabled)
+                LabeledContent("settings.compile.live_delay") {
+                    TextField("700", value: $store.liveCompileDelayMilliseconds, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .disabled(!store.liveCompileEnabled)
+                }
+                Toggle("settings.compile.live_follow", isOn: $store.liveCompileFollowCursor)
+                    .disabled(!store.liveCompileEnabled)
+                Text("settings.compile.live_auto_note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("settings.compile.shell") {
                 LabeledContent("settings.compile.shell_path") {

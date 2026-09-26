@@ -1728,6 +1728,49 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     behavior.add(&passes_row);
     compile.add(&behavior);
 
+    // Live compile — rebuilds on edits after an idle delay. The switch
+    // and delay/follow rows persist the flat `pitex.pref.build.live*`
+    // keys; the scheduler reads them on each edit.
+    let live_group = adw::PreferencesGroup::new();
+    live_group.set_title(&tr(lang, "settings.compile.live"));
+    let (live_auto_row, live_auto) = compat::switch_row(&tr(lang, "settings.compile.live_auto"));
+    live_auto_row.set_subtitle(&tr(lang, "settings.compile.live_auto_note"));
+    live_auto.set_active(state.borrow().store.live_compile_enabled());
+    {
+        let state = state.clone();
+        live_auto.connect_active_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_live_compile_enabled(r.is_active());
+            }
+        });
+    }
+    live_group.add(&live_auto_row);
+    let (live_delay_row, live_delay) =
+        compat::spin_row(&tr(lang, "settings.compile.live_delay"), 200.0, 10_000.0, 50.0);
+    live_delay.set_value(state.borrow().store.live_compile_delay_milliseconds() as f64);
+    {
+        let state = state.clone();
+        live_delay.connect_value_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_live_compile_delay_milliseconds(r.value() as i64);
+            }
+        });
+    }
+    live_group.add(&live_delay_row);
+    let (live_follow_row, live_follow) =
+        compat::switch_row(&tr(lang, "settings.compile.live_follow"));
+    live_follow.set_active(state.borrow().store.live_compile_follow_cursor());
+    {
+        let state = state.clone();
+        live_follow.connect_active_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_live_compile_follow_cursor(r.is_active());
+            }
+        });
+    }
+    live_group.add(&live_follow_row);
+    compile.add(&live_group);
+
     let shell_group = adw::PreferencesGroup::new();
     shell_group.set_title(&tr(lang, "settings.compile.shell"));
     let (shell_path_row, shell_path) = compat::entry_row(&tr(lang, "settings.compile.shell_path"));

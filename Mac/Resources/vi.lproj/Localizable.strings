@@ -250,6 +250,12 @@
 "settings.compile.fallback_help" = "Dùng khi trường lệnh biên dịch trống. Yêu cầu xác nhận shell ở trên.";
 "settings.compile.make_default_editor" = "Dùng cho tệp .tex";
 "settings.compile.make_default_note" = "Đăng ký Pitex làm ứng dụng mặc định cho tệp .tex (nhấp đúp để mở tại đây).";
+"settings.compile.live" = "Biên dịch trực tiếp";
+"settings.compile.live_auto" = "Tự động biên dịch khi ngừng nhập";
+"settings.compile.live_auto_note" = "Biên dịch trực tiếp lưu các tệp đang sửa, rồi tự động biên dịch lại khi bạn ngừng nhập.";
+"settings.compile.live_delay" = "Độ trễ nhàn rỗi (ms)";
+"settings.compile.live_follow" = "Chuyển PDF tới con trỏ sau khi biên dịch trực tiếp";
+"toolbar.live_compile" = "Biên dịch trực tiếp";
 "settings.markdown.live_preview" = "Xem trước trực tiếp";
 "settings.markdown.live_preview_note" = "Cập nhật bản xem trước khi bạn gõ. Khi tắt, bản xem trước cập nhật khi lưu.";
 "settings.markdown.sync_scroll" = "Đồng bộ cuộn";

@@ -250,6 +250,12 @@
 "settings.compile.fallback_help" = "Используется, когда поле команды сборки пусто. Требует одобрения оболочки выше.";
 "settings.compile.make_default_editor" = "Использовать для файлов .tex";
 "settings.compile.make_default_note" = "Регистрирует Pitex как приложение по умолчанию для файлов .tex (двойной щелчок открывает здесь).";
+"settings.compile.live" = "Живая сборка";
+"settings.compile.live_auto" = "Собирать автоматически после остановки ввода";
+"settings.compile.live_auto_note" = "Живая сборка сохраняет открытые изменённые файлы и автоматически собирает заново после остановки ввода.";
+"settings.compile.live_delay" = "Задержка бездействия (мс)";
+"settings.compile.live_follow" = "Перемещать PDF к курсору после живой сборки";
+"toolbar.live_compile" = "Живая сборка";
 "settings.markdown.live_preview" = "Просмотр в реальном времени";
 "settings.markdown.live_preview_note" = "Обновлять просмотр во время ввода. Когда выключено, просмотр обновляется при сохранении.";
 "settings.markdown.sync_scroll" = "Синхронная прокрутка";

@@ -250,6 +250,12 @@
 "settings.compile.fallback_help" = "当构建命令字段为空时使用。需要上方对 Shell 的批准。";
 "settings.compile.make_default_editor" = "用于 .tex 文件";
 "settings.compile.make_default_note" = "将 Pitex 注册为 .tex 文件的默认应用（双击在此打开）。";
+"settings.compile.live" = "实时编译";
+"settings.compile.live_auto" = "停止编辑后自动构建";
+"settings.compile.live_auto_note" = "实时编译会先保存已编辑的打开文件，并在您停止输入后自动重新构建。";
+"settings.compile.live_delay" = "空闲延迟（毫秒）";
+"settings.compile.live_follow" = "实时构建后将 PDF 移动到光标位置";
+"toolbar.live_compile" = "实时编译";
 "settings.markdown.live_preview" = "实时预览";
 "settings.markdown.live_preview_note" = "输入时更新预览。关闭后,预览将在保存时更新。";
 "settings.markdown.sync_scroll" = "同步滚动";

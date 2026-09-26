@@ -175,6 +175,37 @@ impl SettingsStore {
     pub fn set_jump_to_cursor_after_build(&mut self, v: bool) {
         self.prefs.set("pitex.pref.build.jumpToCursorAfterBuild", v);
     }
+    /// `pitex.pref.build.liveCompileEnabled` — rebuild on source edits
+    /// after an idle delay, default off. Live builds auto-save open edited
+    /// files first and write to the hidden `.pitex-live` output directory.
+    pub fn live_compile_enabled(&self) -> bool {
+        self.prefs.bool("pitex.pref.build.liveCompileEnabled").unwrap_or(false)
+    }
+    pub fn set_live_compile_enabled(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.build.liveCompileEnabled", v);
+    }
+    /// `pitex.pref.build.liveCompileDelayMilliseconds` — idle debounce
+    /// before a live build starts, clamped to 200…10_000, default 700.
+    /// Remote workspaces use a larger floor at schedule time.
+    pub fn live_compile_delay_milliseconds(&self) -> i64 {
+        self.prefs
+            .int("pitex.pref.build.liveCompileDelayMilliseconds")
+            .unwrap_or(700)
+            .clamp(200, 10_000)
+    }
+    pub fn set_live_compile_delay_milliseconds(&mut self, v: i64) {
+        self.prefs.set("pitex.pref.build.liveCompileDelayMilliseconds", v);
+    }
+    /// `pitex.pref.build.liveCompileFollowCursor` — after a successful
+    /// live build, scroll the preview to the caret; default off.
+    pub fn live_compile_follow_cursor(&self) -> bool {
+        self.prefs
+            .bool("pitex.pref.build.liveCompileFollowCursor")
+            .unwrap_or(false)
+    }
+    pub fn set_live_compile_follow_cursor(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.build.liveCompileFollowCursor", v);
+    }
     /// `pitex.pref.update.autoInstall` — on launch, check GitHub Releases
     /// and install a newer package without asking.
     pub fn auto_install_updates(&self) -> bool {
@@ -977,6 +1008,44 @@ mod tests {
         // An unknown stored theme resolves to "system".
         store.set_markdown_theme("sepia");
         assert_eq!(store.markdown_theme(), "system");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `pitex.pref.build.live*` — live compile defaults to off, a 700 ms
+    /// delay and no cursor following; the delay clamps to 200…10_000 and
+    /// all three persist under the same keys macOS writes.
+    #[test]
+    fn live_compile_preferences_defaults_clamp_and_persist() {
+        let path = std::env::temp_dir().join(format!(
+            "pitex-prefs-live-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut store = SettingsStore::new(Preferences {
+            values: BTreeMap::new(),
+            path: path.clone(),
+        });
+        assert!(!store.live_compile_enabled());
+        assert_eq!(store.live_compile_delay_milliseconds(), 700);
+        assert!(!store.live_compile_follow_cursor());
+        // Out-of-range stored values clamp on read.
+        store.set_live_compile_delay_milliseconds(50);
+        assert_eq!(store.live_compile_delay_milliseconds(), 200);
+        store.set_live_compile_delay_milliseconds(99_999);
+        assert_eq!(store.live_compile_delay_milliseconds(), 10_000);
+        store.set_live_compile_enabled(true);
+        store.set_live_compile_follow_cursor(true);
+        store.set_live_compile_delay_milliseconds(1_500);
+        // A fresh store over the same file sees the persisted values.
+        let values: BTreeMap<String, serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let store = SettingsStore::new(Preferences {
+            values,
+            path: path.clone(),
+        });
+        assert!(store.live_compile_enabled());
+        assert!(store.live_compile_follow_cursor());
+        assert_eq!(store.live_compile_delay_milliseconds(), 1_500);
         let _ = std::fs::remove_file(&path);
     }
 

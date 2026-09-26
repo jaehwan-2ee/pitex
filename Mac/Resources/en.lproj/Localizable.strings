@@ -250,6 +250,12 @@
 "settings.compile.fallback_help" = "Used when the build-command field is empty. Requires the shell approval above.";
 "settings.compile.make_default_editor" = "Use for .tex Files";
 "settings.compile.make_default_note" = "Registers Pitex as the default app for .tex files (double-click opens here).";
+"settings.compile.live" = "Live Compile";
+"settings.compile.live_auto" = "Automatically build when editing stops";
+"settings.compile.live_auto_note" = "Live compile saves open edited files, then rebuilds automatically when you stop typing.";
+"settings.compile.live_delay" = "Idle delay (ms)";
+"settings.compile.live_follow" = "Move the PDF to the cursor after a live build";
+"toolbar.live_compile" = "Live Compile";
 "settings.markdown.live_preview" = "Live preview";
 "settings.markdown.live_preview_note" = "Update the preview while typing. When off, the preview updates when you save.";
 "settings.markdown.sync_scroll" = "Sync scrolling";
