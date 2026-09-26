@@ -1,0 +1,48 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 82-90,222-228
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 118-119
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 119-120
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 118-119
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 118-119
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 119-120
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 118-119
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 119-120
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 43-56,258-268,1035,1037-1038,1192-1195,1200-1201,1203,1208-1209,1211-1216,1219-1221,1239-1250,1262-1277,1280,1284-1287,1316-1317,1325-1329,1342-1346,1354-1356,1368-1369,1372-1377,1388-1395,1399-1402,2131,2133-2134,2212-2217,2221-2224,2254-2258
+Mac/Sources/Features/BuildSupport.swift
+  h_d73c695d83f4a7 568-573,643-645,649-652,683-685,770-786,833-836,883-888,890,892-894
+Mac/Sources/Features/Preview.swift
+  h_d73c695d83f4a7 92-95,111,122-134,136-141,150,181-182,184-187,191-192,194-197,242-245,275,291,303-319,322,324-338,355-358
+Mac/Sources/Features/SyncTeXSupport.swift
+  h_d73c695d83f4a7 27,32-35,61-65,86-89,91-93,97-103,105-106,114-118,141-143,198,315-325
+Mac/Sources/Features/WorkspaceView.swift
+  h_d73c695d83f4a7 242-245
+Packages/TexApp/Sources/BuildFeature/BuildCommandPlaceholders.swift
+  h_d73c695d83f4a7 1-69
+Packages/TexApp/Tests/TexAppTests/BuildCommandPlaceholdersTests.swift
+  h_d73c695d83f4a7 1-116
+Packages/TexCore/Sources/SyncTeXCore/SyncTeXSourceMapper.swift
+  h_d73c695d83f4a7 1-95
+Packages/TexCore/Tests/TexCoreTests/SyncTeXSourceMapperTests.swift
+  h_d73c695d83f4a7 1-186
+Tools/check-macos-synctex.py
+  h_d73c695d83f4a7 9-10,35-36,127-176,192-232,237-243,245-257,259-262,266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1c6b3dd67e1f4bec72e10b4b2938ab94c61fc9ec",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
