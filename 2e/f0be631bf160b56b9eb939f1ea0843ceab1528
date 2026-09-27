@@ -1,0 +1,14 @@
+Tools/check-sidebar-ui.py
+  h_d73c695d83f4a7 40,73-77,88,90,93-100,107,119,127-131,134-135,137-138,140,161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ef0be631bf160b56b9eb939f1ea0843ceab1528",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
