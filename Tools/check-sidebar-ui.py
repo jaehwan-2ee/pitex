@@ -37,7 +37,7 @@ import Vision
 @main struct SidebarCheck {
     @MainActor static func main() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(.regular)
         Task { @MainActor in
             do { try await run(); exit(0) }
             catch { print("FAIL", error); fflush(nil); exit(1) }
@@ -70,6 +70,11 @@ import Vision
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
+        // Selected segments only draw their tint in an active, key window;
+        // an inactive window renders the gray bezel and would fake a .tint miss.
+        NSApp.activate()
+        window.makeKey()
+        window.appearance = NSAppearance(named: language == "en" ? .darkAqua : .aqua)
         defer {
             window.orderOut(nil)
             UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
@@ -80,15 +85,26 @@ import Vision
             host.layoutSubtreeIfNeeded()
         }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func stage(_ message: String) { print("[stage] \(message)"); fflush(nil) }
         try await settle()
+        stage("appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow)")
         let upper = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.segmentCount == 3 }!
         let split = descendants(host).compactMap { $0 as? NSSplitView }.first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
+        let navTitles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
+            Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
+        }
+        let lower = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
+            control.segmentCount == 3 && (0..<3).allSatisfy { index in
+                control.label(forSegment: index) == navTitles[index]
+            }
+        }!
         precondition(workspace.projectTree.first { $0.path == "main.tex" }?.name == "main.tex")
         precondition(workspace.documentProject.tree.first?.name == "main.tex (.)", "Project must retain duplicate-name context")
         upper.selectedSegment = 1
         precondition(upper.sendAction(upper.action, to: upper.target))
         try await settle()
         precondition(workspace.sidebarSection == .labels)
+        stage("upper picker action OK")
         func snapshot() throws -> [(String, CGRect)] {
             let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             host.cacheDisplay(in: host.bounds, to: bitmap)
@@ -97,13 +113,10 @@ import Vision
             request.recognitionLevel = .accurate
             request.recognitionLanguages = language == "ko" ? ["ko-KR", "en-US"] : ["en-US"]
             try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
-            let titles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
-                Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
-            }
             return try (request.results ?? []).flatMap { observation -> [(String, CGRect)] in
                 guard let candidate = observation.topCandidates(1).first else { return [] }
                 var rows = [(candidate.string, observation.boundingBox)]
-                for title in titles {
+                for title in navTitles {
                     if let range = candidate.string.range(of: title, options: .caseInsensitive), let box = try candidate.boundingBox(for: range) {
                         rows.append((title, box.boundingBox))
                     }
@@ -111,22 +124,20 @@ import Vision
                 return rows
             }.filter { $0.1.minX < 0.45 }
         }
+        // Synthetic clicks deadlock: sendEvent(.leftMouseDown) enters
+        // NSSegmentedControl's tracking loop, which waits for a mouseUp the
+        // caller can't post until sendEvent returns. Drive the real binding
+        // like `upper` does — selectedSegment + sendAction is the same path a
+        // genuine click takes through the SwiftUI Picker.
         func clickTab(_ key: String) async throws {
             let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
-            let candidates = try snapshot()
-            let rows = candidates.filter { $0.0 == title }
-            guard let rect = rows.max(by: { $0.1.midY < $1.1.midY })?.1 else {
-                fatalError("Missing tab \(title): \(candidates)")
+            guard let index = (0..<lower.segmentCount).first(where: { lower.label(forSegment: $0) == title }) else {
+                fatalError("Missing tab \(title): \(navTitles)")
             }
-            let local = NSPoint(x: host.bounds.width * rect.midX,
-                y: host.bounds.height * (host.isFlipped ? 1 - rect.midY : rect.midY))
-            let point = host.convert(local, to: nil)
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
-            }
+            lower.selectedSegment = index
+            precondition(lower.sendAction(lower.action, to: lower.target), "Tab \(title) action did not fire")
             try await settle()
+            stage("tab \(title) selected")
         }
         // Exercise the native split view's resize path at two divider positions.
         split.setPosition(420, ofDividerAt: 0)
@@ -147,6 +158,7 @@ import Vision
         }
         let visibleRows = try snapshot().filter { $0.0.contains("zfile_") }
         precondition(visibleRows.count == afterCount, "Workspace viewport shrank after tab switching")
+        stage("tab switches done; tint check next")
         print("PASS \(language): resized divider reveals \(before) → \(afterCount) rows; Workspace basenames; Project labels and split height retained")
         let expected = SymbolCategory.allCases.map {
             Bundle.main.localizedString(forKey: $0.titleKey, value: nil, table: nil)
