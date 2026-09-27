@@ -39,7 +39,7 @@ import Vision
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         Task { @MainActor in
-            do { try await run(); exit(0) }
+            do { try await run(); print("CHECK_COMPLETE \(CommandLine.arguments[2])"); fflush(nil); exit(0) }
             catch { print("FAIL", error); fflush(nil); exit(1) }
         }
         app.run()
@@ -87,6 +87,17 @@ import Vision
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         func stage(_ message: String) { print("[stage] \(message)"); fflush(nil) }
         try await settle()
+        // The tint check needs the real active bezel — an inactive window
+        // renders selected segments gray. The `open` launch should already
+        // have made us active; bound the retry so a failure fails fast.
+        let activationDeadline = ContinuousClock.now + .seconds(10)
+        while !(NSApp.isActive && window.isKeyWindow) && .now < activationDeadline {
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        precondition(NSApp.isActive && window.isKeyWindow,
+            "Checker window never activated — tint check would measure the inactive bezel")
         stage("appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow)")
         let upper = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.segmentCount == 3 }!
         let split = descendants(host).compactMap { $0 as? NSSplitView }.first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
@@ -225,8 +236,29 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
                     '-target', 'arm64-apple-macos15.0', *[arg for path in includes for arg in ['-I', str(path)]], str(source), str(stripped),
                     *[str(p) for p in (repo / 'Mac/Sources').rglob('*.swift') if p not in (app_main, workspace_view)],
                     *[str(p) for p in objects], '-o', str(executable)], check=True)
+    # Directly exec()ing the Mach-O left the checker unable to activate on CI
+    # (appActive=false → inactive gray bezel, unusable tint check), so launch
+    # through LaunchServices instead. `open -W` waits for exit but does not
+    # forward the child's status — the CHECK_COMPLETE marker, printed only
+    # after run() returns, is authoritative.
     env = {**os.environ, 'PI_AGENT_PATH': '/usr/bin/false', 'PI_CODING_AGENT_DIR': str(root / 'pi')}
+    app = root / 'SidebarCheck.app'
     for language in ['en', 'ko']:
-        subprocess.run([str(executable), str(root), language, '-AppleLanguages', f'({language})'],
-                       env=env, check=True, timeout=60)
+        out_log = root / f'check-{language}.out.log'
+        err_log = root / f'check-{language}.err.log'
+        try:
+            subprocess.run(['/usr/bin/open', '-n', '-W',
+                            '--stdout', str(out_log), '--stderr', str(err_log),
+                            '--env', 'PI_AGENT_PATH=/usr/bin/false',
+                            '--env', f'PI_CODING_AGENT_DIR={root / "pi"}',
+                            str(app), '--args', str(root), language,
+                            '-AppleLanguages', f'({language})'],
+                           env=env, check=True, timeout=60)
+        finally:
+            for stream_log in (out_log, err_log):
+                if stream_log.exists():
+                    print(stream_log.read_text(errors='replace'), end='')
+        output = out_log.read_text(errors='replace') if out_log.exists() else ''
+        if f'CHECK_COMPLETE {language}' not in output:
+            sys.exit(f'FAIL {language}: completion marker missing from checker log')
         shutil.copyfile(root / f'sidebar-{language}.png', Path('/tmp') / f'pitex-sidebar-{language}.png')
