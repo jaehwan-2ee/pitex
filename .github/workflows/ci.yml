@@ -66,6 +66,15 @@ jobs:
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - name: Sidebar UI checks (English and Korean)
+        run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release
+      - name: Sidebar UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-ui-screenshots
+          path: /tmp/pitex-sidebar-*.png
+          if-no-files-found: warn
       - name: Native editor regression checks
         run: swift test --package-path Packages/TexApp --build-system native
       - name: Git and subprocess regression checks
