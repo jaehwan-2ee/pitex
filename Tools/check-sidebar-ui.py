@@ -37,9 +37,9 @@ import Vision
 @main struct SidebarCheck {
     @MainActor static func main() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(.regular)
         Task { @MainActor in
-            do { try await run(); exit(0) }
+            do { try await run(); print("CHECK_COMPLETE \(CommandLine.arguments[2])"); fflush(nil); exit(0) }
             catch { print("FAIL", error); fflush(nil); exit(1) }
         }
         app.run()
@@ -70,6 +70,11 @@ import Vision
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
+        // Selected segments only draw their tint in an active, key window;
+        // an inactive window renders the gray bezel and would fake a .tint miss.
+        NSApp.activate()
+        window.makeKey()
+        window.appearance = NSAppearance(named: language == "en" ? .darkAqua : .aqua)
         defer {
             window.orderOut(nil)
             UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
@@ -80,15 +85,37 @@ import Vision
             host.layoutSubtreeIfNeeded()
         }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func stage(_ message: String) { print("[stage] \(message)"); fflush(nil) }
         try await settle()
+        // The tint check needs the real active bezel — an inactive window
+        // renders selected segments gray. The `open` launch should already
+        // have made us active; bound the retry so a failure fails fast.
+        let activationDeadline = ContinuousClock.now + .seconds(10)
+        while !(NSApp.isActive && window.isKeyWindow) && .now < activationDeadline {
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        precondition(NSApp.isActive && window.isKeyWindow,
+            "Checker window never activated — tint check would measure the inactive bezel")
+        stage("appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow)")
         let upper = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.segmentCount == 3 }!
         let split = descendants(host).compactMap { $0 as? NSSplitView }.first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
+        let navTitles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
+            Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
+        }
+        let lower = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
+            control.segmentCount == 3 && (0..<3).allSatisfy { index in
+                control.label(forSegment: index) == navTitles[index]
+            }
+        }!
         precondition(workspace.projectTree.first { $0.path == "main.tex" }?.name == "main.tex")
         precondition(workspace.documentProject.tree.first?.name == "main.tex (.)", "Project must retain duplicate-name context")
         upper.selectedSegment = 1
         precondition(upper.sendAction(upper.action, to: upper.target))
         try await settle()
         precondition(workspace.sidebarSection == .labels)
+        stage("upper picker action OK")
         func snapshot() throws -> [(String, CGRect)] {
             let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             host.cacheDisplay(in: host.bounds, to: bitmap)
@@ -97,13 +124,10 @@ import Vision
             request.recognitionLevel = .accurate
             request.recognitionLanguages = language == "ko" ? ["ko-KR", "en-US"] : ["en-US"]
             try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
-            let titles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
-                Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
-            }
             return try (request.results ?? []).flatMap { observation -> [(String, CGRect)] in
                 guard let candidate = observation.topCandidates(1).first else { return [] }
                 var rows = [(candidate.string, observation.boundingBox)]
-                for title in titles {
+                for title in navTitles {
                     if let range = candidate.string.range(of: title, options: .caseInsensitive), let box = try candidate.boundingBox(for: range) {
                         rows.append((title, box.boundingBox))
                     }
@@ -111,22 +135,20 @@ import Vision
                 return rows
             }.filter { $0.1.minX < 0.45 }
         }
+        // Synthetic clicks deadlock: sendEvent(.leftMouseDown) enters
+        // NSSegmentedControl's tracking loop, which waits for a mouseUp the
+        // caller can't post until sendEvent returns. Drive the real binding
+        // like `upper` does — selectedSegment + sendAction is the same path a
+        // genuine click takes through the SwiftUI Picker.
         func clickTab(_ key: String) async throws {
             let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
-            let candidates = try snapshot()
-            let rows = candidates.filter { $0.0 == title }
-            guard let rect = rows.max(by: { $0.1.midY < $1.1.midY })?.1 else {
-                fatalError("Missing tab \(title): \(candidates)")
+            guard let index = (0..<lower.segmentCount).first(where: { lower.label(forSegment: $0) == title }) else {
+                fatalError("Missing tab \(title): \(navTitles)")
             }
-            let local = NSPoint(x: host.bounds.width * rect.midX,
-                y: host.bounds.height * (host.isFlipped ? 1 - rect.midY : rect.midY))
-            let point = host.convert(local, to: nil)
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
-            }
+            lower.selectedSegment = index
+            precondition(lower.sendAction(lower.action, to: lower.target), "Tab \(title) action did not fire")
             try await settle()
+            stage("tab \(title) selected")
         }
         // Exercise the native split view's resize path at two divider positions.
         split.setPosition(420, ofDividerAt: 0)
@@ -147,6 +169,7 @@ import Vision
         }
         let visibleRows = try snapshot().filter { $0.0.contains("zfile_") }
         precondition(visibleRows.count == afterCount, "Workspace viewport shrank after tab switching")
+        stage("tab switches done; tint check next")
         print("PASS \(language): resized divider reveals \(before) → \(afterCount) rows; Workspace basenames; Project labels and split height retained")
         let expected = SymbolCategory.allCases.map {
             Bundle.main.localizedString(forKey: $0.titleKey, value: nil, table: nil)
@@ -213,8 +236,29 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
                     '-target', 'arm64-apple-macos15.0', *[arg for path in includes for arg in ['-I', str(path)]], str(source), str(stripped),
                     *[str(p) for p in (repo / 'Mac/Sources').rglob('*.swift') if p not in (app_main, workspace_view)],
                     *[str(p) for p in objects], '-o', str(executable)], check=True)
+    # Directly exec()ing the Mach-O left the checker unable to activate on CI
+    # (appActive=false → inactive gray bezel, unusable tint check), so launch
+    # through LaunchServices instead. `open -W` waits for exit but does not
+    # forward the child's status — the CHECK_COMPLETE marker, printed only
+    # after run() returns, is authoritative.
     env = {**os.environ, 'PI_AGENT_PATH': '/usr/bin/false', 'PI_CODING_AGENT_DIR': str(root / 'pi')}
+    app = root / 'SidebarCheck.app'
     for language in ['en', 'ko']:
-        subprocess.run([str(executable), str(root), language, '-AppleLanguages', f'({language})'],
-                       env=env, check=True, timeout=60)
+        out_log = root / f'check-{language}.out.log'
+        err_log = root / f'check-{language}.err.log'
+        try:
+            subprocess.run(['/usr/bin/open', '-n', '-W',
+                            '--stdout', str(out_log), '--stderr', str(err_log),
+                            '--env', 'PI_AGENT_PATH=/usr/bin/false',
+                            '--env', f'PI_CODING_AGENT_DIR={root / "pi"}',
+                            str(app), '--args', str(root), language,
+                            '-AppleLanguages', f'({language})'],
+                           env=env, check=True, timeout=60)
+        finally:
+            for stream_log in (out_log, err_log):
+                if stream_log.exists():
+                    print(stream_log.read_text(errors='replace'), end='')
+        output = out_log.read_text(errors='replace') if out_log.exists() else ''
+        if f'CHECK_COMPLETE {language}' not in output:
+            sys.exit(f'FAIL {language}: completion marker missing from checker log')
         shutil.copyfile(root / f'sidebar-{language}.png', Path('/tmp') / f'pitex-sidebar-{language}.png')
