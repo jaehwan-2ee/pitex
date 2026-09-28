@@ -109,6 +109,9 @@ jobs:
       - name: Find bar overlay checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-find-bar.py build/Build/Products/Release
+      - name: Settings menu checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-settings-menu.py build/Build/Products/Release
       # Real SwiftUI lifecycle + LaunchServices `open -a`: window fronting
       # and activation without a Dock click (needs no TeX). Runs last so a
       # failure here can't hide the other checks' results.
@@ -138,6 +141,16 @@ jobs:
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - name: Sidebar UI checks (English and Korean)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release
+      - name: Sidebar UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-ui-screenshots-golden-gate
+          path: /tmp/pitex-sidebar-*.png
+          if-no-files-found: warn
       # BasicTeX puts xelatex at the harness's hardcoded
       # /Library/TeX/texbin path; texbin joins PATH because xelatex execs
       # xdvipdfmx through it. The article-class fixture needs no tlmgr.
@@ -153,6 +166,9 @@ jobs:
       - name: Find bar overlay checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-find-bar.py build/Build/Products/Release
+      - name: Settings menu checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-settings-menu.py build/Build/Products/Release
       # The window-routing probe runs last so its result can't mask the
       # navigation/detached-preview evidence above.
       - name: External open routing checks

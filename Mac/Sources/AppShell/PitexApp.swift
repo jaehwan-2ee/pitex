@@ -1859,6 +1859,9 @@ final class WorkspaceModel: ObservableObject {
     /// maps the project key sets into native candidates. The returned
     /// UTF-16 range covers only the current prefix/token, so the popup
     /// inserts the missing tail rather than re-typing the whole command.
+    /// A known context with zero matches still returns its range with an
+    /// empty list — distinct from "no context" so the adapter never falls
+    /// back to dictionary words inside a `\command`, \cite or \ref token.
     func editorCompletions(
         in text: String,
         caretUTF16Offset: Int
@@ -1872,7 +1875,6 @@ final class WorkspaceModel: ObservableObject {
             labels: projectLabels,
             citationKeys: citationKeys
         )
-        guard !items.isEmpty else { return nil }
         return (
             NSRange(
                 location: context.prefixUTF16Offset,
@@ -2664,8 +2666,9 @@ private struct WorkspaceCommandContent: Commands {
             Button("command.toggle_sidebar") { workspace.sidebarVisible.toggle() }
                 .disabled(!workspace.hasProject)
         }
-        CommandGroup(replacing: .help) {
-            Button("command.settings") { workspace.showingSettings = true }
+        CommandGroup(replacing: .appSettings) {
+            Button("command.settings") { WorkspaceWindows.presentSettings(from: workspace) }
+                .keyboardShortcut(",")
         }
     }
 }
@@ -2859,6 +2862,20 @@ enum WorkspaceWindows {
     static func workspace(for window: NSWindow?) -> WorkspaceModel? {
         guard let window else { return nil }
         return live.first { $0.window === window || $0.detachedPreviewWindow === window }
+    }
+
+    /// App-menu Settings…/⌘,. The sheet lives on a scene window. A
+    /// workspace already showing its sheet is reused and fronted — one
+    /// Settings UI app-wide, and in-progress field edits are kept.
+    /// Otherwise the requested window is the owner; a resolution that
+    /// landed on the windowless `unfocused` model (no key window, e.g.
+    /// everything minimized) borrows the first live workspace. The owner
+    /// is unhidden/deminiaturized/fronted so the sheet is on screen.
+    static func presentSettings(from workspace: WorkspaceModel) {
+        let owner = live.first(where: { $0.showingSettings && $0.window != nil })
+            ?? (workspace.window != nil ? workspace : (live.first ?? workspace))
+        owner.present()
+        owner.showingSettings = true
     }
 
     static func register(_ workspace: WorkspaceModel, openWindow: OpenWindowAction?) {

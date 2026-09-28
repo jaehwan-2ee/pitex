@@ -3,6 +3,12 @@
 
 Render the real sidebar and Symbols picker in English and Korean, using a
 temporary project and an isolated app bundle. No model requests or user files.
+The English pass additionally mounts the whole WorkspaceView in a resizable
+window to prove the outer vertical split opens the sidebar at its 170pt
+minimum and that real divider drags survive tab switches, hide/show, and the
+mirrored layout — then checks the empty TODOs pane keeps its header row
+pinned to the pane top across the inner divider resize. Fixture path and
+language arrive through --env; naked argv is only -AppleLanguages.
 """
 import os
 from pathlib import Path
@@ -39,15 +45,17 @@ import Vision
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         Task { @MainActor in
-            do { try await run(); print("CHECK_COMPLETE \(CommandLine.arguments[2])"); fflush(nil); exit(0) }
+            // Configuration travels through the environment — naked argv
+            // tokens get parsed as documents/options, not data.
+            let language = ProcessInfo.processInfo.environment["PITEX_SIDEBAR_LANG"] ?? "en"
+            do { try await run(language); print("CHECK_COMPLETE \(language)"); fflush(nil); exit(0) }
             catch { print("FAIL", error); fflush(nil); exit(1) }
         }
         app.run()
     }
 
-    @MainActor static func run() async throws {
-        let root = URL(fileURLWithPath: CommandLine.arguments[1])
-        let language = CommandLine.arguments[2]
+    @MainActor static func run(_ language: String) async throws {
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PITEX_SIDEBAR_ROOT"] ?? "")
         let workspace = WorkspaceModel()
         await workspace.open(root.appendingPathComponent("main.tex"))
         guard case .ready = workspace.phase else { fatalError("Open failed: \(workspace.phase)") }
@@ -79,11 +87,12 @@ import Vision
             window.orderOut(nil)
             UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
         }
-        func settle() async throws {
-            host.layoutSubtreeIfNeeded()
+        func settle(_ view: NSView) async throws {
+            view.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(300))
-            host.layoutSubtreeIfNeeded()
+            view.layoutSubtreeIfNeeded()
         }
+        func settle() async throws { try await settle(host) }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         func stage(_ message: String) { print("[stage] \(message)"); fflush(nil) }
         try await settle()
@@ -116,10 +125,13 @@ import Vision
         try await settle()
         precondition(workspace.sidebarSection == .labels)
         stage("upper picker action OK")
-        func snapshot() throws -> [(String, CGRect)] {
-            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-layout-live-\(language).png"))
+        func snapshot() throws -> [(String, CGRect)] { try snapshot(of: host) }
+        func snapshot(of view: NSView) throws -> [(String, CGRect)] {
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            if view === host {
+                try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-layout-live-\(language).png"))
+            }
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.recognitionLanguages = language == "ko" ? ["ko-KR", "en-US"] : ["en-US"]
@@ -202,6 +214,189 @@ import Vision
         func compact(_ text: String) -> String { text.replacingOccurrences(of: " ", with: "").lowercased() }
         precondition(text.contains { compact($0).contains(compact(expected[0])) }, "Missing rendered category title: \(text)")
         print("PASS \(language): localized Symbols title and independent Workspace/Project/TODO buttons")
+
+        if language == "en" {
+            // Real-window checks: the whole WorkspaceView (outer vertical
+            // split + the sidebar pane) in a resizable window — the
+            // fixed-frame standalone host can't prove the pane's real
+            // initial width.
+            UserDefaults.standard.set(false, forKey: "inspectorOnLeft")
+            let realHost = NSHostingView(rootView: WorkspaceView(workspace: workspace)
+                .environment(\.locale, Locale(identifier: language)))
+            let realWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 720),
+                                      styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            realWindow.contentView = realHost
+            realWindow.makeKeyAndOrderFront(nil)
+            defer { realWindow.orderOut(nil) }
+            try await settle(realHost)
+            func outerSplit(in view: NSView) -> NSSplitView? {
+                descendants(view).compactMap { $0 as? NSSplitView }.first { $0.isVertical }
+            }
+            func paneWidth(host: NSView, trailing: Bool) -> CGFloat? {
+                (trailing ? outerSplit(in: host)?.arrangedSubviews.last
+                          : outerSplit(in: host)?.arrangedSubviews.first)?.frame.width
+            }
+            // The anchor waits for the full pane set before placing, so
+            // poll until the divider lands — then compare the real frame.
+            func placedWidth(_ target: CGFloat, host: NSView, trailing: Bool) async throws -> CGFloat? {
+                let deadline = ContinuousClock.now + .seconds(5)
+                while .now < deadline {
+                    if let width = paneWidth(host: host, trailing: trailing), abs(width - target) <= 1 {
+                        return width
+                    }
+                    host.layoutSubtreeIfNeeded()
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                return paneWidth(host: host, trailing: trailing)
+            }
+            // Measured before any manual setPosition — the fresh window's
+            // pane must land at the 170pt minimum, not share spare space.
+            let initial = try await placedWidth(170, host: realHost, trailing: false)
+            precondition(initial != nil && abs(initial! - 170) <= 1,
+                         "fresh window sidebar must open at the 170pt minimum, got \(initial as Any)")
+            guard let outer = outerSplit(in: realHost), outer.arrangedSubviews.count >= 2 else {
+                preconditionFailure("real window produced no vertical split")
+            }
+            let leading = { paneWidth(host: realHost, trailing: false)! }
+            let sidebarPane = outer.arrangedSubviews[0]
+            let paneBitmap = sidebarPane.bitmapImageRepForCachingDisplay(in: sidebarPane.bounds)!
+            sidebarPane.cacheDisplay(in: sidebarPane.bounds, to: paneBitmap)
+            try paneBitmap.representation(using: .png, properties: [:])!
+                .write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-minimum-\(language).png"))
+            // A real divider drag must stick — an ordinary model change
+            // (structure tab switch) is not a remount and keeps the width.
+            outer.setPosition(230, ofDividerAt: 0)
+            try await settle(realHost)
+            precondition(abs(leading() - 230) <= 1.5, "divider drag to 230 did not land: \(leading())")
+            workspace.sidebarSection = .bibtex
+            try await settle(realHost)
+            precondition(abs(leading() - 230) <= 1.5, "model change reset the divider to \(leading())")
+            // Hide/show remounts the pane; the remembered real width —
+            // recorded from the actual frame, not a fixed constant — must
+            // come back.
+            let remembered = leading()
+            workspace.sidebarVisible = false
+            try await settle(realHost)
+            workspace.sidebarVisible = true
+            try await settle(realHost)
+            try await settle(realHost)
+            precondition(abs(leading() - remembered) <= 1.5,
+                         "hide/show must restore \(remembered), got \(leading())")
+            // Mirroring moves the pane to the trailing edge — the flip is
+            // a remount, so the remembered width carries over.
+            UserDefaults.standard.set(true, forKey: "inspectorOnLeft")
+            try await settle(realHost)
+            try await settle(realHost)
+            let trailing = { paneWidth(host: realHost, trailing: true)! }
+            precondition(abs(trailing() - remembered) <= 1.5,
+                         "mirror flip must carry \(remembered), got \(trailing())")
+            // Fresh mirrored minimum needs a genuinely new view state —
+            // a same-type rootView swap can keep @StateObject alive, and
+            // one model's editor text view must never live in two hosts.
+            // inspectorOnLeft is still set from the flip above.
+            let freshWorkspace = WorkspaceModel()
+            await freshWorkspace.open(root.appendingPathComponent("empty/plain.tex"))
+            guard case .ready = freshWorkspace.phase else {
+                preconditionFailure("fresh workspace open failed: \(freshWorkspace.phase)")
+            }
+            let freshHost = NSHostingView(rootView: WorkspaceView(workspace: freshWorkspace)
+                .environment(\.locale, Locale(identifier: language)))
+            let freshWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 720),
+                                       styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            freshWindow.contentView = freshHost
+            freshWindow.makeKeyAndOrderFront(nil)
+            defer { freshWindow.orderOut(nil) }
+            try await settle(freshHost)
+            let freshInitial = try await placedWidth(170, host: freshHost, trailing: true)
+            precondition(freshInitial != nil && abs(freshInitial! - 170) <= 1,
+                         "fresh mirrored sidebar must start at 170, got \(freshInitial as Any)")
+            await freshWorkspace.close()
+            freshWindow.orderOut(nil)
+            stage("real window: 170 initial, 230 survives tab change, hide/show + mirror restore")
+
+            // Empty TODOs pane: a fixture-independent project with zero
+            // TODO comments (root's main.tex has one — any file in that
+            // project aggregates it). The header/+ row must stay pinned at
+            // the pane top like the Project header.
+            let emptyWorkspace = WorkspaceModel()
+            await emptyWorkspace.open(root.appendingPathComponent("empty/plain.tex"))
+            guard case .ready = emptyWorkspace.phase else {
+                preconditionFailure("empty project open failed: \(emptyWorkspace.phase)")
+            }
+            let outlineDeadline = ContinuousClock.now + .seconds(5)
+            while emptyWorkspace.outlineItems.isEmpty && .now < outlineDeadline {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            // The same refreshStructure pass publishes todoItems — a
+            // parsed outline proves the scan ran, so empty is real.
+            precondition(!emptyWorkspace.outlineItems.isEmpty, "empty project structure scan never ran")
+            precondition(emptyWorkspace.todoItems.isEmpty, "empty project must have no TODOs")
+            let emptyHost = NSHostingView(rootView: ProjectSidebarView(workspace: emptyWorkspace)
+                .frame(width: 280, height: 650)
+                .environment(\.locale, Locale(identifier: language)))
+            window.contentView = emptyHost
+            try await settle(emptyHost)
+            try await settle(emptyHost)
+            let nav = descendants(emptyHost).compactMap { $0 as? NSSegmentedControl }.first { control in
+                control.segmentCount == 3 && (0..<3).allSatisfy { index in
+                    control.label(forSegment: index) == navTitles[index]
+                }
+            }!
+            let innerSplit = descendants(emptyHost).compactMap { $0 as? NSSplitView }
+                .first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
+            func clickNav(_ key: String) async throws {
+                let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
+                nav.selectedSegment = (0..<nav.segmentCount).first { nav.label(forSegment: $0) == title }!
+                precondition(nav.sendAction(nav.action, to: nav.target), "nav tab \(title) did not fire")
+                try await settle(emptyHost)
+            }
+            // The picker repeats the same titles in the row above the
+            // header, and a "No TODOs" body line can OCR as the title too
+            // — take the highest matching row BELOW the picker's bottom
+            // edge. Vision boxes are normalized, bottom-left origin; the
+            // picker frame converts into host space first (hosting views
+            // are flipped, so isFlipped decides the mapping direction).
+            let hostHeight = emptyHost.bounds.height
+            let headerTolerance = 4 / hostHeight  // ±4pt at the host's scale
+            func headerTop(_ key: String) throws -> (top: CGFloat, boxes: [CGRect]) {
+                let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
+                let boxes = try snapshot(of: emptyHost).filter { $0.0 == title }.map(\.1)
+                // Per snapshot: the inner divider resize moves the picker
+                // row along with its pane, so a stale bottom edge would
+                // misclassify the header.
+                let navRect = nav.convert(nav.bounds, to: emptyHost)
+                let pickerBottom = emptyHost.isFlipped
+                    ? 1 - navRect.maxY / hostHeight
+                    : navRect.minY / hostHeight
+                guard let box = boxes.filter({ $0.maxY <= pickerBottom + 0.005 })
+                    .max(by: { $0.maxY < $1.maxY }) else {
+                    preconditionFailure("no '\(title)' header below the picker — boxes=\(boxes) pickerBottom=\(pickerBottom)")
+                }
+                return (box.maxY, boxes)
+            }
+            try await clickNav("sidebar.project")
+            let project = try headerTop("sidebar.project")
+            try await clickNav("sidebar.todos")
+            let todos = try headerTop("sidebar.todos")
+            let emptyBitmap = emptyHost.bitmapImageRepForCachingDisplay(in: emptyHost.bounds)!
+            emptyHost.cacheDisplay(in: emptyHost.bounds, to: emptyBitmap)
+            try emptyBitmap.representation(using: .png, properties: [:])!
+                .write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-empty-todo-\(language).png"))
+            precondition(abs(todos.top - project.top) <= headerTolerance,
+                         "empty TODOs header/add row must top-align with the Project header (±4pt): "
+                         + "\(todos.top) vs \(project.top) — project=\(project.boxes) todos=\(todos.boxes)")
+            innerSplit.setPosition(170, ofDividerAt: 0)
+            try await settle(emptyHost)
+            try await clickNav("sidebar.project")
+            let projectResized = try headerTop("sidebar.project")
+            try await clickNav("sidebar.todos")
+            let todosResized = try headerTop("sidebar.todos")
+            precondition(abs(todosResized.top - projectResized.top) <= headerTolerance,
+                         "header alignment must survive the divider resize (±4pt): "
+                         + "\(todosResized.top) vs \(projectResized.top) — project=\(projectResized.boxes) todos=\(todosResized.boxes)")
+            stage("empty TODOs header stays pane-top-aligned before/after divider resize")
+            await emptyWorkspace.close()
+        }
         await workspace.close()
     }
 }
@@ -222,6 +417,11 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
     (root / 'main.tex').write_text('\\documentclass{article}\n\\begin{document}\n\\section{Test}\n% TODO: Review this section\n\\end{document}\n')
     (root / 'other').mkdir()
     (root / 'other/main.tex').write_text('Other document.\n')
+    # Independent TODO-free project — the root fixture carries one TODO,
+    # so an empty-todos pane needs its own root.
+    (root / 'empty').mkdir()
+    (root / 'empty/plain.tex').write_text(
+        '\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nPlain.\n\\end{document}\n')
     for i in range(40):
         (root / f'zfile_{i:02d}.tex').write_text('Chapter.\n')
     app_main = repo / 'Mac/Sources/AppShell/PitexApp.swift'
@@ -251,7 +451,9 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
                             '--stdout', str(out_log), '--stderr', str(err_log),
                             '--env', 'PI_AGENT_PATH=/usr/bin/false',
                             '--env', f'PI_CODING_AGENT_DIR={root / "pi"}',
-                            str(app), '--args', str(root), language,
+                            '--env', f'PITEX_SIDEBAR_ROOT={root}',
+                            '--env', f'PITEX_SIDEBAR_LANG={language}',
+                            str(app), '--args',
                             '-AppleLanguages', f'({language})'],
                            env=env, check=True, timeout=60)
         finally:

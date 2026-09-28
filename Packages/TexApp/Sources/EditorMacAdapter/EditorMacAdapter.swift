@@ -337,18 +337,28 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
 
     /// The native completion popup's candidate query after `complete:`
     /// resolves `rangeForUserCompletion`. The shared context detector owns
-    /// the candidate list; `words` is the fallback for plain text.
+    /// the candidate list; `words` is the fallback only when no source is
+    /// attached at all (plain native complete), never when the source
+    /// reports no context or zero matches — dictionary English must not
+    /// leak into unknown TeX prefixes.
     public func textView(
         _ textView: NSTextView,
         completions words: [String],
         forPartialWordRange charRange: NSRange,
         indexOfSelectedItem index: UnsafeMutablePointer<Int>?
     ) -> [String] {
+        // -1 = no pre-selected item. AppKit's default 0 provisionally
+        // inserts the first candidate's suffix as selected text, which is
+        // what re-typed \in becoming \include was. With nothing selected
+        // the popup is a passive list: typing/Backspace/Esc stay literal
+        // until the user picks a candidate.
+        index?.pointee = -1
         let caret = min(
             textView.selectedRange().location + textView.selectedRange().length,
             (textView.string as NSString).length
         )
-        return completionSource?(textView.string, caret)?.candidates ?? words
+        guard let completionSource else { return words }
+        return completionSource(textView.string, caret)?.candidates ?? []
     }
 
     /// Shows the native completion popup when the caret sits in a
@@ -360,8 +370,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     }
 
     /// Debounced so the popup follows typing without re-evaluating the
-    /// context on every keystroke. While the popup is open the partial
-    /// completion is marked text, which suppresses retriggering.
+    /// context on every keystroke.
     private var completionTriggerTask: Task<Void, Never>?
 
     private func scheduleCompletionTrigger() {
