@@ -3,6 +3,21 @@ import EditorMacAdapter
 import LanguageCore
 import SwiftUI
 
+/// The editor's scroll view. `tile()` is AppKit's one relayout pass for
+/// every chrome change — clip-view resizes, but also find-bar show/hide and
+/// its Replace-height growth, which never touch the clip view's frame and
+/// therefore never reach the overlays' frame observers.
+final class EditorScrollView: NSScrollView {
+    /// Runs at the end of each `tile()` — the container uses it to
+    /// re-anchor the gutter/minimap/chip/ghost overlays to the new chrome.
+    var onTile: (@MainActor () -> Void)?
+
+    override func tile() {
+        super.tile()
+        MainActor.assumeIsolated { onTile?() }
+    }
+}
+
 struct EditorContainerView: NSViewRepresentable {
     let adapter: EditorMacAdapter
     var minimapVisible = true
@@ -44,7 +59,7 @@ struct EditorContainerView: NSViewRepresentable {
         textView.setAccessibilityIdentifier("pitex.editor.text")
         textView.setAccessibilityLabel(String(localized: "editor.title"))
 
-        let scrollView = NSScrollView()
+        let scrollView = EditorScrollView(frame: .zero)
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -95,6 +110,15 @@ struct EditorContainerView: NSViewRepresentable {
         let ghost = GhostCompletionOverlayView(textView: textView, scrollView: scrollView)
         scrollView.addSubview(ghost)
         context.coordinator.ghost = ghost
+        // Showing/hiding the find bar (and its Replace-height growth)
+        // retiles without moving the clip view's frame — re-anchor every
+        // overlay so none of them covers the bar.
+        scrollView.onTile = { [weak gutter, weak minimap, weak chips, weak ghost] in
+            gutter?.reposition()
+            minimap?.reposition()
+            chips?.reposition()
+            ghost?.reposition()
+        }
         completion?.overlay = ghost
         context.coordinator.completion = completion
         context.coordinator.ghostMonitor = NSEvent.addLocalMonitorForEvents(
@@ -457,9 +481,9 @@ final class LineNumberGutterView: NSView {
         return cachedLineStarts
     }
 
-    private func reposition() {
+    func reposition() {
         guard let scrollView else { return }
-        frame = scrollView.contentView.frame
+        frame = scrollView.editorOverlayViewport()
         frame.size.width = Self.width
         needsDisplay = true
     }
@@ -658,9 +682,9 @@ final class MinimapOverlayView: NSView {
 
     deinit { observers.forEach { NotificationCenter.default.removeObserver($0) } }
 
-    private func reposition() {
+    func reposition() {
         guard let scrollView else { return }
-        let viewport = scrollView.contentView.frame.insetBy(dx: 8, dy: 8)
+        let viewport = scrollView.editorOverlayViewport().insetBy(dx: 8, dy: 8)
         let width = min(72, max(viewport.width, 0))
         frame = NSRect(x: viewport.maxX - width, y: viewport.minY,
                        width: width, height: max(viewport.height, 0))
@@ -749,6 +773,31 @@ final class MinimapOverlayView: NSView {
     }
 }
 
+extension NSScrollView {
+    /// The region editor overlays (gutter, minimap, chips, ghost) may cover:
+    /// the clip view's frame minus any strip the find bar occupies, all in
+    /// scroll-view coordinates. Whether AppKit shrinks the clip view for the
+    /// bar or floats it over content differs by OS version — trimming by the
+    /// real intersection never double-insets either way.
+    func editorOverlayViewport() -> NSRect {
+        let rect = contentView.frame
+        guard isFindBarVisible, let bar = findBarView else { return rect }
+        let strip = rect.intersection(convert(bar.bounds, from: bar))
+        guard !strip.isNull, strip.height > 0 else { return rect }
+        // The bar is a full-width strip abutting one vertical edge (visual
+        // top or bottom depending on the OS's flippedness); keep the larger
+        // of the two abutting remainders.
+        let above = max(rect.maxY - strip.maxY, 0)
+        let below = max(strip.minY - rect.minY, 0)
+        if above >= below {
+            return NSRect(x: rect.minX, y: strip.maxY,
+                          width: rect.width, height: above)
+        }
+        return NSRect(x: rect.minX, y: rect.minY,
+                      width: rect.width, height: below)
+    }
+}
+
 /// Ghost-text layer for inline AI completion — a translucent suggestion
 /// drawn at the caret glyph, Copilot-style. A plain scroll-view subview
 /// like the gutter/minimap; it never intercepts clicks (`hitTest` → nil).
@@ -794,9 +843,9 @@ final class GhostCompletionOverlayView: NSView {
 
     deinit { observers.forEach { NotificationCenter.default.removeObserver($0) } }
 
-    private func reposition() {
+    func reposition() {
         guard let scrollView else { return }
-        frame = scrollView.contentView.frame
+        frame = scrollView.editorOverlayViewport()
         needsDisplay = true
     }
 

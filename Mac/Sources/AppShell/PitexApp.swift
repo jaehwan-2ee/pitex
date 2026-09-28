@@ -175,6 +175,10 @@ final class WorkspaceModel: ObservableObject {
         didSet { rebuildProjectTree() }
     }
     @Published private(set) var openDocuments: [URL] = []
+    /// Per-document caret + scroll position restored on re-activation —
+    /// each activation rebuilds the editor adapter, so positions are
+    /// snapshotted here. Keyed by the standardized URL like pendingWrites.
+    private var editorViewStates: [URL: EditorMacAdapter.ViewState] = [:]
     @Published private(set) var activeDocumentURL: URL?
     /// Editor↔preview scroll channel for the Markdown web view — created
     /// once per workspace so the editor and inspector sides meet.
@@ -376,9 +380,36 @@ final class WorkspaceModel: ObservableObject {
     /// Finder open routed here can bring it forward.
     weak var window: NSWindow? {
         didSet {
+            // Weak + non-published: publish the attachment so the menu's
+            // Close gate re-evaluates — deferred one actor turn because
+            // WindowReader calls this inside SwiftUI's view update.
+            if oldValue !== window {
+                Task { @MainActor [weak self] in self?.objectWillChange.send() }
+            }
             window?.title = projectURL?.lastPathComponent ?? "Pitex"
             window?.subtitle = remote?.statusText ?? ""
+            // A routed open may have asked for fronting before the native
+            // window existed — finish the job on attachment.
+            if presentOnAttach, window != nil { present() }
         }
+    }
+    /// Set by `present()` while no NSWindow is attached yet (a window just
+    /// created by `openWindow(value:)`); consumed by the assignment above.
+    private var presentOnAttach = false
+
+    /// Brings this workspace's window and the app forward. An open event
+    /// can arrive while the app is inactive — ordering a window front
+    /// alone then leaves it behind the frontmost app until a Dock click.
+    func present() {
+        guard let window else {
+            presentOnAttach = true
+            return
+        }
+        presentOnAttach = false
+        NSApp.unhide(nil)
+        NSApp.activate()
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
     }
 
     /// True when `url` is this window's project folder or lies inside it.
@@ -397,8 +428,7 @@ final class WorkspaceModel: ObservableObject {
     /// Brings this window forward and shows `url` — a file of its project
     /// activates like a sidebar click; a folder just focuses the window.
     func reveal(_ url: URL) {
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        present()
         let url = url.standardizedFileURL
         if projectFiles.contains(url) {
             Task { await activateDocument(url) }
@@ -407,6 +437,10 @@ final class WorkspaceModel: ObservableObject {
         }
     }
     private var didRestoreSession = false
+    /// Set synchronously when this workspace's scene claims an external
+    /// file open — its own launch-time session restore must not race the
+    /// delivered file.
+    var claimedExternalOpen = false
     var canSave: Bool {
         documentSnapshot?.saveState == .dirty && capabilityLease?.access == .readWrite
     }
@@ -443,6 +477,98 @@ final class WorkspaceModel: ObservableObject {
             .compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         WorkspaceWindows.route(url, from: self)
+    }
+
+    // MARK: - Detached preview
+
+    /// The popped-out preview's window while `previewDetached` — a plain
+    /// NSWindow (not a scene), so it never registers as a workspace and
+    /// keeps rendering this model's retainedPDF/SyncTeX state.
+    private(set) var detachedPreviewWindow: NSWindow?
+    /// Held strongly while the window lives — NSWindow.delegate is weak.
+    private var detachedPreviewDelegate: DetachedPreviewWindowDelegate?
+    /// While true the inspector column renders nothing: the detached
+    /// window is the pane's single renderer.
+    @Published private(set) var previewDetached = false
+
+    /// Moves the preview pane into its own window over the same model —
+    /// build output, SyncTeX forward/inverse and markdown all keep working
+    /// because the detached `Preview` observes this same instance.
+    func detachPreview() {
+        guard detachedPreviewWindow == nil else { return }
+        let delegate = DetachedPreviewWindowDelegate(workspace: self)
+        let window = DetachedPreviewWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentMinSize = NSSize(width: 320, height: 360)
+        window.title = String(localized: "preview.title")
+        window.delegate = delegate
+        // Publishes the owning workspace to focused-scene commands as a
+        // fallback; the key-window lookup in AppCommands is what routes
+        // them for this plain NSWindow today.
+        window.contentView = NSHostingView(
+            rootView: Preview(workspace: self, detached: true).focusedSceneObject(self)
+        )
+        detachedPreviewWindow = window
+        detachedPreviewDelegate = delegate
+        previewDetached = true
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Returns the preview to the inspector — also ⌘W's behaviour while
+    /// the detached window is key, so the shortcut can't kill the project.
+    func attachPreview() {
+        closeDetachedPreview()
+    }
+
+    /// The detached window closed (its traffic-light button) — the pane
+    /// reattaches in the inspector.
+    func detachedPreviewDidClose(_ window: NSWindow) {
+        guard window === detachedPreviewWindow else { return }
+        detachedPreviewWindow = nil
+        detachedPreviewDelegate = nil
+        previewDetached = false
+        // The closed window can outlive this call through AppKit — drop
+        // its view so it can't retain the preview's workspace/observers.
+        window.delegate = nil
+        window.contentView = nil
+    }
+
+    /// Tears the detached window down; idempotent — the window cannot
+    /// outlive the model it renders (also runs on workspace close()).
+    private func closeDetachedPreview() {
+        let window = detachedPreviewWindow
+        detachedPreviewWindow = nil
+        detachedPreviewDelegate = nil
+        previewDetached = false
+        // Cleared before close() so windowWillClose's callback no-ops and
+        // a retained window can't keep the preview's observers alive.
+        window?.delegate = nil
+        window?.contentView = nil
+        window?.close()
+    }
+
+    /// Sidebar/footer/menu inspector toggle: while the pane lives in its
+    /// own window the toggle reattaches it — flipping a hidden inline
+    /// pane would do nothing the user can see.
+    func toggleInspectorPane() {
+        if previewDetached { attachPreview() } else { inspectorVisible.toggle() }
+    }
+
+    /// File → Close / ⌘W. While the detached preview is key it only
+    /// reattaches the pane; elsewhere keeps the old semantics (close the
+    /// project, or the window itself when it is empty).
+    func performCloseCommand() {
+        if let detached = detachedPreviewWindow, detached === NSApp.keyWindow {
+            attachPreview()
+        } else if hasProject {
+            Task { await close() }
+        } else {
+            window?.performClose(nil)
+        }
     }
 
     // MARK: - Recents & file operations
@@ -724,9 +850,17 @@ final class WorkspaceModel: ObservableObject {
             let appEnvironment = try await AppShell.make(documentSession: port)
             let snapshot = await session.snapshot()
             guard documentLoadGeneration == generation, projectURL == root else { return }
+            // Snapshot the outgoing editor before the swap — its adapter is
+            // discarded, so this is the last chance to keep its position.
+            if let outgoing = activeDocumentURL, let editor = environment?.editor {
+                editorViewStates[outgoing.standardizedFileURL] = editor.viewState
+            }
             environment = appEnvironment
             activeDocumentURL = url
             if !openDocuments.contains(url) { openDocuments.append(url) }
+            if let state = editorViewStates[url.standardizedFileURL] {
+                appEnvironment.editor.applyViewState(state)
+            }
             documentSnapshot = snapshot
             refreshBuildTarget()
             completion?.attach(to: appEnvironment.editor)
@@ -980,6 +1114,7 @@ final class WorkspaceModel: ObservableObject {
             _ = try? await registry.close(projectRoot: root, session: session)
         }
         openDocuments.removeAll { $0 == url }
+        editorViewStates.removeValue(forKey: url.standardizedFileURL)
         if activeDocumentURL == url {
             if let next = openDocuments.first {
                 activeDocumentURL = nil
@@ -1004,6 +1139,9 @@ final class WorkspaceModel: ObservableObject {
         liveCompileTask?.cancel()
         liveCompileTask = nil
         performLiveRequests(liveScheduler.invalidate())
+        // The popped-out preview renders this workspace's retained PDF —
+        // it must not outlive the project it belongs to.
+        closeDetachedPreview()
         for url in fileWatchers.keys { stopWatcher(for: url) }
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
@@ -1027,6 +1165,7 @@ final class WorkspaceModel: ObservableObject {
         projectURL = nil
         projectFiles = []
         openDocuments = []
+        editorViewStates.removeAll()
         activeDocumentURL = nil
         documentSnapshot = nil
         agent = nil
@@ -1338,6 +1477,13 @@ final class WorkspaceModel: ObservableObject {
                     "height": match.height,
                 ]
             )
+            // While detached, the destination lives in the popped-out
+            // window — restore and raise it (without stealing editor
+            // key) so the highlight is actually visible.
+            if let detached = detachedPreviewWindow {
+                if detached.isMiniaturized { detached.deminiaturize(nil) }
+                detached.orderFront(nil)
+            }
         } catch let error as SyncTeXQueryError {
             // A stale query's failure must not overwrite a newer
             // binding's status.
@@ -1393,6 +1539,10 @@ final class WorkspaceModel: ObservableObject {
                   projectURL == root,
                   syncTeXBinding == binding,
                   resolved == activeDocumentURL?.resolvingSymlinksInPath() else { return }
+            // The click may have come from the detached preview window —
+            // the target editor must come forward (de-miniaturized) to
+            // receive the jump and focus. No-op when already key.
+            present()
             jumpTo(line: match.source.line, column: match.source.column, highlight: settings.inverseSyncHighlight)
         } catch let error as SyncTeXQueryError {
             NSLog("[SyncTeX] inverse error: \(error)")
@@ -2148,10 +2298,16 @@ final class WorkspaceModel: ObservableObject {
     /// preference allows it. Called once from the root view's onAppear.
     func restoreSessionIfNeeded() {
         guard !didRestoreSession, !hasProject, settings.restoreSession,
+              !claimedExternalOpen,
               let recent = recentDocuments.first,
               FileManager.default.fileExists(atPath: recent.path) else { return }
         didRestoreSession = true
-        Task { await open(recent) }
+        Task {
+            // A scene claimed for a Finder open can deliver its URL after
+            // this window appeared — the explicit file beats the restore.
+            guard !self.claimedExternalOpen, !self.hasProject else { return }
+            await self.open(recent)
+        }
     }
 
     func persistCommands() {
@@ -2389,8 +2545,32 @@ private enum WorkspaceOpenError: LocalizedError {
 struct AppCommands: Commands {
     /// Menu commands act on the key window's workspace; with no window
     /// focused they fall back to an empty model, so only Open stays live.
+    /// Resolve the workspace from the native key window — including
+    /// detached previews — FIRST: the focused scene can lag focus changes.
     @FocusedObject private var focusedWorkspace: WorkspaceModel?
-    private var workspace: WorkspaceModel { focusedWorkspace ?? WorkspaceWindows.unfocused }
+    private var workspace: WorkspaceModel {
+        let key = NSApp.keyWindow
+        return WorkspaceWindows.workspace(for: key?.sheetParent ?? key)
+            ?? focusedWorkspace
+            ?? WorkspaceWindows.unfocused
+    }
+
+    var body: some Commands {
+        // Observe the resolved model so project, phase, and preview
+        // changes update command availability.
+        WorkspaceCommandContent(target: workspace)
+    }
+}
+
+/// The command body proper, observing the wrapper's resolved workspace.
+/// Item actions still resolve the key window's workspace at fire time —
+/// a stale focus snapshot must never aim ⌘W at the wrong project.
+private struct WorkspaceCommandContent: Commands {
+    @ObservedObject var target: WorkspaceModel
+    private var workspace: WorkspaceModel {
+        let key = NSApp.keyWindow
+        return WorkspaceWindows.workspace(for: key?.sheetParent ?? key) ?? target
+    }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -2424,16 +2604,11 @@ struct AppCommands: Commands {
                 .keyboardShortcut("p", modifiers: [.command])
                 .disabled(workspace.activeDocumentURL == nil)
             Divider()
-            // Closes the project; an empty window closes itself, like VS Code.
-            Button("command.close") {
-                if workspace.hasProject {
-                    Task { await workspace.close() }
-                } else {
-                    workspace.window?.performClose(nil)
-                }
-            }
+            // Closes the project; an empty window closes itself, like VS
+            // Code. While the detached preview is key it reattaches only.
+            Button("command.close") { workspace.performCloseCommand() }
                 .keyboardShortcut("w")
-                .disabled(workspace.window == nil)
+                .disabled(workspace.window == nil && workspace.detachedPreviewWindow == nil)
             Button("command.clear_session") { Task { await workspace.close() } }
                 .disabled(!workspace.hasProject)
         }
@@ -2480,7 +2655,7 @@ struct AppCommands: Commands {
             Button("command.toggle_assistant") { workspace.toggleAssistant() }
                 .keyboardShortcut("t", modifiers: [.command])
                 .disabled(!workspace.hasProject)
-            Button("command.toggle_inspector") { workspace.inspectorVisible.toggle() }
+            Button("command.toggle_inspector") { workspace.toggleInspectorPane() }
                 .keyboardShortcut("p", modifiers: [.command, .option])
                 .disabled(!workspace.hasProject || workspace.gitDiff != nil)
             Button("command.toggle_bottom") { workspace.bottomPanelVisible.toggle() }
@@ -2512,6 +2687,13 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Session restore is gated on the launch kind: the launch
+        // userInfo carries NSApplicationLaunchIsDefaultLaunchKey (0 when
+        // a file rode in with the launch, 1 on a plain launch).
+        let isDefaultLaunch =
+            (notification.userInfo?["NSApplicationLaunchIsDefaultLaunchKey"] as? NSNumber)?
+            .boolValue ?? true
+        MainActor.assumeIsolated { WorkspaceWindows.setDefaultLaunch(isDefaultLaunch) }
         refreshBundleIconCache()
         // The Pitex Agent installs itself into the app's own support folder
         // on first launch (and refreshes its bundled skills on every launch)
@@ -2535,6 +2717,9 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     /// root view's `onOpenURL`; this delegate remains the fallback for
     /// opens delivered before a scene exists (app launch).
     func application(_ application: NSApplication, open urls: [URL]) {
+        // Activation is cooperative — request it inside the incoming
+        // open-event handler, against the delivered user request.
+        NSApp.activate()
         Task { @MainActor in
             urls.forEach { WorkspaceWindows.route($0) }
         }
@@ -2581,10 +2766,9 @@ struct PitexApp: App {
         WindowGroup("Pitex", id: "workspace", for: WindowOpenRequest.self) { $request in
             WorkspaceWindow(initialURL: request?.url)
         }
-        // Opens route through WorkspaceWindows, so the scene itself must
-        // never spawn a window for an external event: an open scene claims
-        // it via the view-level handlesExternalEvents modifier below.
-        .handlesExternalEvents(matching: [])
+        // Opens route through WorkspaceWindows: an open scene claims the
+        // event via the view-level handlesExternalEvents below, and on a
+        // cold open SwiftUI may create a scene for the delivered file.
         .commands { AppCommands() }
     }
 }
@@ -2611,6 +2795,12 @@ private struct WorkspaceWindow: View {
             // delivered here as a URL and routed like an in-app open.
             .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
             .onOpenURL { url in
+                // Requested inside the incoming open-event handler — the
+                // event can arrive while the app is inactive. The claim
+                // is marked synchronously so this scene's own session
+                // restore cannot race the routed file on a cold launch.
+                NSApp.activate()
+                MainActor.assumeIsolated { workspace.claimedExternalOpen = true }
                 Task { @MainActor in WorkspaceWindows.route(url, from: workspace) }
             }
             .sheet(isPresented: $workspace.showingSettings) {
@@ -2628,10 +2818,13 @@ private struct WorkspaceWindow: View {
             }
             .onAppear {
                 WorkspaceWindows.register(workspace, openWindow: openWindow)
+                // A window created for a routed open must come forward
+                // even if the app was backgrounded when the event arrived.
+                if initialURL != nil { workspace.present() }
                 if let url = initialURL ?? WorkspaceWindows.takePending() {
                     Task { await workspace.open(url) }
                 } else {
-                    workspace.restoreSessionIfNeeded()
+                    WorkspaceWindows.requestInitialRestore(workspace)
                 }
             }
             .onDisappear { Task { await workspace.close() } }
@@ -2646,19 +2839,58 @@ enum WorkspaceWindows {
     private static var openWindow: OpenWindowAction?
     /// Finder opens that arrived before the first window appeared.
     private static var pending: [URL] = []
+    /// Whether this was a plain app launch — from the didFinishLaunching
+    /// userInfo launch key. nil until AppKit reports it, and a scene's
+    /// first onAppear can run before that.
+    private static var defaultLaunch: Bool?
+    /// The only scene ever allowed to restore a session: the first root
+    /// to appear with no file of its own. Held weakly so a discarded
+    /// candidate (file launch) cannot pin it.
+    private static var restoreCandidate: Entry?
+    private static var initialRestoreClaimed = false
     /// Menu target while no window is focused — never shown.
     static let unfocused = WorkspaceModel()
 
     static var live: [WorkspaceModel] { entries.compactMap { $0.workspace } }
 
-    static func register(_ workspace: WorkspaceModel, openWindow: OpenWindowAction) {
+    /// The workspace that owns `window` — its own hosting window or the
+    /// detached preview window. Lets menu commands reach the right model
+    /// while a non-scene window (the detached preview) is key.
+    static func workspace(for window: NSWindow?) -> WorkspaceModel? {
+        guard let window else { return nil }
+        return live.first { $0.window === window || $0.detachedPreviewWindow === window }
+    }
+
+    static func register(_ workspace: WorkspaceModel, openWindow: OpenWindowAction?) {
         entries.removeAll { $0.workspace == nil || $0.workspace === workspace }
         entries.append(Entry(workspace: workspace))
-        self.openWindow = openWindow
+        if let openWindow { self.openWindow = openWindow }
     }
 
     static func takePending() -> URL? {
         pending.isEmpty ? nil : pending.removeFirst()
+    }
+
+    /// Called once the launch kind is known. A default launch lets the
+    /// queued first scene restore its recents; a file launch discards
+    /// the candidate — the delivered URL is that scene's content.
+    static func setDefaultLaunch(_ isDefault: Bool) {
+        defaultLaunch = isDefault
+        guard isDefault else { restoreCandidate = nil; return }
+        restoreCandidate?.workspace?.restoreSessionIfNeeded()
+    }
+
+    /// The first empty root view offers itself for session restore —
+    /// once only, so later new windows can never trigger one. It
+    /// restores immediately when the launch is already known to be a
+    /// default launch; while the kind is unknown it queues and the
+    /// delegate's callback decides.
+    static func requestInitialRestore(_ workspace: WorkspaceModel) {
+        guard !initialRestoreClaimed else { return }
+        initialRestoreClaimed = true
+        guard defaultLaunch != false else { return }
+        restoreCandidate = Entry(workspace: workspace)
+        if defaultLaunch == true { workspace.restoreSessionIfNeeded() }
     }
 
     /// The window whose project contains `url` shows it; otherwise the
@@ -2674,13 +2906,33 @@ enum WorkspaceWindows {
         } else if let empty = candidates.first(where: { candidate in
             candidate.acceptsNewProject && windows.contains { $0 === candidate }
         }) {
-            empty.window?.makeKeyAndOrderFront(nil)
+            // The event can arrive while the app is inactive — present()
+            // activates it and fronts the window.
+            empty.present()
             Task { await empty.open(url) }
         } else if let openWindow {
+            NSApp.activate()
             openWindow(value: WindowOpenRequest(url: url))
         } else {
             pending.append(url)
         }
+    }
+}
+
+/// The detached preview is an auxiliary window: it accepts key focus
+/// while an editor window remains main.
+private final class DetachedPreviewWindow: NSWindow {
+    override var canBecomeMain: Bool { false }
+}
+
+/// Reports the detached preview window's close to its workspace — a
+/// plain NSWindow has no scene machinery to route it through.
+private final class DetachedPreviewWindowDelegate: NSObject, NSWindowDelegate {
+    weak var workspace: WorkspaceModel?
+    init(workspace: WorkspaceModel) { self.workspace = workspace }
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        workspace?.detachedPreviewDidClose(window)
     }
 }
 

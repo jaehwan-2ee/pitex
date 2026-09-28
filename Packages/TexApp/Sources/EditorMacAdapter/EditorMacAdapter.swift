@@ -28,6 +28,10 @@ private final class SessionTextView: NSTextView {
 
     let sessionUndoManager = UndoManager()
     private var pendingReveal: (range: NSRange, highlight: Bool)?
+    /// A scroll offset staged by tab-switch restoration. Deferred until the
+    /// view is mounted in a window with a sized clip view — before that,
+    /// clamping would collapse any offset back to the top.
+    private var pendingViewport: NSPoint?
 
     /// The UTF-16 range an in-flight completion replaces. Supplied by the
     /// adapter from the shared context detector so `\cite{a,k` completes
@@ -41,9 +45,25 @@ private final class SessionTextView: NSTextView {
     override var undoManager: UndoManager? { sessionUndoManager }
 
     func reveal(_ range: NSRange, highlight: Bool) {
+        // Explicit navigation (SyncTeX, outline, find results) always wins
+        // over a staged tab-switch viewport restore.
+        pendingViewport = nil
         setSelectedRange(range)
         pendingReveal = (range, highlight)
         revealIfReady()
+    }
+
+    /// Selection is applied now (clamped to the live text); the scroll
+    /// offset waits for mount. A pending explicit reveal takes precedence
+    /// and is left untouched.
+    func applyViewState(_ state: EditorMacAdapter.ViewState) {
+        guard pendingReveal == nil else { return }
+        let count = (string as NSString).length
+        let location = min(max(state.selection.location, 0), count)
+        setSelectedRange(NSRange(location: location,
+                                 length: min(max(state.selection.length, 0), count - location)))
+        pendingViewport = state.scrollOrigin
+        restoreViewportIfReady()
     }
 
     override func viewDidMoveToWindow() {
@@ -54,6 +74,24 @@ private final class SessionTextView: NSTextView {
     override func layout() {
         super.layout()
         revealIfReady()
+        restoreViewportIfReady()
+    }
+
+    /// Scrolls the clip view to the remembered offset — independently of
+    /// the selection, which may sit far away. Clamped into the laid-out
+    /// document bounds: the file may have shrunk or the window grown since
+    /// the offset was captured.
+    private func restoreViewportIfReady() {
+        guard let origin = pendingViewport, window != nil,
+              let scrollView = enclosingScrollView,
+              scrollView.contentSize.width > 0, scrollView.contentSize.height > 0,
+              let textContainer else { return }
+        pendingViewport = nil
+        layoutManager?.ensureLayout(for: textContainer)
+        let maxY = max(bounds.height - scrollView.contentView.bounds.height, 0)
+        let point = NSPoint(x: 0, y: min(max(origin.y, 0), maxY))
+        scrollView.contentView.scroll(to: point)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     private func revealIfReady() {
@@ -217,6 +255,35 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     /// old walk stopped at the same place.
     static func scrollTargetIndex(forLine line: Int, starts: [Int]) -> Int {
         starts[min(max(line, 0), starts.count - 1)]
+    }
+
+    /// One document's remembered editor position: caret/selection plus the
+    /// scroll offset — kept separate because a user may scroll far from the
+    /// caret, so restoring must not `scrollRangeToVisible` the selection.
+    public struct ViewState {
+        public var selection: NSRange
+        public var scrollOrigin: NSPoint
+        public init(selection: NSRange, scrollOrigin: NSPoint) {
+            self.selection = selection
+            self.scrollOrigin = scrollOrigin
+        }
+    }
+
+    /// The live editor position, for per-document retention across tab
+    /// switches. `.zero` origin when the view was never mounted.
+    public var viewState: ViewState {
+        ViewState(
+            selection: textView.selectedRange(),
+            scrollOrigin: textView.enclosingScrollView?.contentView.bounds.origin ?? .zero
+        )
+    }
+
+    /// Restores a remembered position: the selection applies immediately
+    /// (clamped to the live text); the scroll offset is staged until the
+    /// view is mounted and laid out. A pending or later explicit
+    /// `revealSelection` cancels the staged offset — navigation wins.
+    public func applyViewState(_ state: ViewState) {
+        sessionTextView.applyViewState(state)
     }
 
     /// A newly activated document may not be mounted by SwiftUI yet.

@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "显示源代码";
 "preview.open_external" = "在默认 PDF 查看器中打开";
 "preview.download" = "保存 PDF 副本";
+"preview.detach" = "在单独窗口中打开预览";
+"preview.attach" = "将预览移回编辑器";
 "preview.markdown.unavailable" = "此构建不提供 Markdown 预览。";
 "preview.markdown.blocked_link" = "Pitex 不会从预览中打开可执行文件。";
 "preview.markdown.runtime_missing" = "Markdown 预览需要 Microsoft Edge WebView2 Runtime。请从 https://developer.microsoft.com/microsoft-edge/webview2/ 安装并重启 Pitex。";
