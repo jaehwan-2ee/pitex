@@ -175,6 +175,10 @@ final class WorkspaceModel: ObservableObject {
         didSet { rebuildProjectTree() }
     }
     @Published private(set) var openDocuments: [URL] = []
+    /// Per-document caret + scroll position restored on re-activation —
+    /// each activation rebuilds the editor adapter, so positions are
+    /// snapshotted here. Keyed by the standardized URL like pendingWrites.
+    private var editorViewStates: [URL: EditorMacAdapter.ViewState] = [:]
     @Published private(set) var activeDocumentURL: URL?
     /// Editor↔preview scroll channel for the Markdown web view — created
     /// once per workspace so the editor and inspector sides meet.
@@ -836,9 +840,17 @@ final class WorkspaceModel: ObservableObject {
             let appEnvironment = try await AppShell.make(documentSession: port)
             let snapshot = await session.snapshot()
             guard documentLoadGeneration == generation, projectURL == root else { return }
+            // Snapshot the outgoing editor before the swap — its adapter is
+            // discarded, so this is the last chance to keep its position.
+            if let outgoing = activeDocumentURL, let editor = environment?.editor {
+                editorViewStates[outgoing.standardizedFileURL] = editor.viewState
+            }
             environment = appEnvironment
             activeDocumentURL = url
             if !openDocuments.contains(url) { openDocuments.append(url) }
+            if let state = editorViewStates[url.standardizedFileURL] {
+                appEnvironment.editor.applyViewState(state)
+            }
             documentSnapshot = snapshot
             refreshBuildTarget()
             completion?.attach(to: appEnvironment.editor)
@@ -1092,6 +1104,7 @@ final class WorkspaceModel: ObservableObject {
             _ = try? await registry.close(projectRoot: root, session: session)
         }
         openDocuments.removeAll { $0 == url }
+        editorViewStates.removeValue(forKey: url.standardizedFileURL)
         if activeDocumentURL == url {
             if let next = openDocuments.first {
                 activeDocumentURL = nil
@@ -1142,6 +1155,7 @@ final class WorkspaceModel: ObservableObject {
         projectURL = nil
         projectFiles = []
         openDocuments = []
+        editorViewStates.removeAll()
         activeDocumentURL = nil
         documentSnapshot = nil
         agent = nil

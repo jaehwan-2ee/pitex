@@ -541,9 +541,9 @@ final class FoldChipOverlayView: NSView {
     deinit { observers.forEach { NotificationCenter.default.removeObserver($0) } }
 
     /// Covers the document viewport; `hitTest` limits interaction to chips.
-    private func reposition() {
+    func reposition() {
         guard let scrollView else { return }
-        frame = scrollView.contentView.frame
+        frame = scrollView.editorOverlayViewport()
         needsDisplay = true
     }
 
