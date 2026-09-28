@@ -1,0 +1,20 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 64,96-97,105,107,109-117,135,145-146,151,153-160
+Tools/check-external-open.py
+  h_d73c695d83f4a7 5-11,39-50,62-65,81-106,290-292,294-310,312,315,319,329-389
+Tools/check-find-bar.py
+  h_d73c695d83f4a7 1-195
+Tools/check-workspace-navigation.py
+  h_d73c695d83f4a7 11,23,87-92,124,212-292,467-468
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd20b91e9bb742d0cc434e7fc1c1a72f139a9793",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
