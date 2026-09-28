@@ -1,0 +1,16 @@
+Tools/check-external-open.py
+  h_d73c695d83f4a7 128-129,133-142,154,158,223
+Tools/check-workspace-navigation.py
+  h_d73c695d83f4a7 261-270,272-278,295,309,312,319
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c496e3a703e8fb40a5da63bacb39e58805f97dde",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
