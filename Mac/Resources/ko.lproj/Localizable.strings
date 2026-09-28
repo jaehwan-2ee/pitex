@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "소스 보기";
 "preview.open_external" = "기본 PDF 뷰어에서 열기";
 "preview.download" = "PDF 사본 저장";
+"preview.detach" = "별도 창에서 미리보기 열기";
+"preview.attach" = "미리보기를 편집기로 되돌리기";
 "preview.markdown.unavailable" = "이 빌드에서는 Markdown 미리보기를 사용할 수 없습니다.";
 "preview.markdown.blocked_link" = "Pitex는 미리보기에서 실행 파일을 열지 않습니다.";
 "preview.markdown.runtime_missing" = "Markdown 미리보기에는 Microsoft Edge WebView2 Runtime이 필요합니다. https://developer.microsoft.com/microsoft-edge/webview2/ 에서 설치한 후 Pitex를 다시 시작하세요.";

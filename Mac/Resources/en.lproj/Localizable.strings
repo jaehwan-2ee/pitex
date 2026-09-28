@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "Show Source";
 "preview.open_external" = "Open in Default PDF Viewer";
 "preview.download" = "Save a Copy of the PDF";
+"preview.detach" = "Open Preview in a Separate Window";
+"preview.attach" = "Move Preview Back into the Editor";
 "preview.markdown.unavailable" = "Markdown preview isn't available in this build.";
 "preview.markdown.blocked_link" = "Pitex won't open executable files from the preview.";
 "preview.markdown.runtime_missing" = "Markdown preview needs the Microsoft Edge WebView2 Runtime. Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and restart Pitex.";

@@ -14,9 +14,13 @@ struct Preview: View {
     @ObservedObject private var appearance = AppearanceSettings.shared
     /// The Markdown toolbar's Download reaches the live web view through it.
     @State private var markdownExport = MarkdownPDFExport()
+    /// True inside the popped-out window — the toolbar's third button then
+    /// offers Reattach instead of Detach.
+    private let detached: Bool
 
-    init(workspace: WorkspaceModel) {
+    init(workspace: WorkspaceModel, detached: Bool = false) {
         self.workspace = workspace
+        self.detached = detached
         _settings = ObservedObject(wrappedValue: workspace.settings)
     }
 
@@ -115,6 +119,14 @@ struct Preview: View {
                     .buttonStyle(.borderless)
                     .help(String(localized: "preview.download"))
                     .accessibilityIdentifier("pitex.pdf.download")
+                    Button {
+                        detached ? workspace.attachPreview() : workspace.detachPreview()
+                    } label: {
+                        Image(systemName: detached ? "pip.exit" : "pip.enter")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(String(localized: detached ? "preview.attach" : "preview.detach"))
+                    .accessibilityIdentifier(detached ? "pitex.pdf.attach" : "pitex.pdf.detach")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)

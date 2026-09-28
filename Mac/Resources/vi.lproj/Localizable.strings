@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "Hiển thị mã nguồn";
 "preview.open_external" = "Mở trong trình xem PDF mặc định";
 "preview.download" = "Lưu một bản sao PDF";
+"preview.detach" = "Mở bản xem trước trong cửa sổ riêng";
+"preview.attach" = "Đưa bản xem trước về lại trình soạn thảo";
 "preview.markdown.unavailable" = "Bản dựng này không có xem trước Markdown.";
 "preview.markdown.blocked_link" = "Pitex sẽ không mở tệp thực thi từ bản xem trước.";
 "preview.markdown.runtime_missing" = "Xem trước Markdown cần Microsoft Edge WebView2 Runtime. Cài đặt từ https://developer.microsoft.com/microsoft-edge/webview2/ rồi khởi động lại Pitex.";

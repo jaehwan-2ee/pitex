@@ -97,14 +97,18 @@ struct WorkspaceView: View {
         HSplitView {
             if inspectorOnLeft {
                 // A commit diff keeps the PDF inspector closed — the pane
-                // cannot be opened while the diff is up.
-                if workspace.inspectorVisible && workspace.gitDiff == nil { inspectorColumn }
+                // cannot be opened while the diff is up. A detached pane
+                // lives in its own window; the column must not render a
+                // second copy here.
+                if workspace.inspectorVisible && workspace.gitDiff == nil
+                    && !workspace.previewDetached { inspectorColumn }
                 centerColumn
                 if workspace.sidebarVisible { sidebarColumn }
             } else {
                 if workspace.sidebarVisible { sidebarColumn }
                 centerColumn
-                if workspace.inspectorVisible && workspace.gitDiff == nil { inspectorColumn }
+                if workspace.inspectorVisible && workspace.gitDiff == nil
+                    && !workspace.previewDetached { inspectorColumn }
             }
         }
         .accessibilityIdentifier("pitex.workspace.split")
@@ -432,11 +436,12 @@ struct WorkspaceView: View {
                 Image(systemName: "arrow.left.and.right")
             }
             .help(String(localized: "editor.flip_panels"))
-            Button { workspace.inspectorVisible.toggle() } label: {
+            Button { workspace.toggleInspectorPane() } label: {
                 Image(systemName: "sidebar.right")
             }
             .disabled(workspace.gitDiff != nil)
-            .help(String(localized: workspace.inspectorVisible ? "editor.hide_inspector" : "editor.show_inspector"))
+            .help(String(localized: workspace.inspectorVisible && !workspace.previewDetached
+                         ? "editor.hide_inspector" : "editor.show_inspector"))
             if let path = workspace.activeDocumentRelativePath {
                 Text(verbatim: path)
                     .lineLimit(1)
@@ -502,12 +507,13 @@ struct WorkspaceView: View {
             .accessibilityIdentifier("pitex.toolbar.open")
 
             Button {
-                workspace.inspectorVisible.toggle()
+                workspace.toggleInspectorPane()
             } label: {
                 Label("preview.title", systemImage: "doc.richtext")
             }
             .disabled(workspace.gitDiff != nil)
-            .help(String(localized: workspace.inspectorVisible ? "editor.hide_inspector" : "editor.show_inspector"))
+            .help(String(localized: workspace.inspectorVisible && !workspace.previewDetached
+                         ? "editor.hide_inspector" : "editor.show_inspector"))
             .accessibilityIdentifier("pitex.toolbar.pdf")
 
             Button {

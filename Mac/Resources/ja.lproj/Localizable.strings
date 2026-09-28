@@ -40,6 +40,8 @@
 "preview.synctex_inverse" = "ソースを表示";
 "preview.open_external" = "デフォルトのPDFビューアで開く";
 "preview.download" = "PDFのコピーを保存";
+"preview.detach" = "プレビューを別ウインドウで開く";
+"preview.attach" = "プレビューをエディタに戻す";
 "preview.markdown.unavailable" = "このビルドではMarkdownプレビューを利用できません。";
 "preview.markdown.blocked_link" = "Pitexはプレビューから実行ファイルを開きません。";
 "preview.markdown.runtime_missing" = "Markdownプレビューには Microsoft Edge WebView2 Runtime が必要です。https://developer.microsoft.com/microsoft-edge/webview2/ からインストールして、Pitex を再起動してください。";
