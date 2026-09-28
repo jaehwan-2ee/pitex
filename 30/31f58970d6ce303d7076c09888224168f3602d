@@ -1,0 +1,16 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 120-123
+Tools/check-external-open.py
+  h_d73c695d83f4a7 28-31,36,39-42,44,65,69,211-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3031f58970d6ce303d7076c09888224168f3602d",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
