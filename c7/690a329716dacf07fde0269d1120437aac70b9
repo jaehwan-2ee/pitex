@@ -1,0 +1,18 @@
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 494,2740-2742,2862-2869
+Tools/check-external-open.py
+  h_d73c695d83f4a7 214-219,221-223,273-294,390-393,414
+Tools/check-workspace-navigation.py
+  h_d73c695d83f4a7 369-373,378,380-389
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7690a329716dacf07fde0269d1120437aac70b9",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
