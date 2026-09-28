@@ -221,11 +221,11 @@ enum LaunchFlag {
         func focusDetached() async -> NSWindow? {
             if workspaceA.detachedPreviewWindow == nil {
                 workspaceA.detachPreview()
-                guard await until({ workspaceA.detachedPreviewWindow != nil }) else { return nil }
+                guard await until(20, { workspaceA.detachedPreviewWindow != nil }) else { return nil }
             }
             let window = workspaceA.detachedPreviewWindow!
             window.makeKeyAndOrderFront(nil)
-            guard await until({ NSApp.keyWindow === window }) else { return nil }
+            guard await until(20, { NSApp.keyWindow === window }) else { return nil }
             return window
         }
         print("[diag] key=\(NSApp.keyWindow?.title ?? "nil") main=\(NSApp.mainWindow?.title ?? "nil")")
