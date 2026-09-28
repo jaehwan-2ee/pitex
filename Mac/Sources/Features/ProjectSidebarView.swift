@@ -267,7 +267,7 @@ struct ProjectSidebarView: View {
                 .listStyle(.plain)
             }
         }
-        .frame(maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .accessibilityIdentifier("pitex.sidebar.todos")
     }
 
