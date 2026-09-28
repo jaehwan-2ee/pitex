@@ -9,6 +9,8 @@ minimum and that real divider drags survive tab switches, hide/show, and the
 mirrored layout — then checks the empty TODOs pane keeps its header row
 pinned to the pane top across the inner divider resize. Fixture path and
 language arrive through --env; naked argv is only -AppleLanguages.
+Set PITEX_SIDEBAR_TEXT_BACKEND=ax to exercise the accessibility path even
+on a runner where Vision works; all the same acceptance assertions run.
 """
 import os
 from pathlib import Path
@@ -18,7 +20,65 @@ import subprocess
 import sys
 import tempfile
 
+# AppKit exposes these selectors on objects that need not formally adopt the
+# complete NSAccessibility protocol (including SwiftUI's virtual elements).
+# Keep dispatch in Objective-C: respondsToSelector checks capability, and the
+# SDK declaration supplies the correct NSRect/BOOL ABI without unsafeBitCast.
+ax_header = r'''
+#import <AppKit/AppKit.h>
+NS_ASSUME_NONNULL_BEGIN
+NSDictionary<NSString *, id> *PitexAXRead(id element);
+void PitexAXCheckBridge(void);
+NS_ASSUME_NONNULL_END
+'''
+ax_source = r'''
+#import "SidebarAX.h"
+
+NSDictionary<NSString *, id> *PitexAXRead(id element) {
+    id<NSAccessibility> ax = (id<NSAccessibility>)element;
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    result[@"class"] = NSStringFromClass([element class]);
+    result[@"conforms"] = @([element conformsToProtocol:@protocol(NSAccessibility)]);
+    if ([ax respondsToSelector:@selector(accessibilityFrame)])
+        result[@"frame"] = [NSValue valueWithRect:[ax accessibilityFrame]];
+    if ([ax respondsToSelector:@selector(accessibilityRole)])
+        result[@"role"] = [ax accessibilityRole];
+    if ([ax respondsToSelector:@selector(accessibilityLabel)])
+        result[@"label"] = [ax accessibilityLabel];
+    if ([ax respondsToSelector:@selector(accessibilityValue)])
+        result[@"value"] = [ax accessibilityValue];
+    if ([ax respondsToSelector:@selector(accessibilityTitle)])
+        result[@"title"] = [ax accessibilityTitle];
+    if ([ax respondsToSelector:@selector(accessibilityChildren)])
+        result[@"children"] = [ax accessibilityChildren] ?: @[];
+    return result;
+}
+
+// Regression fixture: selectors are implemented, formal protocol is not.
+// This must work even when the old Swift conditional cast would reject it.
+@interface PitexAXInformalElement : NSObject
+@end
+@implementation PitexAXInformalElement
+- (NSRect)accessibilityFrame { return NSMakeRect(11, 23, 47, 19); }
+- (NSString *)accessibilityLabel { return @"Informal AX text"; }
+- (NSArray *)accessibilityChildren { return @[@"child sentinel"]; }
+@end
+
+void PitexAXCheckBridge(void) {
+    NSDictionary *node = PitexAXRead([PitexAXInformalElement new]);
+    NSCAssert(![node[@"conforms"] boolValue], @"Fixture must not adopt NSAccessibility");
+    NSCAssert(NSEqualRects([node[@"frame"] rectValue], NSMakeRect(11, 23, 47, 19)),
+              @"AX frame dispatch must preserve the native struct return");
+    NSCAssert([node[@"label"] isEqual:@"Informal AX text"], @"Missing informal AX label");
+    NSCAssert([node[@"children"] isEqual:@[@"child sentinel"]], @"Missing informal AX children");
+    NSCAssert(PitexAXRead([NSObject new])[@"frame"] == nil, @"Absent selectors must be safe");
+}
+'''
+
 repo = Path(__file__).resolve().parent.parent
+text_backend = os.environ.get('PITEX_SIDEBAR_TEXT_BACKEND', 'auto')
+if text_backend not in ('auto', 'ax'):
+    sys.exit('PITEX_SIDEBAR_TEXT_BACKEND must be auto or ax')
 if len(sys.argv) > 1:
     products = Path(sys.argv[1]).resolve()
     includes = [products]
@@ -44,6 +104,7 @@ import Vision
 @main struct SidebarCheck {
     @MainActor static func main() {
         let app = NSApplication.shared
+        PitexAXCheckBridge()
         app.setActivationPolicy(.regular)
         Task { @MainActor in
             // Configuration travels through the environment — naked argv
@@ -124,7 +185,7 @@ import Vision
         /// Set when Vision's image path throws (the virtualized runner's
         /// missing scaler): snapshots switch to the real accessibility
         /// tree for the rest of the run.
-        var visionBroken = false
+        var visionBroken = ProcessInfo.processInfo.environment["PITEX_SIDEBAR_TEXT_BACKEND"] == "ax"
         let navTitles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
             Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
         }
@@ -147,35 +208,55 @@ import Vision
             }
             var rows: [(String, CGRect)] = []
             var visited = Set<ObjectIdentifier>()
+            var diagnostics: [String] = []
+            var emitted = Set<String>()
+            func append(_ text: String, _ frame: CGRect) {
+                let box = hostBox(frame)
+                let identity = "\(text)|\(NSStringFromRect(frame))"
+                if emitted.insert(identity).inserted { rows.append((text, box)) }
+            }
             func walk(_ element: Any, _ clip: CGRect) {
-                guard let ax = element as? any NSAccessibilityProtocol else { return }
-                guard visited.insert(ObjectIdentifier(ax as AnyObject)).inserted else { return }
-                let frame = ax.accessibilityFrame()
-                let childClip = ax.accessibilityRole() == .scrollArea
+                let object = element as AnyObject
+                guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+                let node = PitexAXRead(object)
+                let children = node["children"] as? [Any] ?? []
+                let frame = (node["frame"] as? NSValue)?.rectValue ?? .zero
+                let role = node["role"] as? String ?? "none"
+                if diagnostics.count < 16 {
+                    diagnostics.append("\(node["class"] ?? "?") conforms=\(node["conforms"] ?? "?") "
+                        + "role=\(role) frame=\(frame) children=\(children.count)")
+                }
+                let childClip = role == NSAccessibility.Role.scrollArea.rawValue
                     ? clip.intersection(frame)
                     : clip
                 let visible = frame.intersection(clip)
                 if !visible.isNull, visible.width > 0, visible.height > 0 {
                     var texts = Set<String>()
-                    for text in [ax.accessibilityLabel(), ax.accessibilityValue() as? String] {
+                    for key in ["label", "value", "title"] {
+                        let text = node[key] as? String
                         if let text, !text.isEmpty { texts.insert(text) }
                     }
                     for text in texts {
-                        rows.append((text, hostBox(visible)))
+                        append(text, visible)
                         // A label can fuse header and count ("TODOs 0")
                         // — emit a per-title token with the element's
                         // frame like the Vision path's substring boxes.
-                        for title in navTitles
-                            where text.range(of: title, options: .caseInsensitive) != nil {
-                            rows.append((title, hostBox(visible)))
+                        // Only accept a title followed by a numeric count;
+                        // "No TODOs" or a container summary is not a header.
+                        for title in navTitles where text.hasPrefix(title + " ") {
+                            if Int(text.dropFirst(title.count).trimmingCharacters(in: .whitespaces)) != nil {
+                                append(title, visible)
+                            }
                         }
                     }
                 }
-                for child in ax.accessibilityChildren() ?? [] { walk(child, childClip) }
+                for child in children { walk(child, childClip) }
             }
             walk(view, window.convertToScreen(view.convert(view.bounds, to: nil)))
-            print("[stage] ax rows=\(rows.count) sample=\(rows.prefix(8))")
+            print("[stage] ax nodes=\(visited.count) rows=\(rows.count) sample=\(rows.prefix(8))")
+            print("[stage] ax traversal: \(diagnostics.joined(separator: "\n"))")
             fflush(nil)
+            precondition(!rows.isEmpty, "AX returned no visible text; see selector/frame/children diagnostics above")
             return rows
         }
         /// Unfiltered host tokens — the Symbols palette lives right of
@@ -266,13 +347,18 @@ import Vision
             stage("tab \(title) selected")
         }
         // Exercise the native split view's resize path at two divider positions.
+        // AX may expose the same filename on a row and its text child;
+        // count distinct fixture filenames so this cannot inflate reveal.
+        func workspaceRows(_ rows: [(String, CGRect)]) -> Set<String> {
+            Set(rows.filter { $0.0.contains("zfile_") }.map(\.0))
+        }
         split.setPosition(420, ofDividerAt: 0)
         try await settle()
-        let before = try snapshot().filter { $0.0.contains("zfile_") }.count
+        let before = workspaceRows(try snapshot()).count
         split.setPosition(240, ofDividerAt: 0)
         try await settle()
         let after = try snapshot()
-        let afterCount = after.filter { $0.0.contains("zfile_") }.count
+        let afterCount = workspaceRows(after).count
         precondition(afterCount >= before + 5, "Resizing must reveal more Workspace rows: \(before) → \(afterCount)")
         precondition(!after.contains { $0.0.contains("(.)") }, "Workspace leaked duplicate-name folder suffix")
         let height = split.arrangedSubviews[0].frame.height
@@ -282,7 +368,7 @@ import Vision
             precondition(workspace.sidebarSection == .labels, "Lower tabs changed document structure selection")
             precondition(workspace.todoItems.count == 1)
         }
-        let visibleRows = try snapshot().filter { $0.0.contains("zfile_") }
+        let visibleRows = workspaceRows(try snapshot())
         precondition(visibleRows.count == afterCount, "Workspace viewport shrank after tab switching")
         stage("tab switches done; tint check next")
         print("PASS \(language): resized divider reveals \(before) → \(afterCount) rows; Workspace basenames; Project labels and split height retained")
@@ -353,6 +439,7 @@ import Vision
             let initial = try await placedWidth(170, host: realHost, trailing: false)
             precondition(initial != nil && abs(initial! - 170) <= 1,
                          "fresh window sidebar must open at the 170pt minimum, got \(initial as Any)")
+            stage("measured fresh sidebar before manual resize: \(initial!)pt")
             guard let outer = outerSplit(in: realHost), outer.arrangedSubviews.count >= 2 else {
                 preconditionFailure("real window produced no vertical split")
             }
@@ -409,6 +496,7 @@ import Vision
             let freshInitial = try await placedWidth(170, host: freshHost, trailing: true)
             precondition(freshInitial != nil && abs(freshInitial! - 170) <= 1,
                          "fresh mirrored sidebar must start at 170, got \(freshInitial as Any)")
+            stage("measured fresh mirrored sidebar before manual resize: \(freshInitial!)pt")
             await freshWorkspace.close()
             freshWindow.orderOut(nil)
             stage("real window: 170 initial, 230 survives tab change, hide/show + mirror restore")
@@ -493,7 +581,9 @@ import Vision
             precondition(abs(todosResized.top - projectResized.top) <= headerTolerance,
                          "header alignment must survive the divider resize (±4pt): "
                          + "\(todosResized.top) vs \(projectResized.top) — project=\(projectResized.boxes) todos=\(todosResized.boxes)")
-            stage("empty TODOs header stays pane-top-aligned before/after divider resize")
+            stage("empty TODOs header stays pane-top-aligned: "
+                + "delta=\(abs(todos.top - project.top) * hostHeight)pt before resize; "
+                + "delta=\(abs(todosResized.top - projectResized.top) * hostHeight)pt after resize")
             await emptyWorkspace.close()
         }
         await workspace.close()
@@ -530,8 +620,17 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
     source = root / 'Check.swift'
     # Keep the check in the same file as the private SymbolsPaletteView.
     source.write_text(workspace_view.read_text() + '\n' + check)
+    ax_bridge_header = root / 'SidebarAX.h'
+    ax_bridge_header.write_text(ax_header)
+    ax_bridge_source = root / 'SidebarAX.m'
+    ax_bridge_source.write_text(ax_source)
+    ax_bridge_object = root / 'SidebarAX.o'
+    subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-target', 'arm64-apple-macos15.0',
+                    '-Wall', '-Wextra', '-Werror', '-c', str(ax_bridge_source),
+                    '-o', str(ax_bridge_object)], check=True)
     executable = bundle / 'MacOS/check'
     subprocess.run(['xcrun', 'swiftc', '-parse-as-library', '-swift-version', '6',
+                    '-import-objc-header', str(ax_bridge_header), str(ax_bridge_object),
                     '-target', 'arm64-apple-macos15.0', *[arg for path in includes for arg in ['-I', str(path)]], str(source), str(stripped),
                     *[str(p) for p in (repo / 'Mac/Sources').rglob('*.swift') if p not in (app_main, workspace_view)],
                     *[str(p) for p in objects], '-o', str(executable)], check=True)
@@ -552,6 +651,7 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
                             '--env', f'PI_CODING_AGENT_DIR={root / "pi"}',
                             '--env', f'PITEX_SIDEBAR_ROOT={root}',
                             '--env', f'PITEX_SIDEBAR_LANG={language}',
+                            '--env', f'PITEX_SIDEBAR_TEXT_BACKEND={text_backend}',
                             str(app), '--args',
                             '-AppleLanguages', f'({language})'],
                            env=env, check=True, timeout=60)

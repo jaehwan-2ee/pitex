@@ -38,6 +38,20 @@ private final class SessionTextView: NSTextView {
     /// only `k` — NSTextView's word-boundary default would swallow `a,k`.
     var userCompletionRange: (() -> NSRange?)?
 
+    private(set) var isCompleting = false
+    var completionWillStart: (() -> Void)?
+
+    override func complete(_ sender: Any?) {
+        guard !isCompleting, !hasMarkedText() else { return }
+        completionWillStart?()
+        // AppKit tracks the popup synchronously. Candidate selection and
+        // Escape can emit didChangeText inside this call; they must not
+        // schedule another popup after the tracking loop returns.
+        isCompleting = true
+        defer { isCompleting = false }
+        super.complete(sender)
+    }
+
     override var rangeForUserCompletion: NSRange {
         userCompletionRange?() ?? super.rangeForUserCompletion
     }
@@ -170,6 +184,10 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
             else { return nil }
             return completionSource(nativeView.string, nativeView.selectedRange().location)?.range
         }
+        nativeView.completionWillStart = { [weak self] in
+            self?.completionTriggerTimer?.invalidate()
+            self?.completionTriggerTimer = nil
+        }
         // AppKit can change storage during Undo/Redo without notifying the
         // text-view delegate. Synchronize after the entire native group ends.
         for name in [Notification.Name.NSUndoManagerDidUndoChange, Notification.Name.NSUndoManagerDidRedoChange] {
@@ -178,7 +196,6 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, self.desiredText != self.textView.string else { return }
-                    self.pendingNativeMutation = nil
                     self.textDidChange(Notification(name: NSText.didChangeNotification, object: self.textView))
                 }
             })
@@ -306,18 +323,9 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         sessionTextView.sessionUndoManager
     }
 
-    private var pendingNativeMutation: DocumentMutation?
-
     public func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange,
                          replacementString: String?) -> Bool {
         sessionTextView.findController?.finder.noteClientStringWillChange()
-        if !isApplyingSessionSnapshot, !isSubmitting, let replacementString {
-            pendingNativeMutation = DocumentMutation(baseRevision: committed.revision,
-                range: DocumentTextRange(location: range.location, length: range.length),
-                replacement: replacementString)
-        } else {
-            pendingNativeMutation = nil
-        }
         return true
     }
 
@@ -371,16 +379,25 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
 
     /// Debounced so the popup follows typing without re-evaluating the
     /// context on every keystroke.
-    private var completionTriggerTask: Task<Void, Never>?
+    private var completionTriggerTimer: Timer?
 
     private func scheduleCompletionTrigger() {
-        completionTriggerTask?.cancel()
-        guard completionSource != nil else { return }
-        completionTriggerTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(200))
-            guard !Task.isCancelled, let self else { return }
-            self.presentCompletionIfContextual()
+        completionTriggerTimer?.invalidate()
+        completionTriggerTimer = nil
+        guard completionSource != nil, !sessionTextView.isCompleting else { return }
+        // complete: enters a native tracking loop. Calling it from a
+        // MainActor Task keeps that executor job on the stack while the
+        // popup is open, starving fresh tasks (including session acks).
+        // A run-loop callback leaves the concurrency executor available.
+        let timer = Timer(timeInterval: 0.2, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.completionTriggerTimer = nil
+                self.presentCompletionIfContextual()
+            }
         }
+        completionTriggerTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func presentCompletionIfContextual() {
@@ -396,12 +413,17 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         guard !isSubmitting, desiredText != committed.text else { return }
         isSubmitting = true
         let submittedText = desiredText
-        var mutation = pendingNativeMutation ?? DocumentMutation(
+        // shouldChangeTextIn is a proposal, not a record of the final
+        // storage edit. AppKit may coalesce edits, replace multiple ranges,
+        // or restore a provisional completion before didChangeText. Replay
+        // only the change actually present in the native buffer, otherwise
+        // its acknowledgement can delete unrelated text (including newlines).
+        let edit = Self.differingRange(from: committed.text, to: submittedText)
+        var mutation = DocumentMutation(
             baseRevision: committed.revision,
-            range: DocumentTextRange(location: 0, length: committed.text.utf16.count),
-            replacement: submittedText
+            range: DocumentTextRange(location: edit.range.location, length: edit.range.length),
+            replacement: edit.replacement
         )
-        pendingNativeMutation = nil
         let session = self.session
 
         Task { @MainActor [weak self, session] in
@@ -455,7 +477,10 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     /// live IME composition is discarded first so it cannot re-commit into
     /// the shifted text and double its syllables.
     private func apply(_ snapshot: DocumentSnapshot) {
-        pendingNativeMutation = nil
+        // A refresh may have captured this snapshot before a local submit
+        // completed during its await. Never roll the buffer or base revision
+        // backwards, even when the submit has already drained.
+        guard snapshot.revision >= committed.revision else { return }
         committed = snapshot
         desiredText = snapshot.text
         guard textView.string != snapshot.text else { return }
@@ -502,7 +527,8 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         var suffix = 0
         while suffix < oldUnits.count - prefix, suffix < newUnits.count - prefix,
               oldUnits[oldUnits.count - 1 - suffix] == newUnits[newUnits.count - 1 - suffix] { suffix += 1 }
-        if suffix > 0, UTF16.isLeadSurrogate(oldUnits[oldUnits.count - suffix - 1]) {
+        if suffix > 0, suffix < oldUnits.count,
+           UTF16.isLeadSurrogate(oldUnits[oldUnits.count - suffix - 1]) {
             suffix -= 1
         }
         let range = NSRange(location: prefix, length: oldUnits.count - prefix - suffix)

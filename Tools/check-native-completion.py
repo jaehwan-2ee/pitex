@@ -30,14 +30,16 @@ repo = Path(__file__).resolve().parent.parent
 products = Path(sys.argv[1]).resolve()
 check = r'''
 import AppKit
+import CoreGraphics
 import EditorMacAdapter
 import SwiftUI
 
-/// Counts every real NSTextView.complete(_:) invocation — proof the popup
-/// machinery actually engaged, not just that the data source was probed.
+/// Invocation counts diagnose reopenings. WindowServer visibility below
+/// independently proves that a popup was actually displayed.
 @MainActor enum CompleteRecorder {
     static var original: IMP?
     static var calls = 0
+    static var activeCalls = 0
 }
 
 /// Runs the stage list as chained one-shot timers. Each step's timer fires
@@ -156,6 +158,8 @@ import SwiftUI
         let record: CompleteIMP = { view, selector, sender in
             MainActor.assumeIsolated {
                 CompleteRecorder.calls += 1
+                CompleteRecorder.activeCalls += 1
+                defer { CompleteRecorder.activeCalls -= 1 }
                 print("[trace] complete: enter #\(CompleteRecorder.calls) "
                     + "tail='\(String(view.string.suffix(12)))'")
                 fflush(nil)
@@ -176,6 +180,32 @@ import SwiftUI
                 && innerSource?(probeCite, probeCite.utf16.count)?.candidates.contains("knuth84") == true
         }, "provider must load project labels and .bib keys")
         stage("provider ready; starting timer driver")
+
+        func visibleOwnedWindows() -> Set<CGWindowID> {
+            let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                  kCGNullWindowID) as? [[String: Any]] ?? []
+            return Set(info.compactMap { entry in
+                guard (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
+                      let number = entry[kCGWindowNumber as String] as? NSNumber,
+                      let bounds = entry[kCGWindowBounds as String] as? [String: Any],
+                      let width = bounds["Width"] as? NSNumber,
+                      let height = bounds["Height"] as? NSNumber,
+                      width.doubleValue > 5, height.doubleValue > 5 else { return nil }
+                return CGWindowID(number.uint32Value)
+            })
+        }
+        let baselineWindows = visibleOwnedWindows()
+        func popupVisible() -> Bool {
+            !visibleOwnedWindows().subtracting(baselineWindows).isEmpty
+        }
+        func requirePopup(_ label: String) {
+            require(CompleteRecorder.activeCalls == 1 && popupVisible(),
+                    "\(label): a real visible popup must be tracking, depth=\(CompleteRecorder.activeCalls)")
+        }
+        func requireClosed(_ label: String) {
+            require(CompleteRecorder.activeCalls == 0 && !popupVisible(),
+                    "\(label): popup must be closed, depth=\(CompleteRecorder.activeCalls)")
+        }
 
         func tail() -> String { String(textView.string.suffix(24)) }
         func literal(_ expected: String, _ label: String) {
@@ -218,6 +248,7 @@ import SwiftUI
             case "t": return (17, [])
             case "x": return (7, [])
             case "z": return (6, [])
+            case " ": return (49, [])
             default: return nil
             }
         }
@@ -238,6 +269,9 @@ import SwiftUI
 
         var callsBeforeUnknown = 0
         var callsBeforeIME = 0
+        var callsAfterDismiss = 0
+        var callsAfterAccept = 0
+        var heartbeat = 0
         var sessionPolls = 0
         let driver = CompletionDriver()
         func pollSession() {
@@ -246,7 +280,9 @@ import SwiftUI
                 print("PASS native completion: passive popup, literal typing, Esc restore, real accept")
                 print("CHECK_COMPLETE")
                 fflush(nil)
-                return
+                // Exit from the final timer callback, independently of a
+                // suspended async run() continuation or native tracking loop.
+                exit(0)
             }
             sessionPolls += 1
             require(sessionPolls <= 60,
@@ -264,15 +300,31 @@ import SwiftUI
                 require(lastCandidates?.contains("\\include") == true,
                         "\\ prefix must offer builtin commands, got \(String(describing: lastCandidates))")
                 literal("\\", "backslash")
+                requirePopup("automatic backslash")
                 stage("backslash: popup engaged, text stayed literal")
             }),
             // B: continue 'in' — two candidates, still literal.
-            (0.05, { type("in") }),
-            (0.4, {
+            (0.05, {
+                requirePopup("before prefix edit")
+                type("in")
+            }),
+            (0.1, {
+                literal("\\in", "prefix delivered while popup is open")
+                requirePopup("fresh heartbeat after prefix edit")
+                Task { @MainActor in
+                    requirePopup("heartbeat execution")
+                    heartbeat += 1
+                }
+            }),
+            (0.9, {
                 require(lastCandidates?.contains("\\include") == true
                         && lastCandidates?.contains("\\input") == true,
                         "\\in must offer include+input, got \(String(describing: lastCandidates))")
                 literal("\\in", "in-prefix")
+                requirePopup("automatic in-prefix")
+                require(heartbeat == 1, "a fresh MainActor job must run while the popup remains visible")
+                require(workspace.documentSnapshot?.text == textView.string,
+                        "prefix edit must reach documentSnapshot within 1s while popup remains visible")
                 stage("\\in stayed literal with multiple candidates")
             }),
             // C: backspace to '\', then 'x' — a zero-match prefix opens no
@@ -290,12 +342,20 @@ import SwiftUI
                         "zero candidates must not open the popup")
                 stage("\\x unknown prefix: no popup, no dictionary words")
             }),
+            (0.05, { key(96, chars: "\u{F708}", mods: [.function]) }),
+            (0.7, {
+                literal("\\x", "manual F5 unknown prefix")
+                requireClosed("manual F5 unknown prefix")
+                require(lastCandidates == [], "manual unknown prefix must not offer dictionary words")
+                callsBeforeUnknown = CompleteRecorder.calls
+            }),
             // D: single-candidate prefix also stays literal.
             (0.05, { key(backspace.code, chars: backspace.chars); type("doc") }),
             (0.4, {
                 require(lastCandidates == ["\\documentclass"],
                         "\\doc must offer only \\documentclass, got \(String(describing: lastCandidates))")
                 literal("\\doc", "single-candidate prefix")
+                requirePopup("singleton documentclass")
                 stage("\\doc single candidate stayed literal")
             }),
             // E: Down selects the candidate, Escape restores the original
@@ -306,21 +366,33 @@ import SwiftUI
                 key(down.code, chars: down.chars)
             }),
             (0.15, { key(escape.code, chars: escape.chars) }),
-            (0.3, { literal("\\doc", "Down+Escape must restore the original prefix") }),
-            (0.3, {
+            (0.1, {
+                literal("\\doc", "Down+Escape must restore the original prefix")
+                requireClosed("Escape")
+                callsAfterDismiss = CompleteRecorder.calls
+            }),
+            (0.7, {
                 literal("\\doc", "post-Escape debounce must not reinsert")
+                requireClosed("700ms after Escape")
+                require(CompleteRecorder.calls == callsAfterDismiss, "Escape must not reopen completion")
                 stage("Down+Escape restored \\doc; no reinsertion after debounce")
             }),
-            // F: positive opt-in — reopen via the public manual-complete
-            // API, then queued Down+Return accepts the candidate.
-            (0.05, { editor.requestCompletion() }),
-            (0.2, { key(down.code, chars: down.chars) }),
+            // F: actual native manual binding, then Down+Return accepts.
+            (0.05, { key(96, chars: "\u{F708}", mods: [.function]) }),
+            (0.2, { requirePopup("manual F5"); key(down.code, chars: down.chars) }),
             (0.1, { key(ret.code, chars: ret.chars) }),
             (0.4, {
                 literal("\\documentclass", "Down+Return must accept")
                 require(textView.selectedRange().location == (textView.string as NSString).length,
                         "caret must sit after the accepted completion")
                 stage("Down+Return accepted \\documentclass")
+                requireClosed("accepted documentclass")
+                callsAfterAccept = CompleteRecorder.calls
+            }),
+            (0.7, {
+                literal("\\documentclass", "700ms after acceptance")
+                requireClosed("700ms after acceptance")
+                require(CompleteRecorder.calls == callsAfterAccept, "acceptance must not reopen completion")
             }),
             // G: \ref{ — typed prefix stays literal with real label
             // candidates; a custom key is retained; unique key accepted.
@@ -345,7 +417,7 @@ import SwiftUI
                 require(lastCandidates == ["sec:intro"],
                         "\\ref{sec:i must offer only sec:intro, got \(String(describing: lastCandidates))")
                 literal("\\ref{sec:i", "unique ref prefix")
-                editor.requestCompletion()
+                requirePopup("automatic unique ref")
             }),
             (0.2, { key(down.code, chars: down.chars) }),
             (0.1, { key(ret.code, chars: ret.chars) }),
@@ -383,7 +455,7 @@ import SwiftUI
                 require(lastCandidates == ["knuth84"],
                         "\\cite{kn must offer knuth84, got \(String(describing: lastCandidates))")
                 literal("😀\\cite{kn", "cite after Unicode")
-                editor.requestCompletion()
+                requirePopup("automatic cite after Unicode")
             }),
             (0.2, { key(down.code, chars: down.chars) }),
             (0.1, { key(ret.code, chars: ret.chars) }),
@@ -393,7 +465,7 @@ import SwiftUI
                 require(lastCandidates == ["lamport94"],
                         "second cite key must offer lamport94, got \(String(describing: lastCandidates))")
                 literal("😀\\cite{knuth84,l", "multi-cite prefix")
-                editor.requestCompletion()
+                requirePopup("automatic second cite token")
             }),
             (0.2, { key(down.code, chars: down.chars) }),
             (0.1, { key(ret.code, chars: ret.chars) }),
@@ -421,10 +493,55 @@ import SwiftUI
                         "unmark must commit the literal text, tail '\(tail())'")
                 stage("IME marked text suppressed completion; commit stayed literal")
             }),
+            // Ordinary delimiters typed through an unselected automatic
+            // popup must be inserted literally, never accept its first row.
+            (0.05, { type("\n\\in") }),
+            (0.4, { requirePopup("before literal Return"); key(ret.code, chars: ret.chars) }),
+            (0.1, {
+                literal("\\in\n", "unselected Return")
+                requireClosed("unselected Return")
+                callsAfterDismiss = CompleteRecorder.calls
+            }),
+            (0.7, {
+                literal("\\in\n", "700ms after unselected Return")
+                requireClosed("700ms after unselected Return")
+                require(CompleteRecorder.calls == callsAfterDismiss, "literal Return must not reopen")
+            }),
+            (0.05, { type("\\in") }),
+            (0.4, { requirePopup("before literal space"); type(" ") }),
+            (0.1, {
+                literal("\\in ", "unselected space")
+                requireClosed("unselected space")
+                callsAfterDismiss = CompleteRecorder.calls
+            }),
+            (0.7, {
+                literal("\\in ", "700ms after unselected space")
+                requireClosed("700ms after unselected space")
+                require(CompleteRecorder.calls == callsAfterDismiss, "literal space must not reopen")
+            }),
+            (0.05, { type("\n\\in") }),
+            (0.4, { requirePopup("before literal brace"); type("{") }),
+            (0.1, {
+                literal("\\in{", "unselected brace")
+                requireClosed("unselected brace")
+                callsAfterDismiss = CompleteRecorder.calls
+            }),
+            (0.7, {
+                literal("\\in{", "700ms after unselected brace")
+                requireClosed("700ms after unselected brace")
+                require(CompleteRecorder.calls == callsAfterDismiss, "literal brace must not reopen")
+                stage("Return, space and brace stayed literal through unselected popups; no reopen")
+            }),
             // The session submit is async — poll until it lands or the
             // bound is hit.
             (0.3, { pollSession() }),
         ]
+        // Independent of MainActor progress and the timer chain.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            print("FAIL independent completion watchdog expired")
+            fflush(nil)
+            exit(1)
+        }
         driver.scheduleNext()
         // run() must not return while timers are pending — its defers would
         // tear down the window and restore the swizzle. The watchdog turns
@@ -482,7 +599,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-completion-", dir="/tmp") as dire
                         "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
                         "--env", f"PITEX_COMPLETION_FIXTURE={fixture}",
                         str(app)],
-                       check=True, timeout=180)
+                       check=True, timeout=120)
     finally:
         subprocess.run(["/usr/bin/pkill", "-f", str(app)], check=False)
         for log in (out_log, err_log):

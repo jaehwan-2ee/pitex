@@ -144,6 +144,9 @@ jobs:
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - name: Native editor mutation regression checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterMutationTests
       - name: Sidebar UI checks (English and Korean)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release
