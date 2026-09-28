@@ -1,0 +1,16 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 147-159
+Tools/check-native-completion.py
+  h_d73c695d83f4a7 41-42,45-56,175,178,181,185-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "39a6f24ff9cbb293003a7c354f4a3221ccd8551a",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
