@@ -48,7 +48,7 @@ import SwiftUI
 
     @MainActor static func run() async throws {
         func require(_ condition: Bool, _ message: String) {
-            guard condition() else { print("FAIL", message); fflush(nil); exit(1) }
+            guard condition else { print("FAIL", message); fflush(nil); exit(1) }
         }
         func stage(_ message: String) { print("[stage]", message); fflush(nil) }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
@@ -148,8 +148,8 @@ import SwiftUI
                 isARepeat: false, keyCode: code)!
             NSApp.sendEvent(event)
         }
-        let backspace = (code: UInt16(51), chars: "\u{7F}"), escape = (UInt16(53), "\u{1B}")
-        let down = (code: UInt16(125), chars: "\u{F701}"), ret = (UInt16(36), "\r")
+        let backspace = (code: UInt16(51), chars: "\u{7F}"), escape = (code: UInt16(53), chars: "\u{1B}")
+        let down = (code: UInt16(125), chars: "\u{F701}"), ret = (code: UInt16(36), chars: "\r")
 
         // Fresh line so the context scan for each stage starts clean.
         type("\n")
