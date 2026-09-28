@@ -1,0 +1,16 @@
+Tools/check-native-completion.py
+  h_d73c695d83f4a7 8-18,43-73,82,104,109,111-112,135,159-161,163-164,170-179,189-192,196-234,239-255,257-433,485
+Tools/check-sidebar-ui.py
+  h_d73c695d83f4a7 124-197,232-242,244-251,312
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0215192779d132e71c06f14dbb2f48429e46380b",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
