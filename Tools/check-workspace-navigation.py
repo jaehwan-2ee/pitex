@@ -8,6 +8,7 @@ xelatex (BasicTeX at /Library/TeX/texbin) and checks it end-to-end,
 including the detached preview window lifecycle.
 """
 from pathlib import Path
+import json
 import plistlib
 import shutil
 import subprocess
@@ -19,6 +20,7 @@ products = Path(sys.argv[1]).resolve()
 check = r'''
 import AppKit
 import Combine
+import EditorMacAdapter
 import ObjectiveC
 import PDFKit
 import SwiftUI
@@ -82,7 +84,12 @@ import SyncTeXCore
         }
         FindIndicatorRecorder.original = method_setImplementation(method, unsafeBitCast(record, to: IMP.self))
         defer { method_setImplementation(method, FindIndicatorRecorder.original!) }
-        let main = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL
+        // Arguments arrive as JSON in the environment — Cocoa parses
+        // naked argv tokens as documents to open.
+        let launchArgs = (try? JSONSerialization.jsonObject(with: Data(
+            (ProcessInfo.processInfo.environment["PITEX_NAVIGATION_ARGS"] ?? "[]").utf8))) as? [String] ?? []
+        guard !launchArgs.isEmpty else { fatalError("PITEX_NAVIGATION_ARGS missing or empty") }
+        let main = URL(fileURLWithPath: launchArgs[0]).standardizedFileURL
         await workspace.open(main)
         guard let binding = workspace.syncTeXBinding else { fatalError("Open a built project with SyncTeX metadata") }
         let host = NSHostingView(rootView: WorkspaceView(workspace: workspace))
@@ -114,7 +121,7 @@ import SyncTeXCore
         defer { observation.cancel() }
 
         // Visit new tabs, already-open tabs and the same source twice.
-        let targets = Array(CommandLine.arguments.dropFirst(2))
+        let targets = Array(launchArgs.dropFirst())
         for (index, target) in (targets + targets.reversed()).enumerated() {
             workspace.settings.inverseSyncHighlight = index % 2 == 1
             workspace.settings.forwardSyncHighlight = index % 3 != 0
@@ -201,6 +208,87 @@ import SyncTeXCore
         require(descendants(host).contains { $0 === pdf } && split.arrangedSubviews.map(\.frame) == frames,
                 "Manual tab changes must also preserve the preview and pane widths")
         print("PASS manual tab activation preserves workspace")
+
+        // ── Per-document editor view state ───────────────────────────
+        // Each activation rebuilds the editor adapter; the model keeps a
+        // caret + scroll snapshot per document. A caret far from the
+        // viewport proves the restore is not just scrollRangeToVisible.
+        func editorParts() -> (NSScrollView, NSTextView) {
+            let text = workspace.environment!.editor.textView
+            let scroll = descendants(host).compactMap { $0 as? NSScrollView }
+                .first { $0.documentView === text }!
+            return (scroll, text)
+        }
+        func setEditorState(selection: NSRange, scrollY: CGFloat) {
+            let (scroll, text) = editorParts()
+            text.setSelectedRange(selection)
+            text.scroll(NSPoint(x: 0, y: scrollY))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        func requireState(_ stage: String, expected: EditorMacAdapter.ViewState) {
+            let (scroll, text) = editorParts()
+            require(text.selectedRange() == expected.selection,
+                    "\(stage): selection \(text.selectedRange()) != \(expected.selection)")
+            require(abs(scroll.contentView.bounds.origin.y - expected.scrollOrigin.y) < 1,
+                    "\(stage): viewport y \(scroll.contentView.bounds.origin.y) != \(expected.scrollOrigin.y)")
+        }
+        let docA = workspace.activeDocumentURL!
+        guard let docB = workspace.projectFiles.first(where: { $0 != docA }) else {
+            print("FAIL view-state check needs a second project file"); fflush(nil); exit(1)
+        }
+        // Hand the outgoing position back at the end — the detached-preview
+        // checks below SyncTeX from the caret the navigation loop left.
+        let preBlockState = workspace.environment!.editor.viewState
+        let (scrollA, textA) = editorParts()
+        let lengthA = (textA.string as NSString).length
+        let maxYA = max(textA.bounds.height - scrollA.contentView.bounds.height, 0)
+        require(maxYA > 50, "view-state fixture must be scrollable")
+        // A: caret near the top, viewport at the very bottom.
+        setEditorState(selection: NSRange(location: min(4, lengthA), length: 0), scrollY: maxYA)
+        try await settle()
+        let expectedA = workspace.environment!.editor.viewState
+        require(expectedA.scrollOrigin.y > scrollA.contentView.bounds.height / 2,
+                "A's viewport must sit far from its caret")
+        await workspace.activateDocument(docB)
+        try await settle()
+        let (scrollB, textB) = editorParts()
+        let lengthB = (textB.string as NSString).length
+        let maxYB = max(textB.bounds.height - scrollB.contentView.bounds.height, 0)
+        require(maxYB > 50, "view-state fixture must be scrollable")
+        // B: a real selection plus a mid-document viewport.
+        setEditorState(selection: NSRange(location: min(20, lengthB), length: min(8, lengthB - min(20, lengthB))),
+                       scrollY: maxYB / 2)
+        try await settle()
+        let expectedB = workspace.environment!.editor.viewState
+
+        await workspace.activateDocument(docA)
+        try await settle()
+        requireState("A→B→A", expected: expectedA)
+        await workspace.activateDocument(docB)
+        try await settle()
+        requireState("back on B", expected: expectedB)
+        print("PASS per-document caret and viewport restored across tab switches")
+
+        // Explicit navigation issued before the restore layout settles
+        // must win over the cached viewport.
+        await workspace.activateDocument(docA)
+        workspace.jumpTo(line: 2, column: 0)
+        try await settle()
+        let nsTextA = workspace.environment!.editor.textView.string as NSString
+        let firstBreak = nsTextA.range(of: "\n")
+        require(firstBreak.location != NSNotFound, "fixture needs multiple lines")
+        let (_, jumpText) = editorParts()
+        require(jumpText.selectedRange().location == firstBreak.location + 1,
+                "jumpTo must win over the staged viewport restore")
+        let jumpLayout = jumpText.layoutManager!
+        let jumpGlyph = jumpLayout.glyphIndexForCharacter(at: jumpText.selectedRange().location)
+        let jumpRect = jumpLayout.lineFragmentRect(forGlyphAt: jumpGlyph, effectiveRange: nil)
+            .offsetBy(dx: jumpText.textContainerOrigin.x, dy: jumpText.textContainerOrigin.y)
+        require(jumpText.visibleRect.intersects(jumpRect),
+                "explicit jump must leave the target visible, not the cached viewport")
+        print("PASS explicit navigation overrides restored view state")
+        workspace.environment!.editor.applyViewState(preBlockState)
+        try await settle()
 
         // ── Detached preview window ──────────────────────────────────
         // The real app's WindowReader performs this same assignment when
@@ -376,7 +464,8 @@ with tempfile.TemporaryDirectory(prefix="pitex-navigation-", dir="/tmp") as dire
                         "--stdout", str(out_log), "--stderr", str(err_log),
                         "--env", "PI_AGENT_PATH=/usr/bin/false",
                         "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
-                        str(app), "--args", *fixture_args],
+                        "--env", f"PITEX_NAVIGATION_ARGS={json.dumps(fixture_args)}",
+                        str(app)],
                        check=True, timeout=180)
     finally:
         subprocess.run(["/usr/bin/pkill", "-f", str(app)], check=False)

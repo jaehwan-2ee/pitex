@@ -2,11 +2,13 @@
 """Real LaunchServices open events against the real PitexApp lifecycle.
 
 Builds a checker .app from the actual Mac sources (PitexApp @main stripped
-and driven via PitexApp.main()), launches it hidden through `open`, then
-has an in-app driver send itself /usr/bin/open -a requests — the same
-events Finder `Open With`/`open -a` produce. It asserts workspace count,
-the requested document, window visibility/key and app activation without
-any Dock click or mocked activation APIs.
+and driven via PitexApp.main()), then runs three LaunchServices launches
+with configuration only through `--env` (naked argv is parsed by Cocoa as
+documents to open): warm (running app gets `/usr/bin/open -a` requests),
+cold (the file rides in with the launch), cold-restore (session restore
+must not spawn a stray window). It asserts workspace count, the requested
+document, window visibility/key and app activation without any Dock click
+or mocked activation APIs.
 
 Usage: check-external-open.py <Build/Products/Release>
 """
@@ -34,7 +36,18 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
     /// otherwise make the check nondeterministic are pinned first — the
     /// bundle's unique identifier gives it an isolated defaults domain.
     @MainActor static func main() {
-        UserDefaults.standard.set(false, forKey: "pitex.pref.editor.restoreSession")
+        let mode = ProcessInfo.processInfo.environment["PITEX_CHECK_MODE"] ?? "warm"
+        // Restore-session stays at the app's default (on) for warm and
+        // cold-restore — the bundle is fresh, so warm has no recents —
+        // while plain cold keeps it off to isolate the file delivery.
+        // cold-restore seeds the recents so an accidental restore window
+        // next to the explicitly opened file cannot hide.
+        UserDefaults.standard.set(mode != "cold", forKey: "pitex.pref.editor.restoreSession")
+        if mode == "cold-restore" {
+            let root = ProcessInfo.processInfo.environment["PITEX_CHECK_FIXTURE"] ?? ""
+            UserDefaults.standard.set(["\(root)/B/main.tex"],
+                                      forKey: "pitex.pref.workspace.recentDocuments")
+        }
         UserDefaults.standard.set(false, forKey: "pitex.pref.update.autoInstall")
         _ = NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification,
@@ -46,7 +59,10 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
 }
 
 @MainActor enum Driver {
-    static let root = CommandLine.arguments[1]
+    // Environment only — naked argv tokens are parsed by Cocoa as
+    // documents to open, which silently diverted the launch args before.
+    static let root = ProcessInfo.processInfo.environment["PITEX_CHECK_FIXTURE"] ?? ""
+    static let mode = ProcessInfo.processInfo.environment["PITEX_CHECK_MODE"] ?? "warm"
 
     static func run() async {
         func require(_ condition: Bool, _ message: String) {
@@ -62,7 +78,32 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
             return false
         }
 
-        print("[diag] driver started:", diagnostics())
+        print("[diag] mode=\(mode)", diagnostics())
+
+        // Cold modes launch WITH A/main.tex — the ONLY delivery is the
+        // launch event itself; nothing is re-sent, so a dropped event
+        // cannot be masked. cold-restore also seeds a B recent: the
+        // explicit file beats restore — exactly one A window, never a
+        // stray B window.
+        if mode != "warm" {
+            let label = mode == "cold" ? "cold open" : "cold restore"
+            require(await until { owning("\(root)/A") != nil },
+                    "\(label): A/main.tex never reached a workspace — \(diagnostics())")
+            let workspace = owning("\(root)/A")!
+            require(await until { ready(workspace) && workspace.activeDocumentURL?.lastPathComponent == "main.tex" },
+                    "\(label) must load the requested document")
+            require(await until { workspace.window?.isVisible == true && workspace.window?.isKeyWindow == true },
+                    "\(label) window must be visible and key")
+            // Last, so a racing restore window has time to appear.
+            require(WorkspaceWindows.live.count == 1,
+                    "\(label) must produce exactly one window — \(diagnostics())")
+            stage("\(label) delivered main.tex into the only window")
+            print("PASS \(label): one fronted window with the requested document")
+            print("CHECK_COMPLETE")
+            fflush(nil)
+            exit(0)
+        }
+
         // The first scene window must exist before firing opens — the
         // empty-window route branch needs a live workspace to attach to.
         require(await until { WorkspaceWindows.live.contains { $0.window != nil } },
@@ -246,37 +287,36 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
     (fixture / "C").mkdir()
     (fixture / "C/notes.md").write_text("# Notes\n\nsome text\n")
 
-    # Bundle = production Info.plist with a unique test identifier, so
-    # LaunchServices registers and routes document opens for real.
-    bundle = root / "ExternalOpenCheck.app/Contents"
-    (bundle / "MacOS").mkdir(parents=True)
-    resources = bundle / "Resources"
-    resources.mkdir()
-    plist = plistlib.loads((repo / "Mac/Config/Info.plist").read_bytes())
-    plist.update({
-        "CFBundleExecutable": "check",
-        "CFBundleIdentifier": f"test.pitex.external-open.{os.getpid()}",
-        "CFBundleName": "ExternalOpenCheck",
-        "CFBundleDisplayName": "ExternalOpenCheck",
-        "CFBundleDevelopmentRegion": "en",
-        "CFBundleShortVersionString": "0",
-        "CFBundleVersion": "0",
-        "LSMinimumSystemVersion": "15.0",
-    })
-    (bundle / "Info.plist").write_bytes(plistlib.dumps(plist))
-    for locale in (repo / "Mac/Resources").glob("*.lproj"):
-        shutil.copytree(locale, resources / locale.name)
-
+    # Test-only copy of PitexApp.swift: @main stripped, trace lines added
+    # inside the two real delivery paths (behavior otherwise unchanged) so
+    # the CI log shows exactly which entry point each open event took.
     app_main = repo / "Mac/Sources/AppShell/PitexApp.swift"
+    patched = (app_main.read_text()
+        .replace("@main\nstruct PitexApp", "struct PitexApp")
+        .replace(
+            "        NSApp.activate()\n"
+            "        Task { @MainActor in\n"
+            "            urls.forEach { WorkspaceWindows.route($0) }",
+            "        for url in urls { print(\"TRACE delegate-open\", url.path) }\n"
+            "        fflush(nil)\n"
+            "        NSApp.activate()\n"
+            "        Task { @MainActor in\n"
+            "            urls.forEach { WorkspaceWindows.route($0) }")
+        .replace(
+            "            .onOpenURL { url in",
+            "            .onOpenURL { url in\n"
+            "                print(\"TRACE onOpenURL\", url.path)\n"
+            "                fflush(nil)"))
+    assert "TRACE delegate-open" in patched and "TRACE onOpenURL" in patched
     stripped = root / "PitexApp.swift"
-    stripped.write_text(app_main.read_text().replace("@main\nstruct PitexApp", "struct PitexApp"))
+    stripped.write_text(patched)
     source = root / "Check.swift"
     source.write_text(check)
-    executable = bundle / "MacOS/check"
+    binary = root / "check-bin"
     subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-target", "arm64-apple-macos15.0",
                     "-I", str(products), str(source), str(stripped),
                     *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main],
-                    *[str(p) for p in products.glob("*.o")], "-o", str(executable)], check=True)
+                    *[str(p) for p in products.glob("*.o")], "-o", str(binary)], check=True)
 
     # A fake app-local runtime makes PiRuntimeInstaller.ensureInstalled a
     # no-op (no package.json -> installedVersion() nil -> nothing to do).
@@ -286,23 +326,64 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
     fake_pi.write_text("#!/bin/sh\nexit 0\n")
     fake_pi.chmod(0o755)
 
-    # Launch through LaunchServices so the bundle registers; the driver
-    # minimizes/hides the app itself for the background-open stages.
-    # `open -W` swallows the exit status — CHECK_COMPLETE is authoritative.
-    out_log, err_log = root / "check.out.log", root / "check.err.log"
-    app = root / "ExternalOpenCheck.app"
-    try:
-        subprocess.run(["/usr/bin/open", "-n", "-W",
-                        "--stdout", str(out_log), "--stderr", str(err_log),
-                        "--env", "PI_AGENT_PATH=/usr/bin/false",
-                        "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
-                        str(app), "--args", str(fixture)],
-                       check=True, timeout=180)
-    finally:
-        subprocess.run(["/usr/bin/pkill", "-f", str(app)], check=False)
-        for log in (out_log, err_log):
-            if log.exists():
-                print(log.read_text(errors="replace"), end="")
-    output = out_log.read_text(errors="replace") if out_log.exists() else ""
-    if "CHECK_COMPLETE" not in output:
-        sys.exit("FAIL: completion marker missing from checker log")
+    def make_bundle(mode):
+        # Bundle = production Info.plist with a per-mode unique identifier,
+        # so each LaunchServices registration and defaults domain is fresh.
+        app = root / f"ExternalOpenCheck-{mode}.app"
+        contents = app / "Contents"
+        (contents / "MacOS").mkdir(parents=True)
+        resources = contents / "Resources"
+        resources.mkdir()
+        plist = plistlib.loads((repo / "Mac/Config/Info.plist").read_bytes())
+        plist.update({
+            "CFBundleExecutable": "check",
+            "CFBundleIdentifier": f"test.pitex.external-open.{os.getpid()}.{mode}",
+            "CFBundleName": "ExternalOpenCheck",
+            "CFBundleDisplayName": "ExternalOpenCheck",
+            "CFBundleDevelopmentRegion": "en",
+            "CFBundleShortVersionString": "0",
+            "CFBundleVersion": "0",
+            "LSMinimumSystemVersion": "15.0",
+        })
+        (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
+        for locale in (repo / "Mac/Resources").glob("*.lproj"):
+            shutil.copytree(locale, resources / locale.name)
+        shutil.copy(binary, contents / "MacOS/check")
+        return app
+
+    def run_mode(mode):
+        app = make_bundle(mode)
+        out_log, err_log = root / f"check-{mode}.out.log", root / f"check-{mode}.err.log"
+        # No positional arguments and no --args: Cocoa parses naked argv
+        # tokens as documents to open. All config travels through --env.
+        # Both cold modes hand the file to LaunchServices with the
+        # launch — a real double-click on a stopped app.
+        command = ["/usr/bin/open", "-n", "-W",
+                   "--stdout", str(out_log), "--stderr", str(err_log),
+                   "--env", "PI_AGENT_PATH=/usr/bin/false",
+                   "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
+                   "--env", f"PITEX_CHECK_FIXTURE={fixture}",
+                   "--env", f"PITEX_CHECK_MODE={mode}"]
+        if mode.startswith("cold"):
+            command += ["-a", str(app), str(fixture / "A/main.tex")]
+        else:
+            command += [str(app)]
+        try:
+            subprocess.run(command, check=True, timeout=180)
+        except subprocess.SubprocessError as error:
+            print(f"FAIL: launcher for {mode} raised {error}")
+        finally:
+            subprocess.run(["/usr/bin/pkill", "-f", str(app)], check=False)
+            for log in (out_log, err_log):
+                if log.exists():
+                    print(f"--- {mode}: {log.name} ---")
+                    print(log.read_text(errors="replace"), end="")
+        output = out_log.read_text(errors="replace") if out_log.exists() else ""
+        # `open -W` swallows the exit status — CHECK_COMPLETE is decisive.
+        return "CHECK_COMPLETE" in output
+
+    # warm first (running-app open -a), then the launch-time deliveries —
+    # a mode that fails must not hide the evidence from the others.
+    failures = [mode for mode in ("warm", "cold", "cold-restore") if not run_mode(mode)]
+    if failures:
+        sys.exit("FAIL: no CHECK_COMPLETE from: " + ", ".join(failures))

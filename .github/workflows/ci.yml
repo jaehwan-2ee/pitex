@@ -61,15 +61,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Build release app
+        id: build
         run: |
           xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
-      # Real SwiftUI lifecycle + LaunchServices `open -a` to a hidden app:
-      # window fronting and activation without a Dock click (needs no TeX).
-      - name: External open routing checks
-        run: python3 Tools/check-external-open.py build/Build/Products/Release
       - name: Sidebar UI checks (English and Korean)
         run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release
       - name: Sidebar UI screenshots
@@ -96,6 +93,8 @@ jobs:
       # /Library/TeX/texbin path; texbin joins PATH because xelatex execs
       # xdvipdfmx through it. The article-class fixture needs no tlmgr.
       - name: Install BasicTeX
+        id: tex
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           brew install --cask basictex
           echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
@@ -103,8 +102,19 @@ jobs:
         run: python3 Tools/check-macos-synctex.py build/Build/Products/Release
       # Self-contained: builds its own two-file fixture with BasicTeX,
       # then exercises navigation plus the detached preview window.
+      # The outcome gates keep one new check's failure from hiding the rest.
       - name: Workspace navigation and detached preview checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.tex.outcome == 'success' }}
         run: python3 Tools/check-workspace-navigation.py build/Build/Products/Release
+      - name: Find bar overlay checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-find-bar.py build/Build/Products/Release
+      # Real SwiftUI lifecycle + LaunchServices `open -a`: window fronting
+      # and activation without a Dock click (needs no TeX). Runs last so a
+      # failure here can't hide the other checks' results.
+      - name: External open routing checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-external-open.py build/Build/Products/Release
 
   macos-window-checks:
     name: Golden Gate window and SyncTeX checks
@@ -122,22 +132,32 @@ jobs:
       # Metal Toolchain'.
       - run: xcodebuild -downloadComponent MetalToolchain
       - name: Build release app
+        id: build
         run: |
           xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
-      - name: External open routing checks
-        run: python3 Tools/check-external-open.py build/Build/Products/Release
       # BasicTeX puts xelatex at the harness's hardcoded
       # /Library/TeX/texbin path; texbin joins PATH because xelatex execs
       # xdvipdfmx through it. The article-class fixture needs no tlmgr.
       - name: Install BasicTeX
+        id: tex
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           brew install --cask basictex
           echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
       - name: Workspace navigation and detached preview checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.tex.outcome == 'success' }}
         run: python3 Tools/check-workspace-navigation.py build/Build/Products/Release
+      - name: Find bar overlay checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-find-bar.py build/Build/Products/Release
+      # The window-routing probe runs last so its result can't mask the
+      # navigation/detached-preview evidence above.
+      - name: External open routing checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-external-open.py build/Build/Products/Release
 
   rust:
     name: Rust workspace
