@@ -16,6 +16,7 @@ Usage: check-external-open.py <Build/Products/Release>
 from pathlib import Path
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -269,10 +270,14 @@ enum LaunchFlag {
         }
     }
 
-    /// Pushes validation through the whole menu tree so item.isEnabled
-    /// and target/action are resolved before dispatch or inspection.
+    /// Pushes the real menu lifecycle through the whole tree so
+    /// item.isEnabled and target/action are resolved before dispatch or
+    /// inspection: NSMenu.update() alone only runs NSMenuValidation —
+    /// menuNeedsUpdate(_:) is the earlier delegate stage where SwiftUI
+    /// populates dynamic items, so fire it first.
     static func updateMenus() {
         func walk(_ menu: NSMenu) {
+            menu.delegate?.menuNeedsUpdate?(menu)
             menu.update()
             for item in menu.items {
                 if let submenu = item.submenu { walk(submenu) }
@@ -288,6 +293,8 @@ enum LaunchFlag {
     static func dumpMenuShortcuts(_ label: String) {
         print("TRACE menu-dump \(label)")
         func walk(_ menu: NSMenu, _ path: String) {
+            let delegate = menu.delegate.map { "\(type(of: $0))" } ?? "nil"
+            print("TRACE menu '\(path)' delegate=\(delegate)")
             for item in menu.items {
                 if let submenu = item.submenu { walk(submenu, path + "/" + item.title) }
                 guard ["w", "o", "y"].contains(item.keyEquivalent.lowercased()) else { continue }
@@ -380,7 +387,9 @@ enum LaunchFlag {
         let windows = app.windows.map {
             "'\($0.title.isEmpty ? "untitled" : $0.title)' visible=\($0.isVisible) mini=\($0.isMiniaturized)"
         }.joined(separator: "; ")
-        return "mainThread=\(Thread.isMainThread) running=\(app.isRunning) "
+        return "bundle=\(Bundle.main.bundleIdentifier ?? "nil") "
+            + "argv=\(CommandLine.arguments) "
+            + "mainThread=\(Thread.isMainThread) running=\(app.isRunning) "
             + "active=\(app.isActive) hidden=\(app.isHidden) "
             + "didFinishLaunching=\(LaunchFlag.didFinishLaunching) "
             + "userInfo=\(LaunchFlag.finishUserInfo) "
@@ -550,6 +559,16 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
         for locale in (repo / "Mac/Resources").glob("*.lproj"):
             shutil.copytree(locale, resources / locale.name)
         shutil.copy(binary, contents / "MacOS/check")
+        # The copied ad-hoc binary still carries the code identity
+        # "check-bin" — sign each assembled app under its own bundle
+        # identifier so LaunchServices and defaults see a distinct app.
+        subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-",
+                        "--identifier", identifier, str(app)], check=True)
+        describe = subprocess.run(["/usr/bin/codesign", "-d", "--verbose=2", str(app)],
+                                  check=True, capture_output=True, text=True)
+        signed = re.search(r"^Identifier=(.*)$", describe.stderr, re.M)
+        print(f"[diag] codesign {app.name}: {signed.group(1) if signed else 'unknown'}")
+        assert signed and signed.group(1) == identifier
         return app
 
     def run_mode(mode):
