@@ -129,6 +129,7 @@ import SwiftUI
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 850),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentView = host
+        window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
         defer { window.orderOut(nil) }
@@ -148,7 +149,7 @@ import SwiftUI
             fflush(nil)
             exit(1)
         }
-        let (_, textView) = try await editorParts()
+        let (scrollView, textView) = try await editorParts()
         stage("editor mounted")
         let editor = workspace.environment!.editor
         require(window.makeFirstResponder(textView), "Editor must become first responder")
@@ -246,14 +247,17 @@ import SwiftUI
             innerSource?(probeRef, probeRef.utf16.count)?.candidates.contains("sec:intro") == true
                 && innerSource?(probeCite, probeCite.utf16.count)?.candidates.contains("knuth84") == true
         }, "provider must load project labels and .bib keys")
-        stage("provider ready; starting timer driver")
+        stage("provider ready; checking window and caret readiness")
 
-        func visibleOwnedWindows() -> Set<CGWindowID> {
-            let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                                  kCGNullWindowID) as? [[String: Any]] ?? []
-            return Set(info.compactMap { entry in
-                guard (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
-                      let number = entry[kCGWindowNumber as String] as? NSNumber,
+        func ownedWindowInfo(visibleOnly: Bool = true) -> [[String: Any]] {
+            let options: CGWindowListOption = visibleOnly
+                ? [.optionOnScreenOnly, .excludeDesktopElements] : [.optionAll, .excludeDesktopElements]
+            let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+            return info.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid() }
+        }
+        func windowIDs(_ info: [[String: Any]]) -> Set<CGWindowID> {
+            Set(info.compactMap { entry in
+                guard let number = entry[kCGWindowNumber as String] as? NSNumber,
                       let bounds = entry[kCGWindowBounds as String] as? [String: Any],
                       let width = bounds["Width"] as? NSNumber,
                       let height = bounds["Height"] as? NSNumber,
@@ -261,15 +265,60 @@ import SwiftUI
                 return CGWindowID(number.uint32Value)
             })
         }
-        let baselineWindows = visibleOwnedWindows()
+        func describeWindows(_ info: [[String: Any]]) -> String {
+            info.map { entry in
+                "id=\(String(describing: entry[kCGWindowNumber as String])) "
+                    + "bounds=\(String(describing: entry[kCGWindowBounds as String])) "
+                    + "onscreen=\(String(describing: entry[kCGWindowIsOnscreen as String]))"
+            }.joined(separator: "; ")
+        }
+        func windowState() -> String {
+            "active=\(NSApp.isActive) visible=\(window.isVisible) key=\(window.isKeyWindow) "
+                + "appKey=\(String(describing: NSApp.keyWindow?.windowNumber)) "
+                + "editorFocus=\(window.firstResponder === textView) "
+                + "viewport=\(textView.visibleRect) mode=\(String(describing: RunLoop.current.currentMode?.rawValue))"
+        }
+        textView.scrollRangeToVisible(textView.selectedRange())
+        var caretRect = NSRect.zero
+        let ready = await until(10) {
+            host.layoutSubtreeIfNeeded()
+            guard NSApp.isRunning, NSApp.activationPolicy() == .regular,
+                  NSApp.isActive, window.isVisible, window.isKeyWindow,
+                  window.firstResponder === textView, textView.window === window,
+                  scrollView.contentSize.width > 0, scrollView.contentSize.height > 0,
+                  textView.visibleRect.width > 0, textView.visibleRect.height > 0,
+                  let layout = textView.layoutManager, let container = textView.textContainer else { return false }
+            layout.ensureLayout(for: container)
+            caretRect = textView.firstRect(forCharacterRange: textView.selectedRange(), actualRange: nil)
+            window.displayIfNeeded()
+            let viewportOnScreen = window.convertToScreen(textView.convert(textView.visibleRect, to: nil))
+            return caretRect.origin.x.isFinite && caretRect.origin.y.isFinite
+                && caretRect.height > 0 && caretRect.insetBy(dx: -1, dy: 0).intersects(viewportOnScreen)
+                && windowIDs(ownedWindowInfo()).contains(CGWindowID(window.windowNumber))
+        }
+        if !ready {
+            stage("preflight failed: \(windowState()) caret=\(caretRect) owned=[\(describeWindows(ownedWindowInfo(visibleOnly: false)))]")
+        }
+        require(ready, "regular app must be active with a focused onscreen editor and laid-out visible caret before typing")
+        let baselineInfo = ownedWindowInfo()
+        let baselineWindows = windowIDs(baselineInfo)
+        stage("preflight ready: \(windowState()) caret=\(caretRect) baseline=[\(describeWindows(baselineInfo))]")
         func popupVisible() -> Bool {
-            !visibleOwnedWindows().subtracting(baselineWindows).isEmpty
+            !windowIDs(ownedWindowInfo()).subtracting(baselineWindows).isEmpty
+        }
+        func popupDiagnostics(_ label: String) {
+            stage("\(label): \(windowState()) depth=\(CompleteRecorder.activeCalls) "
+                + "baseline=[\(describeWindows(baselineInfo))] "
+                + "current=[\(describeWindows(ownedWindowInfo()))] "
+                + "allOwned=[\(describeWindows(ownedWindowInfo(visibleOnly: false)))]")
         }
         func requirePopup(_ label: String) {
+            if CompleteRecorder.activeCalls != 1 || !popupVisible() { popupDiagnostics(label) }
             require(CompleteRecorder.activeCalls == 1 && popupVisible(),
                     "\(label): a real visible popup must be tracking, depth=\(CompleteRecorder.activeCalls)")
         }
         func requireClosed(_ label: String) {
+            if CompleteRecorder.activeCalls != 0 || popupVisible() { popupDiagnostics(label) }
             require(CompleteRecorder.activeCalls == 0 && !popupVisible(),
                     "\(label): popup must be closed, depth=\(CompleteRecorder.activeCalls)")
         }
@@ -361,18 +410,6 @@ import SwiftUI
         }
 
         driver.steps = [
-            // A: bare backslash — popup engages, nothing is inserted.
-            (0.1, { type("\\") }),
-            (0.4, {
-                require(CompleteRecorder.calls >= 1,
-                        "automatic debounce must engage native complete")
-                require(sourceQueries > 0, "the real completion source must be queried")
-                require(lastCandidates?.contains("\\include") == true,
-                        "\\ prefix must offer builtin commands, got \(String(describing: lastCandidates))")
-                literal("\\", "backslash")
-                requirePopup("automatic backslash")
-                stage("backslash: popup engaged, text stayed literal")
-            }),
             // B: continue 'in' — two candidates, still literal.
             (0.05, {
                 requirePopup("before prefix edit")
@@ -648,7 +685,34 @@ import SwiftUI
             fflush(nil)
             exit(1)
         }
-        driver.scheduleNext()
+        // A: after preflight, wait for WindowServer to publish the first
+        // popup. Candidate generation is synchronous through the app source;
+        // this bound covers presentation, not a fallback dictionary lookup.
+        // Never reopen the popup or advance to prefix typing before visibility.
+        func awaitInitialPopup(until deadline: ContinuousClock.Instant) {
+            if CompleteRecorder.activeCalls == 1 && popupVisible() {
+                require(CompleteRecorder.calls >= 1, "automatic debounce must engage native complete")
+                require(sourceQueries > 0, "the real completion source must be queried")
+                require(lastCandidates?.contains("\\include") == true,
+                        "\\ prefix must offer builtin commands, got \(String(describing: lastCandidates))")
+                literal("\\", "backslash")
+                requirePopup("automatic backslash")
+                stage("backslash: popup engaged, text stayed literal")
+                driver.scheduleNext()
+                return
+            }
+            guard ContinuousClock.now < deadline else {
+                popupDiagnostics("initial popup presentation timeout; sourceQueries=\(sourceQueries) candidates=\(String(describing: lastCandidates))")
+                require(false, "automatic backslash did not become visible within 5s")
+                return
+            }
+            driver.scheduleAfter(0.05) { awaitInitialPopup(until: deadline) }
+        }
+        driver.scheduleAfter(0.1) {
+            let deadline = ContinuousClock.now + .seconds(5)
+            driver.scheduleAfter(0.05) { awaitInitialPopup(until: deadline) }
+            type("\\")
+        }
         // run() must not return while timers are pending — its defers would
         // tear down the window and restore the swizzle. The watchdog turns
         // a stalled chain into a diagnosable FAIL instead of a launcher

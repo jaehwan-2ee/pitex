@@ -37,6 +37,20 @@ private final class SessionTextView: NSTextView {
     /// adapter from the shared context detector so `\cite{a,k` completes
     /// only `k` — NSTextView's word-boundary default would swallow `a,k`.
     var userCompletionRange: (() -> NSRange?)?
+    var hasCustomCompletionSource: (() -> Bool)?
+
+    override func completions(forPartialWordRange charRange: NSRange,
+                              indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
+        guard hasCustomCompletionSource?() == true else {
+            return super.completions(forPartialWordRange: charRange, indexOfSelectedItem: index)
+        }
+        // The app owns these candidates. Going through super first asks the
+        // system spell server for dictionary words before consulting the
+        // delegate, delaying TeX completion when that service times out.
+        index.pointee = -1
+        return delegate?.textView?(self, completions: [], forPartialWordRange: charRange,
+                                  indexOfSelectedItem: index) ?? []
+    }
 
     private(set) var isCompleting = false
     var completionWillStart: (() -> Void)?
@@ -222,6 +236,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
             else { return nil }
             return completionSource(nativeView.string, nativeView.selectedRange().location)?.range
         }
+        nativeView.hasCustomCompletionSource = { [weak self] in self?.completionSource != nil }
         nativeView.completionWillStart = { [weak self] in
             self?.completionTriggerTimer?.invalidate()
             self?.completionTriggerTimer = nil
