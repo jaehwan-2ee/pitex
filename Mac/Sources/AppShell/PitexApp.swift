@@ -2672,7 +2672,13 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
+    /// A bare launch or Dock reopen may create the first workspace window,
+    /// but never an extra one — file opens keep routing through the
+    /// existing windows / openWindow path.
+    @MainActor
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        WorkspaceWindows.live.isEmpty
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
