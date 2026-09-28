@@ -1,0 +1,14 @@
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 2675-2681
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f6da0ae3a762f112d779a8503b32ffad6ec5b6e",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
