@@ -1,0 +1,20 @@
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 178-181,843-847,851-853,1107,1158
+Mac/Sources/Features/EditorContainerView.swift
+  h_d73c695d83f4a7 6-20,62,113-121,484,486,685,687,776-800,846,848
+Mac/Sources/Features/EditorFolding.swift
+  h_d73c695d83f4a7 544,546
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  h_d73c695d83f4a7 31-34,48-50,56-68,77-94,260-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "741f726656f63f5fe917b11400a493a7fb1f5d5c",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
