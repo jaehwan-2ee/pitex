@@ -258,9 +258,24 @@ import SyncTeXCore
                     "\(stage): restored selection \(last.selection) != \(expected.selection) "
                     + "or viewport y \(last.scrollOrigin.y) != \(expected.scrollOrigin.y)")
         }
+        let canon: (URL) -> URL = { $0.resolvingSymlinksInPath().standardizedFileURL }
+        // activateDocument is done by the time it returns — a failed load
+        // (e.g. a figure row) leaves phase failed and swaps the editor away.
+        func requireActivated(_ stage: String, _ url: URL) {
+            var ready = false
+            if case .ready = workspace.phase { ready = true }
+            require(ready && workspace.activeDocumentURL.map(canon) == canon(url),
+                    "\(stage): \(url.lastPathComponent) must be active+ready "
+                    + "(phase=\(workspace.phase), active=\(workspace.activeDocumentURL?.path ?? "nil"))")
+        }
         let docA = workspace.activeDocumentURL!
-        guard let docB = workspace.projectFiles.first(where: { $0 != docA }) else {
-            print("FAIL view-state check needs a second project file"); fflush(nil); exit(1)
+        // projectFiles also lists figures/PDF artifacts — they sort before
+        // same-stem sources and cannot be edited. Pick a real source.
+        guard let docB = workspace.projectFiles.first(where: {
+            WorkspaceModel.isSourceFile($0) && canon($0) != canon(docA)
+        }) else {
+            print("FAIL view-state check needs a second source file; projectFiles="
+                + "\(workspace.projectFiles.map(\.path))"); fflush(nil); exit(1)
         }
         // Hand the outgoing position back at the end — the detached-preview
         // checks below SyncTeX from the caret the navigation loop left.
@@ -277,6 +292,7 @@ import SyncTeXCore
         require(expectedA.scrollOrigin.y > scrollA.contentView.bounds.height / 2,
                 "A's viewport must sit far from its caret")
         await workspace.activateDocument(docB)
+        requireActivated("docB", docB)
         try await settle()
         let (scrollB, textB) = try await editorParts("docB mount")
         let lengthB = (textB.string as NSString).length
@@ -290,14 +306,17 @@ import SyncTeXCore
         let expectedB = workspace.environment!.editor.viewState
 
         await workspace.activateDocument(docA)
+        requireActivated("A→B→A", docA)
         try await requireState("A→B→A", expected: expectedA)
         await workspace.activateDocument(docB)
+        requireActivated("back on B", docB)
         try await requireState("back on B", expected: expectedB)
         print("PASS per-document caret and viewport restored across tab switches")
 
         // Explicit navigation issued before the restore layout settles
         // must win over the cached viewport.
         await workspace.activateDocument(docA)
+        requireActivated("pre-jump", docA)
         workspace.jumpTo(line: 2, column: 0)
         try await settle()
         let nsTextA = workspace.environment!.editor.textView.string as NSString

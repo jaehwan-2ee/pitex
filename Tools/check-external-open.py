@@ -125,11 +125,21 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         stage("A opened in the empty workspace")
 
         // B: the reported case — the ONLY window is minimized in the Dock
-        // (app not hidden). Opening another folder must create exactly
-        // one new window, fronted, with no Dock click.
+        // AND Finder is frontmost (a real double-click foreground), so
+        // Pitex must activate itself from background, no Dock click.
         let windowA = workspaceA.window!
         windowA.miniaturize(nil)
         require(await until { windowA.isMiniaturized }, "Could not minimize A for the background-open case")
+        if let finder = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.finder"
+        }) {
+            _ = finder.activate()
+        } else {
+            _ = NSWorkspace.shared.launchApplication("Finder")
+        }
+        require(await until { !NSApp.isActive && !NSApp.isHidden },
+                "Finder must become frontmost while Pitex stays unhidden")
+        require(windowA.isMiniaturized, "A must still be miniaturized")
         await openExternal("\(root)/B/main.tex")
         require(await until { owning("\(root)/B") != nil },
                 "B/main.tex never reached a workspace")
@@ -141,11 +151,11 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
             return windowB !== windowA && windowB.isVisible && windowB.isKeyWindow
         }, "The new B window must be fronted without a Dock click")
         require(await until { NSApp.isActive },
-                "open -a while A is minimized must keep the app active")
+                "open -a from a Finder foreground must activate the app")
         require(await until { ready(workspaceB) && workspaceB.activeDocumentURL?.lastPathComponent == "main.tex" },
                 "B must open its requested document")
         let windowB = workspaceB.window!
-        stage("B opened a new window while A was minimized")
+        stage("B opened a new window with A minimized and Finder frontmost")
 
         // B again, minimized: reuses the same window and restores it.
         windowB.miniaturize(nil)
@@ -210,7 +220,7 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
             windowNumber: detached.windowNumber, context: nil,
             characters: "w", charactersIgnoringModifiers: "w",
             isARepeat: false, keyCode: 13)!
-        require(NSApp.mainMenu?.performKeyEquivalent(close) == true,
+        require(NSApp.mainMenu?.performKeyEquivalent(with: close) == true,
                 "Cmd-W must be claimed by the main menu — \(diagnostics())")
         require(await until { !workspaceA.previewDetached },
                 "Cmd-W on the detached preview must reattach it")
