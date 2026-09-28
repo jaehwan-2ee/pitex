@@ -147,9 +147,11 @@ jobs:
       - name: Native editor mutation regression checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterMutationTests
-      - name: Sidebar UI checks (English and Korean)
+      # Vision OCR is unavailable on Golden Gate; the macos job retains
+      # the full rendered/localization/tint suite. Measure actual layout here.
+      - name: Sidebar native geometry checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release
+        run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release --geometry-only
       - name: Sidebar UI screenshots
         if: always()
         uses: actions/upload-artifact@v4

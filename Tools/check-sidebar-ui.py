@@ -9,9 +9,12 @@ minimum and that real divider drags survive tab switches, hide/show, and the
 mirrored layout — then checks the empty TODOs pane keeps its header row
 pinned to the pane top across the inner divider resize. Fixture path and
 language arrive through --env; naked argv is only -AppleLanguages.
-Set PITEX_SIDEBAR_TEXT_BACKEND=ax to exercise the accessibility path even
-on a runner where Vision works; all the same acceptance assertions run.
+Pass --geometry-only for the Golden Gate runner without working Vision OCR.
+This runs the real-window width/retention checks and measures header Text
+frames using background NSViews injected into a temporary source copy.
+The default mode retains the full English/Korean rendered acceptance suite.
 """
+import argparse
 import os
 from pathlib import Path
 import plistlib
@@ -20,67 +23,33 @@ import subprocess
 import sys
 import tempfile
 
-# AppKit exposes these selectors on objects that need not formally adopt the
-# complete NSAccessibility protocol (including SwiftUI's virtual elements).
-# Keep dispatch in Objective-C: respondsToSelector checks capability, and the
-# SDK declaration supplies the correct NSRect/BOOL ABI without unsafeBitCast.
-ax_header = r'''
-#import <AppKit/AppKit.h>
-NS_ASSUME_NONNULL_BEGIN
-NSDictionary<NSString *, id> *PitexAXRead(id element);
-void PitexAXCheckBridge(void);
-NS_ASSUME_NONNULL_END
-'''
-ax_source = r'''
-#import "SidebarAX.h"
 
-NSDictionary<NSString *, id> *PitexAXRead(id element) {
-    id<NSAccessibility> ax = (id<NSAccessibility>)element;
-    NSMutableDictionary *result = [NSMutableDictionary dictionary];
-    result[@"class"] = NSStringFromClass([element class]);
-    result[@"conforms"] = @([element conformsToProtocol:@protocol(NSAccessibility)]);
-    if ([ax respondsToSelector:@selector(accessibilityFrame)])
-        result[@"frame"] = [NSValue valueWithRect:[ax accessibilityFrame]];
-    if ([ax respondsToSelector:@selector(accessibilityRole)])
-        result[@"role"] = [ax accessibilityRole];
-    if ([ax respondsToSelector:@selector(accessibilityLabel)])
-        result[@"label"] = [ax accessibilityLabel];
-    if ([ax respondsToSelector:@selector(accessibilityValue)])
-        result[@"value"] = [ax accessibilityValue];
-    if ([ax respondsToSelector:@selector(accessibilityTitle)])
-        result[@"title"] = [ax accessibilityTitle];
-    if ([ax respondsToSelector:@selector(accessibilityChildren)])
-        result[@"children"] = [ax accessibilityChildren] ?: @[];
-    return result;
-}
+def instrument_headers(source):
+    """Add passive probes only to the two exact production header Text sites."""
+    anchors = [
+        ('Text("sidebar.todos")',
+         'key: "sidebar.todos", active: navigatorSection == .todos'),
+        ('Text(isWorkspace ? "sidebar.workspace" : "sidebar.project")',
+         'key: isWorkspace ? "sidebar.workspace" : "sidebar.project", '
+         'active: navigatorSection == (isWorkspace ? .workspace : .project)'),
+    ]
+    for text, arguments in anchors:
+        anchor = (text + '\n                    .font(.caption.weight(.semibold))'
+                  + '\n                    .foregroundStyle(.secondary)')
+        if source.count(anchor) != 1:
+            raise RuntimeError(f'Expected exactly one production header anchor: {text}')
+        source = source.replace(anchor, anchor + '\n                    .background('
+                                + f'SidebarHeaderProbe({arguments}))', 1)
+    return source
 
-// Regression fixture: selectors are implemented, formal protocol is not.
-// This must work even when the old Swift conditional cast would reject it.
-@interface PitexAXInformalElement : NSObject
-@end
-@implementation PitexAXInformalElement
-- (NSRect)accessibilityFrame { return NSMakeRect(11, 23, 47, 19); }
-- (NSString *)accessibilityLabel { return @"Informal AX text"; }
-- (NSArray *)accessibilityChildren { return @[@"child sentinel"]; }
-@end
 
-void PitexAXCheckBridge(void) {
-    NSDictionary *node = PitexAXRead([PitexAXInformalElement new]);
-    NSCAssert(![node[@"conforms"] boolValue], @"Fixture must not adopt NSAccessibility");
-    NSCAssert(NSEqualRects([node[@"frame"] rectValue], NSMakeRect(11, 23, 47, 19)),
-              @"AX frame dispatch must preserve the native struct return");
-    NSCAssert([node[@"label"] isEqual:@"Informal AX text"], @"Missing informal AX label");
-    NSCAssert([node[@"children"] isEqual:@[@"child sentinel"]], @"Missing informal AX children");
-    NSCAssert(PitexAXRead([NSObject new])[@"frame"] == nil, @"Absent selectors must be safe");
-}
-'''
-
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('products', nargs='?')
+parser.add_argument('--geometry-only', action='store_true')
+args = parser.parse_args()
 repo = Path(__file__).resolve().parent.parent
-text_backend = os.environ.get('PITEX_SIDEBAR_TEXT_BACKEND', 'auto')
-if text_backend not in ('auto', 'ax'):
-    sys.exit('PITEX_SIDEBAR_TEXT_BACKEND must be auto or ax')
-if len(sys.argv) > 1:
-    products = Path(sys.argv[1]).resolve()
+if args.products:
+    products = Path(args.products).resolve()
     includes = [products]
     objects = list(products.glob('*.o'))
 else:
@@ -101,10 +70,31 @@ check = r'''
 import CoreML
 import Vision
 
+// Background markers receive the foreground Text's proposed size. They have
+// no drawing, intrinsic size, hit testing, or effect on the parent's layout.
+final class SidebarHeaderMarker: NSView {
+    var key = ""
+    var active = false
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+struct SidebarHeaderProbe: NSViewRepresentable {
+    let key: String
+    let active: Bool
+    func makeNSView(context: Context) -> SidebarHeaderMarker { SidebarHeaderMarker() }
+    func updateNSView(_ view: SidebarHeaderMarker, context: Context) {
+        view.key = key
+        view.active = active
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SidebarHeaderMarker,
+                     context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+}
+
 @main struct SidebarCheck {
     @MainActor static func main() {
         let app = NSApplication.shared
-        PitexAXCheckBridge()
         app.setActivationPolicy(.regular)
         Task { @MainActor in
             // Configuration travels through the environment — naked argv
@@ -117,6 +107,7 @@ import Vision
     }
 
     @MainActor static func run(_ language: String) async throws {
+        let geometryOnly = ProcessInfo.processInfo.environment["PITEX_SIDEBAR_GEOMETRY_ONLY"] == "1"
         let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PITEX_SIDEBAR_ROOT"] ?? "")
         let workspace = WorkspaceModel()
         await workspace.open(root.appendingPathComponent("main.tex"))
@@ -157,6 +148,13 @@ import Vision
         func settle() async throws { try await settle(host) }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         func stage(_ message: String) { print("[stage] \(message)"); fflush(nil) }
+        func capture(_ view: NSView, _ name: String) throws {
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!
+                .write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-\(name)-\(language).png"))
+        }
+        stage(geometryOnly ? "native sidebar geometry mode (no OCR)" : "full rendered sidebar mode")
         /// Virtualized runners lack the scaler driver Vision's GPU path
         /// needs (CRImageReaderError) — pin every compute stage that
         /// offers a CPU device so OCR runs on the CPU the VM has.
@@ -182,99 +180,15 @@ import Vision
                          "Vision offered no CPU compute stage — OCR would hit the VM scaler path again")
             return request
         }
-        /// Set when Vision's image path throws (the virtualized runner's
-        /// missing scaler): snapshots switch to the real accessibility
-        /// tree for the rest of the run.
-        var visionBroken = ProcessInfo.processInfo.environment["PITEX_SIDEBAR_TEXT_BACKEND"] == "ax"
         let navTitles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
             Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
         }
-        /// Real text tokens + on-screen frames from the accessibility
-        /// tree — label/value strings with screen frames normalized to
-        /// host bottom-left-origin boxes like Vision's. A scroll area's
-        /// rect clips its descendants' visible frames, so offscreen lazy
-        /// rows never leak into the row counts.
-        func axSnapshot(of view: NSView) -> [(String, CGRect)] {
-            guard let window = view.window,
-                  view.bounds.width > 0, view.bounds.height > 0 else { return [] }
-            func hostBox(_ screenRect: CGRect) -> CGRect {
-                let inHost = view.convert(window.convertFromScreen(screenRect), from: nil)
-                return CGRect(x: inHost.minX / view.bounds.width,
-                              y: view.isFlipped
-                                  ? 1 - inHost.maxY / view.bounds.height
-                                  : inHost.minY / view.bounds.height,
-                              width: inHost.width / view.bounds.width,
-                              height: inHost.height / view.bounds.height)
-            }
-            var rows: [(String, CGRect)] = []
-            var visited = Set<ObjectIdentifier>()
-            var diagnostics: [String] = []
-            var emitted = Set<String>()
-            func append(_ text: String, _ frame: CGRect) {
-                let box = hostBox(frame)
-                let identity = "\(text)|\(NSStringFromRect(frame))"
-                if emitted.insert(identity).inserted { rows.append((text, box)) }
-            }
-            func walk(_ element: Any, _ clip: CGRect) {
-                let object = element as AnyObject
-                guard visited.insert(ObjectIdentifier(object)).inserted else { return }
-                let node = PitexAXRead(object)
-                let children = node["children"] as? [Any] ?? []
-                let frame = (node["frame"] as? NSValue)?.rectValue ?? .zero
-                let role = node["role"] as? String ?? "none"
-                if diagnostics.count < 16 {
-                    diagnostics.append("\(node["class"] ?? "?") conforms=\(node["conforms"] ?? "?") "
-                        + "role=\(role) frame=\(frame) children=\(children.count)")
-                }
-                let childClip = role == NSAccessibility.Role.scrollArea.rawValue
-                    ? clip.intersection(frame)
-                    : clip
-                let visible = frame.intersection(clip)
-                if !visible.isNull, visible.width > 0, visible.height > 0 {
-                    var texts = Set<String>()
-                    for key in ["label", "value", "title"] {
-                        let text = node[key] as? String
-                        if let text, !text.isEmpty { texts.insert(text) }
-                    }
-                    for text in texts {
-                        append(text, visible)
-                        // A label can fuse header and count ("TODOs 0")
-                        // — emit a per-title token with the element's
-                        // frame like the Vision path's substring boxes.
-                        // Only accept a title followed by a numeric count;
-                        // "No TODOs" or a container summary is not a header.
-                        for title in navTitles where text.hasPrefix(title + " ") {
-                            if Int(text.dropFirst(title.count).trimmingCharacters(in: .whitespaces)) != nil {
-                                append(title, visible)
-                            }
-                        }
-                    }
-                }
-                for child in children { walk(child, childClip) }
-            }
-            walk(view, window.convertToScreen(view.convert(view.bounds, to: nil)))
-            print("[stage] ax nodes=\(visited.count) rows=\(rows.count) sample=\(rows.prefix(8))")
-            print("[stage] ax traversal: \(diagnostics.joined(separator: "\n"))")
-            fflush(nil)
-            precondition(!rows.isEmpty, "AX returned no visible text; see selector/frame/children diagnostics above")
-            return rows
-        }
-        /// Unfiltered host tokens — the Symbols palette lives right of
-        /// the sidebar's 0.45 cut, so it needs the raw set.
         func rawTokens(of view: NSView) throws -> [String] {
-            if visionBroken { return axSnapshot(of: view).map(\.0) }
             let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
             view.cacheDisplay(in: view.bounds, to: bitmap)
-            do {
-                let request = try ocrRequest()
-                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
-                return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            } catch {
-                visionBroken = true
-                print("[stage] Vision OCR failed: \(error) — accessibility geometry fallback")
-                fflush(nil)
-                return axSnapshot(of: view).map(\.0)
-            }
+            let request = try ocrRequest()
+            try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         }
         try await settle()
         // The tint check needs the real active bezel — an inactive window
@@ -289,20 +203,6 @@ import Vision
         precondition(NSApp.isActive && window.isKeyWindow,
             "Checker window never activated — tint check would measure the inactive bezel")
         stage("appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow)")
-        let upper = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.segmentCount == 3 }!
-        let split = descendants(host).compactMap { $0 as? NSSplitView }.first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
-        let lower = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
-            control.segmentCount == 3 && (0..<3).allSatisfy { index in
-                control.label(forSegment: index) == navTitles[index]
-            }
-        }!
-        precondition(workspace.projectTree.first { $0.path == "main.tex" }?.name == "main.tex")
-        precondition(workspace.documentProject.tree.first?.name == "main.tex (.)", "Project must retain duplicate-name context")
-        upper.selectedSegment = 1
-        precondition(upper.sendAction(upper.action, to: upper.target))
-        try await settle()
-        precondition(workspace.sidebarSection == .labels)
-        stage("upper picker action OK")
         func snapshot() throws -> [(String, CGRect)] { try snapshot(of: host) }
         func snapshot(of view: NSView) throws -> [(String, CGRect)] {
             let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
@@ -310,96 +210,98 @@ import Vision
             if view === host {
                 try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-layout-live-\(language).png"))
             }
-            if visionBroken { return axSnapshot(of: view).filter { $0.1.minX < 0.45 } }
-            do {
-                let request = try ocrRequest()
-                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
-                return try (request.results ?? []).flatMap { observation -> [(String, CGRect)] in
-                    guard let candidate = observation.topCandidates(1).first else { return [] }
-                    var rows = [(candidate.string, observation.boundingBox)]
-                    for title in navTitles {
-                        if let range = candidate.string.range(of: title, options: .caseInsensitive), let box = try candidate.boundingBox(for: range) {
-                            rows.append((title, box.boundingBox))
-                        }
+            let request = try ocrRequest()
+            try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
+            return try (request.results ?? []).flatMap { observation -> [(String, CGRect)] in
+                guard let candidate = observation.topCandidates(1).first else { return [] }
+                var rows = [(candidate.string, observation.boundingBox)]
+                for title in navTitles {
+                    if let range = candidate.string.range(of: title, options: .caseInsensitive), let box = try candidate.boundingBox(for: range) {
+                        rows.append((title, box.boundingBox))
                     }
-                    return rows
-                }.filter { $0.1.minX < 0.45 }
-            } catch {
-                visionBroken = true
-                print("[stage] Vision OCR failed: \(error) — accessibility geometry fallback")
-                fflush(nil)
-                return axSnapshot(of: view).filter { $0.1.minX < 0.45 }
-            }
+                }
+                return rows
+            }.filter { $0.1.minX < 0.45 }
         }
-        // Synthetic clicks deadlock: sendEvent(.leftMouseDown) enters
-        // NSSegmentedControl's tracking loop, which waits for a mouseUp the
-        // caller can't post until sendEvent returns. Drive the real binding
-        // like `upper` does — selectedSegment + sendAction is the same path a
-        // genuine click takes through the SwiftUI Picker.
-        func clickTab(_ key: String) async throws {
-            let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
-            guard let index = (0..<lower.segmentCount).first(where: { lower.label(forSegment: $0) == title }) else {
-                fatalError("Missing tab \(title): \(navTitles)")
-            }
-            lower.selectedSegment = index
-            precondition(lower.sendAction(lower.action, to: lower.target), "Tab \(title) action did not fire")
+        if !geometryOnly {
+            let upper = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.segmentCount == 3 }!
+            let split = descendants(host).compactMap { $0 as? NSSplitView }.first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
+            let lower = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
+                control.segmentCount == 3 && (0..<3).allSatisfy { index in
+                    control.label(forSegment: index) == navTitles[index]
+                }
+            }!
+            precondition(workspace.projectTree.first { $0.path == "main.tex" }?.name == "main.tex")
+            precondition(workspace.documentProject.tree.first?.name == "main.tex (.)", "Project must retain duplicate-name context")
+            upper.selectedSegment = 1
+            precondition(upper.sendAction(upper.action, to: upper.target))
             try await settle()
-            stage("tab \(title) selected")
-        }
-        // Exercise the native split view's resize path at two divider positions.
-        // AX may expose the same filename on a row and its text child;
-        // count distinct fixture filenames so this cannot inflate reveal.
-        func workspaceRows(_ rows: [(String, CGRect)]) -> Set<String> {
-            Set(rows.filter { $0.0.contains("zfile_") }.map(\.0))
-        }
-        split.setPosition(420, ofDividerAt: 0)
-        try await settle()
-        let before = workspaceRows(try snapshot()).count
-        split.setPosition(240, ofDividerAt: 0)
-        try await settle()
-        let after = try snapshot()
-        let afterCount = workspaceRows(after).count
-        precondition(afterCount >= before + 5, "Resizing must reveal more Workspace rows: \(before) → \(afterCount)")
-        precondition(!after.contains { $0.0.contains("(.)") }, "Workspace leaked duplicate-name folder suffix")
-        let height = split.arrangedSubviews[0].frame.height
-        for key in ["sidebar.project", "sidebar.todos", "sidebar.workspace"] {
-            try await clickTab(key)
-            precondition(abs(split.arrangedSubviews[0].frame.height - height) < 3, "Tab switch reset the divider")
-            precondition(workspace.sidebarSection == .labels, "Lower tabs changed document structure selection")
-            precondition(workspace.todoItems.count == 1)
-        }
-        let visibleRows = workspaceRows(try snapshot())
-        precondition(visibleRows.count == afterCount, "Workspace viewport shrank after tab switching")
-        stage("tab switches done; tint check next")
-        print("PASS \(language): resized divider reveals \(before) → \(afterCount) rows; Workspace basenames; Project labels and split height retained")
-        let expected = SymbolCategory.allCases.map {
-            Bundle.main.localizedString(forKey: $0.titleKey, value: nil, table: nil)
-        }
-        precondition(!expected.contains { $0.hasPrefix("editor.") })
-        let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let workspaceTitle = Bundle.main.localizedString(forKey: "sidebar.workspace", value: nil, table: nil)
-        let tab = try snapshot().filter { $0.0 == workspaceTitle }.max { $0.1.midY < $1.1.midY }!.1
-        let pixels = bitmap.converting(to: .sRGB, renderingIntent: .default)!
-        var tintedPixels = 0
-        for y in Int((1 - tab.maxY) * Double(bitmap.pixelsHigh))..<Int((1 - tab.minY) * Double(bitmap.pixelsHigh)) {
-            for x in Int(tab.minX * Double(bitmap.pixelsWide))..<Int(tab.maxX * Double(bitmap.pixelsWide)) {
-                guard let color = pixels.colorAt(x: x, y: y) else { continue }
-                if abs(color.redComponent - tint.redComponent) < 0.04 &&
-                    abs(color.greenComponent - tint.greenComponent) < 0.04 &&
-                    abs(color.blueComponent - tint.blueComponent) < 0.04 { tintedPixels += 1 }
+            precondition(workspace.sidebarSection == .labels)
+            stage("upper picker action OK")
+            // Synthetic clicks deadlock: sendEvent(.leftMouseDown) enters
+            // NSSegmentedControl's tracking loop, which waits for a mouseUp the
+            // caller can't post until sendEvent returns. Drive the real binding
+            // like `upper` does — selectedSegment + sendAction is the same path a
+            // genuine click takes through the SwiftUI Picker.
+            func clickTab(_ key: String) async throws {
+                let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
+                guard let index = (0..<lower.segmentCount).first(where: { lower.label(forSegment: $0) == title }) else {
+                    fatalError("Missing tab \(title): \(navTitles)")
+                }
+                lower.selectedSegment = index
+                precondition(lower.sendAction(lower.action, to: lower.target), "Tab \(title) action did not fire")
+                try await settle()
+                stage("tab \(title) selected")
             }
+            // Exercise the native split view's resize path at two divider positions.
+            split.setPosition(420, ofDividerAt: 0)
+            try await settle()
+            let before = try snapshot().filter { $0.0.contains("zfile_") }.count
+            split.setPosition(240, ofDividerAt: 0)
+            try await settle()
+            let after = try snapshot()
+            let afterCount = after.filter { $0.0.contains("zfile_") }.count
+            precondition(afterCount >= before + 5, "Resizing must reveal more Workspace rows: \(before) → \(afterCount)")
+            precondition(!after.contains { $0.0.contains("(.)") }, "Workspace leaked duplicate-name folder suffix")
+            let height = split.arrangedSubviews[0].frame.height
+            for key in ["sidebar.project", "sidebar.todos", "sidebar.workspace"] {
+                try await clickTab(key)
+                precondition(abs(split.arrangedSubviews[0].frame.height - height) < 3, "Tab switch reset the divider")
+                precondition(workspace.sidebarSection == .labels, "Lower tabs changed document structure selection")
+                precondition(workspace.todoItems.count == 1)
+            }
+            let visibleRows = try snapshot().filter { $0.0.contains("zfile_") }
+            precondition(visibleRows.count == afterCount, "Workspace viewport shrank after tab switching")
+            stage("tab switches done; tint check next")
+            print("PASS \(language): resized divider reveals \(before) → \(afterCount) rows; Workspace basenames; Project labels and split height retained")
+            let expected = SymbolCategory.allCases.map {
+                Bundle.main.localizedString(forKey: $0.titleKey, value: nil, table: nil)
+            }
+            precondition(!expected.contains { $0.hasPrefix("editor.") })
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let workspaceTitle = Bundle.main.localizedString(forKey: "sidebar.workspace", value: nil, table: nil)
+            let tab = try snapshot().filter { $0.0 == workspaceTitle }.max { $0.1.midY < $1.1.midY }!.1
+            let pixels = bitmap.converting(to: .sRGB, renderingIntent: .default)!
+            var tintedPixels = 0
+            for y in Int((1 - tab.maxY) * Double(bitmap.pixelsHigh))..<Int((1 - tab.minY) * Double(bitmap.pixelsHigh)) {
+                for x in Int(tab.minX * Double(bitmap.pixelsWide))..<Int(tab.maxX * Double(bitmap.pixelsWide)) {
+                    guard let color = pixels.colorAt(x: x, y: y) else { continue }
+                    if abs(color.redComponent - tint.redComponent) < 0.04 &&
+                        abs(color.greenComponent - tint.greenComponent) < 0.04 &&
+                        abs(color.blueComponent - tint.blueComponent) < 0.04 { tintedPixels += 1 }
+                }
+            }
+            precondition(tintedPixels > 30, "Selected Workspace button ignored the theme tint: \(tintedPixels) pixels")
+            print("PASS \(language): selected navigator button uses the inherited theme tint")
+            try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("sidebar-\(language).png"))
+            // Read the rendered picker, so Text(String) regressing to a raw key
+            // fails even though every translation is still present in the bundle.
+            let text = try rawTokens(of: host)
+            func compact(_ text: String) -> String { text.replacingOccurrences(of: " ", with: "").lowercased() }
+            precondition(text.contains { compact($0).contains(compact(expected[0])) }, "Missing rendered category title: \(text)")
+            print("PASS \(language): localized Symbols title and independent Workspace/Project/TODO buttons")
         }
-        precondition(tintedPixels > 30, "Selected Workspace button ignored the theme tint: \(tintedPixels) pixels")
-        print("PASS \(language): selected navigator button uses the inherited theme tint")
-        try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("sidebar-\(language).png"))
-        // Read the rendered picker, so Text(String) regressing to a raw key
-        // fails even though every translation is still present in the bundle.
-        let text = try rawTokens(of: host)
-        func compact(_ text: String) -> String { text.replacingOccurrences(of: " ", with: "").lowercased() }
-        precondition(text.contains { compact($0).contains(compact(expected[0])) }, "Missing rendered category title: \(text)")
-        print("PASS \(language): localized Symbols title and independent Workspace/Project/TODO buttons")
-
         if language == "en" {
             // Real-window checks: the whole WorkspaceView (outer vertical
             // split + the sidebar pane) in a resizable window — the
@@ -476,6 +378,7 @@ import Vision
             let trailing = { paneWidth(host: realHost, trailing: true)! }
             precondition(abs(trailing() - remembered) <= 1.5,
                          "mirror flip must carry \(remembered), got \(trailing())")
+            try capture(realHost, "resized-mirrored")
             // Fresh mirrored minimum needs a genuinely new view state —
             // a same-type rootView swap can keep @StateObject alive, and
             // one model's editor text view must never live in two hosts.
@@ -497,9 +400,11 @@ import Vision
             precondition(freshInitial != nil && abs(freshInitial! - 170) <= 1,
                          "fresh mirrored sidebar must start at 170, got \(freshInitial as Any)")
             stage("measured fresh mirrored sidebar before manual resize: \(freshInitial!)pt")
+            try capture(freshHost, "minimum-mirrored")
             await freshWorkspace.close()
             freshWindow.orderOut(nil)
             stage("real window: 170 initial, 230 survives tab change, hide/show + mirror restore")
+            realWindow.orderOut(nil)
 
             // Empty TODOs pane: a fixture-independent project with zero
             // TODO comments (root's main.tex has one — any file in that
@@ -522,6 +427,7 @@ import Vision
                 .frame(width: 280, height: 650)
                 .environment(\.locale, Locale(identifier: language)))
             window.contentView = emptyHost
+            window.makeKeyAndOrderFront(nil)
             try await settle(emptyHost)
             try await settle(emptyHost)
             let nav = descendants(emptyHost).compactMap { $0 as? NSSegmentedControl }.first { control in
@@ -531,6 +437,11 @@ import Vision
             }!
             let innerSplit = descendants(emptyHost).compactMap { $0 as? NSSplitView }
                 .first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
+            if geometryOnly {
+                innerSplit.setPosition(330, ofDividerAt: 0)
+                try await settle(emptyHost)
+            }
+            let initialInnerHeight = innerSplit.arrangedSubviews[0].frame.height
             func clickNav(_ key: String) async throws {
                 let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
                 nav.selectedSegment = (0..<nav.segmentCount).first { nav.label(forSegment: $0) == title }!
@@ -547,7 +458,24 @@ import Vision
             let headerTolerance = 4 / hostHeight  // ±4pt at the host's scale
             func headerTop(_ key: String) throws -> (top: CGFloat, boxes: [CGRect]) {
                 let title = Bundle.main.localizedString(forKey: key, value: nil, table: nil)
-                let boxes = try snapshot(of: emptyHost).filter { $0.0 == title }.map(\.1)
+                let boxes: [CGRect]
+                if geometryOnly {
+                    let markers = descendants(emptyHost).compactMap { $0 as? SidebarHeaderMarker }
+                        .filter { $0.key == key }
+                    precondition(markers.count == 1, "expected one real header marker for \(key), got \(markers.count)")
+                    let marker = markers[0]
+                    precondition(marker.active && marker.window === window && !marker.isHiddenOrHasHiddenAncestor,
+                                 "header marker is not on the selected, mounted page: \(key)")
+                    let rect = marker.convert(marker.bounds, to: emptyHost)
+                    precondition(rect.width > 0 && rect.height > 0 && emptyHost.bounds.contains(rect),
+                                 "header Text must have a visible positive frame: \(key) \(rect)")
+                    boxes = [CGRect(x: rect.minX / emptyHost.bounds.width,
+                                    y: emptyHost.isFlipped ? 1 - rect.maxY / hostHeight : rect.minY / hostHeight,
+                                    width: rect.width / emptyHost.bounds.width, height: rect.height / hostHeight)]
+                    stage("rendered \(key) header Text frame: \(rect)")
+                } else {
+                    boxes = try snapshot(of: emptyHost).filter { $0.0 == title }.map(\.1)
+                }
                 // Per snapshot: the inner divider resize moves the picker
                 // row along with its pane, so a stale bottom edge would
                 // misclassify the header.
@@ -563,6 +491,7 @@ import Vision
             }
             try await clickNav("sidebar.project")
             let project = try headerTop("sidebar.project")
+            try capture(emptyHost, "empty-project")
             try await clickNav("sidebar.todos")
             let todos = try headerTop("sidebar.todos")
             let emptyBitmap = emptyHost.bitmapImageRepForCachingDisplay(in: emptyHost.bounds)!
@@ -574,10 +503,17 @@ import Vision
                          + "\(todos.top) vs \(project.top) — project=\(project.boxes) todos=\(todos.boxes)")
             innerSplit.setPosition(170, ofDividerAt: 0)
             try await settle(emptyHost)
+            let resizedInnerHeight = innerSplit.arrangedSubviews[0].frame.height
+            if geometryOnly {
+                precondition(abs(resizedInnerHeight - 170) <= 1.5 && abs(resizedInnerHeight - initialInnerHeight) > 4,
+                             "inner divider must actually resize: \(initialInnerHeight) → \(resizedInnerHeight)")
+            }
             try await clickNav("sidebar.project")
             let projectResized = try headerTop("sidebar.project")
+            try capture(emptyHost, "empty-project-resized")
             try await clickNav("sidebar.todos")
             let todosResized = try headerTop("sidebar.todos")
+            try capture(emptyHost, "empty-todo-resized")
             precondition(abs(todosResized.top - projectResized.top) <= headerTolerance,
                          "header alignment must survive the divider resize (±4pt): "
                          + "\(todosResized.top) vs \(projectResized.top) — project=\(projectResized.boxes) todos=\(todosResized.boxes)")
@@ -620,19 +556,17 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
     source = root / 'Check.swift'
     # Keep the check in the same file as the private SymbolsPaletteView.
     source.write_text(workspace_view.read_text() + '\n' + check)
-    ax_bridge_header = root / 'SidebarAX.h'
-    ax_bridge_header.write_text(ax_header)
-    ax_bridge_source = root / 'SidebarAX.m'
-    ax_bridge_source.write_text(ax_source)
-    ax_bridge_object = root / 'SidebarAX.o'
-    subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-target', 'arm64-apple-macos15.0',
-                    '-Wall', '-Wextra', '-Werror', '-c', str(ax_bridge_source),
-                    '-o', str(ax_bridge_object)], check=True)
+    sidebar_view = repo / 'Mac/Sources/Features/ProjectSidebarView.swift'
+    sidebar_sources = [sidebar_view]
+    if args.geometry_only:
+        sidebar_copy = root / 'ProjectSidebarView.swift'
+        sidebar_copy.write_text(instrument_headers(sidebar_view.read_text()))
+        sidebar_sources = [sidebar_copy]
     executable = bundle / 'MacOS/check'
     subprocess.run(['xcrun', 'swiftc', '-parse-as-library', '-swift-version', '6',
-                    '-import-objc-header', str(ax_bridge_header), str(ax_bridge_object),
                     '-target', 'arm64-apple-macos15.0', *[arg for path in includes for arg in ['-I', str(path)]], str(source), str(stripped),
-                    *[str(p) for p in (repo / 'Mac/Sources').rglob('*.swift') if p not in (app_main, workspace_view)],
+                    *[str(p) for p in (repo / 'Mac/Sources').rglob('*.swift') if p not in (app_main, workspace_view, sidebar_view)],
+                    *map(str, sidebar_sources),
                     *[str(p) for p in objects], '-o', str(executable)], check=True)
     # Directly exec()ing the Mach-O left the checker unable to activate on CI
     # (appActive=false → inactive gray bezel, unusable tint check), so launch
@@ -641,7 +575,7 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
     # after run() returns, is authoritative.
     env = {**os.environ, 'PI_AGENT_PATH': '/usr/bin/false', 'PI_CODING_AGENT_DIR': str(root / 'pi')}
     app = root / 'SidebarCheck.app'
-    for language in ['en', 'ko']:
+    for language in (['en'] if args.geometry_only else ['en', 'ko']):
         out_log = root / f'check-{language}.out.log'
         err_log = root / f'check-{language}.err.log'
         try:
@@ -651,7 +585,7 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
                             '--env', f'PI_CODING_AGENT_DIR={root / "pi"}',
                             '--env', f'PITEX_SIDEBAR_ROOT={root}',
                             '--env', f'PITEX_SIDEBAR_LANG={language}',
-                            '--env', f'PITEX_SIDEBAR_TEXT_BACKEND={text_backend}',
+                            '--env', f'PITEX_SIDEBAR_GEOMETRY_ONLY={int(args.geometry_only)}',
                             str(app), '--args',
                             '-AppleLanguages', f'({language})'],
                            env=env, check=True, timeout=60)
@@ -662,4 +596,5 @@ with tempfile.TemporaryDirectory(prefix='pitex-sidebar-', dir='/tmp') as directo
         output = out_log.read_text(errors='replace') if out_log.exists() else ''
         if f'CHECK_COMPLETE {language}' not in output:
             sys.exit(f'FAIL {language}: completion marker missing from checker log')
-        shutil.copyfile(root / f'sidebar-{language}.png', Path('/tmp') / f'pitex-sidebar-{language}.png')
+        if not args.geometry_only:
+            shutil.copyfile(root / f'sidebar-{language}.png', Path('/tmp') / f'pitex-sidebar-{language}.png')

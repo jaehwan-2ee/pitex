@@ -308,8 +308,11 @@ import SwiftUI
                 requirePopup("before prefix edit")
                 type("in")
             }),
-            (0.1, {
-                literal("\\in", "prefix delivered while popup is open")
+            // AppKit closes the bare-backslash popup before redispatching
+            // the typed key. Allow the production 200ms debounce to show
+            // the automatically filtered popup before testing liveness.
+            (0.4, {
+                literal("\\in", "prefix delivered before automatic popup check")
                 requirePopup("fresh heartbeat after prefix edit")
                 Task { @MainActor in
                     requirePopup("heartbeat execution")
@@ -324,7 +327,7 @@ import SwiftUI
                 requirePopup("automatic in-prefix")
                 require(heartbeat == 1, "a fresh MainActor job must run while the popup remains visible")
                 require(workspace.documentSnapshot?.text == textView.string,
-                        "prefix edit must reach documentSnapshot within 1s while popup remains visible")
+                        "prefix edit must reach documentSnapshot within 1s of automatic popup visibility")
                 stage("\\in stayed literal with multiple candidates")
             }),
             // C: backspace to '\', then 'x' — a zero-match prefix opens no
