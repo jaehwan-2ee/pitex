@@ -5221,8 +5221,10 @@ fn build_chrome(
     // Right inspector: PDF preview.
     let preview = crate::panes::build_preview_pane(state, ui);
     inner.set_end_child(Some(&preview));
-    inner.set_position(900);
-    outer.set_position(240);
+    // GTK clamps these positions to the children's minimum sizes. Start
+    // both side panes at that minimum and give the editor the remaining space.
+    inner.set_position(i32::MAX);
+    outer.set_position(0);
 
     outer.set_vexpand(true);
     toolbar_view.append(&outer);

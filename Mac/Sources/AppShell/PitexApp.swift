@@ -2531,6 +2531,9 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Finder / Open With / `open -a`: each URL goes to the window whose
     /// project contains it, else an empty window, else a new window.
+    /// Warm opens are claimed by an open scene and arrive through the
+    /// root view's `onOpenURL`; this delegate remains the fallback for
+    /// opens delivered before a scene exists (app launch).
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in
             urls.forEach { WorkspaceWindows.route($0) }
@@ -2578,8 +2581,9 @@ struct PitexApp: App {
         WindowGroup("Pitex", id: "workspace", for: WindowOpenRequest.self) { $request in
             WorkspaceWindow(initialURL: request?.url)
         }
-        // The app delegate routes Finder opens itself; SwiftUI must not add
-        // a window of its own for them.
+        // Opens route through WorkspaceWindows, so the scene itself must
+        // never spawn a window for an external event: an open scene claims
+        // it via the view-level handlesExternalEvents modifier below.
         .handlesExternalEvents(matching: [])
         .commands { AppCommands() }
     }
@@ -2602,6 +2606,13 @@ private struct WorkspaceWindow: View {
             .frame(minWidth: 980, minHeight: 620)
             .background(WindowReader { workspace.window = $0 })
             .focusedSceneObject(workspace)
+            // A Finder / Open With / `open -a` event while the app runs is
+            // claimed by an already-open scene ("*" always matches), then
+            // delivered here as a URL and routed like an in-app open.
+            .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+            .onOpenURL { url in
+                Task { @MainActor in WorkspaceWindows.route(url, from: workspace) }
+            }
             .sheet(isPresented: $workspace.showingSettings) {
                 SettingsView(store: workspace.settings, workspace: workspace)
             }
