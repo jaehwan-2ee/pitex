@@ -1,0 +1,16 @@
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  h_d73c695d83f4a7 43,48-51,56-60,62-90
+Tools/check-native-completion.py
+  h_d73c695d83f4a7 45,202,342-344,502-534,670
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a75d9c5ccde7c91bae65253c11b89862af79e768",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
