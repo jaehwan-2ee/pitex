@@ -38,8 +38,22 @@ import SwiftUI
 /// independently proves that a popup was actually displayed.
 @MainActor enum CompleteRecorder {
     static var original: IMP?
+    static var insertOriginal: IMP?
+    static var commandOriginal: IMP?
     static var calls = 0
     static var activeCalls = 0
+
+    static func event(_ event: NSEvent?) -> String {
+        guard let event else { return "none" }
+        guard event.type == .keyDown || event.type == .keyUp else { return "type=\(event.type.rawValue)" }
+        return "type=\(event.type.rawValue) key=\(event.keyCode) "
+            + "chars=\(String(describing: event.characters)) time=\(event.timestamp)"
+    }
+
+    static func state(_ view: NSTextView) -> String {
+        "selection=\(view.selectedRange()) tail=\(String(view.string.suffix(24)).debugDescription) "
+            + "appEvent=[\(event(NSApp.currentEvent))] windowEvent=[\(event(view.window?.currentEvent))]"
+    }
 }
 
 /// Runs the stage list as chained one-shot timers. Each step's timer fires
@@ -158,18 +172,69 @@ import SwiftUI
         let record: CompleteIMP = { view, selector, sender in
             MainActor.assumeIsolated {
                 CompleteRecorder.calls += 1
+                let call = CompleteRecorder.calls
                 CompleteRecorder.activeCalls += 1
                 defer { CompleteRecorder.activeCalls -= 1 }
-                print("[trace] complete: enter #\(CompleteRecorder.calls) "
-                    + "tail='\(String(view.string.suffix(12)))'")
+                print("[trace] complete: enter #\(call) \(CompleteRecorder.state(view))")
                 fflush(nil)
                 unsafeBitCast(CompleteRecorder.original!, to: CompleteIMP.self)(view, selector, sender)
-                print("[trace] complete: return tail='\(String(view.string.suffix(12)))'")
+                print("[trace] complete: return #\(call) \(CompleteRecorder.state(view))")
                 fflush(nil)
             }
         }
-        CompleteRecorder.original = method_setImplementation(method, unsafeBitCast(record, to: IMP.self))
-        defer { method_setImplementation(method, CompleteRecorder.original!) }
+        CompleteRecorder.original = method_getImplementation(method)
+        class_replaceMethod(NSTextView.self, #selector(NSTextView.complete(_:)),
+                            unsafeBitCast(record, to: IMP.self), method_getTypeEncoding(method))
+        defer {
+            class_replaceMethod(NSTextView.self, #selector(NSTextView.complete(_:)),
+                                CompleteRecorder.original!, method_getTypeEncoding(method))
+        }
+
+        // Public hooks only, tracing without changing the delivered input.
+        // In particular, determine whether Return with no selected row ever
+        // calls insertCompletion or doCommand before the tracking loop exits.
+        let insertMethod = class_getInstanceMethod(NSTextView.self,
+            #selector(NSTextView.insertCompletion(_:forPartialWordRange:movement:isFinal:)))!
+        typealias InsertIMP = @convention(c) (NSTextView, Selector, NSString, NSRange, Int, Bool) -> Void
+        let recordInsert: InsertIMP = { view, selector, word, range, movement, isFinal in
+            MainActor.assumeIsolated {
+                print("[trace] insertCompletion movement=\(movement) final=\(isFinal) "
+                    + "word=\(String(word).debugDescription) range=\(range) \(CompleteRecorder.state(view))")
+                fflush(nil)
+                unsafeBitCast(CompleteRecorder.insertOriginal!, to: InsertIMP.self)(
+                    view, selector, word, range, movement, isFinal)
+            }
+        }
+        CompleteRecorder.insertOriginal = method_getImplementation(insertMethod)
+        class_replaceMethod(NSTextView.self,
+                            #selector(NSTextView.insertCompletion(_:forPartialWordRange:movement:isFinal:)),
+                            unsafeBitCast(recordInsert, to: IMP.self), method_getTypeEncoding(insertMethod))
+        defer {
+            class_replaceMethod(NSTextView.self,
+                                #selector(NSTextView.insertCompletion(_:forPartialWordRange:movement:isFinal:)),
+                                CompleteRecorder.insertOriginal!, method_getTypeEncoding(insertMethod))
+        }
+
+        let commandMethod = class_getInstanceMethod(NSTextView.self, #selector(NSTextView.doCommand(by:)))!
+        typealias CommandIMP = @convention(c) (NSTextView, Selector, Selector) -> Void
+        let recordCommand: CommandIMP = { view, selector, command in
+            MainActor.assumeIsolated {
+                print("[trace] doCommand \(NSStringFromSelector(command)) depth=\(CompleteRecorder.activeCalls) "
+                    + CompleteRecorder.state(view))
+                fflush(nil)
+                unsafeBitCast(CompleteRecorder.commandOriginal!, to: CommandIMP.self)(view, selector, command)
+            }
+        }
+        // class_getInstanceMethod may return an inherited implementation.
+        // Replace on NSTextView itself so the hook cannot receive arbitrary
+        // NSResponder instances through a globally patched superclass.
+        CompleteRecorder.commandOriginal = method_getImplementation(commandMethod)
+        class_replaceMethod(NSTextView.self, #selector(NSTextView.doCommand(by:)),
+                            unsafeBitCast(recordCommand, to: IMP.self), method_getTypeEncoding(commandMethod))
+        defer {
+            class_replaceMethod(NSTextView.self, #selector(NSTextView.doCommand(by:)),
+                                CompleteRecorder.commandOriginal!, method_getTypeEncoding(commandMethod))
+        }
 
         // The project provider must have loaded the fixture's labels and
         // .bib keys before the chain starts — probe it directly rather

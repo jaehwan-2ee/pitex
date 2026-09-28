@@ -144,6 +144,19 @@ jobs:
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - name: Native completion checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 Tools/check-native-completion.py build/Build/Products/Release 2>&1 | tee /tmp/pitex-native-completion-golden.log
+      - name: Native completion log
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-completion-log-golden-gate
+          path: /tmp/pitex-native-completion-golden.log
+          if-no-files-found: error
       - name: Native editor mutation regression checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterMutationTests
@@ -177,9 +190,6 @@ jobs:
       - name: Settings menu checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-settings-menu.py build/Build/Products/Release
-      - name: Native completion checks
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: python3 Tools/check-native-completion.py build/Build/Products/Release
       # The window-routing probe runs last so its result can't mask the
       # navigation/detached-preview evidence above.
       - name: External open routing checks
