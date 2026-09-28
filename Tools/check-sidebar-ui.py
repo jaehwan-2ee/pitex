@@ -38,6 +38,7 @@ else:
                     targets.setdefault(target.name, files)
     objects = [p for files in targets.values() for p in files]
 check = r'''
+import CoreML
 import Vision
 
 @main struct SidebarCheck {
@@ -95,6 +96,31 @@ import Vision
         func settle() async throws { try await settle(host) }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         func stage(_ message: String) { print("[stage] \(message)"); fflush(nil) }
+        /// Virtualized runners lack the scaler driver Vision's GPU path
+        /// needs (CRImageReaderError) — pin every compute stage that
+        /// offers a CPU device so OCR runs on the CPU the VM has.
+        /// setComputeDevice is the supported API (macOS 14+); the older
+        /// usesCPUOnly flag is deprecated and capped at macOS 14.
+        func ocrRequest() throws -> VNRecognizeTextRequest {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = language == "ko" ? ["ko-KR", "en-US"] : ["en-US"]
+            var pinned = 0
+            for (stage, devices) in try request.supportedComputeStageDevices {
+                for device in devices {
+                    // MLComputeDevice.cpu is an enum case — assign the
+                    // instance the request itself advertises for the stage.
+                    if case .cpu = device {
+                        request.setComputeDevice(device, for: stage)
+                        pinned += 1
+                        break
+                    }
+                }
+            }
+            precondition(pinned > 0,
+                         "Vision offered no CPU compute stage — OCR would hit the VM scaler path again")
+            return request
+        }
         try await settle()
         // The tint check needs the real active bezel — an inactive window
         // renders selected segments gray. The `open` launch should already
@@ -132,9 +158,7 @@ import Vision
             if view === host {
                 try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-layout-live-\(language).png"))
             }
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = language == "ko" ? ["ko-KR", "en-US"] : ["en-US"]
+            let request = try ocrRequest()
             try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
             return try (request.results ?? []).flatMap { observation -> [(String, CGRect)] in
                 guard let candidate = observation.topCandidates(1).first else { return [] }
@@ -206,9 +230,7 @@ import Vision
         try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("sidebar-\(language).png"))
         // Read the rendered picker, so Text(String) regressing to a raw key
         // fails even though every translation is still present in the bundle.
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = language == "ko" ? ["ko-KR", "en-US"] : ["en-US"]
+        let request = try ocrRequest()
         try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         func compact(_ text: String) -> String { text.replacingOccurrences(of: " ", with: "").lowercased() }

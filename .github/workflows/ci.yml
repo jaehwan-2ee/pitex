@@ -112,6 +112,9 @@ jobs:
       - name: Settings menu checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-settings-menu.py build/Build/Products/Release
+      - name: Native completion checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-native-completion.py build/Build/Products/Release
       # Real SwiftUI lifecycle + LaunchServices `open -a`: window fronting
       # and activation without a Dock click (needs no TeX). Runs last so a
       # failure here can't hide the other checks' results.
@@ -169,6 +172,9 @@ jobs:
       - name: Settings menu checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-settings-menu.py build/Build/Products/Release
+      - name: Native completion checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-native-completion.py build/Build/Products/Release
       # The window-routing probe runs last so its result can't mask the
       # navigation/detached-preview evidence above.
       - name: External open routing checks
