@@ -40,16 +40,54 @@ private final class SessionTextView: NSTextView {
 
     private(set) var isCompleting = false
     var completionWillStart: (() -> Void)?
+    private var completionHandledInput = false
 
     override func complete(_ sender: Any?) {
         guard !isCompleting, !hasMarkedText() else { return }
         completionWillStart?()
+        let ownerWindow = window
+        let openingEvent = ownerWindow?.currentEvent
+        let originalText = string
+        let originalSelection = selectedRange()
         // AppKit tracks the popup synchronously. Candidate selection and
         // Escape can emit didChangeText inside this call; they must not
         // schedule another popup after the tracking loop returns.
         isCompleting = true
-        defer { isCompleting = false }
+        completionHandledInput = false
+        defer {
+            isCompleting = false
+            completionHandledInput = false
+        }
         super.complete(sender)
+
+        // With no selected row AppKit consumes Return to close its popup,
+        // without calling insertCompletion or doCommand. Give only that
+        // otherwise-unhandled key back to the normal text input bindings.
+        // A final completion callback counts as handled even when accepting
+        // an exact match left the string and selection unchanged.
+        guard !completionHandledInput, isEditable, !hasMarkedText(),
+              let ownerWindow, window === ownerWindow, ownerWindow.isKeyWindow,
+              ownerWindow.firstResponder === self,
+              let event = ownerWindow.currentEvent, event.type == .keyDown,
+              event !== openingEvent,
+              event.timestamp > (openingEvent?.timestamp ?? -.infinity),
+              event.windowNumber == ownerWindow.windowNumber,
+              event.keyCode == 36 || event.keyCode == 76,
+              event.modifierFlags.intersection([.shift, .command, .control, .option]).isEmpty,
+              originalSelection.length == 0, selectedRange() == originalSelection,
+              string == originalText else { return }
+        interpretKeyEvents([event])
+    }
+
+    override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange,
+                                   movement: Int, isFinal flag: Bool) {
+        if isCompleting, flag { completionHandledInput = true }
+        super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
+    }
+
+    override func doCommand(by selector: Selector) {
+        if isCompleting { completionHandledInput = true }
+        super.doCommand(by: selector)
     }
 
     override var rangeForUserCompletion: NSRange {

@@ -42,6 +42,7 @@ import SwiftUI
     static var commandOriginal: IMP?
     static var calls = 0
     static var activeCalls = 0
+    static var finalInsertions = 0
 
     static func event(_ event: NSEvent?) -> String {
         guard let event else { return "none" }
@@ -198,6 +199,7 @@ import SwiftUI
         typealias InsertIMP = @convention(c) (NSTextView, Selector, NSString, NSRange, Int, Bool) -> Void
         let recordInsert: InsertIMP = { view, selector, word, range, movement, isFinal in
             MainActor.assumeIsolated {
+                if isFinal { CompleteRecorder.finalInsertions += 1 }
                 print("[trace] insertCompletion movement=\(movement) final=\(isFinal) "
                     + "word=\(String(word).debugDescription) range=\(range) \(CompleteRecorder.state(view))")
                 fflush(nil)
@@ -337,6 +339,9 @@ import SwiftUI
         var callsAfterDismiss = 0
         var callsAfterAccept = 0
         var heartbeat = 0
+        var exactMatchText = ""
+        var exactMatchSelection = NSRange(location: 0, length: 0)
+        var finalInsertionsBeforeExactMatch = 0
         var sessionPolls = 0
         let driver = CompletionDriver()
         func pollSession() {
@@ -494,6 +499,39 @@ import SwiftUI
                         "Down+Return must accept sec:intro, tail '\(tail())'")
                 stage("\\ref literal, custom key kept, sec:intro accepted")
             }),
+            // Selecting the already-exact first candidate still consumes
+            // Return. Text equality alone cannot distinguish that acceptance
+            // from the unselected Return which must insert a newline.
+            (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
+            (0.1, { type("\\ref{sec:end") }),
+            (0.4, {
+                require(lastCandidates == ["sec:end", "sec:endmore"],
+                        "exact-match fixture must retain both candidates, got \(String(describing: lastCandidates))")
+                literal("\\ref{sec:end", "exact ref prefix")
+                requirePopup("exact ref prefix with longer alternative")
+                exactMatchText = textView.string
+                exactMatchSelection = textView.selectedRange()
+                finalInsertionsBeforeExactMatch = CompleteRecorder.finalInsertions
+                key(down.code, chars: down.chars)
+            }),
+            (0.1, { key(ret.code, chars: ret.chars) }),
+            (0.1, {
+                require(CompleteRecorder.finalInsertions == finalInsertionsBeforeExactMatch + 1,
+                        "exact-match acceptance must exercise the native final completion callback")
+                require(textView.string == exactMatchText && textView.selectedRange() == exactMatchSelection,
+                        "accepting an exact match must preserve the full text and caret without an extra newline")
+                requireClosed("exact-match acceptance")
+                callsAfterAccept = CompleteRecorder.calls
+            }),
+            (0.7, {
+                require(textView.string == exactMatchText && textView.selectedRange() == exactMatchSelection,
+                        "exact-match acceptance must remain unchanged after 700ms")
+                requireClosed("700ms after exact-match acceptance")
+                require(CompleteRecorder.calls == callsAfterAccept, "exact-match acceptance must not reopen")
+                require(workspace.documentSnapshot?.text == exactMatchText,
+                        "exact-match acceptance must preserve session equality")
+                stage("exact sec:end accepted with unchanged text/caret, no newline and no reopen")
+            }),
             // H: cite — same delete/refuse freedom: \cite{kn stays passive,
             // backspace + a custom key is retained, no word leak.
             (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
@@ -629,6 +667,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-completion-", dir="/tmp") as dire
         "\\begin{document}\n"
         "\\section{Intro}\\label{sec:intro}\n"
         "\\section{End}\\label{sec:end}\n"
+        "\\label{sec:endmore}\n"
         "Body text.\n"
         "\\end{document}\n")
     (fixture / "refs.bib").write_text(
