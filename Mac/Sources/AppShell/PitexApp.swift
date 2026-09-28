@@ -492,7 +492,12 @@ final class WorkspaceModel: ObservableObject {
         window.contentMinSize = NSSize(width: 320, height: 360)
         window.title = String(localized: "preview.title")
         window.delegate = delegate
-        window.contentView = NSHostingView(rootView: Preview(workspace: self, detached: true))
+        // Publishes the owning workspace to focused-scene commands as a
+        // fallback; the key-window lookup in AppCommands is what routes
+        // them for this plain NSWindow today.
+        window.contentView = NSHostingView(
+            rootView: Preview(workspace: self, detached: true).focusedSceneObject(self)
+        )
         detachedPreviewWindow = window
         detachedPreviewDelegate = delegate
         previewDetached = true

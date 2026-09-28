@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Check a rendered workspace without modifying or building its TeX project.
 
-Usage: check-workspace-navigation.py <Build/Products/Release> <main.tex>
-       <project-relative-source.tex>:<line> [<source.tex>:<line> ...]
-The main PDF and SyncTeX metadata must already exist.
+Usage: check-workspace-navigation.py <Build/Products/Release> [<main.tex>
+       <project-relative-source.tex>:<line> [<source.tex>:<line> ...]]
+With no fixture arguments the script builds its own two-file project with
+xelatex (BasicTeX at /Library/TeX/texbin) and checks it end-to-end,
+including the detached preview window lifecycle.
 """
-import os
 from pathlib import Path
+import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,8 +30,21 @@ import SyncTeXCore
 }
 
 @main struct Check {
-    @MainActor static func main() async throws {
-        _ = NSApplication.shared
+    @MainActor static func main() {
+        // A bundled launch through LaunchServices gives the checker a
+        // regular activation policy and a real event loop — direct exec()
+        // can leave the process unable to activate, which would make the
+        // isKeyWindow/miniaturize assertions fail for the wrong reason.
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        Task { @MainActor in
+            do { try await run(); print("CHECK_COMPLETE"); fflush(nil); exit(0) }
+            catch { print("FAIL", error); fflush(nil); exit(1) }
+        }
+        app.run()
+    }
+
+    @MainActor static func run() async throws {
         func require(_ condition: Bool, _ message: String) {
             guard condition else { print("FAIL", message); fflush(nil); exit(1) }
         }
@@ -185,21 +201,188 @@ import SyncTeXCore
         require(descendants(host).contains { $0 === pdf } && split.arrangedSubviews.map(\.frame) == frames,
                 "Manual tab changes must also preserve the preview and pane widths")
         print("PASS manual tab activation preserves workspace")
+
+        // ── Detached preview window ──────────────────────────────────
+        // The real app's WindowReader performs this same assignment when
+        // SwiftUI mounts the scene — needed for present()/inverse window
+        // fronting since the harness hosts the view by hand.
+        workspace.window = window
+        WorkspaceWindows.register(workspace, openWindow: nil)
+        let liveCount = WorkspaceWindows.live.count
+        func waitFor(_ condition: @autoclosure () -> Bool, _ message: String) async throws {
+            for _ in 0..<100 where !condition() {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            require(condition(), message)
+        }
+
+        workspace.detachPreview()
+        try await settle()
+        require(workspace.previewDetached, "detachPreview must mark the pane detached")
+        let detached = workspace.detachedPreviewWindow!
+        require(WorkspaceWindows.live.count == liveCount,
+                "The detached preview must not register as a workspace")
+        require(!descendants(host).contains { $0 is PDFView },
+                "The inline preview must unmount while detached")
+        let detachedPDF = descendants(detached.contentView!).compactMap { $0 as? PDFView }.first!
+        require(detachedPDF !== pdf && detachedPDF.document?.pageCount == document.pageCount,
+                "The detached window must host its own PDFView over the same document")
+
+        // Forward sync restores a minimized detached window and lands on it.
+        workspace.settings.forwardSyncHighlight = true
+        detached.miniaturize(nil)
+        try await settle()
+        require(detached.isMiniaturized, "Fixture must be able to minimize the detached window")
+        await workspace.syncForward()
+        try await settle()
+        require(!detached.isMiniaturized && detached.isVisible,
+                "Forward sync must restore and present the detached preview")
+        let detachedMarkers = (0..<detachedPDF.document!.pageCount).flatMap {
+            detachedPDF.document!.page(at: $0)!.annotations
+        }.filter { $0.type == PDFAnnotationSubtype.highlight.rawValue }
+        require(detachedMarkers.count == 1, "Forward marker must land on the detached PDF")
+
+        // Inverse Cmd-click in the detached window lands in the source
+        // editor and fronts its window — including cross-file targets.
+        let inverseParts = (targets.last ?? "main.tex:105").split(separator: ":")
+        let inverseSource = binding.projectRoot
+            .appendingPathComponent(String(inverseParts[0])).standardizedFileURL
+        let forward = try await workspace.syncTeXRunner.forward(
+            binding: binding, sourceURL: inverseSource,
+            line: Int(inverseParts[1])!, column: 0)
+        let expected = try await workspace.syncTeXRunner.inverse(
+            binding: binding, page: forward.pdf.page, point: forward.pdf.point)
+        require(expected.source.path.value == String(inverseParts[0]),
+                "The detached-sync target must map back to the requested source")
+        let page = detachedPDF.document!.page(at: forward.pdf.page - 1)!
+        // Same point math as the inline-navigation loop above: scroll the
+        // SyncTeX box into view first, then click the precise point the
+        // expected inverse was computed from.
+        let rect = NSRect(x: forward.h, y: page.bounds(for: .mediaBox).maxY - forward.v,
+                          width: max(forward.width, 4), height: max(forward.height, 4))
+        detachedPDF.go(to: rect, on: page)
+        try await settle()
+        let pdfPoint = NSPoint(x: forward.pdf.point.x,
+                               y: page.bounds(for: .mediaBox).maxY - forward.pdf.point.y)
+        let clickPoint = detachedPDF.convert(pdfPoint, from: page)
+        require(detachedPDF.bounds.contains(clickPoint), "Cmd-click target must be visible")
+        let event = NSEvent.mouseEvent(with: .leftMouseDown,
+            location: detachedPDF.convert(clickPoint, to: nil),
+            modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: detached.windowNumber, context: nil,
+            eventNumber: 1, clickCount: 1, pressure: 1)!
+        NSApp.sendEvent(event)
+        try await waitFor(workspace.activeDocumentURL == inverseSource,
+                        "Inverse sync from the detached preview must activate the expected source")
+        try await settle()
+        let text = workspace.environment!.editor.textView
+        let line = (text.string as NSString).substring(to: text.selectedRange().location)
+            .components(separatedBy: "\n").count
+        require(line == expected.source.line, "Caret must land on the inverse-sync line")
+        require(window.isKeyWindow,
+                "Inverse sync from the detached preview must front the editor window")
+        require(detached.isVisible, "The detached window must stay open after inverse sync")
+
+        // ⌘W while the detached window is key reattaches only the pane —
+        // the project must survive.
+        detached.makeKeyAndOrderFront(nil)
+        try await settle()
+        require(NSApp.keyWindow === detached, "Fixture must make the detached window key")
+        workspace.performCloseCommand()
+        try await settle()
+        require(!workspace.previewDetached && workspace.detachedPreviewWindow == nil,
+                "Cmd-W on the detached preview must reattach it, not close the project")
+        require(workspace.hasProject, "Cmd-W on the detached preview must keep the project alive")
+        require(window.isVisible, "The workspace window must stay open")
+        require(detached.contentView == nil, "The reattached window must drop its hosted view")
+        require(descendants(host).contains { $0 is PDFView },
+                "The inline preview must remount after reattach")
+
+        // The window's own close button reattaches the same way.
+        workspace.detachPreview()
+        try await settle()
+        let closed = workspace.detachedPreviewWindow!
+        closed.close()
+        try await settle()
+        require(!workspace.previewDetached && workspace.detachedPreviewWindow == nil,
+                "Closing the detached window must reattach the pane")
+        require(closed.contentView == nil && closed.delegate == nil,
+                "A closed detached window must drop its view and delegate")
+        require(descendants(host).contains { $0 is PDFView },
+                "The inline preview must remount after the detached window closes")
+
+        // Closing the owning workspace closes and releases the window.
+        workspace.detachPreview()
+        try await settle()
+        let orphan = workspace.detachedPreviewWindow!
+        await workspace.close()
+        require(workspace.detachedPreviewWindow == nil && !workspace.previewDetached,
+                "Workspace close must tear down the detached preview")
+        require(orphan.contentView == nil && !orphan.isVisible,
+                "The detached window must close with its workspace")
+        print("PASS detached preview: detach/reattach, minimized forward sync, inverse fronting, Cmd-W and teardown")
+
         await workspace.close()
     }
 }
 '''
 with tempfile.TemporaryDirectory(prefix="pitex-navigation-", dir="/tmp") as directory:
     root = Path(directory)
+    bundle = root / "NavigationCheck.app/Contents"
+    (bundle / "MacOS").mkdir(parents=True)
+    resources = bundle / "Resources"
+    resources.mkdir()
+    (bundle / "Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleExecutable": "check", "CFBundleIdentifier": "test.pitex.navigation",
+        "CFBundleDevelopmentRegion": "en", "CFBundlePackageType": "APPL",
+    }))
+    for locale in (repo / "Mac/Resources").glob("*.lproj"):
+        shutil.copytree(locale, resources / locale.name)
     source = root / "Check.swift"
     source.write_text(check)
     app_main = repo / "Mac/Sources/AppShell/PitexApp.swift"
     stripped = root / "PitexApp.swift"
     stripped.write_text(app_main.read_text().replace("@main\nstruct PitexApp", "struct PitexApp"))
-    executable = root / "check"
+    executable = bundle / "MacOS/check"
     subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-target", "arm64-apple-macos15.0",
                     "-I", str(products), str(source), str(stripped),
                     *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main],
                     *[str(p) for p in products.glob("*.o")], "-o", str(executable)], check=True)
-    env = {**os.environ, "PI_AGENT_PATH": "/usr/bin/false", "PI_CODING_AGENT_DIR": str(root / "pi")}
-    subprocess.run([str(executable), *sys.argv[2:]], env=env, check=True, timeout=90)
+    if len(sys.argv) > 2:
+        # Caller-supplied fixture: a built project + source:line targets.
+        fixture_args = sys.argv[2:]
+    else:
+        # Self-contained fixture (same shape as check-macos-synctex.py):
+        # a two-file project the navigation loop can round-trip through
+        # SyncTeX. Needs BasicTeX's xelatex at the harness path.
+        fixture = root / "fixture"
+        (fixture / "sections").mkdir(parents=True)
+        (fixture / "main.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}\nFirst page.\\par\n\\newpage\n"
+            + "\n" * 100 + "RootTarget\\par\n\\newpage\n\\input{sections/child}\n\\end{document}\n"
+        )
+        (fixture / "sections/child.tex").write_text("% child\n" + "\n" * 100 + "ChildTarget\\par\n")
+        subprocess.run(["/Library/TeX/texbin/xelatex", "-synctex=1", "-interaction=nonstopmode",
+                        "-halt-on-error", "main.tex"], cwd=fixture, check=True, stdout=subprocess.DEVNULL)
+        fixture_args = [str(fixture / "main.tex"), "main.tex:105", "sections/child.tex:102"]
+    # Launch through LaunchServices like check-sidebar-ui.py: directly
+    # exec()ing the Mach-O left the checker unable to activate on CI, and
+    # the isKeyWindow assertions need a real active app. `open -W` waits
+    # but swallows the exit status — CHECK_COMPLETE is authoritative.
+    out_log, err_log = root / "check.out.log", root / "check.err.log"
+    app = root / "NavigationCheck.app"
+    try:
+        subprocess.run(["/usr/bin/open", "-n", "-W",
+                        "--stdout", str(out_log), "--stderr", str(err_log),
+                        "--env", "PI_AGENT_PATH=/usr/bin/false",
+                        "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
+                        str(app), "--args", *fixture_args],
+                       check=True, timeout=180)
+    finally:
+        subprocess.run(["/usr/bin/pkill", "-f", str(app)], check=False)
+        for log in (out_log, err_log):
+            if log.exists():
+                print(log.read_text(errors="replace"), end="")
+    output = out_log.read_text(errors="replace") if out_log.exists() else ""
+    if "CHECK_COMPLETE" not in output:
+        sys.exit("FAIL: completion marker missing from checker log")
