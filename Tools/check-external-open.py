@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Real LaunchServices open events against the real PitexApp lifecycle.
 
-Builds a checker .app from the actual Mac sources (PitexApp @main stripped
-and driven via PitexApp.main()), then runs three LaunchServices launches
-with configuration only through `--env` (naked argv is parsed by Cocoa as
-documents to open): warm (running app gets `/usr/bin/open -a` requests),
-cold (the file rides in with the launch), cold-restore (session restore
-must not spawn a stray window). It asserts workspace count, the requested
-document, window visibility/key and app activation without any Dock click
-or mocked activation APIs.
+Builds a checker .app from the actual Mac sources — production @main
+intact, a test-only applicationDidFinishLaunching hook starts the driver —
+then runs four LaunchServices launches with configuration only through
+`--env` (naked argv is parsed by Cocoa as documents to open): warm
+(running app gets `/usr/bin/open -a` requests), cold (the file rides in
+with the launch), cold-restore (explicit file must beat a seeded recent),
+restore (a bare launch must restore exactly the seeded recent). It
+asserts workspace count, the requested document, window visibility/key
+and app activation without any Dock click or mocked activation APIs.
 
 Usage: check-external-open.py <Build/Products/Release>
 """
@@ -27,42 +28,11 @@ check = r'''
 import AppKit
 import SwiftUI
 
-/// Set by the didFinishLaunching observer registered in the wrapper —
-/// plain storage so the observer can write it from any context.
+/// Set by the injected applicationDidFinishLaunching hook — plain
+/// storage so the delegate can write it from any context.
 enum LaunchFlag {
     nonisolated(unsafe) static var didFinishLaunching = false
     nonisolated(unsafe) static var finishUserInfo = "nil"
-}
-
-@main enum CheckMain {
-    /// Boots the REAL app scene/delegate stack. Only settings that would
-    /// otherwise make the check nondeterministic are pinned first — the
-    /// bundle's unique identifier gives it an isolated defaults domain.
-    @MainActor static func main() {
-        let mode = ProcessInfo.processInfo.environment["PITEX_CHECK_MODE"] ?? "warm"
-        // Restore-session stays at the app's default (on) for warm and
-        // cold-restore — the bundle is fresh, so warm has no recents —
-        // while every plain cold variant keeps it off to isolate the
-        // file delivery. cold-restore seeds the recents so an accidental
-        // restore window next to the explicit file cannot hide.
-        UserDefaults.standard.set(mode == "warm" || mode == "cold-restore",
-                                  forKey: "pitex.pref.editor.restoreSession")
-        if mode == "cold-restore" {
-            let root = ProcessInfo.processInfo.environment["PITEX_CHECK_FIXTURE"] ?? ""
-            UserDefaults.standard.set(["\(root)/B/main.tex"],
-                                      forKey: "pitex.pref.workspace.recentDocuments")
-        }
-        UserDefaults.standard.set(false, forKey: "pitex.pref.update.autoInstall")
-        _ = NotificationCenter.default.addObserver(
-            forName: NSApplication.didFinishLaunchingNotification,
-            object: nil, queue: nil
-        ) { note in
-            LaunchFlag.didFinishLaunching = true
-            LaunchFlag.finishUserInfo = String(describing: note.userInfo)
-        }
-        Task { @MainActor in await Driver.run() }
-        PitexApp.main()
-    }
 }
 
 @MainActor enum Driver {
@@ -91,12 +61,14 @@ enum LaunchFlag {
         // launch event itself; nothing is re-sent, so a dropped event
         // cannot be masked. cold-restore also seeds a B recent: the
         // explicit file beats restore — exactly one A window, never a
-        // stray B window.
+        // stray B window. `restore` is the positive control: a bare
+        // launch with the B recent must restore exactly B, one window.
         if mode != "warm" {
             let label = mode
-            require(await until { owning("\(root)/A") != nil },
-                    "\(label): A/main.tex never reached a workspace — \(diagnostics())")
-            let workspace = owning("\(root)/A")!
+            let expected = mode == "restore" ? "\(root)/B" : "\(root)/A"
+            require(await until { owning(expected) != nil },
+                    "\(label): expected document never reached a workspace — \(diagnostics())")
+            let workspace = owning(expected)!
             require(await until { ready(workspace) && workspace.activeDocumentURL?.lastPathComponent == "main.tex" },
                     "\(label) must load the requested document")
             require(await until { workspace.window?.isVisible == true && workspace.window?.isKeyWindow == true },
@@ -440,13 +412,11 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
     (fixture / "C").mkdir()
     (fixture / "C/notes.md").write_text("# Notes\n\nsome text\n")
 
-    # Test-only copies of PitexApp.swift: trace lines added inside the
-    # real delivery paths (behavior otherwise unchanged) so the CI log
-    # shows exactly which entry point each open event took. The "warm"
-    # binary strips @main and drives PitexApp.main() from CheckMain's
-    # early Task; the "original" binary keeps production @main and starts
-    # the driver inside an injected applicationDidFinishLaunching hook —
-    # the 2x2 matrix compares wrapper-vs-original and -n-vs-default.
+    # Test-only copy of PitexApp.swift keeping the production @main:
+    # trace lines inside the real delivery paths (behavior otherwise
+    # unchanged) so the CI log shows which entry point each open event
+    # took, plus a finish-hook that records the launch userInfo and
+    # starts the driver after the app has actually launched.
     app_main = repo / "Mac/Sources/AppShell/PitexApp.swift"
     patched = (app_main.read_text()
         .replace(
@@ -496,10 +466,10 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
             "                fflush(nil)\n"
             "                WorkspaceWindows.register(workspace, openWindow: openWindow)")
         .replace(
-            "                    workspace.restoreSessionIfNeeded()",
-            "                    print(\"TRACE onAppear->restore claimed=\\(workspace.claimedExternalOpen)\")\n"
+            "                    WorkspaceWindows.requestInitialRestore(workspace)",
+            "                    print(\"TRACE onAppear->requestRestore claimed=\\(workspace.claimedExternalOpen)\")\n"
             "                    fflush(nil)\n"
-            "                    workspace.restoreSessionIfNeeded()")
+            "                    WorkspaceWindows.requestInitialRestore(workspace)")
         .replace(
             "            Button(\"command.close\") { workspace.performCloseCommand() }",
             "            Button(\"command.close\") { print(\"TRACE close-button-action\"); "
@@ -527,23 +497,9 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
                    "TRACE onAppear", "TRACE performClose", "TRACE cmd-resolve", "TRACE close-button"):
         assert marker in patched, f"trace injection missed: {marker}"
 
-    # Wrapper variant: @main stripped, CheckMain drives PitexApp.main().
-    stripped = root / "PitexApp.swift"
-    stripped.write_text(patched.replace("@main\nstruct PitexApp", "struct PitexApp"))
-    source = root / "Check.swift"
-    source.write_text(check)
-    binary = root / "check-bin"
-    swiftc = ["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
-              "-target", "arm64-apple-macos15.0", "-I", str(products)]
-    sources = [str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main]
-    objects = [str(p) for p in products.glob("*.o")]
-    subprocess.run(swiftc + [str(source), str(stripped), *sources, *objects,
-                             "-o", str(binary)], check=True)
-
-    # Original variant: production @main intact; no CheckMain compiled.
-    # The injected finish hook records launch userInfo and starts the same
-    # driver the wrapper schedules early — the only bootstrap difference.
-    original_patched = patched.replace(
+    # Production @main intact — the injected finish hook records the
+    # launch userInfo and starts the driver once the app has launched.
+    patched = patched.replace(
         "    func applicationDidFinishLaunching(_ notification: Notification) {",
         "    func applicationDidFinishLaunching(_ notification: Notification) {\n"
         "        print(\"TRACE didFinishLaunching userInfo=\\(String(describing: notification.userInfo))\")\n"
@@ -551,17 +507,17 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
         "        LaunchFlag.didFinishLaunching = true\n"
         "        LaunchFlag.finishUserInfo = String(describing: notification.userInfo)\n"
         "        Task { @MainActor in await Driver.run() }")
-    assert "await Driver.run()" in original_patched
-    original_app = root / "PitexAppOriginal.swift"
-    original_app.write_text(original_patched)
-    # The checker's own @main is dropped; production's @main provides it.
-    check_original = check[:check.index("@main enum CheckMain {")] \
-        + check[check.index("@MainActor enum Driver {"):]
-    source_original = root / "CheckOriginal.swift"
-    source_original.write_text(check_original)
-    binary_original = root / "check-bin-original"
-    subprocess.run(swiftc + [str(source_original), str(original_app), *sources, *objects,
-                             "-o", str(binary_original)], check=True)
+    assert "await Driver.run()" in patched
+    stripped = root / "PitexApp.swift"
+    stripped.write_text(patched)
+    source = root / "Check.swift"
+    source.write_text(check)
+    binary = root / "check-bin"
+    subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
+                    "-target", "arm64-apple-macos15.0", "-I", str(products),
+                    str(source), str(stripped),
+                    *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main],
+                    *[str(p) for p in products.glob("*.o")], "-o", str(binary)], check=True)
 
     # A fake app-local runtime makes PiRuntimeInstaller.ensureInstalled a
     # no-op (no package.json -> installedVersion() nil -> nothing to do).
@@ -593,45 +549,36 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
         (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
         for locale in (repo / "Mac/Resources").glob("*.lproj"):
             shutil.copytree(locale, resources / locale.name)
-        chosen = binary_original if "original" in mode else binary
-        shutil.copy(chosen, contents / "MacOS/check")
+        shutil.copy(binary, contents / "MacOS/check")
         return app
 
     def run_mode(mode):
-        # Launch labels may add original/no-n variants of a scenario; the
-        # driver env always carries the scenario itself.
-        scenario = {"warm-original": "warm",
-                    "cold-original-no-n-restore": "cold-restore"}.get(mode, mode)
         identifier = f"test.pitex.external-open.{os.getpid()}.{mode}"
         app = make_bundle(mode, identifier)
-        if "original" in mode:
-            # No CheckMain in this binary — pin the isolation keys into
-            # the fresh bundle's defaults domain before launch: restore
-            # follows the scenario (warm/cold-restore on, cold off) and
-            # cold-restore preseeds its recent externally.
-            restore = "true" if scenario in ("warm", "cold-restore") else "false"
+        # No CheckMain — pin the isolation keys into this bundle's fresh
+        # defaults domain before launch: restore matches the app default
+        # (on) except for plain cold, and the restore modes preseed a B
+        # recent externally.
+        restore = "false" if mode == "cold" else "true"
+        subprocess.run(["/usr/bin/defaults", "write", identifier,
+                        "pitex.pref.editor.restoreSession", "-bool", restore], check=True)
+        subprocess.run(["/usr/bin/defaults", "write", identifier,
+                        "pitex.pref.update.autoInstall", "-bool", "false"], check=True)
+        if mode in ("cold-restore", "restore"):
             subprocess.run(["/usr/bin/defaults", "write", identifier,
-                            "pitex.pref.editor.restoreSession", "-bool", restore], check=True)
-            subprocess.run(["/usr/bin/defaults", "write", identifier,
-                            "pitex.pref.update.autoInstall", "-bool", "false"], check=True)
-            if scenario == "cold-restore":
-                subprocess.run(["/usr/bin/defaults", "write", identifier,
-                                "pitex.pref.workspace.recentDocuments",
-                                "-array", str(fixture / "B/main.tex")], check=True)
+                            "pitex.pref.workspace.recentDocuments",
+                            "-array", str(fixture / "B/main.tex")], check=True)
         out_log, err_log = root / f"check-{mode}.out.log", root / f"check-{mode}.err.log"
         # No positional arguments and no --args: Cocoa parses naked argv
         # tokens as documents to open. All config travels through --env.
-        # Every cold mode hands the file to LaunchServices with the
-        # launch — a real double-click on a stopped app; labels with
-        # "-no-n" drop -n to compare instance routing against the default.
-        command = ["/usr/bin/open"]
-        if "no-n" not in mode:
-            command.append("-n")
-        command += ["-W", "--stdout", str(out_log), "--stderr", str(err_log),
-                    "--env", "PI_AGENT_PATH=/usr/bin/false",
-                    "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
-                    "--env", f"PITEX_CHECK_FIXTURE={fixture}",
-                    "--env", f"PITEX_CHECK_MODE={scenario}"]
+        # Cold modes hand the file to LaunchServices with the launch — a
+        # real double-click on a stopped app.
+        command = ["/usr/bin/open", "-W",
+                   "--stdout", str(out_log), "--stderr", str(err_log),
+                   "--env", "PI_AGENT_PATH=/usr/bin/false",
+                   "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
+                   "--env", f"PITEX_CHECK_FIXTURE={fixture}",
+                   "--env", f"PITEX_CHECK_MODE={mode}"]
         if mode.startswith("cold"):
             command += ["-a", str(app), str(fixture / "A/main.tex")]
         else:
@@ -652,9 +599,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
 
     # warm first (running-app open -a), then the launch-time deliveries —
     # a mode that fails must not hide the evidence from the others.
-    modes = ("warm", "cold", "cold-restore",
-             "cold-no-n", "cold-original", "cold-original-no-n",
-             "warm-original", "cold-original-no-n-restore")
+    modes = ("warm", "cold", "cold-restore", "restore")
     failures = [mode for mode in modes if not run_mode(mode)]
     if failures:
         sys.exit("FAIL: no CHECK_COMPLETE from: " + ", ".join(failures))

@@ -380,6 +380,12 @@ final class WorkspaceModel: ObservableObject {
     /// Finder open routed here can bring it forward.
     weak var window: NSWindow? {
         didSet {
+            // Weak + non-published: publish the attachment so the menu's
+            // Close gate re-evaluates — deferred one actor turn because
+            // WindowReader calls this inside SwiftUI's view update.
+            if oldValue !== window {
+                Task { @MainActor [weak self] in self?.objectWillChange.send() }
+            }
             window?.title = projectURL?.lastPathComponent ?? "Pitex"
             window?.subtitle = remote?.statusText ?? ""
             // A routed open may have asked for fronting before the native
@@ -2539,15 +2545,31 @@ private enum WorkspaceOpenError: LocalizedError {
 struct AppCommands: Commands {
     /// Menu commands act on the key window's workspace; with no window
     /// focused they fall back to an empty model, so only Open stays live.
-    /// The detached preview is a plain NSWindow, so a scene-scoped lookup
-    /// finds nothing while it is key — resolve the native window FIRST:
-    /// SwiftUI can report a different scene's object as focused.
+    /// Resolve the workspace from the native key window — including
+    /// detached previews — FIRST: the focused scene can lag focus changes.
     @FocusedObject private var focusedWorkspace: WorkspaceModel?
     private var workspace: WorkspaceModel {
         let key = NSApp.keyWindow
         return WorkspaceWindows.workspace(for: key?.sheetParent ?? key)
             ?? focusedWorkspace
             ?? WorkspaceWindows.unfocused
+    }
+
+    var body: some Commands {
+        // Observe the resolved model so project, phase, and preview
+        // changes update command availability.
+        WorkspaceCommandContent(target: workspace)
+    }
+}
+
+/// The command body proper, observing the wrapper's resolved workspace.
+/// Item actions still resolve the key window's workspace at fire time —
+/// a stale focus snapshot must never aim ⌘W at the wrong project.
+private struct WorkspaceCommandContent: Commands {
+    @ObservedObject var target: WorkspaceModel
+    private var workspace: WorkspaceModel {
+        let key = NSApp.keyWindow
+        return WorkspaceWindows.workspace(for: key?.sheetParent ?? key) ?? target
     }
 
     var body: some Commands {
@@ -2665,6 +2687,13 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Session restore is gated on the launch kind: the launch
+        // userInfo carries NSApplicationLaunchIsDefaultLaunchKey (0 when
+        // a file rode in with the launch, 1 on a plain launch).
+        let isDefaultLaunch =
+            (notification.userInfo?["NSApplicationLaunchIsDefaultLaunchKey"] as? NSNumber)?
+            .boolValue ?? true
+        MainActor.assumeIsolated { WorkspaceWindows.setDefaultLaunch(isDefaultLaunch) }
         refreshBundleIconCache()
         // The Pitex Agent installs itself into the app's own support folder
         // on first launch (and refreshes its bundled skills on every launch)
@@ -2795,7 +2824,7 @@ private struct WorkspaceWindow: View {
                 if let url = initialURL ?? WorkspaceWindows.takePending() {
                     Task { await workspace.open(url) }
                 } else {
-                    workspace.restoreSessionIfNeeded()
+                    WorkspaceWindows.requestInitialRestore(workspace)
                 }
             }
             .onDisappear { Task { await workspace.close() } }
@@ -2810,6 +2839,15 @@ enum WorkspaceWindows {
     private static var openWindow: OpenWindowAction?
     /// Finder opens that arrived before the first window appeared.
     private static var pending: [URL] = []
+    /// Whether this was a plain app launch — from the didFinishLaunching
+    /// userInfo launch key. nil until AppKit reports it, and a scene's
+    /// first onAppear can run before that.
+    private static var defaultLaunch: Bool?
+    /// The only scene ever allowed to restore a session: the first root
+    /// to appear with no file of its own. Held weakly so a discarded
+    /// candidate (file launch) cannot pin it.
+    private static var restoreCandidate: Entry?
+    private static var initialRestoreClaimed = false
     /// Menu target while no window is focused — never shown.
     static let unfocused = WorkspaceModel()
 
@@ -2831,6 +2869,28 @@ enum WorkspaceWindows {
 
     static func takePending() -> URL? {
         pending.isEmpty ? nil : pending.removeFirst()
+    }
+
+    /// Called once the launch kind is known. A default launch lets the
+    /// queued first scene restore its recents; a file launch discards
+    /// the candidate — the delivered URL is that scene's content.
+    static func setDefaultLaunch(_ isDefault: Bool) {
+        defaultLaunch = isDefault
+        guard isDefault else { restoreCandidate = nil; return }
+        restoreCandidate?.workspace?.restoreSessionIfNeeded()
+    }
+
+    /// The first empty root view offers itself for session restore —
+    /// once only, so later new windows can never trigger one. It
+    /// restores immediately when the launch is already known to be a
+    /// default launch; while the kind is unknown it queues and the
+    /// delegate's callback decides.
+    static func requestInitialRestore(_ workspace: WorkspaceModel) {
+        guard !initialRestoreClaimed else { return }
+        initialRestoreClaimed = true
+        guard defaultLaunch != false else { return }
+        restoreCandidate = Entry(workspace: workspace)
+        if defaultLaunch == true { workspace.restoreSessionIfNeeded() }
     }
 
     /// The window whose project contains `url` shows it; otherwise the
@@ -2859,10 +2919,8 @@ enum WorkspaceWindows {
     }
 }
 
-/// The detached preview is an auxiliary window: it can be key for
-/// interaction but must never become main — with no scene backing it,
-/// becoming main would pull command dispatch away from the owning
-/// workspace's scene.
+/// The detached preview is an auxiliary window: it accepts key focus
+/// while an editor window remains main.
 private final class DetachedPreviewWindow: NSWindow {
     override var canBecomeMain: Bool { false }
 }
