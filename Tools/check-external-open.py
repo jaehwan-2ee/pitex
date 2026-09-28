@@ -29,7 +29,10 @@ import SwiftUI
 
 /// Set by the didFinishLaunching observer registered in the wrapper —
 /// plain storage so the observer can write it from any context.
-enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
+enum LaunchFlag {
+    nonisolated(unsafe) static var didFinishLaunching = false
+    nonisolated(unsafe) static var finishUserInfo = "nil"
+}
 
 @main enum CheckMain {
     /// Boots the REAL app scene/delegate stack. Only settings that would
@@ -39,10 +42,11 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         let mode = ProcessInfo.processInfo.environment["PITEX_CHECK_MODE"] ?? "warm"
         // Restore-session stays at the app's default (on) for warm and
         // cold-restore — the bundle is fresh, so warm has no recents —
-        // while plain cold keeps it off to isolate the file delivery.
-        // cold-restore seeds the recents so an accidental restore window
-        // next to the explicitly opened file cannot hide.
-        UserDefaults.standard.set(mode != "cold", forKey: "pitex.pref.editor.restoreSession")
+        // while every plain cold variant keeps it off to isolate the
+        // file delivery. cold-restore seeds the recents so an accidental
+        // restore window next to the explicit file cannot hide.
+        UserDefaults.standard.set(mode == "warm" || mode == "cold-restore",
+                                  forKey: "pitex.pref.editor.restoreSession")
         if mode == "cold-restore" {
             let root = ProcessInfo.processInfo.environment["PITEX_CHECK_FIXTURE"] ?? ""
             UserDefaults.standard.set(["\(root)/B/main.tex"],
@@ -52,7 +56,10 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         _ = NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification,
             object: nil, queue: nil
-        ) { _ in LaunchFlag.didFinishLaunching = true }
+        ) { note in
+            LaunchFlag.didFinishLaunching = true
+            LaunchFlag.finishUserInfo = String(describing: note.userInfo)
+        }
         Task { @MainActor in await Driver.run() }
         PitexApp.main()
     }
@@ -86,7 +93,7 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         // explicit file beats restore — exactly one A window, never a
         // stray B window.
         if mode != "warm" {
-            let label = mode == "cold" ? "cold open" : "cold restore"
+            let label = mode
             require(await until { owning("\(root)/A") != nil },
                     "\(label): A/main.tex never reached a workspace — \(diagnostics())")
             let workspace = owning("\(root)/A")!
@@ -198,43 +205,63 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
                 "A's window must restore and come forward for its file")
         stage("A/other.tex restored and reused the owning workspace")
 
-        // ⌘W through the real menu chain while A's detached preview is
-        // key — but only after focus visited B, so stale SwiftUI focus
-        // cannot supply the wrong workspace to the command router.
+        // ⌘W modality matrix — which dispatch path actually delivers a
+        // menu command while A's detached preview (key, never main) is
+        // focused. Control per row: ⇧⌘Y on the real scene window B must
+        // toggle its bottom panel — proving the modality can deliver a
+        // native menu action at all — before ⌘W is tried on the preview.
+        // Focus visits B once first so stale SwiftUI focus cannot supply
+        // the wrong workspace to the command router.
         workspaceA.detachPreview()
         require(await until { workspaceA.detachedPreviewWindow != nil },
                 "Detaching A's preview must create its window")
-        let detached = workspaceA.detachedPreviewWindow!
         await openExternal("\(root)/B/main.tex")
         require(await until { windowB.isKeyWindow },
                 "B must regain key before the preview is refocused")
-        detached.makeKeyAndOrderFront(nil)
-        require(await until { NSApp.keyWindow === detached },
-                "The detached preview must become key")
-        require(await until { NSApp.mainWindow !== detached },
-                "The detached preview must be key but never main")
-        // Let the focus change settle one turn, then dump every ⌘w menu
-        // item (title/enabled/hidden/mods/action/target + resolved target)
-        // — performKeyEquivalent returned true yet performCloseCommand
-        // never ran, so some other 'w' item is claiming the shortcut.
-        try? await Task.sleep(for: .milliseconds(100))
-        dumpMenuShortcuts()
+        func focusDetached() async -> NSWindow? {
+            if workspaceA.detachedPreviewWindow == nil {
+                workspaceA.detachPreview()
+                guard await until({ workspaceA.detachedPreviewWindow != nil }) else { return nil }
+            }
+            let window = workspaceA.detachedPreviewWindow!
+            window.makeKeyAndOrderFront(nil)
+            guard await until({ NSApp.keyWindow === window }) else { return nil }
+            return window
+        }
         print("[diag] key=\(NSApp.keyWindow?.title ?? "nil") main=\(NSApp.mainWindow?.title ?? "nil")")
         fflush(nil)
-        let close = NSEvent.keyEvent(with: .keyDown, location: .zero,
-            modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: detached.windowNumber, context: nil,
-            characters: "w", charactersIgnoringModifiers: "w",
-            isARepeat: false, keyCode: 13)!
-        require(NSApp.mainMenu?.performKeyEquivalent(with: close) == true,
-                "Cmd-W must be claimed by the main menu — \(diagnostics())")
-        require(await until { !workspaceA.previewDetached },
-                "Cmd-W on the detached preview must reattach it")
-        require(workspaceA.hasProject && workspaceB.hasProject,
-                "Cmd-W on the preview must not close either project")
-        require(WorkspaceWindows.live.count == 3,
-                "Cmd-W on the preview must not touch any workspace window")
-        stage("Cmd-W reattached the detached preview; projects intact")
+        var rows: [(name: String, control: Bool, close: Bool, healthy: Bool)] = []
+        for modality in ["keyEquivalent", "sendEvent", "postEvent", "menuClick"] {
+            // Control: ⇧⌘Y on scene window B must toggle its bottom panel.
+            windowB.makeKeyAndOrderFront(nil)
+            require(await until { NSApp.keyWindow === windowB },
+                    "\(modality): B's scene window must be key for the control")
+            let panelBefore = workspaceB.bottomPanelVisible
+            await dispatch(modality, key: "y", code: 16,
+                           mods: [.command, .shift], window: windowB)
+            let control = workspaceB.bottomPanelVisible != panelBefore
+            // Subject: ⌘W on A's detached preview must reattach it.
+            let detached = await focusDetached()
+            require(detached != nil,
+                    "\(modality): the detached preview must be key — \(diagnostics())")
+            require(NSApp.mainWindow !== detached!,
+                    "\(modality): the detached preview must be key but never main")
+            await dispatch(modality, key: "w", code: 13,
+                           mods: [.command], window: detached!)
+            let close = !workspaceA.previewDetached
+            let healthy = workspaceA.hasProject && workspaceB.hasProject
+                && WorkspaceWindows.live.count == 3
+            rows.append((modality, control, close, healthy))
+            print("[matrix] \(modality): control=\(control) close=\(close) healthy=\(healthy)")
+            fflush(nil)
+        }
+        require(rows.allSatisfy { $0.healthy },
+                "A dispatched shortcut must not close a project — \(rows)")
+        require(rows.contains { $0.control },
+                "No modality delivered ⇧⌘Y to the key scene window — \(diagnostics())")
+        require(rows.contains { $0.close },
+                "No modality delivered ⌘W to the key detached preview — \(diagnostics())")
+        stage("⌘W matrix: \(rows.map { "\($0.name)=\($0.close ? "close" : "no-op")" }.joined(separator: ", "))")
 
         print("PASS external open: empty reuse, minimized-open new window, minimized restore, hidden third project, owner reuse, Cmd-W detach")
         print("CHECK_COMPLETE")
@@ -270,26 +297,108 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         }
     }
 
-    /// Recursively prints every menu item whose key equivalent is 'w'
-    /// — which item claims ⌘W while the detached preview is key.
-    static func dumpMenuShortcuts() {
+    /// Pushes validation through the whole menu tree so item.isEnabled
+    /// and target/action are resolved before dispatch or inspection.
+    static func updateMenus() {
+        func walk(_ menu: NSMenu) {
+            menu.update()
+            for item in menu.items {
+                if let submenu = item.submenu { walk(submenu) }
+            }
+        }
+        if let menu = NSApp.mainMenu { walk(menu) }
+        fflush(nil)
+    }
+
+    /// Recursively prints every menu item whose key equivalent is w, o,
+    /// or y — which items claim ⌘W, ⌘O, and the ⇧⌘Y control. `label`
+    /// identifies which dispatch target this dump precedes.
+    static func dumpMenuShortcuts(_ label: String) {
+        print("TRACE menu-dump \(label)")
         func walk(_ menu: NSMenu, _ path: String) {
             for item in menu.items {
                 if let submenu = item.submenu { walk(submenu, path + "/" + item.title) }
-                guard item.keyEquivalent.lowercased() == "w" else { continue }
+                guard ["w", "o", "y"].contains(item.keyEquivalent.lowercased()) else { continue }
                 let action = item.action.map { "\($0)" } ?? "nil"
                 let target = item.target.map { "\(type(of: $0))" } ?? "nil"
-                print("TRACE menuItem-w '\(path)/\(item.title)' enabled=\(item.isEnabled) "
-                    + "hidden=\(item.isHidden) mods=\(item.keyEquivalentModifierMask.rawValue) "
+                print("TRACE menuItem '\(path)/\(item.title)' key=\(item.keyEquivalent) "
+                    + "enabled=\(item.isEnabled) hidden=\(item.isHidden) "
+                    + "mods=\(item.keyEquivalentModifierMask.rawValue) "
                     + "action=\(action) target=\(target)")
                 if let action = item.action {
                     let resolved = NSApp.target(forAction: action, to: item.target, from: item)
-                    print("TRACE menuItem-w resolvedTarget=\(resolved.map { "\(type(of: $0))" } ?? "nil")")
+                    print("TRACE menuItem resolvedTarget=\(resolved.map { "\(type(of: $0))" } ?? "nil")")
                 }
             }
         }
         if let menu = NSApp.mainMenu { walk(menu, "") }
         fflush(nil)
+    }
+
+    /// Finds a menu item by exact key equivalent + modifier bits —
+    /// an uppercase alphabetic keyEquivalent implies .shift even when
+    /// Cocoa stores it without the bit; never matches on localized titles.
+    static func menuItem(key: String, mods: NSEvent.ModifierFlags) -> NSMenuItem? {
+        let relevant: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
+        let wanted = mods.intersection(relevant)
+        var found: NSMenuItem?
+        func walk(_ menu: NSMenu) {
+            for item in menu.items where found == nil {
+                if let submenu = item.submenu { walk(submenu); continue }
+                var actual = item.keyEquivalentModifierMask.intersection(relevant)
+                if let char = item.keyEquivalent.first, char.isLetter, char.isUppercase {
+                    actual.insert(.shift)
+                }
+                guard item.keyEquivalent.lowercased() == key.lowercased(),
+                      actual == wanted
+                else { continue }
+                found = item
+            }
+        }
+        if let menu = NSApp.mainMenu { walk(menu) }
+        return found
+    }
+
+    /// Delivers one shortcut through the named dispatch path, then lets
+    /// the run loop turn so async command routing can land. menuClick
+    /// fires the item's real action via performActionForItem — only when
+    /// the updated menu reports it enabled; a disabled item is a miss,
+    /// not a forced pass.
+    static func dispatch(_ modality: String, key: String, code: UInt16,
+                         mods: NSEvent.ModifierFlags, window: NSWindow) async {
+        // Settle one run-loop tick after the key-window assertion —
+        // SwiftUI command availability trails makeKeyAndOrderFront.
+        try? await Task.sleep(for: .milliseconds(100))
+        updateMenus()
+        dumpMenuShortcuts("\(modality) -> '\(window.title.isEmpty ? "untitled" : window.title)'")
+        if modality == "menuClick" {
+            if let item = menuItem(key: key, mods: mods), let menu = item.menu {
+                menu.update()
+                let index = menu.index(of: item)
+                if item.isEnabled {
+                    menu.performActionForItem(at: index)
+                } else {
+                    print("[matrix] \(modality): '\(item.title)' disabled — not dispatched")
+                }
+            } else {
+                print("[matrix] \(modality): no item for \(mods.rawValue)+\(key)")
+            }
+        } else {
+            let chars = mods.contains(.shift) ? key.uppercased() : key
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil,
+                characters: chars, charactersIgnoringModifiers: chars,
+                isARepeat: false, keyCode: code) else { return }
+            switch modality {
+            case "sendEvent": NSApp.sendEvent(event)
+            case "postEvent": NSApp.postEvent(event, atStart: false)
+            default:
+                let claimed = NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+                print("[matrix] keyEquivalent claimed=\(claimed)")
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(200))
     }
 
     /// State snapshot for bootstrap failures: thread, app lifecycle, the
@@ -302,6 +411,7 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         return "mainThread=\(Thread.isMainThread) running=\(app.isRunning) "
             + "active=\(app.isActive) hidden=\(app.isHidden) "
             + "didFinishLaunching=\(LaunchFlag.didFinishLaunching) "
+            + "userInfo=\(LaunchFlag.finishUserInfo) "
             + "live=\(WorkspaceWindows.live.count) windows=\(app.windows.count) [\(windows)]"
     }
 
@@ -330,12 +440,15 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
     (fixture / "C").mkdir()
     (fixture / "C/notes.md").write_text("# Notes\n\nsome text\n")
 
-    # Test-only copy of PitexApp.swift: @main stripped, trace lines added
-    # inside the two real delivery paths (behavior otherwise unchanged) so
-    # the CI log shows exactly which entry point each open event took.
+    # Test-only copies of PitexApp.swift: trace lines added inside the
+    # real delivery paths (behavior otherwise unchanged) so the CI log
+    # shows exactly which entry point each open event took. The "warm"
+    # binary strips @main and drives PitexApp.main() from CheckMain's
+    # early Task; the "original" binary keeps production @main and starts
+    # the driver inside an injected applicationDidFinishLaunching hook —
+    # the 2x2 matrix compares wrapper-vs-original and -n-vs-default.
     app_main = repo / "Mac/Sources/AppShell/PitexApp.swift"
     patched = (app_main.read_text()
-        .replace("@main\nstruct PitexApp", "struct PitexApp")
         .replace(
             "        NSApp.activate()\n"
             "        Task { @MainActor in\n"
@@ -413,15 +526,42 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
     for marker in ("TRACE delegate-open", "TRACE onOpenURL", "TRACE untitled", "TRACE route",
                    "TRACE onAppear", "TRACE performClose", "TRACE cmd-resolve", "TRACE close-button"):
         assert marker in patched, f"trace injection missed: {marker}"
+
+    # Wrapper variant: @main stripped, CheckMain drives PitexApp.main().
     stripped = root / "PitexApp.swift"
-    stripped.write_text(patched)
+    stripped.write_text(patched.replace("@main\nstruct PitexApp", "struct PitexApp"))
     source = root / "Check.swift"
     source.write_text(check)
     binary = root / "check-bin"
-    subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-target", "arm64-apple-macos15.0",
-                    "-I", str(products), str(source), str(stripped),
-                    *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main],
-                    *[str(p) for p in products.glob("*.o")], "-o", str(binary)], check=True)
+    swiftc = ["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
+              "-target", "arm64-apple-macos15.0", "-I", str(products)]
+    sources = [str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main]
+    objects = [str(p) for p in products.glob("*.o")]
+    subprocess.run(swiftc + [str(source), str(stripped), *sources, *objects,
+                             "-o", str(binary)], check=True)
+
+    # Original variant: production @main intact; no CheckMain compiled.
+    # The injected finish hook records launch userInfo and starts the same
+    # driver the wrapper schedules early — the only bootstrap difference.
+    original_patched = patched.replace(
+        "    func applicationDidFinishLaunching(_ notification: Notification) {",
+        "    func applicationDidFinishLaunching(_ notification: Notification) {\n"
+        "        print(\"TRACE didFinishLaunching userInfo=\\(String(describing: notification.userInfo))\")\n"
+        "        fflush(nil)\n"
+        "        LaunchFlag.didFinishLaunching = true\n"
+        "        LaunchFlag.finishUserInfo = String(describing: notification.userInfo)\n"
+        "        Task { @MainActor in await Driver.run() }")
+    assert "await Driver.run()" in original_patched
+    original_app = root / "PitexAppOriginal.swift"
+    original_app.write_text(original_patched)
+    # The checker's own @main is dropped; production's @main provides it.
+    check_original = check[:check.index("@main enum CheckMain {")] \
+        + check[check.index("@MainActor enum Driver {"):]
+    source_original = root / "CheckOriginal.swift"
+    source_original.write_text(check_original)
+    binary_original = root / "check-bin-original"
+    subprocess.run(swiftc + [str(source_original), str(original_app), *sources, *objects,
+                             "-o", str(binary_original)], check=True)
 
     # A fake app-local runtime makes PiRuntimeInstaller.ensureInstalled a
     # no-op (no package.json -> installedVersion() nil -> nothing to do).
@@ -431,7 +571,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
     fake_pi.write_text("#!/bin/sh\nexit 0\n")
     fake_pi.chmod(0o755)
 
-    def make_bundle(mode):
+    def make_bundle(mode, identifier):
         # Bundle = production Info.plist with a per-mode unique identifier,
         # so each LaunchServices registration and defaults domain is fresh.
         app = root / f"ExternalOpenCheck-{mode}.app"
@@ -442,7 +582,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
         plist = plistlib.loads((repo / "Mac/Config/Info.plist").read_bytes())
         plist.update({
             "CFBundleExecutable": "check",
-            "CFBundleIdentifier": f"test.pitex.external-open.{os.getpid()}.{mode}",
+            "CFBundleIdentifier": identifier,
             "CFBundleName": "ExternalOpenCheck",
             "CFBundleDisplayName": "ExternalOpenCheck",
             "CFBundleDevelopmentRegion": "en",
@@ -453,22 +593,45 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
         (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
         for locale in (repo / "Mac/Resources").glob("*.lproj"):
             shutil.copytree(locale, resources / locale.name)
-        shutil.copy(binary, contents / "MacOS/check")
+        chosen = binary_original if "original" in mode else binary
+        shutil.copy(chosen, contents / "MacOS/check")
         return app
 
     def run_mode(mode):
-        app = make_bundle(mode)
+        # Launch labels may add original/no-n variants of a scenario; the
+        # driver env always carries the scenario itself.
+        scenario = {"warm-original": "warm",
+                    "cold-original-no-n-restore": "cold-restore"}.get(mode, mode)
+        identifier = f"test.pitex.external-open.{os.getpid()}.{mode}"
+        app = make_bundle(mode, identifier)
+        if "original" in mode:
+            # No CheckMain in this binary — pin the isolation keys into
+            # the fresh bundle's defaults domain before launch: restore
+            # follows the scenario (warm/cold-restore on, cold off) and
+            # cold-restore preseeds its recent externally.
+            restore = "true" if scenario in ("warm", "cold-restore") else "false"
+            subprocess.run(["/usr/bin/defaults", "write", identifier,
+                            "pitex.pref.editor.restoreSession", "-bool", restore], check=True)
+            subprocess.run(["/usr/bin/defaults", "write", identifier,
+                            "pitex.pref.update.autoInstall", "-bool", "false"], check=True)
+            if scenario == "cold-restore":
+                subprocess.run(["/usr/bin/defaults", "write", identifier,
+                                "pitex.pref.workspace.recentDocuments",
+                                "-array", str(fixture / "B/main.tex")], check=True)
         out_log, err_log = root / f"check-{mode}.out.log", root / f"check-{mode}.err.log"
         # No positional arguments and no --args: Cocoa parses naked argv
         # tokens as documents to open. All config travels through --env.
-        # Both cold modes hand the file to LaunchServices with the
-        # launch — a real double-click on a stopped app.
-        command = ["/usr/bin/open", "-n", "-W",
-                   "--stdout", str(out_log), "--stderr", str(err_log),
-                   "--env", "PI_AGENT_PATH=/usr/bin/false",
-                   "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
-                   "--env", f"PITEX_CHECK_FIXTURE={fixture}",
-                   "--env", f"PITEX_CHECK_MODE={mode}"]
+        # Every cold mode hands the file to LaunchServices with the
+        # launch — a real double-click on a stopped app; labels with
+        # "-no-n" drop -n to compare instance routing against the default.
+        command = ["/usr/bin/open"]
+        if "no-n" not in mode:
+            command.append("-n")
+        command += ["-W", "--stdout", str(out_log), "--stderr", str(err_log),
+                    "--env", "PI_AGENT_PATH=/usr/bin/false",
+                    "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
+                    "--env", f"PITEX_CHECK_FIXTURE={fixture}",
+                    "--env", f"PITEX_CHECK_MODE={scenario}"]
         if mode.startswith("cold"):
             command += ["-a", str(app), str(fixture / "A/main.tex")]
         else:
@@ -489,6 +652,9 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
 
     # warm first (running-app open -a), then the launch-time deliveries —
     # a mode that fails must not hide the evidence from the others.
-    failures = [mode for mode in ("warm", "cold", "cold-restore") if not run_mode(mode)]
+    modes = ("warm", "cold", "cold-restore",
+             "cold-no-n", "cold-original", "cold-original-no-n",
+             "warm-original", "cold-original-no-n-restore")
+    failures = [mode for mode in modes if not run_mode(mode)]
     if failures:
         sys.exit("FAIL: no CHECK_COMPLETE from: " + ", ".join(failures))
