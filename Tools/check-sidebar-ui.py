@@ -121,6 +121,80 @@ import Vision
                          "Vision offered no CPU compute stage — OCR would hit the VM scaler path again")
             return request
         }
+        /// Set when Vision's image path throws (the virtualized runner's
+        /// missing scaler): snapshots switch to the real accessibility
+        /// tree for the rest of the run.
+        var visionBroken = false
+        let navTitles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
+            Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
+        }
+        /// Real text tokens + on-screen frames from the accessibility
+        /// tree — label/value strings with screen frames normalized to
+        /// host bottom-left-origin boxes like Vision's. A scroll area's
+        /// rect clips its descendants' visible frames, so offscreen lazy
+        /// rows never leak into the row counts.
+        func axSnapshot(of view: NSView) -> [(String, CGRect)] {
+            guard let window = view.window,
+                  view.bounds.width > 0, view.bounds.height > 0 else { return [] }
+            func hostBox(_ screenRect: CGRect) -> CGRect {
+                let inHost = view.convert(window.convertFromScreen(screenRect), from: nil)
+                return CGRect(x: inHost.minX / view.bounds.width,
+                              y: view.isFlipped
+                                  ? 1 - inHost.maxY / view.bounds.height
+                                  : inHost.minY / view.bounds.height,
+                              width: inHost.width / view.bounds.width,
+                              height: inHost.height / view.bounds.height)
+            }
+            var rows: [(String, CGRect)] = []
+            var visited = Set<ObjectIdentifier>()
+            func walk(_ element: Any, _ clip: CGRect) {
+                guard let ax = element as? any NSAccessibilityProtocol else { return }
+                guard visited.insert(ObjectIdentifier(ax as AnyObject)).inserted else { return }
+                let frame = ax.accessibilityFrame()
+                let childClip = ax.accessibilityRole() == .scrollArea
+                    ? clip.intersection(frame)
+                    : clip
+                let visible = frame.intersection(clip)
+                if !visible.isNull, visible.width > 0, visible.height > 0 {
+                    var texts = Set<String>()
+                    for text in [ax.accessibilityLabel(), ax.accessibilityValue() as? String] {
+                        if let text, !text.isEmpty { texts.insert(text) }
+                    }
+                    for text in texts {
+                        rows.append((text, hostBox(visible)))
+                        // A label can fuse header and count ("TODOs 0")
+                        // — emit a per-title token with the element's
+                        // frame like the Vision path's substring boxes.
+                        for title in navTitles
+                            where text.range(of: title, options: .caseInsensitive) != nil {
+                            rows.append((title, hostBox(visible)))
+                        }
+                    }
+                }
+                for child in ax.accessibilityChildren() ?? [] { walk(child, childClip) }
+            }
+            walk(view, window.convertToScreen(view.convert(view.bounds, to: nil)))
+            print("[stage] ax rows=\(rows.count) sample=\(rows.prefix(8))")
+            fflush(nil)
+            return rows
+        }
+        /// Unfiltered host tokens — the Symbols palette lives right of
+        /// the sidebar's 0.45 cut, so it needs the raw set.
+        func rawTokens(of view: NSView) throws -> [String] {
+            if visionBroken { return axSnapshot(of: view).map(\.0) }
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            do {
+                let request = try ocrRequest()
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
+                return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            } catch {
+                visionBroken = true
+                print("[stage] Vision OCR failed: \(error) — accessibility geometry fallback")
+                fflush(nil)
+                return axSnapshot(of: view).map(\.0)
+            }
+        }
         try await settle()
         // The tint check needs the real active bezel — an inactive window
         // renders selected segments gray. The `open` launch should already
@@ -136,9 +210,6 @@ import Vision
         stage("appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow)")
         let upper = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.segmentCount == 3 }!
         let split = descendants(host).compactMap { $0 as? NSSplitView }.first { !$0.isVertical && $0.arrangedSubviews.count == 2 }!
-        let navTitles = ["sidebar.workspace", "sidebar.project", "sidebar.todos"].map {
-            Bundle.main.localizedString(forKey: $0, value: nil, table: nil)
-        }
         let lower = descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
             control.segmentCount == 3 && (0..<3).allSatisfy { index in
                 control.label(forSegment: index) == navTitles[index]
@@ -158,18 +229,26 @@ import Vision
             if view === host {
                 try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/pitex-sidebar-layout-live-\(language).png"))
             }
-            let request = try ocrRequest()
-            try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
-            return try (request.results ?? []).flatMap { observation -> [(String, CGRect)] in
-                guard let candidate = observation.topCandidates(1).first else { return [] }
-                var rows = [(candidate.string, observation.boundingBox)]
-                for title in navTitles {
-                    if let range = candidate.string.range(of: title, options: .caseInsensitive), let box = try candidate.boundingBox(for: range) {
-                        rows.append((title, box.boundingBox))
+            if visionBroken { return axSnapshot(of: view).filter { $0.1.minX < 0.45 } }
+            do {
+                let request = try ocrRequest()
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
+                return try (request.results ?? []).flatMap { observation -> [(String, CGRect)] in
+                    guard let candidate = observation.topCandidates(1).first else { return [] }
+                    var rows = [(candidate.string, observation.boundingBox)]
+                    for title in navTitles {
+                        if let range = candidate.string.range(of: title, options: .caseInsensitive), let box = try candidate.boundingBox(for: range) {
+                            rows.append((title, box.boundingBox))
+                        }
                     }
-                }
-                return rows
-            }.filter { $0.1.minX < 0.45 }
+                    return rows
+                }.filter { $0.1.minX < 0.45 }
+            } catch {
+                visionBroken = true
+                print("[stage] Vision OCR failed: \(error) — accessibility geometry fallback")
+                fflush(nil)
+                return axSnapshot(of: view).filter { $0.1.minX < 0.45 }
+            }
         }
         // Synthetic clicks deadlock: sendEvent(.leftMouseDown) enters
         // NSSegmentedControl's tracking loop, which waits for a mouseUp the
@@ -230,9 +309,7 @@ import Vision
         try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("sidebar-\(language).png"))
         // Read the rendered picker, so Text(String) regressing to a raw key
         // fails even though every translation is still present in the bundle.
-        let request = try ocrRequest()
-        try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
-        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let text = try rawTokens(of: host)
         func compact(_ text: String) -> String { text.replacingOccurrences(of: " ", with: "").lowercased() }
         precondition(text.contains { compact($0).contains(compact(expected[0])) }, "Missing rendered category title: \(text)")
         print("PASS \(language): localized Symbols title and independent Workspace/Project/TODO buttons")

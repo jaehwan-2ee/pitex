@@ -5,9 +5,17 @@ Hosts the real WorkspaceModel + WorkspaceView editor in a real window and
 verifies the native completion popup is PASSIVE: an automatic 200ms debounce
 trigger may show candidates, but nothing enters the text until the user picks
 one. Covers the reported bug (\in auto-becoming \include with the suffix
-selected) plus backspace/retype, an unknown prefix, Down+Escape restore and
-Down+Return acceptance. The completionSource wrapper counts real candidate
-queries; a method swizzle records every NSTextView.complete engagement.
+selected) plus backspace/retype, unknown prefixes, Down+Escape restore,
+Down+Return acceptance, ref/cite keys, a Unicode prefix, comma-separated
+cite tokens and IME marked text.
+
+Input goes through real queued keyDown events (NSApp.postEvent) and the
+stage sequence is a chain of one-shot Timers registered in .common AND
+.eventTracking — each fire arms the successor BEFORE running its action, so
+later steps still deliver on time if an action enters a nested
+event-tracking loop. The
+completionSource wrapper counts real candidate queries; a method swizzle
+records every NSTextView.complete engagement with enter/return text.
 
 Usage: check-native-completion.py <Build/Products/Release>
 """
@@ -32,6 +40,37 @@ import SwiftUI
     static var calls = 0
 }
 
+/// Runs the stage list as chained one-shot timers. Each step's timer fires
+/// in .common and .eventTracking modes; on fire the NEXT step is armed
+/// before the current action runs, so if an action enters a nested
+/// event-tracking loop the following steps still deliver on time.
+@MainActor final class CompletionDriver {
+    var steps: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
+    private var cursor = 0
+    var done = false
+    func scheduleNext() {
+        guard cursor < steps.count else { return }
+        let index = cursor
+        cursor += 1
+        let timer = Timer(timeInterval: steps[index].delay, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                self.scheduleNext()
+                self.steps[index].action()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .eventTracking)
+    }
+    /// Arms an ad-hoc step outside the linear chain (bounded retries).
+    func scheduleAfter(_ delay: TimeInterval, _ action: @escaping @MainActor () -> Void) {
+        let timer = Timer(timeInterval: delay, repeats: false) { _ in
+            MainActor.assumeIsolated { action() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .eventTracking)
+    }
+}
+
 @main struct Check {
     @MainActor static func main() {
         // A bundled launch through LaunchServices gives the checker a
@@ -40,7 +79,7 @@ import SwiftUI
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         Task { @MainActor in
-            do { try await run(); print("CHECK_COMPLETE"); fflush(nil); exit(0) }
+            do { try await run(); exit(0) }
             catch { print("FAIL", error); fflush(nil); exit(1) }
         }
         app.run()
@@ -62,12 +101,15 @@ import SwiftUI
         }
 
         let root = ProcessInfo.processInfo.environment["PITEX_COMPLETION_FIXTURE"] ?? ""
+        stage("opening fixture project")
         let workspace = WorkspaceModel()
         await workspace.open(URL(fileURLWithPath: root + "/main.tex").standardizedFileURL)
         require(await until { if case .ready = workspace.phase { return true }; return false },
                 "Fixture project must reach .ready")
+        stage("project ready; mounting workspace view")
         let host = NSHostingView(rootView: WorkspaceView(workspace: workspace))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+        // 1400x850 — the proven window geometry the navigation checker uses.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 850),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
@@ -90,10 +132,9 @@ import SwiftUI
             exit(1)
         }
         let (_, textView) = try await editorParts()
+        stage("editor mounted")
         let editor = workspace.environment!.editor
         require(window.makeFirstResponder(textView), "Editor must become first responder")
-        // Caret at end of document on a fresh line — each stage's context
-        // scan then starts clean.
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
 
         // Record every candidate query on the REAL provider (attached by
@@ -115,15 +156,27 @@ import SwiftUI
         let record: CompleteIMP = { view, selector, sender in
             MainActor.assumeIsolated {
                 CompleteRecorder.calls += 1
+                print("[trace] complete: enter #\(CompleteRecorder.calls) "
+                    + "tail='\(String(view.string.suffix(12)))'")
+                fflush(nil)
                 unsafeBitCast(CompleteRecorder.original!, to: CompleteIMP.self)(view, selector, sender)
+                print("[trace] complete: return tail='\(String(view.string.suffix(12)))'")
+                fflush(nil)
             }
         }
         CompleteRecorder.original = method_setImplementation(method, unsafeBitCast(record, to: IMP.self))
         defer { method_setImplementation(method, CompleteRecorder.original!) }
 
-        func settle(_ ms: Int = 400) async throws {
-            try await Task.sleep(for: .milliseconds(ms))
-        }
+        // The project provider must have loaded the fixture's labels and
+        // .bib keys before the chain starts — probe it directly rather
+        // than racing the refresh cycle.
+        let probeRef = "\\ref{se", probeCite = "\\cite{kn"
+        require(await until {
+            innerSource?(probeRef, probeRef.utf16.count)?.candidates.contains("sec:intro") == true
+                && innerSource?(probeCite, probeCite.utf16.count)?.candidates.contains("knuth84") == true
+        }, "provider must load project labels and .bib keys")
+        stage("provider ready; starting timer driver")
+
         func tail() -> String { String(textView.string.suffix(24)) }
         func literal(_ expected: String, _ label: String) {
             require(textView.string.hasSuffix(expected),
@@ -133,206 +186,251 @@ import SwiftUI
             require(!textView.hasMarkedText(),
                     "\(label): no marked text may linger")
         }
-        /// Per-character native input — each character drives didChangeText
-        /// and re-arms the real 200ms debounce like typing does.
-        func type(_ text: String) {
-            for char in text {
-                textView.insertText(String(char),
-                                    replacementRange: NSRange(location: NSNotFound, length: 0))
-            }
-        }
-        func key(_ code: UInt16, chars: String = "") {
-            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+        /// Queued keyDown — the completion popup's nested tracking loop
+        /// consumes posted events; a direct sendEvent would bypass it.
+        func key(_ code: UInt16, chars: String = "", mods: NSEvent.ModifierFlags = []) {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                 context: nil, characters: chars, charactersIgnoringModifiers: chars,
                 isARepeat: false, keyCode: code)!
-            NSApp.sendEvent(event)
+            NSApp.postEvent(event, atStart: false)
+        }
+        /// ANSI key codes for the printable characters the stages type.
+        /// Non-keyboard text (emoji, IME) uses insertText/setMarkedText.
+        func keyCode(for char: Character) -> (code: UInt16, mods: NSEvent.ModifierFlags)? {
+            switch char {
+            case "\\": return (42, [])
+            case "{": return (33, [.shift])
+            case ",": return (43, [])
+            case ":": return (41, [.shift])
+            case "a": return (0, [])
+            case "c": return (8, [])
+            case "d": return (2, [])
+            case "e": return (14, [])
+            case "f": return (3, [])
+            case "i": return (34, [])
+            case "k": return (40, [])
+            case "l": return (37, [])
+            case "n": return (45, [])
+            case "o": return (31, [])
+            case "r": return (15, [])
+            case "s": return (1, [])
+            case "t": return (17, [])
+            case "x": return (7, [])
+            case "z": return (6, [])
+            default: return nil
+            }
+        }
+        /// Real queued keyDown per character — each one drives didChangeText
+        /// and re-arms the 200ms debounce like typing; a newline is a
+        /// Return key event.
+        func type(_ text: String) {
+            for char in text {
+                if char == "\n" { key(36, chars: "\r"); continue }
+                guard let mapped = keyCode(for: char) else {
+                    print("FAIL unmapped character \(char)"); fflush(nil); exit(1)
+                }
+                key(mapped.code, chars: String(char), mods: mapped.mods)
+            }
         }
         let backspace = (code: UInt16(51), chars: "\u{7F}"), escape = (code: UInt16(53), chars: "\u{1B}")
         let down = (code: UInt16(125), chars: "\u{F701}"), ret = (code: UInt16(36), chars: "\r")
 
-        // Fresh line so the context scan for each stage starts clean.
-        type("\n")
+        var callsBeforeUnknown = 0
+        var callsBeforeIME = 0
+        var sessionPolls = 0
+        let driver = CompletionDriver()
+        func pollSession() {
+            if workspace.documentSnapshot?.text == textView.string {
+                driver.done = true
+                print("PASS native completion: passive popup, literal typing, Esc restore, real accept")
+                print("CHECK_COMPLETE")
+                fflush(nil)
+                return
+            }
+            sessionPolls += 1
+            require(sessionPolls <= 60,
+                    "session text must match the editor after completion stages")
+            driver.scheduleAfter(0.1) { pollSession() }
+        }
 
-        // A: bare backslash — popup engages, nothing is inserted.
-        CompleteRecorder.calls = 0
-        type("\\")
-        try await settle()
-        require(CompleteRecorder.calls >= 1, "automatic debounce must engage native complete")
-        require(sourceQueries > 0, "the real completion source must be queried")
-        require(lastCandidates?.contains("\\include") == true,
-                "\\ prefix must offer builtin commands, got \(String(describing: lastCandidates))")
-        literal("\\", "backslash")
-        stage("backslash: popup engaged, text stayed literal")
-
-        // B: continue 'in' — two candidates, still literal.
-        type("in")
-        try await settle()
-        require(lastCandidates?.contains("\\include") == true
-                && lastCandidates?.contains("\\input") == true,
-                "\\in must offer include+input, got \(String(describing: lastCandidates))")
-        literal("\\in", "in-prefix")
-        stage("\\in stayed literal with multiple candidates")
-
-        // C: backspace back to '\' (popup may re-engage — text only), then
-        // 'x' reaches a zero-match prefix: no popup, no dictionary words.
-        key(backspace.code, chars: backspace.chars)
-        key(backspace.code, chars: backspace.chars)
-        try await settle()
-        literal("\\", "after backspacing 'in'")
-        let callsBeforeUnknown = CompleteRecorder.calls
-        type("x")
-        try await settle()
-        literal("\\x", "unknown prefix")
-        require(lastCandidates == [],
-                "\\x is a valid context with zero matches — must not see English words, "
-                + "got \(String(describing: lastCandidates))")
-        require(CompleteRecorder.calls == callsBeforeUnknown,
-                "zero candidates must not open the popup")
-        stage("\\x unknown prefix: no popup, no dictionary words")
-
-        // D: single-candidate prefix also stays literal.
-        key(backspace.code, chars: backspace.chars)
-        type("doc")
-        try await settle()
-        require(lastCandidates == ["\\documentclass"],
-                "\\doc must offer only \\documentclass, got \(String(describing: lastCandidates))")
-        literal("\\doc", "single-candidate prefix")
-        stage("\\doc single candidate stayed literal")
-
-        // E: Down selects the candidate, Escape restores the original
-        // prefix+caret; then wait past the debounce — no reinsertion.
-        require(CompleteRecorder.calls >= callsBeforeUnknown + 1, "popup must be open for \\doc")
-        key(down.code, chars: down.chars)
-        key(escape.code, chars: escape.chars)
-        try await settle(300)
-        literal("\\doc", "Down+Escape must restore the original prefix")
-        try await settle(300)
-        literal("\\doc", "post-Escape debounce must not reinsert")
-        stage("Down+Escape restored \\doc; no reinsertion after debounce")
-
-        // F: positive opt-in — reopen via the public manual-complete API,
-        // then a real Down+Return accepts the candidate.
-        editor.requestCompletion()
-        try await settle(200)
-        key(down.code, chars: down.chars)
-        key(ret.code, chars: ret.chars)
-        try await settle()
-        literal("\\documentclass", "Down+Return must accept")
-        require(textView.selectedRange().location == (textView.string as NSString).length,
-                "caret must sit after the accepted completion")
-        stage("Down+Return accepted \\documentclass")
-
-        // The project provider must have loaded the fixture's labels and
-        // .bib keys before the group stages — probe it directly rather
-        // than racing the refresh cycle.
-        let probeRef = "\\ref{se", probeCite = "\\cite{kn"
-        require(await until {
-            innerSource?(probeRef, probeRef.utf16.count)?.candidates.contains("sec:intro") == true
-                && innerSource?(probeCite, probeCite.utf16.count)?.candidates.contains("knuth84") == true
-        }, "provider must load project labels and .bib keys")
-
-        // G: \ref{ — typed prefix stays literal with real label candidates.
-        type("\n")
-        type("\\ref{se")
-        try await settle()
-        require(lastCandidates?.contains("sec:intro") == true
-                && lastCandidates?.contains("sec:end") == true,
-                "\\ref{se must offer both labels, got \(String(describing: lastCandidates))")
-        literal("\\ref{se", "ref prefix")
-        // Backspace + an unknown custom key stays literal, no word leak.
-        key(backspace.code, chars: backspace.chars)
-        type("zz")
-        try await settle()
-        literal("\\ref{szz", "custom ref key")
-        require(lastCandidates == [],
-                "zero-match ref key must not see dictionary words, "
-                + "got \(String(describing: lastCandidates))")
-        // Explicit choice of a unique label still works.
-        type("\n")
-        type("\\ref{sec:i")
-        try await settle()
-        require(lastCandidates == ["sec:intro"],
-                "\\ref{sec:i must offer only sec:intro, got \(String(describing: lastCandidates))")
-        literal("\\ref{sec:i", "unique ref prefix")
-        editor.requestCompletion()
-        try await settle(200)
-        key(down.code, chars: down.chars)
-        key(ret.code, chars: ret.chars)
-        try await settle()
-        require(textView.string.hasSuffix("\\ref{sec:intro"),
-                "Down+Return must accept sec:intro, tail '\(tail())'")
-        stage("\\ref literal, custom key kept, sec:intro accepted")
-
-        // H: cite — the same delete/refuse freedom as commands: \cite{kn
-        // stays passive, then backspace + a custom key is retained with
-        // no candidates and no word leak.
-        type("\n")
-        type("\\cite{kn")
-        try await settle()
-        require(lastCandidates == ["knuth84"],
-                "\\cite{kn must offer knuth84, got \(String(describing: lastCandidates))")
-        literal("\\cite{kn", "cite prefix")
-        key(backspace.code, chars: backspace.chars)
-        type("zz")
-        try await settle()
-        literal("\\cite{kzz", "custom cite key")
-        require(lastCandidates == [],
-                "zero-match cite key must not see dictionary words, "
-                + "got \(String(describing: lastCandidates))")
-        // Unicode before the cite — a surrogate pair shifts UTF-16
-        // offsets; only the current key token may be replaced.
-        type("\n")
-        type("😀\\cite{kn")
-        try await settle()
-        require(lastCandidates == ["knuth84"],
-                "\\cite{kn must offer knuth84, got \(String(describing: lastCandidates))")
-        literal("😀\\cite{kn", "cite after Unicode")
-        editor.requestCompletion()
-        try await settle(200)
-        key(down.code, chars: down.chars)
-        key(ret.code, chars: ret.chars)
-        try await settle()
-        literal("😀\\cite{knuth84", "cite accept after Unicode")
-        // Comma-separated second key: the range covers only the fragment.
-        type(",l")
-        try await settle()
-        require(lastCandidates == ["lamport94"],
-                "second cite key must offer lamport94, got \(String(describing: lastCandidates))")
-        literal("😀\\cite{knuth84,l", "multi-cite prefix")
-        editor.requestCompletion()
-        try await settle(200)
-        key(down.code, chars: down.chars)
-        key(ret.code, chars: ret.chars)
-        try await settle()
-        literal("😀\\cite{knuth84,lamport94", "multi-cite accept")
-        stage("cite: Unicode offsets correct, second key replaced only its token")
-
-        // I: IME marked text must not engage the popup at all.
-        type("\n")
-        type("\\i")
-        try await settle()
-        key(escape.code, chars: escape.chars)
-        try await settle(300)
-        let callsBeforeIME = CompleteRecorder.calls
-        textView.setMarkedText("か", selectedRange: NSRange(location: 0, length: 0),
-                               replacementRange: NSRange(location: NSNotFound, length: 0))
-        try await settle()
-        require(textView.hasMarkedText(), "marked text must be active")
-        require(CompleteRecorder.calls == callsBeforeIME,
-                "no completion popup may engage while IME text is marked")
-        textView.unmarkText()
-        try await settle(200)
-        require(!textView.hasMarkedText() && textView.string.hasSuffix("\\iか"),
-                "unmark must commit the literal text, tail '\(tail())'")
-        stage("IME marked text suppressed completion; commit stayed literal")
-
-        // Session text must equal what is on screen — the mutation stream
-        // saw the user's literal typing plus the one accepted completion.
-        // The session submit is async: poll until it lands.
-        require(await until { workspace.documentSnapshot?.text == textView.string },
-                "session text must match the editor after completion stages")
-        print("PASS native completion: passive popup, literal typing, Esc restore, real accept")
+        driver.steps = [
+            // A: bare backslash — popup engages, nothing is inserted.
+            (0.1, { type("\\") }),
+            (0.4, {
+                require(CompleteRecorder.calls >= 1,
+                        "automatic debounce must engage native complete")
+                require(sourceQueries > 0, "the real completion source must be queried")
+                require(lastCandidates?.contains("\\include") == true,
+                        "\\ prefix must offer builtin commands, got \(String(describing: lastCandidates))")
+                literal("\\", "backslash")
+                stage("backslash: popup engaged, text stayed literal")
+            }),
+            // B: continue 'in' — two candidates, still literal.
+            (0.05, { type("in") }),
+            (0.4, {
+                require(lastCandidates?.contains("\\include") == true
+                        && lastCandidates?.contains("\\input") == true,
+                        "\\in must offer include+input, got \(String(describing: lastCandidates))")
+                literal("\\in", "in-prefix")
+                stage("\\in stayed literal with multiple candidates")
+            }),
+            // C: backspace to '\', then 'x' — a zero-match prefix opens no
+            // popup and never sees dictionary words.
+            (0.05, { key(backspace.code, chars: backspace.chars)
+                     key(backspace.code, chars: backspace.chars) }),
+            (0.4, { literal("\\", "after backspacing 'in'") }),
+            (0.05, { callsBeforeUnknown = CompleteRecorder.calls; type("x") }),
+            (0.4, {
+                literal("\\x", "unknown prefix")
+                require(lastCandidates == [],
+                        "\\x is a valid context with zero matches — must not see English words, "
+                        + "got \(String(describing: lastCandidates))")
+                require(CompleteRecorder.calls == callsBeforeUnknown,
+                        "zero candidates must not open the popup")
+                stage("\\x unknown prefix: no popup, no dictionary words")
+            }),
+            // D: single-candidate prefix also stays literal.
+            (0.05, { key(backspace.code, chars: backspace.chars); type("doc") }),
+            (0.4, {
+                require(lastCandidates == ["\\documentclass"],
+                        "\\doc must offer only \\documentclass, got \(String(describing: lastCandidates))")
+                literal("\\doc", "single-candidate prefix")
+                stage("\\doc single candidate stayed literal")
+            }),
+            // E: Down selects the candidate, Escape restores the original
+            // prefix+caret; then wait past the debounce — no reinsertion.
+            (0.05, {
+                require(CompleteRecorder.calls >= callsBeforeUnknown + 1,
+                        "popup must be open for \\doc")
+                key(down.code, chars: down.chars)
+            }),
+            (0.15, { key(escape.code, chars: escape.chars) }),
+            (0.3, { literal("\\doc", "Down+Escape must restore the original prefix") }),
+            (0.3, {
+                literal("\\doc", "post-Escape debounce must not reinsert")
+                stage("Down+Escape restored \\doc; no reinsertion after debounce")
+            }),
+            // F: positive opt-in — reopen via the public manual-complete
+            // API, then queued Down+Return accepts the candidate.
+            (0.05, { editor.requestCompletion() }),
+            (0.2, { key(down.code, chars: down.chars) }),
+            (0.1, { key(ret.code, chars: ret.chars) }),
+            (0.4, {
+                literal("\\documentclass", "Down+Return must accept")
+                require(textView.selectedRange().location == (textView.string as NSString).length,
+                        "caret must sit after the accepted completion")
+                stage("Down+Return accepted \\documentclass")
+            }),
+            // G: \ref{ — typed prefix stays literal with real label
+            // candidates; a custom key is retained; unique key accepted.
+            (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
+            (0.1, { type("\\ref{se") }),
+            (0.4, {
+                require(lastCandidates?.contains("sec:intro") == true
+                        && lastCandidates?.contains("sec:end") == true,
+                        "\\ref{se must offer both labels, got \(String(describing: lastCandidates))")
+                literal("\\ref{se", "ref prefix")
+            }),
+            (0.05, { key(backspace.code, chars: backspace.chars); type("zz") }),
+            (0.4, {
+                literal("\\ref{szz", "custom ref key")
+                require(lastCandidates == [],
+                        "zero-match ref key must not see dictionary words, "
+                        + "got \(String(describing: lastCandidates))")
+            }),
+            (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
+            (0.1, { type("\\ref{sec:i") }),
+            (0.4, {
+                require(lastCandidates == ["sec:intro"],
+                        "\\ref{sec:i must offer only sec:intro, got \(String(describing: lastCandidates))")
+                literal("\\ref{sec:i", "unique ref prefix")
+                editor.requestCompletion()
+            }),
+            (0.2, { key(down.code, chars: down.chars) }),
+            (0.1, { key(ret.code, chars: ret.chars) }),
+            (0.4, {
+                require(textView.string.hasSuffix("\\ref{sec:intro"),
+                        "Down+Return must accept sec:intro, tail '\(tail())'")
+                stage("\\ref literal, custom key kept, sec:intro accepted")
+            }),
+            // H: cite — same delete/refuse freedom: \cite{kn stays passive,
+            // backspace + a custom key is retained, no word leak.
+            (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
+            (0.1, { type("\\cite{kn") }),
+            (0.4, {
+                require(lastCandidates == ["knuth84"],
+                        "\\cite{kn must offer knuth84, got \(String(describing: lastCandidates))")
+                literal("\\cite{kn", "cite prefix")
+            }),
+            (0.05, { key(backspace.code, chars: backspace.chars); type("zz") }),
+            (0.4, {
+                literal("\\cite{kzz", "custom cite key")
+                require(lastCandidates == [],
+                        "zero-match cite key must not see dictionary words, "
+                        + "got \(String(describing: lastCandidates))")
+            }),
+            // Unicode before the cite — a surrogate pair shifts UTF-16
+            // offsets; only the current key token may be replaced. The
+            // queued Escape/newline must be delivered before the emoji's
+            // synchronous insertText runs, so they are separate steps.
+            (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
+            (0.1, {
+                textView.insertText("😀", replacementRange: NSRange(location: NSNotFound, length: 0))
+                type("\\cite{kn")
+            }),
+            (0.4, {
+                require(lastCandidates == ["knuth84"],
+                        "\\cite{kn must offer knuth84, got \(String(describing: lastCandidates))")
+                literal("😀\\cite{kn", "cite after Unicode")
+                editor.requestCompletion()
+            }),
+            (0.2, { key(down.code, chars: down.chars) }),
+            (0.1, { key(ret.code, chars: ret.chars) }),
+            (0.4, { literal("😀\\cite{knuth84", "cite accept after Unicode") }),
+            (0.05, { type(",l") }),
+            (0.4, {
+                require(lastCandidates == ["lamport94"],
+                        "second cite key must offer lamport94, got \(String(describing: lastCandidates))")
+                literal("😀\\cite{knuth84,l", "multi-cite prefix")
+                editor.requestCompletion()
+            }),
+            (0.2, { key(down.code, chars: down.chars) }),
+            (0.1, { key(ret.code, chars: ret.chars) }),
+            (0.4, {
+                literal("😀\\cite{knuth84,lamport94", "multi-cite accept")
+                stage("cite: Unicode offsets correct, second key replaced only its token")
+            }),
+            // I: IME marked text must not engage the popup at all.
+            (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
+            (0.1, { type("\\i") }),
+            (0.4, { key(escape.code, chars: escape.chars) }),
+            (0.3, {
+                callsBeforeIME = CompleteRecorder.calls
+                textView.setMarkedText("か", selectedRange: NSRange(location: 0, length: 0),
+                                       replacementRange: NSRange(location: NSNotFound, length: 0))
+            }),
+            (0.4, {
+                require(textView.hasMarkedText(), "marked text must be active")
+                require(CompleteRecorder.calls == callsBeforeIME,
+                        "no completion popup may engage while IME text is marked")
+            }),
+            (0.05, { textView.unmarkText() }),
+            (0.2, {
+                require(!textView.hasMarkedText() && textView.string.hasSuffix("\\iか"),
+                        "unmark must commit the literal text, tail '\(tail())'")
+                stage("IME marked text suppressed completion; commit stayed literal")
+            }),
+            // The session submit is async — poll until it lands or the
+            // bound is hit.
+            (0.3, { pollSession() }),
+        ]
+        driver.scheduleNext()
+        // run() must not return while timers are pending — its defers would
+        // tear down the window and restore the swizzle. The watchdog turns
+        // a stalled chain into a diagnosable FAIL instead of a launcher
+        // timeout.
+        require(await until(120) { driver.done }, "completion driver stalled — see stage output")
     }
 }
 '''
@@ -384,7 +482,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-completion-", dir="/tmp") as dire
                         "--env", f"PI_CODING_AGENT_DIR={root / 'pi'}",
                         "--env", f"PITEX_COMPLETION_FIXTURE={fixture}",
                         str(app)],
-                       check=True, timeout=120)
+                       check=True, timeout=180)
     finally:
         subprocess.run(["/usr/bin/pkill", "-f", str(app)], check=False)
         for log in (out_log, err_log):
