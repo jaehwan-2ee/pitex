@@ -1,0 +1,30 @@
+Development/check-external-open.md
+  h_d73c695d83f4a7 1-38
+Linux/Cargo.lock
+  h_d73c695d83f4a7 964
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_d73c695d83f4a7 5224-5227
+Linux/crates/pitex/Cargo.toml
+  h_d73c695d83f4a7 3
+Mac/Config/Info.plist
+  h_d73c695d83f4a7 20,22
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 2534-2536,2584-2586,2609-2615
+Mac/Sources/Features/WorkspaceView.swift
+  h_d73c695d83f4a7 115,121
+Windows/Cargo.lock
+  h_d73c695d83f4a7 1090
+Windows/crates/pitex-windows/Cargo.toml
+  h_d73c695d83f4a7 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "687462de83e72fdb8e6e209e679cc6ee055a0d02",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
