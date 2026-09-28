@@ -1,0 +1,14 @@
+Tools/check-external-open.py
+  h_d73c695d83f4a7 19,273-277,280,296-297,390-392,562-571
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "360d492b7d0decc001bb2b9cb001c70226de6862",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
