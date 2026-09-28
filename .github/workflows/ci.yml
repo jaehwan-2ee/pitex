@@ -117,6 +117,10 @@ jobs:
         with:
           fetch-depth: 0
       - run: sw_vers
+      # The xcode-27 image ships without the Metal toolchain the build
+      # invokes; download it once or `xcodebuild` fails with 'missing
+      # Metal Toolchain'.
+      - run: xcodebuild -downloadComponent MetalToolchain
       - name: Build release app
         run: |
           xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \

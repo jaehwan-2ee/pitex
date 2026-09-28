@@ -25,15 +25,23 @@ check = r'''
 import AppKit
 import SwiftUI
 
+/// Set by the didFinishLaunching observer registered in the wrapper —
+/// plain storage so the observer can write it from any context.
+enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
+
 @main enum CheckMain {
     /// Boots the REAL app scene/delegate stack. Only settings that would
     /// otherwise make the check nondeterministic are pinned first — the
     /// bundle's unique identifier gives it an isolated defaults domain.
-    static func main() async {
+    @MainActor static func main() {
         UserDefaults.standard.set(false, forKey: "pitex.pref.editor.restoreSession")
         UserDefaults.standard.set(false, forKey: "pitex.pref.update.autoInstall")
+        _ = NotificationCenter.default.addObserver(
+            forName: NSApplication.didFinishLaunchingNotification,
+            object: nil, queue: nil
+        ) { _ in LaunchFlag.didFinishLaunching = true }
         Task { @MainActor in await Driver.run() }
-        await PitexApp.main()
+        PitexApp.main()
     }
 }
 
@@ -54,10 +62,11 @@ import SwiftUI
             return false
         }
 
+        print("[diag] driver started:", diagnostics())
         // The first scene window must exist before firing opens — the
         // empty-window route branch needs a live workspace to attach to.
         require(await until { WorkspaceWindows.live.contains { $0.window != nil } },
-                "App never produced an initial window")
+                "App never produced an initial window — \(diagnostics())")
         let initialCount = WorkspaceWindows.live.count
         stage("initial workspaces=\(initialCount)")
 
@@ -197,6 +206,19 @@ import SwiftUI
             fflush(nil)
             exit(1)
         }
+    }
+
+    /// State snapshot for bootstrap failures: thread, app lifecycle, the
+    /// AppKit window list, and how many workspaces registered a scene.
+    static func diagnostics() -> String {
+        let app = NSApplication.shared
+        let windows = app.windows.map {
+            "'\($0.title.isEmpty ? "untitled" : $0.title)' visible=\($0.isVisible) mini=\($0.isMiniaturized)"
+        }.joined(separator: "; ")
+        return "mainThread=\(Thread.isMainThread) running=\(app.isRunning) "
+            + "active=\(app.isActive) hidden=\(app.isHidden) "
+            + "didFinishLaunching=\(LaunchFlag.didFinishLaunching) "
+            + "live=\(WorkspaceWindows.live.count) windows=\(app.windows.count) [\(windows)]"
     }
 
     static func until(_ timeout: Double = 20, _ condition: @MainActor () -> Bool) async -> Bool {
