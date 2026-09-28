@@ -201,12 +201,17 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         detached.makeKeyAndOrderFront(nil)
         require(await until { NSApp.keyWindow === detached },
                 "The detached preview must become key")
+        // Let the focus change settle one turn, then dispatch the real
+        // menu key-equivalent path — performKeyEquivalent reports whether
+        // the main menu actually claimed the event, unlike sendEvent.
+        try? await Task.sleep(for: .milliseconds(100))
         let close = NSEvent.keyEvent(with: .keyDown, location: .zero,
             modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: detached.windowNumber, context: nil,
             characters: "w", charactersIgnoringModifiers: "w",
             isARepeat: false, keyCode: 13)!
-        NSApp.sendEvent(close)
+        require(NSApp.mainMenu?.performKeyEquivalent(close) == true,
+                "Cmd-W must be claimed by the main menu — \(diagnostics())")
         require(await until { !workspaceA.previewDetached },
                 "Cmd-W on the detached preview must reattach it")
         require(workspaceA.hasProject && workspaceB.hasProject,
@@ -305,9 +310,67 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
         .replace(
             "            .onOpenURL { url in",
             "            .onOpenURL { url in\n"
-            "                print(\"TRACE onOpenURL\", url.path)\n"
-            "                fflush(nil)"))
-    assert "TRACE delegate-open" in patched and "TRACE onOpenURL" in patched
+            "                print(\"TRACE onOpenURL\", url.path, \"ws=\\(ObjectIdentifier(workspace))\")\n"
+            "                fflush(nil)")
+        .replace(
+            "    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }",
+            "    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {\n"
+            "        print(\"TRACE untitled consult live=\\(MainActor.assumeIsolated { WorkspaceWindows.live.count })\")\n"
+            "        fflush(nil)\n"
+            "        return false\n"
+            "    }")
+        .replace(
+            "        let url = url.standardizedFileURL\n"
+            "        let windows = live",
+            "        let url = url.standardizedFileURL\n"
+            "        let windows = live\n"
+            "        print(\"TRACE route\", url.lastPathComponent, \"live=\\(windows.count)\")\n"
+            "        fflush(nil)")
+        .replace("            owner.reveal(url)",
+            "            print(\"TRACE route->owner\")\n            fflush(nil)\n            owner.reveal(url)")
+        .replace("            empty.present()\n            Task { await empty.open(url) }",
+            "            print(\"TRACE route->empty\")\n            fflush(nil)\n"
+            "            empty.present()\n            Task { await empty.open(url) }")
+        .replace("            openWindow(value: WindowOpenRequest(url: url))",
+            "            print(\"TRACE route->openWindow\")\n            fflush(nil)\n"
+            "            openWindow(value: WindowOpenRequest(url: url))")
+        .replace("            pending.append(url)",
+            "            print(\"TRACE route->pending\")\n            fflush(nil)\n            pending.append(url)")
+        .replace(
+            "            .onAppear {\n"
+            "                WorkspaceWindows.register(workspace, openWindow: openWindow)",
+            "            .onAppear {\n"
+            "                print(\"TRACE onAppear ws=\\(ObjectIdentifier(workspace)) "
+            "initial=\\(String(describing: initialURL)) live=\\(WorkspaceWindows.live.count)\")\n"
+            "                fflush(nil)\n"
+            "                WorkspaceWindows.register(workspace, openWindow: openWindow)")
+        .replace(
+            "                    workspace.restoreSessionIfNeeded()",
+            "                    print(\"TRACE onAppear->restore claimed=\\(workspace.claimedExternalOpen)\")\n"
+            "                    fflush(nil)\n"
+            "                    workspace.restoreSessionIfNeeded()")
+        .replace(
+            "    func performCloseCommand() {",
+            "    func performCloseCommand() {\n"
+            "        print(\"TRACE performClose project=\\(projectURL?.lastPathComponent ?? \"none\") "
+            "detached=\\(previewDetached) keyIsDetached=\\(detachedPreviewWindow === NSApp.keyWindow)\")\n"
+            "        fflush(nil)")
+        .replace(
+            "        let key = NSApp.keyWindow\n"
+            "        return WorkspaceWindows.workspace(for: key?.sheetParent ?? key)\n"
+            "            ?? focusedWorkspace\n"
+            "            ?? WorkspaceWindows.unfocused",
+            "        let key = NSApp.keyWindow\n"
+            "        let byWindow = WorkspaceWindows.workspace(for: key?.sheetParent ?? key)\n"
+            "        print(\"TRACE cmd-resolve byWindow=\\(byWindow?.projectURL?.lastPathComponent ?? \"nil\") "
+            "focused=\\(focusedWorkspace?.projectURL?.lastPathComponent ?? \"nil\") key=\\(key?.title ?? \"nil\")\")\n"
+            "        fflush(nil)\n"
+            "        return byWindow\n"
+            "            ?? focusedWorkspace\n"
+            "            ?? WorkspaceWindows.unfocused"))
+    for marker in ("TRACE delegate-open", "TRACE onOpenURL", "TRACE untitled", "TRACE route",
+                   "TRACE onAppear", "TRACE performClose", "TRACE cmd-resolve"):
+        assert marker in patched, f"trace injection missed: {marker}"
     stripped = root / "PitexApp.swift"
     stripped.write_text(patched)
     source = root / "Check.swift"

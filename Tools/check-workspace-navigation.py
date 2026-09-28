@@ -213,24 +213,50 @@ import SyncTeXCore
         // Each activation rebuilds the editor adapter; the model keeps a
         // caret + scroll snapshot per document. A caret far from the
         // viewport proves the restore is not just scrollRangeToVisible.
-        func editorParts() -> (NSScrollView, NSTextView) {
+        // editorParts waits for the CURRENT adapter's textView to actually
+        // mount — SwiftUI commits the adapter swap on a later layout pass,
+        // so right after activateDocument the hosted scroll view can still
+        // own the previous adapter's document view.
+        func editorParts(_ stage: String) async throws -> (NSScrollView, NSTextView) {
             let text = workspace.environment!.editor.textView
-            let scroll = descendants(host).compactMap { $0 as? NSScrollView }
-                .first { $0.documentView === text }!
-            return (scroll, text)
+            for _ in 0..<100 {
+                if let scroll = descendants(host).compactMap({ $0 as? NSScrollView })
+                    .first(where: { $0.documentView === text }) {
+                    return (scroll, text)
+                }
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            let scrolls = descendants(host).compactMap { $0 as? NSScrollView }
+                .map { "docView=\($0.documentView.map { "\(Unmanaged.passUnretained($0).toOpaque())" } ?? "nil")" }
+                .joined(separator: ", ")
+            print("FAIL \(stage): adapter textView \(Unmanaged.passUnretained(text).toOpaque()) "
+                + "window=\(String(describing: text.window)) "
+                + "active=\(workspace.activeDocumentURL?.lastPathComponent ?? "nil") "
+                + "never mounted under host; scrolls=[\(scrolls)]")
+            fflush(nil); exit(1)
         }
-        func setEditorState(selection: NSRange, scrollY: CGFloat) {
-            let (scroll, text) = editorParts()
+        func setEditorState(_ stage: String, selection: NSRange, scrollY: CGFloat) async throws {
+            let (scroll, text) = try await editorParts(stage)
             text.setSelectedRange(selection)
             text.scroll(NSPoint(x: 0, y: scrollY))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
-        func requireState(_ stage: String, expected: EditorMacAdapter.ViewState) {
-            let (scroll, text) = editorParts()
-            require(text.selectedRange() == expected.selection,
-                    "\(stage): selection \(text.selectedRange()) != \(expected.selection)")
-            require(abs(scroll.contentView.bounds.origin.y - expected.scrollOrigin.y) < 1,
-                    "\(stage): viewport y \(scroll.contentView.bounds.origin.y) != \(expected.scrollOrigin.y)")
+        // The staged viewport restore lands on a layout pass after mount —
+        // poll for the restored values instead of asserting on one frame.
+        func requireState(_ stage: String, expected: EditorMacAdapter.ViewState) async throws {
+            var last = EditorMacAdapter.ViewState(selection: NSRange(), scrollOrigin: .zero)
+            for _ in 0..<100 {
+                let (_, _) = try await editorParts(stage)
+                last = workspace.environment!.editor.viewState
+                if last.selection == expected.selection,
+                   abs(last.scrollOrigin.y - expected.scrollOrigin.y) < 1 { return }
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            require(false,
+                    "\(stage): restored selection \(last.selection) != \(expected.selection) "
+                    + "or viewport y \(last.scrollOrigin.y) != \(expected.scrollOrigin.y)")
         }
         let docA = workspace.activeDocumentURL!
         guard let docB = workspace.projectFiles.first(where: { $0 != docA }) else {
@@ -239,34 +265,34 @@ import SyncTeXCore
         // Hand the outgoing position back at the end — the detached-preview
         // checks below SyncTeX from the caret the navigation loop left.
         let preBlockState = workspace.environment!.editor.viewState
-        let (scrollA, textA) = editorParts()
+        let (scrollA, textA) = try await editorParts("docA mount")
         let lengthA = (textA.string as NSString).length
         let maxYA = max(textA.bounds.height - scrollA.contentView.bounds.height, 0)
         require(maxYA > 50, "view-state fixture must be scrollable")
         // A: caret near the top, viewport at the very bottom.
-        setEditorState(selection: NSRange(location: min(4, lengthA), length: 0), scrollY: maxYA)
+        try await setEditorState("docA state",
+            selection: NSRange(location: min(4, lengthA), length: 0), scrollY: maxYA)
         try await settle()
         let expectedA = workspace.environment!.editor.viewState
         require(expectedA.scrollOrigin.y > scrollA.contentView.bounds.height / 2,
                 "A's viewport must sit far from its caret")
         await workspace.activateDocument(docB)
         try await settle()
-        let (scrollB, textB) = editorParts()
+        let (scrollB, textB) = try await editorParts("docB mount")
         let lengthB = (textB.string as NSString).length
         let maxYB = max(textB.bounds.height - scrollB.contentView.bounds.height, 0)
         require(maxYB > 50, "view-state fixture must be scrollable")
         // B: a real selection plus a mid-document viewport.
-        setEditorState(selection: NSRange(location: min(20, lengthB), length: min(8, lengthB - min(20, lengthB))),
-                       scrollY: maxYB / 2)
+        try await setEditorState("docB state",
+            selection: NSRange(location: min(20, lengthB), length: min(8, lengthB - min(20, lengthB))),
+            scrollY: maxYB / 2)
         try await settle()
         let expectedB = workspace.environment!.editor.viewState
 
         await workspace.activateDocument(docA)
-        try await settle()
-        requireState("A→B→A", expected: expectedA)
+        try await requireState("A→B→A", expected: expectedA)
         await workspace.activateDocument(docB)
-        try await settle()
-        requireState("back on B", expected: expectedB)
+        try await requireState("back on B", expected: expectedB)
         print("PASS per-document caret and viewport restored across tab switches")
 
         // Explicit navigation issued before the restore layout settles
@@ -277,7 +303,7 @@ import SyncTeXCore
         let nsTextA = workspace.environment!.editor.textView.string as NSString
         let firstBreak = nsTextA.range(of: "\n")
         require(firstBreak.location != NSNotFound, "fixture needs multiple lines")
-        let (_, jumpText) = editorParts()
+        let (_, jumpText) = try await editorParts("post-jump mount")
         require(jumpText.selectedRange().location == firstBreak.location + 1,
                 "jumpTo must win over the staged viewport restore")
         let jumpLayout = jumpText.layoutManager!

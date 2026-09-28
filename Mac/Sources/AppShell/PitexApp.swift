@@ -431,6 +431,10 @@ final class WorkspaceModel: ObservableObject {
         }
     }
     private var didRestoreSession = false
+    /// Set synchronously when this workspace's scene claims an external
+    /// file open — its own launch-time session restore must not race the
+    /// delivered file.
+    var claimedExternalOpen = false
     var canSave: Bool {
         documentSnapshot?.saveState == .dirty && capabilityLease?.access == .readWrite
     }
@@ -2288,10 +2292,16 @@ final class WorkspaceModel: ObservableObject {
     /// preference allows it. Called once from the root view's onAppear.
     func restoreSessionIfNeeded() {
         guard !didRestoreSession, !hasProject, settings.restoreSession,
+              !claimedExternalOpen,
               let recent = recentDocuments.first,
               FileManager.default.fileExists(atPath: recent.path) else { return }
         didRestoreSession = true
-        Task { await open(recent) }
+        Task {
+            // A scene claimed for a Finder open can deliver its URL after
+            // this window appeared — the explicit file beats the restore.
+            guard !self.claimedExternalOpen, !self.hasProject else { return }
+            await self.open(recent)
+        }
     }
 
     func persistCommands() {
@@ -2686,13 +2696,7 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A bare launch or Dock reopen may create the first workspace window,
-    /// but never an extra one — file opens keep routing through the
-    /// existing windows / openWindow path.
-    @MainActor
-    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
-        WorkspaceWindows.live.isEmpty
-    }
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
@@ -2764,8 +2768,11 @@ private struct WorkspaceWindow: View {
             .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
             .onOpenURL { url in
                 // Requested inside the incoming open-event handler — the
-                // event can arrive while the app is inactive.
+                // event can arrive while the app is inactive. The claim
+                // is marked synchronously so this scene's own session
+                // restore cannot race the routed file on a cold launch.
                 NSApp.activate()
+                MainActor.assumeIsolated { workspace.claimedExternalOpen = true }
                 Task { @MainActor in WorkspaceWindows.route(url, from: workspace) }
             }
             .sheet(isPresented: $workspace.showingSettings) {
