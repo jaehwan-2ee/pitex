@@ -211,10 +211,16 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
         detached.makeKeyAndOrderFront(nil)
         require(await until { NSApp.keyWindow === detached },
                 "The detached preview must become key")
-        // Let the focus change settle one turn, then dispatch the real
-        // menu key-equivalent path — performKeyEquivalent reports whether
-        // the main menu actually claimed the event, unlike sendEvent.
+        require(await until { NSApp.mainWindow !== detached },
+                "The detached preview must be key but never main")
+        // Let the focus change settle one turn, then dump every ⌘w menu
+        // item (title/enabled/hidden/mods/action/target + resolved target)
+        // — performKeyEquivalent returned true yet performCloseCommand
+        // never ran, so some other 'w' item is claiming the shortcut.
         try? await Task.sleep(for: .milliseconds(100))
+        dumpMenuShortcuts()
+        print("[diag] key=\(NSApp.keyWindow?.title ?? "nil") main=\(NSApp.mainWindow?.title ?? "nil")")
+        fflush(nil)
         let close = NSEvent.keyEvent(with: .keyDown, location: .zero,
             modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: detached.windowNumber, context: nil,
@@ -262,6 +268,28 @@ enum LaunchFlag { nonisolated(unsafe) static var didFinishLaunching = false }
             fflush(nil)
             exit(1)
         }
+    }
+
+    /// Recursively prints every menu item whose key equivalent is 'w'
+    /// — which item claims ⌘W while the detached preview is key.
+    static func dumpMenuShortcuts() {
+        func walk(_ menu: NSMenu, _ path: String) {
+            for item in menu.items {
+                if let submenu = item.submenu { walk(submenu, path + "/" + item.title) }
+                guard item.keyEquivalent.lowercased() == "w" else { continue }
+                let action = item.action.map { "\($0)" } ?? "nil"
+                let target = item.target.map { "\(type(of: $0))" } ?? "nil"
+                print("TRACE menuItem-w '\(path)/\(item.title)' enabled=\(item.isEnabled) "
+                    + "hidden=\(item.isHidden) mods=\(item.keyEquivalentModifierMask.rawValue) "
+                    + "action=\(action) target=\(target)")
+                if let action = item.action {
+                    let resolved = NSApp.target(forAction: action, to: item.target, from: item)
+                    print("TRACE menuItem-w resolvedTarget=\(resolved.map { "\(type(of: $0))" } ?? "nil")")
+                }
+            }
+        }
+        if let menu = NSApp.mainMenu { walk(menu, "") }
+        fflush(nil)
     }
 
     /// State snapshot for bootstrap failures: thread, app lifecycle, the
@@ -360,6 +388,10 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
             "                    fflush(nil)\n"
             "                    workspace.restoreSessionIfNeeded()")
         .replace(
+            "            Button(\"command.close\") { workspace.performCloseCommand() }",
+            "            Button(\"command.close\") { print(\"TRACE close-button-action\"); "
+            "fflush(nil); workspace.performCloseCommand() }")
+        .replace(
             "    func performCloseCommand() {",
             "    func performCloseCommand() {\n"
             "        print(\"TRACE performClose project=\\(projectURL?.lastPathComponent ?? \"none\") "
@@ -379,7 +411,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-open-", dir="/tmp") as directory:
             "            ?? focusedWorkspace\n"
             "            ?? WorkspaceWindows.unfocused"))
     for marker in ("TRACE delegate-open", "TRACE onOpenURL", "TRACE untitled", "TRACE route",
-                   "TRACE onAppear", "TRACE performClose", "TRACE cmd-resolve"):
+                   "TRACE onAppear", "TRACE performClose", "TRACE cmd-resolve", "TRACE close-button"):
         assert marker in patched, f"trace injection missed: {marker}"
     stripped = root / "PitexApp.swift"
     stripped.write_text(patched)

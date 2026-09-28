@@ -491,7 +491,7 @@ final class WorkspaceModel: ObservableObject {
     func detachPreview() {
         guard detachedPreviewWindow == nil else { return }
         let delegate = DetachedPreviewWindowDelegate(workspace: self)
-        let window = NSWindow(
+        let window = DetachedPreviewWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
@@ -2737,10 +2737,9 @@ struct PitexApp: App {
         WindowGroup("Pitex", id: "workspace", for: WindowOpenRequest.self) { $request in
             WorkspaceWindow(initialURL: request?.url)
         }
-        // Opens route through WorkspaceWindows, so the scene itself must
-        // never spawn a window for an external event: an open scene claims
-        // it via the view-level handlesExternalEvents modifier below.
-        .handlesExternalEvents(matching: [])
+        // Opens route through WorkspaceWindows: an open scene claims the
+        // event via the view-level handlesExternalEvents below, and on a
+        // cold open SwiftUI may create a scene for the delivered file.
         .commands { AppCommands() }
     }
 }
@@ -2858,6 +2857,14 @@ enum WorkspaceWindows {
             pending.append(url)
         }
     }
+}
+
+/// The detached preview is an auxiliary window: it can be key for
+/// interaction but must never become main — with no scene backing it,
+/// becoming main would pull command dispatch away from the owning
+/// workspace's scene.
+private final class DetachedPreviewWindow: NSWindow {
+    override var canBecomeMain: Bool { false }
 }
 
 /// Reports the detached preview window's close to its workspace — a

@@ -366,14 +366,27 @@ import SyncTeXCore
         detached.miniaturize(nil)
         try await settle()
         require(detached.isMiniaturized, "Fixture must be able to minimize the detached window")
+        // Identity diff like the inline check — PDFAnnotation `type`
+        // strings differ across PDFKit versions (e.g. slash prefixes).
+        let detachedBefore = (0..<detachedPDF.document!.pageCount).flatMap {
+            detachedPDF.document!.page(at: $0)!.annotations
+        }
         await workspace.syncForward()
         try await settle()
         require(!detached.isMiniaturized && detached.isVisible,
                 "Forward sync must restore and present the detached preview")
-        let detachedMarkers = (0..<detachedPDF.document!.pageCount).flatMap {
+        let detachedAfter = (0..<detachedPDF.document!.pageCount).flatMap {
             detachedPDF.document!.page(at: $0)!.annotations
-        }.filter { $0.type == PDFAnnotationSubtype.highlight.rawValue }
-        require(detachedMarkers.count == 1, "Forward marker must land on the detached PDF")
+        }
+        let detachedMarkers = detachedAfter.filter { marker in
+            !detachedBefore.contains { $0 === marker }
+        }
+        require(detachedMarkers.count == 1 && detachedMarkers.allSatisfy { !$0.shouldPrint },
+                "Forward marker must land on the detached PDF: new=\(detachedMarkers.count) "
+                + "of before=\(detachedBefore.count) after=\(detachedAfter.count), "
+                + "types=\(detachedMarkers.map { $0.type ?? "nil" }), "
+                + "caret=\(workspace.environment!.editor.selectedRange), "
+                + "sync=\(workspace.syncTeXState)")
 
         // Inverse Cmd-click in the detached window lands in the source
         // editor and fronts its window — including cross-file targets.
