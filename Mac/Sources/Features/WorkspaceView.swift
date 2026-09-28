@@ -112,13 +112,13 @@ struct WorkspaceView: View {
 
     private var sidebarColumn: some View {
         ProjectSidebarView(workspace: workspace)
-            .frame(minWidth: 170, idealWidth: 200, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 170, idealWidth: 170, maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: appearance.color(for: .gutterBackground)))
     }
 
     private var inspectorColumn: some View {
         Preview(workspace: workspace)
-            .frame(minWidth: 300, idealWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 300, idealWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: appearance.color(for: .gutterBackground)))
     }
 
