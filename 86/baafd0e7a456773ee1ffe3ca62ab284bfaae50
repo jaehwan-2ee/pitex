@@ -1,0 +1,22 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 147-149
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  h_d73c695d83f4a7 41-54,187-190,382,385-397,399-400,416-422,424-425,480-483,530-531
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterMutationTests.swift
+  h_d73c695d83f4a7 1-429
+Tools/check-native-completion.py
+  h_d73c695d83f4a7 33,37-38,42,161-162,184-209,251,272-274,283-285,303,307-319,324-327,345-351,358,369-374,376-377,380-382,389-395,420,458,468,496-534,539-544,602
+Tools/check-sidebar-ui.py
+  h_d73c695d83f4a7 12-13,23-77,79-81,107,188,211-217,219-229,235-236,240,244-249,253,256-257,259,350-354,357,361,371,442,499,584-586,623-630,633,654
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86baafd0e7a456773ee1ffe3ca62ab284bfaae50",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
