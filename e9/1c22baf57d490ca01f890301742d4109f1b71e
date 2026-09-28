@@ -1,0 +1,32 @@
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 43-44
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 43-44
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 43-44
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 43-44
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 43-44
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 43-44
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 43-44
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 381-383,386-403,421,468-554,1114-1116,1451-1457,1513-1516,2513-2515,2517-2522,2556-2558,2560,2607,2662-2664,2741-2743,2761-2763,2787-2795,2798,2818-2820,2823,2831-2841
+Mac/Sources/Features/Preview.swift
+  h_d73c695d83f4a7 17-19,21,23,122-129
+Mac/Sources/Features/WorkspaceView.swift
+  h_d73c695d83f4a7 100-104,110-111,439,443-444,510,515-516
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e91c22baf57d490ca01f890301742d4109f1b71e",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
