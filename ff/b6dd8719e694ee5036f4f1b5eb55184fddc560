@@ -1,0 +1,16 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 70-83,138-140,164-177,229-231
+Tools/check-document-layout.py
+  h_d73c695d83f4a7 1-397
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ffb6dd8719e694ee5036f4f1b5eb55184fddc560",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
