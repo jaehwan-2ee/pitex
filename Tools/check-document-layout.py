@@ -23,6 +23,24 @@ import PDFKit
 import SwiftUI
 import WebKit
 
+// Hosted macOS runners expose a 1024pt screen. Keep this test's requested
+// viewport, including portions outside that screen, so native pane minima
+// and divider tracking exercise the same geometry as a wider user display.
+// Only screen fitting changes; production WorkspaceView and NSSplitView run
+// unchanged, and every drag verifies the actual window/host/split dimensions.
+final class LayoutFixtureWindow: NSWindow {
+    private(set) var requestedViewportWidth: CGFloat = 1440
+
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
+    func setViewportWidth(_ width: CGFloat) {
+        requestedViewportWidth = width
+        setContentSize(NSSize(width: width, height: 800))
+    }
+}
+
 @main struct DocumentLayoutCheck {
     @MainActor static func main() {
         let app = NSApplication.shared
@@ -85,6 +103,21 @@ import WebKit
         func widths(_ host: NSView) -> [CGFloat] {
             outer(host).arrangedSubviews.map { $0.frame.width }
         }
+        func requireViewport(_ host: NSView, _ label: String, minimumWidth: CGFloat = 0) {
+            guard let window = host.window as? LayoutFixtureWindow else {
+                fail("HARNESS_ERROR", "Missing layout fixture window", host)
+            }
+            let requested = window.requestedViewportWidth
+            let contentWidth = window.contentRect(forFrameRect: window.frame).width
+            let hostWidth = host.bounds.width
+            let splitWidth = outer(host).bounds.width
+            let details = "\(label): requested=\(requested) windowFrame=\(window.frame.width) "
+                + "windowContent=\(contentWidth) host=\(hostWidth) split=\(splitWidth) minimum=\(minimumWidth)"
+            stage("viewport \(details)")
+            require([contentWidth, hostWidth, splitWidth].allSatisfy { abs($0 - requested) <= 1 },
+                    "Fixture viewport was constrained: \(details)", host)
+            require(splitWidth >= minimumWidth, "Fixture cannot fit requested divider sizes: \(details)", host)
+        }
         func same(_ actual: [CGFloat], _ expected: [CGFloat], tolerance: CGFloat = 1) -> Bool {
             actual.count == expected.count && zip(actual, expected).allSatisfy { abs($0 - $1) <= tolerance }
         }
@@ -146,14 +179,17 @@ import WebKit
             }
             fail("HARNESS_ERROR", "Unstable geometry at \(label): \(last)", host)
         }
-        func mount(_ workspace: WorkspaceModel) -> (NSWindow, NSView) {
+        func mount(_ workspace: WorkspaceModel) -> (LayoutFixtureWindow, NSView) {
             let host = NSHostingView(rootView: WorkspaceView(workspace: workspace))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 800),
+            let window = LayoutFixtureWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 800),
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentView = host
             workspace.window = window
             window.makeKeyAndOrderFront(nil)
+            // Reapply after ordering, which can otherwise fit a new window
+            // to the runner's screen before the first native layout pass.
+            window.setViewportWidth(1440)
             NSApp.activate()
             return (window, host)
         }
@@ -162,7 +198,17 @@ import WebKit
         // main-actor task, global event injection, or Accessibility grant.
         func drag(_ host: NSView, divider: Int, to position: CGFloat) async throws {
             let split = outer(host)
+            requireViewport(host, "before native drag divider=\(divider)",
+                            minimumWidth: 170 + 460 + 300 + 2 * split.dividerThickness)
+            require(split.arrangedSubviews.count == 3 && (0..<2).contains(divider),
+                    "Native drag requires three panes and a valid divider", host)
+            let minima: [CGFloat] = defaults.bool(forKey: "inspectorOnLeft") ? [300, 460, 170] : [170, 460, 300]
             let pane = split.arrangedSubviews[divider]
+            let minimum = pane.frame.minX + minima[divider]
+            let maximum = split.arrangedSubviews[divider + 1].frame.maxX
+                - minima[divider + 1] - split.dividerThickness
+            require(position >= minimum && position <= maximum,
+                    "Drag target outside native pane constraints: target=\(position) range=\(minimum)...\(maximum) widths=\(widths(host))", host)
             let start = NSPoint(x: pane.frame.maxX + split.dividerThickness / 2, y: split.bounds.midY)
             let end = NSPoint(x: position + split.dividerThickness / 2, y: start.y)
             guard let window = split.window else { fail("HARNESS_ERROR", "Drag window missing", host) }
@@ -182,6 +228,8 @@ import WebKit
         func resize(_ host: NSView, sidebar: CGFloat, inspector: CGFloat) async throws -> [CGFloat] {
             let split = outer(host)
             require(split.arrangedSubviews.count == 3, "Expected three panes before manual resize", host)
+            requireViewport(host, "before sizing sidebar=\(sidebar) inspector=\(inspector)",
+                            minimumWidth: sidebar + 460 + inspector + 2 * split.dividerThickness)
             try await drag(host, divider: 0, to: sidebar)
             try await drag(host, divider: 1, to: split.bounds.width - split.dividerThickness - inspector)
             let expected = [sidebar, split.bounds.width - sidebar - inspector - 2 * split.dividerThickness, inspector]
@@ -202,6 +250,7 @@ import WebKit
         defer { window.orderOut(nil) }
         try await rendered(workspace, host, tex)
         let initial = try await stable(host, "fresh PDF workspace")
+        requireViewport(host, "fresh PDF workspace")
         require(initial.count == 3 && abs(initial[0] - 170) <= 1, "Fresh sidebar must be 170pt: \(initial)", host)
         capture(host, "fresh-pdf")
         let a = try await resize(host, sidebar: 230, inspector: 460)
@@ -250,6 +299,7 @@ import WebKit
         defer { secondWindow.orderOut(nil) }
         try await rendered(independent, secondHost, tex)
         let secondInitial = try await stable(secondHost, "independent workspace")
+        requireViewport(secondHost, "independent workspace")
         require(secondInitial.count == 3 && abs(secondInitial[0] - 170) <= 1,
                 "Independent workspace inherited first's sidebar: \(secondInitial)", secondHost)
         let independentA = try await resize(secondHost, sidebar: 205, inspector: 420)
@@ -266,11 +316,11 @@ import WebKit
         // restores its undragged preference (600). Exercise both orientations.
         for mirrored in [false, true] {
             defaults.set(false, forKey: "inspectorOnLeft")
-            window.setContentSize(NSSize(width: 1600, height: 800))
+            window.setViewportWidth(1600)
             _ = try await stable(host, "wide before narrow test")
             _ = try await resize(host, sidebar: 400, inspector: 600)
             defaults.set(mirrored, forKey: "inspectorOnLeft")
-            window.setContentSize(NSSize(width: 980, height: 800))
+            window.setViewportWidth(980)
             let narrow = try await stable(host, "narrow mirrored=\(mirrored)")
             require(narrow.count == 3 && narrow[1] >= 459, "Editor minimum violated: \(narrow)", host)
             let split = outer(host)
@@ -289,8 +339,9 @@ import WebKit
             _ = try await stable(host, "mirror narrow realization")
             try await expect(host, Array(realized.reversed()), "mirror retains narrow realization")
             defaults.set(mirrored, forKey: "inspectorOnLeft")
-            window.setContentSize(NSSize(width: 1600, height: 800))
+            window.setViewportWidth(1600)
             _ = try await stable(host, "expanded")
+            requireViewport(host, "expanded")
             let wideRoles: [CGFloat] = [180, outer(host).bounds.width - 780 - 2 * outer(host).dividerThickness, 600]
             try await expect(host, mirrored ? Array(wideRoles.reversed()) : wideRoles,
                              "expansion restores undragged inspector preference")
