@@ -1,0 +1,14 @@
+Tools/check-document-layout.py
+  h_d73c695d83f4a7 26-43,106-120,182,184,190-192,201-205,207-211,231-232,253,302,319,323,342,344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fad60ede8d867ce60068383891451ce811f1d8d2",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
