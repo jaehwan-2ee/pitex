@@ -676,7 +676,6 @@ private final class WorkspaceNativeSplitView: NSSplitView, NSSplitViewDelegate {
         isVertical = true
         dividerStyle = .thin
         delegate = self
-        setAccessibilityIdentifier("pitex.workspace.split")
     }
 
     @available(*, unavailable)

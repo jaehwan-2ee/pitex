@@ -67,6 +67,20 @@ jobs:
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      # Keep the older checks running if this new regression fails; the
+      # final outcome step below still makes its failure fail the job.
+      - name: Document layout native regression checks
+        id: document_layout
+        continue-on-error: true
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-document-layout.py build/Build/Products/Release
+      - name: Document layout logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-layout-${{ github.job }}
+          path: /tmp/pitex-document-layout-current/
+          if-no-files-found: warn
       - name: Sidebar UI checks (English and Korean)
         run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release
       - name: Sidebar UI screenshots
@@ -121,6 +135,9 @@ jobs:
       - name: External open routing checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-external-open.py build/Build/Products/Release
+      - name: Require document layout acceptance
+        if: ${{ always() && steps.document_layout.outcome == 'failure' }}
+        run: exit 1
 
   macos-window-checks:
     name: Golden Gate window and SyncTeX checks
@@ -144,6 +161,20 @@ jobs:
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      # Keep the older checks running if this new regression fails; the
+      # final outcome step below still makes its failure fail the job.
+      - name: Document layout native regression checks
+        id: document_layout
+        continue-on-error: true
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-document-layout.py build/Build/Products/Release
+      - name: Document layout logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-layout-${{ github.job }}
+          path: /tmp/pitex-document-layout-current/
+          if-no-files-found: warn
       - name: Native completion checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
@@ -195,6 +226,9 @@ jobs:
       - name: External open routing checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 Tools/check-external-open.py build/Build/Products/Release
+      - name: Require document layout acceptance
+        if: ${{ always() && steps.document_layout.outcome == 'failure' }}
+        run: exit 1
 
   rust:
     name: Rust workspace
