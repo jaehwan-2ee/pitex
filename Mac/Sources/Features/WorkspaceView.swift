@@ -13,10 +13,6 @@ struct WorkspaceView: View {
     @ObservedObject private var appearance = AppearanceSettings.shared
     /// Symbols palette popover anchored to the toolbar button.
     @State private var showingSymbols = false
-    /// The sidebar divider's last real width — remounted panes (hide,
-    /// mirror flip, detached preview) restore it; each window starts at
-    /// the minimum. In-memory only.
-    @StateObject private var sidebarWidth = SidebarWidthState()
 
     init(workspace: WorkspaceModel) {
         self.workspace = workspace
@@ -94,7 +90,7 @@ struct WorkspaceView: View {
     }
 
     /// The inspector's own condition, shared by the layout and the
-    /// sidebar anchor so the anchor waits for the same arrangement.
+    /// native split so detached content has no inline column.
     /// A commit diff keeps the PDF inspector closed — the pane cannot be
     /// opened while the diff is up. A detached pane lives in its own
     /// window; the column must not render a second copy here.
@@ -102,22 +98,16 @@ struct WorkspaceView: View {
         workspace.inspectorVisible && workspace.gitDiff == nil && !workspace.previewDetached
     }
 
-    /// HSplitView is used instead of NavigationSplitView: its conditional
-    /// panes make the sidebar/inspector collapse buttons work reliably —
-    /// NavigationSplitViewVisibility cannot express "content only, no
-    /// detail", so a get-only binding silently ignored collapse requests.
+    /// The outer split owns geometry independently of the PDF/Markdown
+    /// content's fitting size. Its hosting panes survive ordinary updates.
     private var workspaceLayout: some View {
-        HSplitView {
-            if inspectorOnLeft {
-                if inspectorInline { inspectorColumn }
-                centerColumn
-                if workspace.sidebarVisible { sidebarColumn }
-            } else {
-                if workspace.sidebarVisible { sidebarColumn }
-                centerColumn
-                if inspectorInline { inspectorColumn }
-            }
-        }
+        WorkspaceSplitView(
+            workspace: workspace,
+            inspectorOnLeft: inspectorOnLeft,
+            sidebar: workspace.sidebarVisible ? AnyView(sidebarColumn) : nil,
+            center: AnyView(centerColumn),
+            inspector: inspectorInline ? AnyView(inspectorColumn) : nil
+        )
         .accessibilityIdentifier("pitex.workspace.split")
     }
 
@@ -125,11 +115,6 @@ struct WorkspaceView: View {
         ProjectSidebarView(workspace: workspace)
             .frame(minWidth: 170, idealWidth: 170, maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: appearance.color(for: .gutterBackground)))
-            .background(SidebarDividerAnchor(
-                state: sidebarWidth,
-                paneCount: inspectorInline ? 3 : 2,
-                trailingEdge: inspectorOnLeft
-            ))
     }
 
     private var inspectorColumn: some View {
@@ -149,7 +134,7 @@ struct WorkspaceView: View {
             conflictBanner
             remoteConflictBanner
             // VSplitView gives the console's top edge a draggable divider,
-            // like the outer HSplitView does for the side panes.
+            // like the outer native split does for the side panes.
             VSplitView {
                 VStack(spacing: 0) {
                     editor
@@ -571,189 +556,276 @@ struct WorkspaceView: View {
     }
 }
 
-/// Per-window sidebar width memory: NSSplitView forgets a removed
-/// arranged subview's width, and SwiftUI's idealWidth only seeds the
-/// first layout — so the pane's real divider position is kept here and
-/// restored by the anchor whenever the pane remounts.
-private final class SidebarWidthState: ObservableObject {
-    /// Matches the column's minWidth — real drags never go below it, so
-    /// smaller readings mean the pane is leaving the split, not resizing.
-    let minimum: CGFloat = 170
-    var width: CGFloat = 170
-}
-
-/// HSplitView shares spare space across all columns on its first layout,
-/// so idealWidth alone leaves the sidebar wider than its minimum. This
-/// marker lives inside the sidebar pane; once the pane sits in a windowed
-/// split with real frames it moves the divider once to the remembered
-/// width, then only records where the user leaves it — no width lock.
-private struct SidebarDividerAnchor: NSViewRepresentable {
-    let state: SidebarWidthState
-    /// How many panes the split shows once settled — placing earlier
-    /// (sidebar+center only) would be overwritten when the inspector
-    /// column joins.
-    let paneCount: Int
-    /// Sidebar sits at the split's right edge in the mirrored layout.
-    let trailingEdge: Bool
-
-    func makeNSView(context: Context) -> SidebarAnchorView {
-        SidebarAnchorView(state: state, paneCount: paneCount, trailingEdge: trailingEdge)
+/// Geometry belongs to a workspace/document, not a mounted SwiftUI pane.
+/// These preferences are only changed by divider movement; fitting content
+/// and a temporarily smaller window must never overwrite them.
+@MainActor
+final class WorkspacePaneLayoutState {
+    struct Widths: Equatable {
+        var sidebar: CGFloat = 170
+        var inspector: CGFloat = 300
     }
 
-    func updateNSView(_ nsView: SidebarAnchorView, context: Context) {
-        nsView.configure(paneCount: paneCount, trailingEdge: trailingEdge)
+    /// A drag in a constrained window has two results: a new preference
+    /// for the moved pane, and exact displayed widths for this viewport.
+    /// Re-fitting the preferences immediately would redistribute both sides.
+    struct Realization {
+        var viewportWidth: CGFloat
+        var dividerThickness: CGFloat
+        var sidebar: CGFloat?
+        var inspector: CGFloat?
+    }
+
+    private(set) var widths = Widths()
+    private(set) var realization: Realization?
+    private(set) var activeDocumentURL: URL?
+    private(set) var documentWidths: [URL: Widths] = [:]
+    private var documentRealizations: [URL: Realization] = [:]
+
+    func activate(_ url: URL?) {
+        let key = url?.standardizedFileURL
+        guard key != activeDocumentURL else { return }
+        activeDocumentURL = key
+        if let key {
+            // An unseen tab starts exactly where the outgoing tab left it.
+            if let saved = documentWidths[key] {
+                widths = saved
+                realization = documentRealizations[key]
+            }
+            documentWidths[key] = widths
+            documentRealizations[key] = realization
+        }
+    }
+
+    func record(sidebar: CGFloat? = nil, inspector: CGFloat? = nil, realization: Realization? = nil) {
+        guard sidebar != nil || inspector != nil else { return }
+        if let sidebar, sidebar.isFinite, sidebar >= 170 { widths.sidebar = sidebar }
+        if let inspector, inspector.isFinite, inspector >= 300 { widths.inspector = inspector }
+        self.realization = realization
+        if let activeDocumentURL {
+            documentWidths[activeDocumentURL] = widths
+            documentRealizations[activeDocumentURL] = realization
+        }
+    }
+
+    func remove(_ url: URL) {
+        documentWidths.removeValue(forKey: url.standardizedFileURL)
+        documentRealizations.removeValue(forKey: url.standardizedFileURL)
+    }
+
+    func reset() {
+        activeDocumentURL = nil
+        documentWidths.removeAll()
+        documentRealizations.removeAll()
+        widths = Widths()
+        realization = nil
     }
 }
 
-private final class SidebarAnchorView: NSView {
-    private let state: SidebarWidthState
-    /// The arrangement the split settles into, fed from the layout
-    /// condition — a real change re-arms placement, repeats do nothing.
-    private var paneCount: Int
-    private var trailingEdge: Bool
-    /// The split/pane/slot this view last placed — a reparent or index
-    /// move that keeps the window (mirror flip, pane reuse) re-places at
-    /// the remembered width; leaving the window drops the placement.
-    private weak var placedSplit: NSSplitView?
-    private weak var placedPane: NSView?
-    private var placedIndex = -1
-    /// Guards recording while our own setPosition is posting.
+private struct WorkspaceSplitView: NSViewRepresentable {
+    let workspace: WorkspaceModel
+    let inspectorOnLeft: Bool
+    let sidebar: AnyView?
+    let center: AnyView
+    let inspector: AnyView?
+
+    func makeNSView(context: Context) -> WorkspaceNativeSplitView {
+        WorkspaceNativeSplitView(state: workspace.paneLayout)
+    }
+
+    func updateNSView(_ split: WorkspaceNativeSplitView, context: Context) {
+        // Crossing a hosting boundary otherwise loses SwiftUI environment
+        // values. Keep window commands bound to this workspace from every pane.
+        func hosted(_ view: AnyView) -> AnyView {
+            AnyView(view.environment(\.self, context.environment).focusedSceneObject(workspace))
+        }
+        split.configure(
+            sidebar: sidebar.map(hosted), center: hosted(center),
+            inspector: inspector.map(hosted), inspectorOnLeft: inspectorOnLeft
+        )
+    }
+}
+
+/// A frame-based outer split: hosted content cannot install intrinsic-size
+/// constraints that redistribute the columns when PDFKit becomes WebKit.
+/// NSSplitView still owns divider drawing, hit testing, and mouse tracking.
+private final class WorkspaceNativeSplitView: NSSplitView, NSSplitViewDelegate {
+    private enum Pane: Hashable {
+        case sidebar, center, inspector
+
+        var minimum: CGFloat {
+            switch self {
+            case .sidebar: 170
+            case .center: 460
+            case .inspector: 300
+            }
+        }
+    }
+
+    private let state: WorkspacePaneLayoutState
+    private var hosts: [Pane: NSHostingView<AnyView>] = [:]
+    private var panes: [Pane] = []
+    private var documentURL: URL?
+    private var configuring = false
     private var placing = false
-    private weak var observedSplit: NSSplitView?
-    /// nonisolated(unsafe): removed once in deinit; the token is only
-    /// touched on the main thread while the view is alive.
-    nonisolated(unsafe) private var resizeObserver: NSObjectProtocol?
+    private var trackingDivider = false
 
-    init(state: SidebarWidthState, paneCount: Int, trailingEdge: Bool) {
+    init(state: WorkspacePaneLayoutState) {
         self.state = state
-        self.paneCount = paneCount
-        self.trailingEdge = trailingEdge
         super.init(frame: .zero)
+        isVertical = true
+        dividerStyle = .thin
+        delegate = self
+        setAccessibilityIdentifier("pitex.workspace.split")
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    deinit {
-        if let resizeObserver { NotificationCenter.default.removeObserver(resizeObserver) }
-    }
+    func configure(sidebar: AnyView?, center: AnyView, inspector: AnyView?, inspectorOnLeft: Bool) {
+        configuring = true
+        defer { configuring = false }
+        documentURL = state.activeDocumentURL
+        var contents: [(Pane, AnyView)] = []
+        if let sidebar { contents.append((.sidebar, sidebar)) }
+        contents.append((.center, center))
+        if let inspector { contents.append((.inspector, inspector)) }
+        if inspectorOnLeft { contents.reverse() }
+        let nextPanes = contents.map(\.0)
 
-    /// Covers the whole pane purely as a marker — never take clicks.
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    /// SwiftUI re-feeds the expected arrangement on every body pass; only
-    /// a real change re-arms placement so a layout re-applies the width.
-    func configure(paneCount: Int, trailingEdge: Bool) {
-        guard paneCount != self.paneCount || trailingEdge != self.trailingEdge else { return }
-        self.paneCount = paneCount
-        self.trailingEdge = trailingEdge
-        placedSplit = nil
-        placedPane = nil
-        placedIndex = -1
-        needsLayout = true
-        reconcile()
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if window == nil {
-            placedSplit = nil
-            placedPane = nil
-            placedIndex = -1
-            unobserve()
-            return
+        for (pane, content) in contents {
+            if let host = hosts[pane] {
+                host.rootView = content
+            } else {
+                let host = NSHostingView(rootView: content)
+                host.sizingOptions = []
+                host.autoresizingMask = []
+                hosts[pane] = host
+            }
         }
-        // If this attach saw a partial arranged set, guarantee a later
-        // layout attempt even when our own bounds never change again.
-        needsLayout = true
-        reconcile()
+        // Preserve hosts (and editor/preview identity) across normal updates
+        // and mirror changes. Hidden panes unmount just as conditional panes did.
+        if nextPanes != panes {
+            for pane in panes where !nextPanes.contains(pane) {
+                hosts.removeValue(forKey: pane)?.removeFromSuperview()
+            }
+            panes = nextPanes
+            for (index, pane) in panes.enumerated() {
+                guard let host = hosts[pane] else { continue }
+                if arrangedSubviews.count <= index || arrangedSubviews[index] !== host {
+                    host.removeFromSuperview()
+                    insertArrangedSubview(host, at: index)
+                }
+            }
+        }
+        placePanes()
     }
 
-    /// First bounds land on the split's initial layout pass — that's the
-    /// earliest the real pane width is known, no timer needed.
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        placePanes()
+    }
+
     override func layout() {
         super.layout()
-        reconcile()
+        placePanes()
     }
 
-    /// The pane (a direct arranged subview) and its index inside the
-    /// first vertical NSSplitView above this marker. The sidebar's own
-    /// structure/navigator split is skipped because it isn't vertical.
-    private func paneContext() -> (split: NSSplitView, pane: NSView, index: Int)? {
-        var pane = self as NSView
-        while let superview = pane.superview {
-            if let split = superview as? NSSplitView, split.isVertical,
-               let index = split.arrangedSubviews.firstIndex(of: pane) {
-                return (split, pane, index)
-            }
-            pane = superview
-        }
-        return nil
-    }
-
-    /// Non-nil only when the pane sits in the slot the current config
-    /// expects — a transitional arrangement (fewer panes than expected
-    /// while a sibling is still arriving, wrong edge mid-mirror) is nil,
-    /// so nothing places or records against a layout about to move.
-    private func settledContext() -> (split: NSSplitView, pane: NSView, index: Int)? {
-        guard let (split, pane, index) = paneContext(),
-              split.bounds.width > 0, pane.frame.width > 0,
-              split.arrangedSubviews.count == paneCount,
-              index == (trailingEdge ? paneCount - 1 : 0) else { return nil }
-        return (split, pane, index)
-    }
-
-    private func reconcile() {
-        // setPosition relayouts subviews — our own layout() re-enters
-        // before the placed triple is written, so guard it too.
-        guard !placing, window != nil,
-              let (split, pane, index) = settledContext() else { return }
-        // Same split, same pane, same slot is a routine layout, not a move.
-        guard split !== placedSplit || pane !== placedPane || index != placedIndex else { return }
+    private func placePanes() {
+        guard !placing, !trackingDivider, !panes.isEmpty,
+              arrangedSubviews.count == panes.count, bounds.width > 0 else { return }
         placing = true
-        let width = state.width
-        if index == 0 {
-            split.setPosition(width, ofDividerAt: 0)
-        } else {
-            // Trailing column (mirrored layout): the pane's right edge is
-            // the split's own bounds, minus the divider strip.
-            split.setPosition(split.bounds.width - split.dividerThickness - width,
-                              ofDividerAt: index - 1)
+        defer { placing = false }
+        let available = max(0, bounds.width - CGFloat(panes.count - 1) * dividerThickness)
+        // Reuse the exact drag result at the same viewport and visibility.
+        // Mirroring does not change this role-based geometry. A different
+        // window width fits preferences, recovering an undragged wide pane.
+        let realization = state.realization.flatMap { saved in
+            saved.viewportWidth == bounds.width && saved.dividerThickness == dividerThickness
+                && (saved.sidebar != nil) == panes.contains(.sidebar)
+                && (saved.inspector != nil) == panes.contains(.inspector) ? saved : nil
         }
-        placing = false
-        placedSplit = split
-        placedPane = pane
-        placedIndex = index
-        if split !== observedSplit {
-            unobserve()
-            observedSplit = split
-            resizeObserver = NotificationCenter.default.addObserver(
-                forName: NSSplitView.didResizeSubviewsNotification,
-                object: split, queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.record() }
+        var widths = panes.map { pane -> CGFloat in
+            switch pane {
+            case .sidebar: realization?.sidebar ?? state.widths.sidebar
+            case .center: pane.minimum
+            case .inspector: realization?.inspector ?? state.widths.inspector
             }
         }
-    }
-
-    private func unobserve() {
-        if let resizeObserver {
-            NotificationCenter.default.removeObserver(resizeObserver)
-            self.resizeObserver = nil
+        let minimumTotal = panes.reduce(CGFloat.zero) { $0 + $1.minimum }
+        let desiredTotal = widths.reduce(0, +)
+        if available < minimumTotal {
+            // Only possible below the window's normal minimum size.
+            widths = panes.map { available * $0.minimum / minimumTotal }
+        } else if desiredTotal > available {
+            let excess = desiredTotal - minimumTotal
+            let scale = (available - minimumTotal) / excess
+            widths = zip(panes, widths).map { pane, width in
+                pane.minimum + (width - pane.minimum) * scale
+            }
+        } else if let center = panes.firstIndex(of: .center) {
+            widths[center] += available - desiredTotal
         }
-        observedSplit = nil
+        var x = bounds.minX
+        for (index, width) in widths.enumerated() {
+            let frame = NSRect(x: x, y: bounds.minY, width: width, height: bounds.height)
+            if arrangedSubviews[index].frame != frame { arrangedSubviews[index].frame = frame }
+            x += width + dividerThickness
+        }
     }
 
-    /// Records only in the context last placed — transitional layouts (a
-    /// pane mid-reparent or before placement) never overwrite the memory.
-    /// Redistributed widths (sibling removed, window resize) count too:
-    /// remounts restore the latest real width, not just dragged ones.
-    private func record() {
-        guard !placing,
-              let (split, pane, index) = settledContext(),
-              split === placedSplit, pane === placedPane, index == placedIndex,
-              pane.frame.width >= state.minimum else { return }
-        state.width = pane.frame.width
+    override func mouseDown(with event: NSEvent) {
+        let before = visibleWidths()
+        trackingDivider = true
+        super.mouseDown(with: event)
+        trackingDivider = false
+        recordChanges(from: before)
+    }
+
+    // Explicit native setPosition calls are intentional divider moves too
+    // (including accessibility/test clients), unlike frame fitting above.
+    override func setPosition(_ position: CGFloat, ofDividerAt dividerIndex: Int) {
+        guard panes.indices.contains(dividerIndex), panes.indices.contains(dividerIndex + 1) else { return }
+        let before = visibleWidths()
+        let minimum = splitView(self, constrainMinCoordinate: 0, ofSubviewAt: dividerIndex)
+        let maximum = splitView(self, constrainMaxCoordinate: bounds.maxX, ofSubviewAt: dividerIndex)
+        let wasTracking = trackingDivider
+        trackingDivider = true
+        super.setPosition(max(minimum, min(maximum, position)), ofDividerAt: dividerIndex)
+        trackingDivider = wasTracking
+        recordChanges(from: before)
+    }
+
+    private func visibleWidths() -> [Pane: CGFloat] {
+        guard arrangedSubviews.count == panes.count else { return [:] }
+        return Dictionary(uniqueKeysWithValues: zip(panes, arrangedSubviews).map { ($0, $1.frame.width) })
+    }
+
+    private func recordChanges(from before: [Pane: CGFloat]) {
+        guard !placing, !configuring, documentURL == state.activeDocumentURL else { return }
+        let after = visibleWidths()
+        // Only save the side actually moved. The other side may currently be
+        // clamped by a smaller window and must retain its larger preference.
+        func changed(_ pane: Pane) -> CGFloat? {
+            guard let old = before[pane], let new = after[pane], abs(old - new) > 0.01 else { return nil }
+            return new
+        }
+        state.record(
+            sidebar: changed(.sidebar), inspector: changed(.inspector),
+            realization: .init(viewportWidth: bounds.width, dividerThickness: dividerThickness,
+                               sidebar: after[.sidebar], inspector: after[.inspector])
+        )
+    }
+
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
+
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat,
+                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+        arrangedSubviews[dividerIndex].frame.minX + panes[dividerIndex].minimum
+    }
+
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+        arrangedSubviews[dividerIndex + 1].frame.maxX - panes[dividerIndex + 1].minimum - dividerThickness
     }
 }
 

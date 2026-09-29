@@ -179,7 +179,11 @@ final class WorkspaceModel: ObservableObject {
     /// each activation rebuilds the editor adapter, so positions are
     /// snapshotted here. Keyed by the standardized URL like pendingWrites.
     private var editorViewStates: [URL: EditorMacAdapter.ViewState] = [:]
-    @Published private(set) var activeDocumentURL: URL?
+    /// In-memory pane preferences follow document lifetime, not SwiftUI mounts.
+    let paneLayout = WorkspacePaneLayoutState()
+    @Published private(set) var activeDocumentURL: URL? {
+        willSet { paneLayout.activate(newValue) }
+    }
     /// Editor↔preview scroll channel for the Markdown web view — created
     /// once per workspace so the editor and inspector sides meet.
     let markdownScrollSync = MarkdownScrollSync()
@@ -1115,6 +1119,7 @@ final class WorkspaceModel: ObservableObject {
         }
         openDocuments.removeAll { $0 == url }
         editorViewStates.removeValue(forKey: url.standardizedFileURL)
+        paneLayout.remove(url)
         if activeDocumentURL == url {
             if let next = openDocuments.first {
                 activeDocumentURL = nil
@@ -1167,6 +1172,7 @@ final class WorkspaceModel: ObservableObject {
         openDocuments = []
         editorViewStates.removeAll()
         activeDocumentURL = nil
+        paneLayout.reset()
         documentSnapshot = nil
         agent = nil
         completion = nil
