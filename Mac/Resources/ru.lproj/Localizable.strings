@@ -173,14 +173,14 @@
 "command.run_custom" = "Запустить пользовательскую команду";
 "command.view" = "Вид";
 "command.toggle_assistant" = "Переключить ассистента";
-"command.toggle_inspector" = "Переключить панель PDF";
+"command.toggle_inspector" = "Переключить правую панель";
 "command.toggle_bottom" = "Переключить нижнюю панель";
 "command.toggle_sidebar" = "Переключить левую панель";
 
 "editor.show_sidebar" = "Показать боковую панель";
 "editor.hide_sidebar" = "Скрыть боковую панель";
-"editor.show_inspector" = "Показать панель PDF";
-"editor.hide_inspector" = "Скрыть панель PDF";
+"editor.show_inspector" = "Показать правую панель";
+"editor.hide_inspector" = "Скрыть правую панель";
 "editor.toggle_assistant" = "Переключить ассистента";
 "editor.toggle_bottom" = "Переключить нижнюю панель";
 "editor.flip_panels" = "Поменять панели местами";
@@ -243,7 +243,7 @@
 "settings.compile.custom_command" = "Пользовательская команда";
 "settings.compile.commands_note" = "{file} раскрывается в путь к исходному файлу. Команды применяются к открытому проекту и становятся стандартными для новых проектов.";
 "settings.compile.behavior" = "Поведение";
-"settings.compile.switch_pdf" = "Переключаться на панель PDF после успешной сборки";
+"settings.compile.switch_pdf" = "Переключаться на правую панель после успешной сборки";
 "settings.compile.jump_cursor" = "Синхронизировать PDF с позицией курсора после сборки";
 "settings.compile.stop_error" = "Останавливаться после первой ошибки";
 "settings.compile.max_passes" = "Максимум проходов: %u";

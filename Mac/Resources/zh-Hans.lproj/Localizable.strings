@@ -173,14 +173,14 @@
 "command.run_custom" = "运行自定义命令";
 "command.view" = "视图";
 "command.toggle_assistant" = "切换助手";
-"command.toggle_inspector" = "切换 PDF 面板";
+"command.toggle_inspector" = "切换右侧边栏";
 "command.toggle_bottom" = "切换底部面板";
 "command.toggle_sidebar" = "切换左侧边栏";
 
 "editor.show_sidebar" = "显示侧边栏";
 "editor.hide_sidebar" = "隐藏侧边栏";
-"editor.show_inspector" = "显示 PDF 面板";
-"editor.hide_inspector" = "隐藏 PDF 面板";
+"editor.show_inspector" = "显示右侧边栏";
+"editor.hide_inspector" = "隐藏右侧边栏";
 "editor.toggle_assistant" = "切换助手";
 "editor.toggle_bottom" = "切换底部面板";
 "editor.flip_panels" = "翻转面板";
@@ -243,7 +243,7 @@
 "settings.compile.custom_command" = "自定义命令";
 "settings.compile.commands_note" = "{file} 会展开为源文件路径。命令应用于当前打开的项目，并成为新项目的默认值。";
 "settings.compile.behavior" = "行为";
-"settings.compile.switch_pdf" = "构建成功后切换到 PDF 面板";
+"settings.compile.switch_pdf" = "构建成功后切换到右侧边栏";
 "settings.compile.jump_cursor" = "构建后将 PDF 同步到光标位置";
 "settings.compile.stop_error" = "遇到第一个错误后停止";
 "settings.compile.max_passes" = "最大遍数：%u";

@@ -123,7 +123,7 @@ struct SidebarHeaderProbe: NSViewRepresentable {
             : NSColor(srgbRed: 0.84, green: 0.23, blue: 0.29, alpha: 1)
         let host = NSHostingView(rootView: HStack(alignment: .top) {
             ProjectSidebarView(workspace: workspace).frame(width: 280, height: 650)
-            SymbolsPaletteView(onInsert: { _ in }).frame(width: 320, height: 320)
+            SymbolsPaletteView(onCopy: { _ in }).frame(width: 320, height: 320)
         }.padding(10).background(Color(nsColor: .windowBackgroundColor))
             .tint(Color(nsColor: tint))
             .environment(\.locale, Locale(identifier: language)))

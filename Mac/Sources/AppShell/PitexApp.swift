@@ -2660,9 +2660,6 @@ private struct WorkspaceCommandContent: Commands {
                 .disabled(workspace.syncTeXBinding == nil)
         }
         CommandMenu("command.view") {
-            Button("command.toggle_assistant") { workspace.toggleAssistant() }
-                .keyboardShortcut("t", modifiers: [.command])
-                .disabled(!workspace.hasProject)
             Button("command.toggle_inspector") { workspace.toggleInspectorPane() }
                 .keyboardShortcut("p", modifiers: [.command, .option])
                 .disabled(!workspace.hasProject || workspace.gitDiff != nil)
@@ -2670,6 +2667,7 @@ private struct WorkspaceCommandContent: Commands {
                 .keyboardShortcut("y", modifiers: [.command, .shift])
                 .disabled(!workspace.hasProject)
             Button("command.toggle_sidebar") { workspace.sidebarVisible.toggle() }
+                .keyboardShortcut("t", modifiers: [.command])
                 .disabled(!workspace.hasProject)
         }
         CommandGroup(replacing: .appSettings) {

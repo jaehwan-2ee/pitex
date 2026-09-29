@@ -175,10 +175,9 @@ struct WorkspaceView: View {
             .fixedSize()
             .help(String(localized: "editor.symbols"))
             .accessibilityLabel(String(localized: "editor.symbols"))
-            .disabled(workspace.environment == nil)
             .accessibilityIdentifier("pitex.toolbar.symbols")
             .popover(isPresented: $showingSymbols, arrowEdge: .bottom) {
-                SymbolsPaletteView(onInsert: insertSymbol)
+                SymbolsPaletteView(onCopy: copySymbol)
             }
 
             Menu {
@@ -482,7 +481,7 @@ struct WorkspaceView: View {
 
     /// Toolbar layout: a sidebar collapse/expand button at the top-left
     /// (navigation placement) and the five-button cluster at the top-right —
-    /// open, PDF pane toggle, assistant wand, settings, find — matching the
+    /// open, right sidebar toggle, assistant wand, settings, find — matching the
     /// reference editor's toolbar.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
@@ -506,7 +505,7 @@ struct WorkspaceView: View {
             Button {
                 workspace.toggleInspectorPane()
             } label: {
-                Label("preview.title", systemImage: "doc.richtext")
+                Label("sidebar.right", systemImage: "doc.richtext")
             }
             .disabled(workspace.gitDiff != nil)
             .help(String(localized: workspace.inspectorVisible && !workspace.previewDetached
@@ -539,13 +538,11 @@ struct WorkspaceView: View {
         }
     }
 
-    /// Inserts the palette's LaTeX command at the caret through
-    /// NSTextView's own insertion path, so undo grouping and the
-    /// document-session submit pipeline behave exactly like typed text.
-    private func insertSymbol(_ symbol: TexSymbol) {
-        guard let textView = workspace.environment?.editor.textView else { return }
-        textView.insertText(symbol.command, replacementRange: textView.selectedRange())
-        textView.window?.makeFirstResponder(textView)
+    /// Copies the palette's LaTeX command for pasting wherever it is needed.
+    private func copySymbol(_ symbol: TexSymbol) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(symbol.command, forType: .string)
     }
 
     private func showFindPanel() {
@@ -832,7 +829,7 @@ private final class WorkspaceNativeSplitView: NSSplitView, NSSplitViewDelegate {
 /// Rows come from the shared `TexSymbolCatalogue` so macOS and Linux list
 /// identical symbols in identical order.
 private struct SymbolsPaletteView: View {
-    let onInsert: (TexSymbol) -> Void
+    let onCopy: (TexSymbol) -> Void
     @State private var category = SymbolCategory.greekLetters
 
     var body: some View {
@@ -855,7 +852,7 @@ private struct SymbolsPaletteView: View {
                 ) {
                     ForEach(TexSymbolCatalogue.symbols(in: category), id: \.command) { symbol in
                         Button {
-                            onInsert(symbol)
+                            onCopy(symbol)
                         } label: {
                             Text(symbol.glyph)
                                 .font(.system(size: 17))

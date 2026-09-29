@@ -173,14 +173,14 @@
 "command.run_custom" = "Ejecutar comando personalizado";
 "command.view" = "Ver";
 "command.toggle_assistant" = "Alternar asistente";
-"command.toggle_inspector" = "Alternar panel de PDF";
+"command.toggle_inspector" = "Alternar barra lateral derecha";
 "command.toggle_bottom" = "Alternar panel inferior";
 "command.toggle_sidebar" = "Alternar barra lateral izquierda";
 
 "editor.show_sidebar" = "Mostrar barra lateral";
 "editor.hide_sidebar" = "Ocultar barra lateral";
-"editor.show_inspector" = "Mostrar panel de PDF";
-"editor.hide_inspector" = "Ocultar panel de PDF";
+"editor.show_inspector" = "Mostrar barra lateral derecha";
+"editor.hide_inspector" = "Ocultar barra lateral derecha";
 "editor.toggle_assistant" = "Alternar asistente";
 "editor.toggle_bottom" = "Alternar panel inferior";
 "editor.flip_panels" = "Intercambiar paneles";
@@ -243,7 +243,7 @@
 "settings.compile.custom_command" = "Comando personalizado";
 "settings.compile.commands_note" = "{file} se expande a la ruta del archivo fuente. Los comandos se aplican al proyecto abierto y se convierten en los predeterminados para proyectos nuevos.";
 "settings.compile.behavior" = "Comportamiento";
-"settings.compile.switch_pdf" = "Cambiar al panel de PDF tras una compilación correcta";
+"settings.compile.switch_pdf" = "Cambiar a la barra lateral derecha tras una compilación correcta";
 "settings.compile.jump_cursor" = "Sincronizar el PDF con la posición del cursor tras compilar";
 "settings.compile.stop_error" = "Detener tras el primer error";
 "settings.compile.max_passes" = "Pasadas máximas: %u";

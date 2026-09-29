@@ -172,14 +172,14 @@
 "command.run_custom" = "カスタムコマンドを実行";
 "command.view" = "表示";
 "command.toggle_assistant" = "アシスタントを切り替え";
-"command.toggle_inspector" = "PDFパネルを切り替え";
+"command.toggle_inspector" = "右サイドバーを切り替え";
 "command.toggle_bottom" = "下部パネルを切り替え";
 "command.toggle_sidebar" = "左サイドバーを切り替え";
 
 "editor.show_sidebar" = "サイドバーを表示";
 "editor.hide_sidebar" = "サイドバーを隠す";
-"editor.show_inspector" = "PDFパネルを表示";
-"editor.hide_inspector" = "PDFパネルを隠す";
+"editor.show_inspector" = "右サイドバーを表示";
+"editor.hide_inspector" = "右サイドバーを隠す";
 "editor.toggle_assistant" = "アシスタントを切り替え";
 "editor.toggle_bottom" = "下部パネルを切り替え";
 "editor.flip_panels" = "パネルを反転";
@@ -243,7 +243,7 @@
 "settings.compile.custom_command" = "カスタムコマンド";
 "settings.compile.commands_note" = "{file} はソースファイルのパスに置き換わります。コマンドは開いているプロジェクトに適用され、新規プロジェクトのデフォルトになります。";
 "settings.compile.behavior" = "動作";
-"settings.compile.switch_pdf" = "ビルド成功後に PDF パネルへ切り替え";
+"settings.compile.switch_pdf" = "ビルド成功後に右サイドバーへ切り替え";
 "settings.compile.jump_cursor" = "ビルド後にカーソル位置へ PDF を同期";
 "settings.compile.stop_error" = "最初のエラーで停止";
 "settings.compile.max_passes" = "最大パス数: %u";
