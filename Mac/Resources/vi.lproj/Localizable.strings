@@ -172,14 +172,14 @@
 "command.run_custom" = "Chạy lệnh tùy chỉnh";
 "command.view" = "Hiển thị";
 "command.toggle_assistant" = "Bật/tắt trợ lý";
-"command.toggle_inspector" = "Bật/tắt bảng PDF";
+"command.toggle_inspector" = "Bật/tắt thanh bên phải";
 "command.toggle_bottom" = "Bật/tắt bảng dưới";
 "command.toggle_sidebar" = "Bật/tắt thanh bên trái";
 
 "editor.show_sidebar" = "Hiện thanh bên";
 "editor.hide_sidebar" = "Ẩn thanh bên";
-"editor.show_inspector" = "Hiện bảng PDF";
-"editor.hide_inspector" = "Ẩn bảng PDF";
+"editor.show_inspector" = "Hiện thanh bên phải";
+"editor.hide_inspector" = "Ẩn thanh bên phải";
 "editor.toggle_assistant" = "Bật/tắt trợ lý";
 "editor.toggle_bottom" = "Bật/tắt bảng dưới";
 "editor.flip_panels" = "Đảo các bảng";
@@ -243,7 +243,7 @@
 "settings.compile.custom_command" = "Lệnh tùy chỉnh";
 "settings.compile.commands_note" = "{file} mở rộng thành đường dẫn tệp nguồn. Lệnh áp dụng cho dự án đang mở và trở thành mặc định cho dự án mới.";
 "settings.compile.behavior" = "Hành vi";
-"settings.compile.switch_pdf" = "Chuyển sang bảng PDF sau khi biên dịch thành công";
+"settings.compile.switch_pdf" = "Chuyển sang thanh bên phải sau khi biên dịch thành công";
 "settings.compile.jump_cursor" = "Đồng bộ PDF tới vị trí con trỏ sau khi biên dịch";
 "settings.compile.stop_error" = "Dừng sau lỗi đầu tiên";
 "settings.compile.max_passes" = "Số lượt tối đa: %u";

@@ -175,8 +175,8 @@ Source and PDF stay locked together:
 | New / Open / Close | `⌘N` / `⌘O` / `⌘W` | `Ctrl+N` / `Ctrl+O` / `Ctrl+W` |
 | Find | `⌘F` | `Ctrl+F` |
 | Settings | — | `Ctrl+,` |
-| Assistant pane | — | `Ctrl+T` |
-| Inspector pane | — | `Ctrl+Alt+P` |
+| Left Sidebar | `⌘T` | `Ctrl+T` |
+| Right Sidebar | `⌘⌥P` | `Ctrl+Alt+P` |
 | Bottom panel | — | `Ctrl+Shift+Y` |
 
 ## Download

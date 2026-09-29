@@ -172,14 +172,14 @@
 "command.run_custom" = "커스텀 명령 실행";
 "command.view" = "보기";
 "command.toggle_assistant" = "어시스턴트 토글";
-"command.toggle_inspector" = "PDF 패널 토글";
+"command.toggle_inspector" = "오른쪽 사이드바 토글";
 "command.toggle_bottom" = "하단 패널 토글";
 "command.toggle_sidebar" = "왼쪽 사이드바 토글";
 
 "editor.show_sidebar" = "사이드바 보기";
 "editor.hide_sidebar" = "사이드바 숨기기";
-"editor.show_inspector" = "PDF 패널 보기";
-"editor.hide_inspector" = "PDF 패널 숨기기";
+"editor.show_inspector" = "오른쪽 사이드바 보기";
+"editor.hide_inspector" = "오른쪽 사이드바 숨기기";
 "editor.toggle_assistant" = "어시스턴트 토글";
 "editor.toggle_bottom" = "하단 패널 토글";
 "editor.flip_panels" = "패널 위치 바꾸기";
@@ -243,7 +243,7 @@
 "settings.compile.custom_command" = "커스텀 명령";
 "settings.compile.commands_note" = "{file}은 소스 파일 경로로 치환됩니다. 명령은 열린 프로젝트에 적용되며 새 프로젝트의 기본값이 됩니다.";
 "settings.compile.behavior" = "동작";
-"settings.compile.switch_pdf" = "빌드 성공 후 PDF 패널로 전환";
+"settings.compile.switch_pdf" = "빌드 성공 후 오른쪽 사이드바로 전환";
 "settings.compile.jump_cursor" = "빌드 후 커서 위치로 PDF 동기화";
 "settings.compile.stop_error" = "첫 오류 후 중지";
 "settings.compile.max_passes" = "최대 패스: %u";

@@ -5057,7 +5057,7 @@ fn build_chrome(
     }
     header.pack_start(&sidebar_toggle);
 
-    // Trailing controls: open, PDF toggle, assistant, settings, find.
+    // Trailing controls: open, right sidebar toggle, assistant, settings, find.
     let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
     compat::initial_tooltip(&open_btn, &tr(lang, "workspace.open"));
     a11y(&open_btn, "pitex.toolbar.open", "workspace.open");
@@ -5071,8 +5071,8 @@ fn build_chrome(
     header.pack_end(&open_btn);
 
     let pdf_toggle = gtk4::Button::from_icon_name("x-office-document-symbolic");
-    compat::initial_tooltip(&pdf_toggle, &tr(lang, "preview.title"));
-    a11y(&pdf_toggle, "pitex.toolbar.pdf", "preview.title");
+    compat::initial_tooltip(&pdf_toggle, &tr(lang, "sidebar.right"));
+    a11y(&pdf_toggle, "pitex.toolbar.pdf", "sidebar.right");
     {
         let state = state.clone();
         pdf_toggle.connect_clicked(move |_| {
@@ -5139,10 +5139,6 @@ fn build_chrome(
     );
     primary.append_section(Some(&tr(lang, "command.build_menu")), &build_section);
     let view_section = gio::Menu::new();
-    view_section.append(
-        Some(&tr(lang, "command.toggle_assistant")),
-        Some("win.assistant"),
-    );
     view_section.append(
         Some(&tr(lang, "command.toggle_inspector")),
         Some("win.inspector"),
@@ -5266,7 +5262,7 @@ fn build_chrome(
     // ── keyboard shortcuts — the macOS `AppCommands` accelerator surface:
     // ⌘N new, ⌘O open, ⌘P pin, ⌘W close, ⌘S save, ⌘⇧S save-as, ⌘⌥S save-all,
     // ⌘/ comment, ⌘⇧A send-selection, ⌘B build, ⌘. cancel, ⌘⌃B custom,
-    // ⌘⇧J sync, ⌘T assistant, ⌘⌥P inspector, ⌘⇧Y bottom panel. (⌘ maps to
+    // ⌘⇧J sync, ⌘T left sidebar, ⌘⌥P inspector, ⌘⇧Y bottom panel. (⌘ maps to
     // Ctrl; macOS Control+Command pairs map to Ctrl+Alt here.)
     app.set_accels_for_action("win.newdoc", &["<Control>n"]);
     app.set_accels_for_action("win.open", &["<Control>o"]);
@@ -5281,7 +5277,7 @@ fn build_chrome(
     app.set_accels_for_action("win.cancelbuild", &["<Control>period"]);
     app.set_accels_for_action("win.runcustom", &["<Control><Alt>b"]);
     app.set_accels_for_action("win.syncforward", &["<Control><Shift>j"]);
-    app.set_accels_for_action("win.assistant", &["<Control>t"]);
+    app.set_accels_for_action("win.sidebar", &["<Control>t"]);
     app.set_accels_for_action("win.inspector", &["<Control><Alt>p"]);
     app.set_accels_for_action("win.bottompanel", &["<Control><Shift>y"]);
     app.set_accels_for_action("win.find", &["<Control>f"]);
@@ -5609,9 +5605,8 @@ fn error_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
 
 /// Symbols popover — the GTK counterpart of `SymbolsPaletteView`: a
 /// category picker over a glyph grid from the shared `TEX_SYMBOLS`
-/// catalogue. A click runs `insert_at_cursor`, which flows through the
-/// buffer's `changed` hook like typed text (session submit, undo,
-/// autosave all see it) and never replaces surrounding text.
+/// catalogue. A click copies the exact LaTeX command to the clipboard
+/// and closes the popover.
 fn build_symbols_popover() -> gtk4::Popover {
     let lang = LANG.with(|l| l.get());
     let popover = gtk4::Popover::new();
@@ -5658,17 +5653,8 @@ fn build_symbols_popover() -> gtk4::Popover {
                 compat::initial_tooltip(&button, symbol.command);
                 let command = symbol.command;
                 let popover = popover.clone();
-                button.connect_clicked(move |_| {
-                    STATE.with(|s| {
-                        if let Some(state) = s.borrow().as_ref() {
-                            if let Ok(st) = state.try_borrow() {
-                                if let Some(editor) = &st.editor {
-                                    editor.buffer().insert_at_cursor(command);
-                                    editor.view().grab_focus();
-                                }
-                            }
-                        }
-                    });
+                button.connect_clicked(move |button| {
+                    button.clipboard().set_text(command);
                     popover.popdown();
                 });
                 // `insert(-1)` appends — `FlowBox::append` needs gtk4 v4_6,
@@ -5960,8 +5946,8 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     strip.append(&scroll);
 
     // TeXifier-style symbols palette — the same catalogue + ordering the
-    // macOS `SymbolsPaletteView` renders; a glyph click inserts the LaTeX
-    // command at the caret. Sits immediately left of the "+" menu like
+    // macOS `SymbolsPaletteView` renders; a glyph click copies the LaTeX
+    // command to the clipboard. Sits immediately left of the "+" menu like
     // the macOS tab strip.
     let symbols_btn = gtk4::MenuButton::new();
     symbols_btn.set_icon_name("accessories-character-map-symbolic");

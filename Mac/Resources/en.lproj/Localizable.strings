@@ -172,14 +172,14 @@
 "command.run_custom" = "Run Custom Command";
 "command.view" = "View";
 "command.toggle_assistant" = "Toggle Assistant";
-"command.toggle_inspector" = "Toggle PDF Panel";
+"command.toggle_inspector" = "Toggle Right Sidebar";
 "command.toggle_bottom" = "Toggle Bottom Panel";
 "command.toggle_sidebar" = "Toggle Left Sidebar";
 
 "editor.show_sidebar" = "Show Sidebar";
 "editor.hide_sidebar" = "Hide Sidebar";
-"editor.show_inspector" = "Show PDF Panel";
-"editor.hide_inspector" = "Hide PDF Panel";
+"editor.show_inspector" = "Show Right Sidebar";
+"editor.hide_inspector" = "Hide Right Sidebar";
 "editor.toggle_assistant" = "Toggle Assistant";
 "editor.toggle_bottom" = "Toggle Bottom Panel";
 "editor.flip_panels" = "Flip Panels";
@@ -243,7 +243,7 @@
 "settings.compile.custom_command" = "Custom Command";
 "settings.compile.commands_note" = "{file} expands to the source file path. Commands apply to the open project and become the default for new projects.";
 "settings.compile.behavior" = "Behavior";
-"settings.compile.switch_pdf" = "Switch to the PDF panel after a successful build";
+"settings.compile.switch_pdf" = "Switch to the right sidebar after a successful build";
 "settings.compile.jump_cursor" = "Sync PDF to the cursor position after a build";
 "settings.compile.stop_error" = "Stop after the first error";
 "settings.compile.max_passes" = "Maximum passes: %u";
