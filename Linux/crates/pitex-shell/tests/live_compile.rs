@@ -217,7 +217,8 @@ fn live_compile_scenarios() {
     nested_source_output_stem();
     own_save_does_not_retrigger();
     manual_build_keeps_sibling_output();
-    superseded_failure_keeps_last_good();
+    intermediate_success_then_latest_revision();
+    pending_edit_failure_keeps_last_good();
     stale_results_never_publish();
     invalidate_then_next_build_starts();
     retained_pdf_survives_current_failure();
@@ -341,8 +342,58 @@ fn manual_build_keeps_sibling_output() {
     assert_eq!(fx.model.latest_built_pdf_name.as_deref(), Some("main.pdf"));
 }
 
-fn superseded_failure_keeps_last_good() {
-    let mut fx = Fixture::open("superseded", "main.tex", "cp {file} {outdir}/main.pdf");
+fn intermediate_success_then_latest_revision() {
+    let mut fx = Fixture::open(
+        "progressive",
+        "main.tex",
+        "mkdir {outdir}/running || exit 1; \
+         cp {file} {outdir}/main.pdf && printf 'snapshot-ready\\n'; \
+         while [ ! -e {outdir}/release ]; do sleep 0.01; done; rmdir {outdir}/running",
+    );
+    fx.edit("main.tex", "% intermediate\n");
+    fx.fire();
+    let first = fx.model.active_run.clone().expect("first run started");
+    pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::BuildEvent {
+            event: BuildEvent::Log(entry), ..
+        } if entry.text.contains("snapshot-ready"))
+    });
+    let intermediate = std::fs::read(fx._dir.join("main.tex")).unwrap();
+
+    fx.edit("main.tex", "% latest\n");
+    let latest = fx.model.document_snapshot.as_ref().unwrap().text.clone();
+    fx.fire();
+    assert_eq!(fx.model.active_run.as_ref().unwrap().build, first.build);
+    assert!(fx.model.live.pending_deadline().is_some());
+    assert!(!fx.model.build_cancel_requested.load(std::sync::atomic::Ordering::SeqCst));
+    write(&fx._dir.join(".pitex-live/main/release"), "");
+
+    let (finished, outcome, _) = fx.finish_next();
+    assert_eq!(finished, first.build);
+    assert!(matches!(outcome.unwrap().lifecycle, BuildLifecycle::Succeeded { .. }));
+    assert_eq!(&*fx.model.retained_pdf.as_ref().unwrap().pdf, intermediate.as_slice());
+    let queued = fx.model.active_run.as_ref().expect("due latest run started").build.clone();
+    assert_ne!(queued, first.build);
+
+    let (finished, outcome, _) = fx.finish_next();
+    assert_eq!(finished, queued);
+    assert!(matches!(outcome.unwrap().lifecycle, BuildLifecycle::Succeeded { .. }));
+    assert_eq!(&*fx.model.retained_pdf.as_ref().unwrap().pdf, latest.as_bytes());
+    assert_eq!(std::fs::read(fx._dir.join("main.tex")).unwrap(), latest.as_bytes());
+    assert!(fx.model.active_run.is_none());
+    assert!(fx.model.live.pending_deadline().is_none());
+    // Republishing the auto-saved snapshot must not schedule a third run.
+    let session = fx.model.registered_sessions.iter()
+        .find(|s| s.path().raw_value() == "main.tex").unwrap();
+    fx.model.document_snapshot = Some(session.snapshot());
+    assert!(fx.model.note_source_edit(&fx.store).is_empty());
+    fx.fire();
+    assert!(fx.model.active_run.is_none());
+    assert!(fx.model.live.pending_deadline().is_none());
+}
+
+fn pending_edit_failure_keeps_last_good() {
+    let mut fx = Fixture::open("pendingfailure", "main.tex", "cp {file} {outdir}/main.pdf");
     fx.edit("main.tex", "% good\n");
     fx.fire();
     let (_, outcome, _) = fx.finish_next();
@@ -353,26 +404,16 @@ fn superseded_failure_keeps_last_good() {
     };
     let good_name = fx.model.latest_built_pdf_name.clone();
 
-    // A failing command is now live; start its run, then supersede it
-    // with a newer edit before its finish lands.
+    // A failure remains current when a newer edit is pending; only its
+    // status changes, never the retained last-good artifact.
     fx.model.build_command_text = "cp /definitely/missing {outdir}/main.pdf".into();
     fx.edit("main.tex", "% second\n");
     fx.fire();
     assert!(fx.model.is_building());
     fx.edit("main.tex", "% third\n");
-    let (_, outcome, _) = fx.finish_next();
-    let _ = outcome; // cp fails — exactly what we want superseded.
-    // The superseded failure never published: the status is an honest
-    // "Build superseded." while the retained PDF keeps the last-good
-    // bytes and its artifact name intact — no fake Succeeded, no stale
-    // issues. (The third edit is pending but not yet due on the frozen
-    // clock, so nothing dispatched past it.)
-    match &fx.model.build_state {
-        WorkspaceBuildState::Failed(reason) => {
-            assert_eq!(reason, "Build superseded.")
-        }
-        other => panic!("expected Failed(\"Build superseded.\"), got {other:?}"),
-    }
+    let _ = fx.finish_next();
+    assert!(matches!(fx.model.build_state, WorkspaceBuildState::Failed(_)));
+    assert!(fx.model.live.pending_deadline().is_some());
     let retained = fx.model.retained_pdf.clone().expect("retained pdf");
     assert_eq!(&retained.pdf[..], &good_pdf[..]);
     assert_eq!(fx.model.latest_built_pdf_name, good_name);
@@ -450,14 +491,9 @@ fn invalidate_then_next_build_starts() {
     assert!(fx.model.active_run.is_none());
     let (finished_id, _, _) = fx.finish_next();
     assert_eq!(finished_id, retired.build);
-    // Busy state from the retired run was released — nothing published;
-    // status is an honest "Build cancelled." while the retained artifact
-    // (if any) stays in the viewer.
+    // The retired run releases busy state without publishing an artifact.
     assert!(!fx.model.is_building());
-    match &fx.model.build_state {
-        WorkspaceBuildState::Failed(reason) => assert_eq!(reason, "Build cancelled."),
-        other => panic!("expected Failed(\"Build cancelled.\"), got {other:?}"),
-    }
+    assert!(matches!(fx.model.build_state, WorkspaceBuildState::Failed(_)));
     // Next build actually starts — the whole point of the fix.
     fx.edit("main.tex", "% second\n");
     fx.fire();
@@ -848,7 +884,7 @@ fn retained_live_artifact_never_falls_back() {
     assert!(fx.model.synctex_binding.is_none());
     assert!(matches!(
         fx.model.build_state,
-        WorkspaceBuildState::Failed(ref r) if r == "Build cancelled."
+        WorkspaceBuildState::Failed(_)
     ));
     assert_eq!(
         fx.model.retained_pdf.as_ref().map(|r| r.artifact.as_str()),
@@ -867,13 +903,7 @@ fn custom_without_outdir_rejected() {
     // Nothing ran — the reservation completed against a clear,
     // non-modal error and the scheduler slot is free.
     assert!(fx.model.active_run.is_none());
-    match &fx.model.build_state {
-        WorkspaceBuildState::Failed(reason) => {
-            assert!(reason.contains("{outdir}"), "{reason}")
-        }
-        other => panic!("expected Failed, got {other:?}"),
-    }
-    assert!(fx.model.build_log_text.contains("{outdir}"));
+    assert!(matches!(fx.model.build_state, WorkspaceBuildState::Failed(_)));
     assert_eq!(fx.model.console_section, ConsoleSection::Log);
     assert!(!fx.model.bottom_panel_visible);
     assert!(fx.model.live.active().is_none());

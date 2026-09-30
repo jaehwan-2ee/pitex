@@ -559,7 +559,7 @@ extension WorkspaceModel {
     /// `completed(token)` — the contract's once-per-started-run call: it
     /// frees the slot, classifies the run and dispatches whatever queued
     /// behind it (queued manual first, then a live edit whose deadline
-    /// already elapsed — no second debounce after a cancellation).
+    /// already elapsed — no second debounce after completion).
     private func finishScheduledRun(_ token: LiveRunToken) {
         let composing = environment?.editor.hasMarkedText ?? false
         let (status, requests) = liveScheduler.completed(
@@ -582,7 +582,8 @@ extension WorkspaceModel {
 
     /// The run still owns this workspace's slot and context: same mounted
     /// project (a close/reopen reusing the path fails it), same root, and
-    /// the scheduler still accepts its results.
+    /// the scheduler still accepts its results. Ordinary edits queue a
+    /// follow-up without retiring this run's output.
     private func runStillCurrent(_ token: LiveRunToken, context: UUID, root: URL) -> Bool {
         projectGeneration == context
             && projectURL == root
@@ -594,7 +595,7 @@ extension WorkspaceModel {
     /// saved first so the compiler sees what the editor shows.
     private func runBuild(token: LiveRunToken) async {
         // The scheduler may have superseded this start before the Task ran
-        // (newer edit, manual request, invalidation): complete immediately
+        // (manual request, toggle-off, invalidation): complete immediately
         // so queued work dispatches; a token that is not ours is left alone.
         guard liveScheduler.acceptsActiveResult(token) else {
             if liveScheduler.active == token { finishScheduledRun(token) }
@@ -868,15 +869,15 @@ extension WorkspaceModel {
                 await self?.handleBuildEvent(event, token: token, buildID: buildID)
             }
             flushBuildLog(for: token)
-            // Publish only while the scheduler still accepts this run's
-            // results and the workspace is unchanged — a superseded live
-            // run clears its busy state but never lands its artifacts.
+            // An accepted run may publish an intermediate PDF with newer
+            // edits pending. Cancelled/retired runs never land artifacts;
+            // the queued run starts only after this one finishes publishing.
             switch outcome.lifecycle {
             case .succeeded:
                 guard runStillCurrent(token, context: context, root: root) else { break }
                 let pdfData = await orchestrator.successfulPDF() ?? Data()
-                // The await may have raced a newer edit — verify again
-                // before this run's PDF is allowed to publish.
+                // The await may have raced cancellation or a context change —
+                // verify ownership again before publishing this run's PDF.
                 guard runStillCurrent(token, context: context, root: root) else { break }
                 buildState = .succeeded(pdf: pdfData, log: buildLogText)
                 latestBuiltPDFName = outputPDF

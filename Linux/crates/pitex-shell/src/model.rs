@@ -4404,10 +4404,10 @@ impl WorkspaceModel {
     }
 
     /// Terminal mapping + `switchToPDFOnBuild` / `jumpToCursorAfterBuild`
-    /// follow-ups. The scheduler is fed first — a superseded or orphaned
-    /// run still releases the slot and may dispatch queued work — while a
-    /// stale or superseded result never publishes. Returns `Some(pdf_path)`
-    /// when the UI should also load the built PDF (absolute path).
+    /// follow-ups. The scheduler releases the slot first; an uncancelled
+    /// same-generation result may publish even with newer edits pending.
+    /// Retired runs only release busy state. Returns `Some(pdf_path)` when
+    /// the UI should also load the built PDF (absolute path).
     pub fn apply_build_finished(
         &mut self,
         build: BuildID,
@@ -4439,13 +4439,11 @@ impl WorkspaceModel {
         } else {
             None
         };
-        let superseded = matches!(completion, Some(LiveCompletion::Superseded(_)));
-        let published = if current {
-            self.publish_build_outcome(&run, outcome, output_pdf, superseded, store)
+        let published = if current && matches!(completion, Some(LiveCompletion::Current(_))) {
+            self.publish_build_outcome(&run, outcome, output_pdf, store)
         } else {
-            // Invalidated run draining late: the busy flag still belongs
-            // to it — release only that so follow-up builds are not stuck
-            // on `is_building`. Nothing from the old context publishes.
+            // Retired or unrecognized scheduler token: release busy state
+            // without publishing an artifact, error, or SyncTeX binding.
             if self.is_building() {
                 self.restore_retained_state();
             }
@@ -4455,24 +4453,15 @@ impl WorkspaceModel {
         published
     }
 
-    /// Applies the finished run's outcome to build state/UI-visible fields.
-    /// A superseded run — newer edits arrived — is short-circuited before
-    /// any issues/log/state mutation: its artifact, errors and binding
-    /// must never reach the UI; the last good PDF stays.
+    /// Applies an accepted run's outcome to build state/UI-visible fields.
+    /// Newer edits may still be queued; their run starts after publication.
     fn publish_build_outcome(
         &mut self,
         run: &ActiveRun,
         outcome: Result<BuildOutcome, String>,
         output_pdf: &str,
-        superseded: bool,
         store: &SettingsStore,
     ) -> Option<PathBuf> {
-        if superseded {
-            // Superseded by newer input — nothing publishes, not even its
-            // issues; the retained last-good PDF stays on screen.
-            self.build_state = WorkspaceBuildState::Failed("Build superseded.".into());
-            return None;
-        }
         // Live runs never steal the panel or jump on the manual-build
         // settings — cursor following is opt-in via its own preference.
         let (switch_to_pdf, jump_to_cursor) = if run.live.is_some() {

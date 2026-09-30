@@ -19,12 +19,11 @@
 //!   changes; `set_enabled(false)` on the toggle. Both retire only live
 //!   work — an active manual run keeps ownership.
 //!
-//! Stale-result suppression: a live completion is reported
-//! [`LiveCompletion::Superseded`] when newer edits were recorded, an
-//!   invalidation bumped the generation, or the run was asked to cancel —
-//!   the UI clears its busy state but must not publish the artifact,
-//!   log, issues or SyncTeX binding. A token that is not the active run
-//!   is [`LiveCompletion::Stale`] and changes nothing.
+//! Ordinary edits coalesce behind the active build; its intermediate result
+//! may publish before the pending revision catches up. A live completion is
+//! [`LiveCompletion::Superseded`] only after cancellation or context invalidation:
+//! the UI clears busy state but must not publish its artifact, log, issues or
+//! SyncTeX binding. A token that is not active is [`LiveCompletion::Stale`].
 
 use std::fmt;
 
@@ -79,10 +78,9 @@ pub enum LiveRequest {
 /// How `completed` classified the finishing run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveCompletion {
-    /// The finishing run is current — publish its result.
+    /// The finishing run owns this context — publish even with edits pending.
     Current(LiveRunToken),
-    /// The run finished but was superseded (newer edits, invalidation or
-    /// a manual request): clear busy state, suppress its artifacts.
+    /// Cancelled or invalidated: clear busy state, suppress its artifacts.
     Superseded(LiveRunToken),
     /// Not the active run — an obsolete or unknown completion. Nothing
     /// changed; the newer active run keeps its slot.
@@ -169,10 +167,9 @@ impl LiveCompileScheduler {
     }
 
     /// May events/results stamped with `token` be applied to the UI now?
-    /// True only for the active run, and for a live run only while it is
-    /// still current — once an edit, manual request or invalidation asked
-    /// it to cancel, its streaming log/issue/binding events are stale and
-    /// must be dropped (busy state still clears at `completed`).
+    /// True only for the active run, and for a live run only while it owns
+    /// the current context. Ordinary edits queue a follow-up; a manual request
+    /// or invalidation cancels the live run and rejects its streaming events.
     /// A manual run's results are always accepted while it is the active
     /// run — including after a toggle-off/invalidate, since a manual
     /// completion is still `Current`; the caller's workspace guard
@@ -235,9 +232,8 @@ impl LiveCompileScheduler {
         requests
     }
 
-    /// A real source edit: record the newest deadline and cancel a
-    /// superseded live run immediately. During a manual run the edit just
-    /// stays pending — manual builds keep priority.
+    /// A real source edit: queue the newest revision without interrupting
+    /// useful work. Both live and manual builds finish before the follow-up.
     pub fn note_edit(&mut self, now_ms: u64) -> Vec<LiveRequest> {
         if !self.enabled {
             return Vec::new();
@@ -247,9 +243,7 @@ impl LiveCompileScheduler {
             deadline_ms: now_ms.saturating_add(self.delay_ms),
             generation: self.generation,
         });
-        let mut requests = Vec::new();
-        self.cancel_active_live(&mut requests);
-        requests
+        Vec::new()
     }
 
     /// The user asked for a manual build. Manual work covers the current
@@ -288,7 +282,6 @@ impl LiveCompileScheduler {
                 let superseded = match token.kind {
                     LiveRunKind::Live => {
                         active.cancel_requested
-                            || self.pending.is_some()
                             || token.generation != self.generation
                     }
                     // A manual result may display even with newer input
@@ -423,14 +416,14 @@ mod tests {
     }
 
     #[test]
-    fn edit_cancels_live_but_not_manual() {
+    fn edits_queue_without_interrupting_live_or_manual() {
         let mut s = enabled();
         s.note_edit(0);
         let live = live_start(&s.poll(700, false));
-        let requests = s.note_edit(800);
-        assert_eq!(requests, [LiveRequest::Cancel { token: live }]);
-        // A second edit does not re-cancel.
+        assert!(s.note_edit(800).is_empty());
         assert!(s.note_edit(810).is_empty());
+        assert_eq!(s.active(), Some(live));
+        assert!(s.accepts_active_result(live));
         // Manual active: an edit just stays pending.
         let mut s = enabled();
         let manual = match s.request_manual().as_slice() {
@@ -443,16 +436,16 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_live_restarts_without_a_second_delay() {
+    fn live_finishes_then_dispatches_due_pending_revision() {
         let mut s = enabled();
         s.note_edit(0);
         let first = live_start(&s.poll(700, false));
-        s.note_edit(800); // cancels `first`, deadline 1500
-        // Cancellation still in flight — pending is kept, nothing starts.
+        s.note_edit(800);
+        // The slot stays occupied even after the pending deadline.
         assert!(s.poll(1_500, false).is_empty());
-        // The old run finishes after the new deadline: dispatch immediately.
+        // Publish this revision before dispatching the queued one.
         let (status, requests) = s.completed(first, 1_700, false);
-        assert_eq!(status, LiveCompletion::Superseded(first));
+        assert_eq!(status, LiveCompletion::Current(first));
         let second = live_start(&requests);
         assert_ne!(first, second);
         let (status, _) = s.completed(second, 2_000, false);
@@ -460,15 +453,14 @@ mod tests {
     }
 
     #[test]
-    fn superseded_live_never_publishes() {
+    fn intermediate_live_result_publishes_before_pending_deadline() {
         let mut s = enabled();
         s.note_edit(0);
         let live = live_start(&s.poll(700, false));
-        // An edit raced the in-flight run; it succeeds anyway — the
-        // completion is superseded so the stale PDF is never published.
+        // A newer edit does not invalidate useful progress in the same context.
         s.note_edit(900);
         let (status, requests) = s.completed(live, 1_000, false);
-        assert_eq!(status, LiveCompletion::Superseded(live));
+        assert_eq!(status, LiveCompletion::Current(live));
         // Deadline (1600) not yet reached — poll later.
         assert!(requests.is_empty());
         let next = live_start(&s.poll(1_600, false));
@@ -542,12 +534,11 @@ mod tests {
         s.note_edit(0);
         let live = live_start(&s.poll(700, false));
         assert!(s.accepts_active_result(live));
-        // Superseded by a newer edit — its late log/issue events drop.
+        // Ordinary edits retain the active build's streaming ownership.
         s.note_edit(800);
-        assert!(!s.accepts_active_result(live));
-        // Cancel in flight; it finishes superseded, nothing due yet.
+        assert!(s.accepts_active_result(live));
         let (status, requests) = s.completed(live, 1_000, false);
-        assert_eq!(status, LiveCompletion::Superseded(live));
+        assert_eq!(status, LiveCompletion::Current(live));
         assert!(requests.is_empty());
         // The next live run accepts again.
         let next = live_start(&s.poll(1_500, false));
