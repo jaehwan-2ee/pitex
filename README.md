@@ -142,7 +142,8 @@ files — there is no shadow copy — and compiles them.
   the preview with intermediate progress. New edits coalesce into one
   follow-up build rather than repeatedly cancelling useful work. A manual
   build takes priority and is never interrupted by typing; disabling live
-  compile or changing the build context still retires live work.
+  compile or changing the build context (including the resolved main
+  document, not just an explicit pin) still retires live work.
 - **Custom commands** must keep their output isolated too: add the
   `{outdir}` placeholder (e.g. `latexmk -pdf -outdir={outdir} {file}`)
   or the live run stops with an explanatory message. The shipped

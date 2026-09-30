@@ -218,6 +218,7 @@ fn live_compile_scenarios() {
     own_save_does_not_retrigger();
     manual_build_keeps_sibling_output();
     intermediate_success_then_latest_revision();
+    resolved_target_change_retires_live_result();
     pending_edit_failure_keeps_last_good();
     stale_results_never_publish();
     invalidate_then_next_build_starts();
@@ -390,6 +391,34 @@ fn intermediate_success_then_latest_revision() {
     fx.fire();
     assert!(fx.model.active_run.is_none());
     assert!(fx.model.live.pending_deadline().is_none());
+}
+
+fn resolved_target_change_retires_live_result() {
+    let mut fx = Fixture::open(
+        "resolved-target", "main.tex",
+        "cp {file} {outdir}/main.pdf && printf 'snapshot-ready\\n'; \
+         while [ ! -e {outdir}/release ]; do sleep 0.01; done",
+    );
+    fx.edit("main.tex", "% old main\n");
+    fx.fire();
+    pump(&mut fx.model, &fx.rx, |m| {
+        matches!(m, WorkspaceMessage::BuildEvent {
+            event: BuildEvent::Log(entry), ..
+        } if entry.text.contains("snapshot-ready"))
+    });
+    let other = fx._dir.join("other.tex");
+    write(&other, "\\documentclass{article}\n\\begin{document}Other main\\end{document}\n");
+    fx.model.project_files.push(other.clone());
+    fx.model.active_document_url = Some(other);
+    fx.model.document_snapshot = None;
+    fx.model.refresh_build_target();
+    // Always release/drain the process before asserting, including on failure.
+    write(&fx._dir.join(".pitex-live/main/release"), "");
+    let _ = fx.finish_next();
+    assert_eq!(fx.model.build_source_relative_path().as_deref(), Some("other.tex"));
+    assert!(fx.model.retained_pdf.is_none(), "old main's PDF published into the new target");
+    assert!(fx.model.active_run.is_none());
+    assert!(!fx.model.is_building());
 }
 
 fn pending_edit_failure_keeps_last_good() {

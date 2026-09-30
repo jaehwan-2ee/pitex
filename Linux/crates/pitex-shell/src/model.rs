@@ -3700,6 +3700,7 @@ impl WorkspaceModel {
         &mut self,
         (result, project): (Result<Option<PathBuf>, ResolutionError>, project_feature::DocumentProject),
     ) {
+        let previous_source = self.build_source_url();
         let previous_target = self.automatic_build_target.clone();
         match result {
             Ok(target) => {
@@ -3722,6 +3723,11 @@ impl WorkspaceModel {
             self.files_revision += 1;
         }
         self.document_project = project;
+        if self.build_source_url() != previous_source {
+            // A resolved main-document change is a context switch too,
+            // not an ordinary edit that may publish intermediate progress.
+            self.invalidate_live();
+        }
         // A different build target retires the retained artifact — its
         // PDF belongs to the old main; a chapter switch under the same
         // main leaves `source` matching and keeps it.
