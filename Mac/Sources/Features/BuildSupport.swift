@@ -509,9 +509,8 @@ extension WorkspaceModel {
         performLiveRequests(liveScheduler.setEnabled(settings.liveCompileEnabled))
     }
 
-    /// Re-arms the debounce Task at the scheduler's pending deadline — the
-    /// caller-owned timer the contract requires. The deadline is always
-    /// re-read, so a newer edit slides the wait without extra bookkeeping.
+    /// Re-arms the coalescing Task at the scheduler's pending deadline.
+    /// Re-read for settings changes; further edits keep the existing window.
     /// While a run holds the slot its completion dispatches a due pending
     /// edit itself — arming here would only refire empty polls at 0 ms.
     func armLiveCompileTimer() {

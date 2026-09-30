@@ -176,7 +176,7 @@ impl SettingsStore {
         self.prefs.set("pitex.pref.build.jumpToCursorAfterBuild", v);
     }
     /// `pitex.pref.build.liveCompileEnabled` — rebuild on source edits
-    /// after an idle delay, default off. Live builds auto-save open edited
+    /// after a coalescing delay, default off. Live builds auto-save open edited
     /// files first and write to the hidden `.pitex-live` output directory.
     pub fn live_compile_enabled(&self) -> bool {
         self.prefs.bool("pitex.pref.build.liveCompileEnabled").unwrap_or(false)
@@ -184,8 +184,8 @@ impl SettingsStore {
     pub fn set_live_compile_enabled(&mut self, v: bool) {
         self.prefs.set("pitex.pref.build.liveCompileEnabled", v);
     }
-    /// `pitex.pref.build.liveCompileDelayMilliseconds` — idle debounce
-    /// before a live build starts, clamped to 200…10_000, default 700.
+    /// `pitex.pref.build.liveCompileDelayMilliseconds` — coalescing window
+    /// from the first pending edit, clamped to 200…10_000, default 700.
     /// Remote workspaces use a larger floor at schedule time.
     pub fn live_compile_delay_milliseconds(&self) -> i64 {
         self.prefs

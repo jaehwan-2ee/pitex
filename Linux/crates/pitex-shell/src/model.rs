@@ -1149,7 +1149,7 @@ pub struct WorkspaceModel {
     pub live: LiveCompileScheduler,
     /// `(path, content hash)` of the committed text the last live note
     /// recorded. Save/snapshot republishes carry the same hash — only a
-    /// real text change may re-arm the debounce.
+    /// real text change may queue a live build.
     live_edit_signature: Option<(NormalizedRelativePath, DiskContentHash)>,
     /// `(resolved build source, command)` captured when the pending edit
     /// was noted — a target or command change before the timer fires

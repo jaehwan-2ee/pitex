@@ -255,9 +255,9 @@
 "settings.compile.make_default_editor" = ".tex ファイルに使用";
 "settings.compile.make_default_note" = "Pitex を既定の .tex エディタとして登録します（ダブルクリックで開く）。";
 "settings.compile.live" = "ライブコンパイル";
-"settings.compile.live_auto" = "入力が止まったら自動でビルド";
-"settings.compile.live_auto_note" = "ライブコンパイルは編集中のファイルを保存し、入力が止まると自動で再ビルドします。";
-"settings.compile.live_delay" = "アイドル遅延（ms）";
+"settings.compile.live_auto" = "編集中に自動でビルド";
+"settings.compile.live_auto_note" = "ライブコンパイルは開いている変更済みファイルを保存し、実行中のビルドを中断せずに変更をまとめてビルドします。";
+"settings.compile.live_delay" = "ビルド待機時間（ms）";
 "settings.compile.live_follow" = "ライブビルド後にカーソル位置へ PDF を移動";
 "toolbar.live_compile" = "ライブコンパイル";
 "settings.markdown.live_preview" = "ライブプレビュー";

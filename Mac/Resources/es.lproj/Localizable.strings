@@ -255,9 +255,9 @@
 "settings.compile.make_default_editor" = "Usar para archivos .tex";
 "settings.compile.make_default_note" = "Registra Pitex como la app predeterminada para archivos .tex (doble clic para abrir aquí).";
 "settings.compile.live" = "Compilación en vivo";
-"settings.compile.live_auto" = "Compilar automáticamente al dejar de escribir";
-"settings.compile.live_auto_note" = "La compilación en vivo guarda los archivos editados abiertos y vuelve a compilar automáticamente al dejar de escribir.";
-"settings.compile.live_delay" = "Espera de inactividad (ms)";
+"settings.compile.live_auto" = "Compilar automáticamente durante la edición";
+"settings.compile.live_auto_note" = "La compilación en vivo guarda los archivos abiertos modificados y agrupa los cambios sin interrumpir la compilación en curso.";
+"settings.compile.live_delay" = "Espera de compilación (ms)";
 "settings.compile.live_follow" = "Mover el PDF al cursor tras compilar en vivo";
 "toolbar.live_compile" = "Compilación en vivo";
 "settings.markdown.live_preview" = "Vista previa en vivo";

@@ -129,7 +129,7 @@ Compile**) and Pitex rebuilds automatically as you edit. The first edit
 opens a short coalescing window; the build then saves the latest open edited
 files — there is no shadow copy — and compiles them.
 
-- **Idle delay** is configurable from 200 ms to 10 s (default 700 ms).
+- **Build delay** is configurable from 200 ms to 10 s (default 700 ms).
   Remote projects compile on the connected device and never go below a
   1.5 s effective delay.
   Further typing does not restart this window; an active build or IME

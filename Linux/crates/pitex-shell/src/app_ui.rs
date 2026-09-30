@@ -917,7 +917,7 @@ impl AppState {
         if let Some(session) = self.active_session.clone() {
             self.model.document_snapshot = Some(session.snapshot());
         }
-        // Live compile — real text changes re-arm the debounce; saves and
+        // Live compile — real text changes queue a build; saves and
         // snapshot republishes carry the same content hash and skip it.
         let requests = self.model.note_source_edit(&self.store);
         self.model
