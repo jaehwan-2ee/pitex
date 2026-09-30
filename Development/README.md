@@ -67,8 +67,8 @@ every response must agree across Swift and Rust.
 
 The fixed workload covers continuous typing, short bursts, hesitant typing,
 and long IME composition at 120/600/1800 ms compiler service times, plus a
-remote-style trace at 1600 ms with the existing 1500 ms debounce floor.
-Local traces hold the configured idle delay at 700 ms. The virtual host uses
+remote-style trace at 1600 ms with the existing 1500 ms delay floor.
+Local traces hold the configured build delay at 700 ms. The virtual host uses
 a 150 ms overdue-timer retry and 50 ms cancellation acknowledgement.
 These are prescribed inputs, not measured compiler or operating-system times.
 
@@ -83,6 +83,16 @@ These are prescribed inputs, not measured compiler or operating-system times.
   final revision eventually accepted, stale/invalidated/cancelled results
   rejected, manual ownership preserved, and no self-triggering rebuild loop.
   Failure exits nonzero; `METRIC` lines appear only after all checks pass.
+
+The retained policy uses a fixed first-edit coalescing window and lets active
+same-context builds finish; one queued build then catches up. In the fixed
+workload, mean latency fell from 5800 to 1791.815 ms and p95 from 14260 to
+3320 ms. Cancellations fell from 51 to zero, but useful completed builds rose
+from 52 to 134 and virtual compiler busy time from 38860 to 103840 ms.
+This trades more completed work for progress during typing; it is not evidence
+of lower CPU or battery use. Immediate catch-up and adaptive/cooldown variants
+were rejected for excessive build churn, worse tail latency, or extra state
+without a material improvement.
 
 This measures **scheduling policy**, not actual TeX speed, editor responsiveness,
 PDF flicker, viewport preservation, or end-to-end presentation latency.
