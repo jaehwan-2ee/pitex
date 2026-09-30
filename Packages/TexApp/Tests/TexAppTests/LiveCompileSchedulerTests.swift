@@ -39,17 +39,28 @@ final class LiveCompileSchedulerTests: XCTestCase {
         XCTAssertNil(scheduler.pendingDeadline)
     }
 
-    func testRapidEditsCoalesceToOneRun() throws {
+    func testContinuousEditsAreBoundedButNeverBypassIME() {
+        for delay in [LiveCompileScheduler.minDelayMs, LiveCompileScheduler.defaultDelayMs,
+                      LiveCompileScheduler.remoteMinDelayMs, LiveCompileScheduler.maxDelayMs] {
+            var scheduler = makeEnabled()
+            scheduler.setDelay(delay)
+            scheduler.noteEdit(nowMs: 0)
+            for now in stride(from: UInt64(100), through: delay * 2, by: 100) {
+                XCTAssertTrue(scheduler.noteEdit(nowMs: now).isEmpty)
+                XCTAssertTrue(scheduler.poll(nowMs: now, composing: true).isEmpty)
+            }
+            let token = liveStart(scheduler.poll(nowMs: delay * 2, composing: false))
+            XCTAssertEqual(scheduler.active, token)
+            XCTAssertTrue(scheduler.poll(nowMs: delay * 4, composing: false).isEmpty)
+            let (status, requests) = scheduler.completed(token: token, nowMs: delay * 4, composing: false)
+            XCTAssertEqual(status, .current(token))
+            XCTAssertTrue(requests.isEmpty)
+        }
         var scheduler = makeEnabled()
-        XCTAssertTrue(scheduler.noteEdit(nowMs: 0).isEmpty)
-        XCTAssertTrue(scheduler.noteEdit(nowMs: 300).isEmpty)
-        XCTAssertTrue(scheduler.noteEdit(nowMs: 600).isEmpty)
-        let deadline = try XCTUnwrap(scheduler.pendingDeadline)
-        XCTAssertTrue(scheduler.poll(nowMs: deadline - 1, composing: false).isEmpty)
-        let token = liveStart(scheduler.poll(nowMs: deadline, composing: false))
-        XCTAssertEqual(scheduler.active, token)
-        // The started run consumed the pending edit — no second start.
-        XCTAssertTrue(scheduler.poll(nowMs: 5_000, composing: false).isEmpty)
+        scheduler.noteEdit(nowMs: .max - 100)
+        XCTAssertEqual(scheduler.pendingDeadline, .max)
+        XCTAssertTrue(scheduler.poll(nowMs: .max - 1, composing: false).isEmpty)
+        _ = liveStart(scheduler.poll(nowMs: .max, composing: false))
     }
 
     func testComposingHoldsTheDeadlineUntilLifted() {

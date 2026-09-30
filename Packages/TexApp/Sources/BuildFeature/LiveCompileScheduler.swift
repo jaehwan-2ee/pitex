@@ -6,8 +6,8 @@
 ///
 /// Integration contract:
 ///
-/// - `noteEdit(nowMs:)` on every real source mutation (also while IME
-///   composition is in progress — the deadline just keeps moving).
+/// - `noteEdit(nowMs:)` on every real source mutation (also during IME
+///   composition). A bounded debounce prevents endless postponement.
 /// - `poll(nowMs:composing:)` when the caller's debounce timer fires (arm it
 ///   for `pendingDeadline`) and whenever work may have been freed (it is
 ///   idempotent).
@@ -48,7 +48,7 @@ public struct LiveCompileScheduler: Equatable, Sendable {
         /// Millisecond timestamp of the newest edit (deadline base, so a
         /// later `setDelay` re-derives from the edit, not from "now").
         var editedAtMs: UInt64
-        var deadlineMs: UInt64
+        var firstEditedAtMs: UInt64
         var generation: UInt64
     }
 
@@ -68,9 +68,12 @@ public struct LiveCompileScheduler: Equatable, Sendable {
         queuedManual = false
     }
 
-    /// Deadline the caller's timer should fire at, if an edit is pending.
+    /// Idle deadline, bounded to two delays from the first pending edit.
     public var pendingDeadline: UInt64? {
-        pending?.deadlineMs
+        pending.map {
+            min($0.editedAtMs.saturatingAdd(delayMs),
+                $0.firstEditedAtMs.saturatingAdd(delayMs.saturatingAdd(delayMs)))
+        }
     }
 
     /// The run currently holding the slot.
@@ -128,9 +131,6 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     /// delay fires earlier rather than sliding a new full delay.
     public mutating func setDelay(_ delayMs: UInt64) {
         self.delayMs = delayMs
-        if let editedAtMs = pending?.editedAtMs {
-            pending?.deadlineMs = editedAtMs.saturatingAdd(delayMs)
-        }
     }
 
     /// Workspace switch/close or target/command change: retire all live
@@ -150,7 +150,7 @@ public struct LiveCompileScheduler: Equatable, Sendable {
         guard enabled else { return [] }
         pending = PendingEdit(
             editedAtMs: nowMs,
-            deadlineMs: nowMs.saturatingAdd(delayMs),
+            firstEditedAtMs: pending?.firstEditedAtMs ?? nowMs,
             generation: generation
         )
         return []
@@ -260,15 +260,16 @@ public struct LiveCompileScheduler: Equatable, Sendable {
             return
         }
         guard let pendingEdit = pending,
+              let deadline = pendingDeadline,
               enabled,
               !composing,
-              nowMs >= pendingEdit.deadlineMs,
+              nowMs >= deadline,
               pendingEdit.generation == generation
         else { return }
         pending = nil
         let token = mint(kind: .live)
         activeRun = ActiveRun(token: token, cancelRequested: false)
-        requests.append(.startLive(token: token, deadlineMs: pendingEdit.deadlineMs))
+        requests.append(.startLive(token: token, deadlineMs: deadline))
     }
 }
 

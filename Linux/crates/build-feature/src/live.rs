@@ -6,8 +6,8 @@
 //!
 //! Integration contract:
 //!
-//! - `note_edit(now)` on every real source mutation (also while IME
-//!   composition is in progress — the deadline just keeps moving).
+//! - `note_edit(now)` on every real source mutation (also during IME
+//!   composition). A bounded debounce prevents endless postponement.
 //! - `poll(now, composing)` when the caller's debounce timer fires (arm it
 //!   for [`pending_deadline`]) and whenever work may have been freed (it
 //!   is idempotent).
@@ -92,7 +92,7 @@ struct PendingEdit {
     /// Millisecond timestamp of the newest edit (deadline base, so a
     /// later `set_delay` re-derives from the edit, not from "now").
     edited_at_ms: u64,
-    deadline_ms: u64,
+    first_edited_at_ms: u64,
     generation: u64,
 }
 
@@ -141,9 +141,13 @@ impl LiveCompileScheduler {
     pub fn delay_ms(&self) -> u64 {
         self.delay_ms
     }
-    /// Deadline the caller's timer should fire at, if an edit is pending.
+    /// Idle deadline, bounded to two delays from the first pending edit.
     pub fn pending_deadline(&self) -> Option<u64> {
-        self.pending.map(|p| p.deadline_ms)
+        self.pending.map(|p| {
+            p.edited_at_ms.saturating_add(self.delay_ms).min(
+                p.first_edited_at_ms.saturating_add(self.delay_ms.saturating_mul(2)),
+            )
+        })
     }
     /// The run currently holding the slot.
     pub fn active(&self) -> Option<LiveRunToken> {
@@ -213,9 +217,6 @@ impl LiveCompileScheduler {
     /// delay fires earlier rather than sliding a new full delay.
     pub fn set_delay(&mut self, delay_ms: u64) {
         self.delay_ms = delay_ms;
-        if let Some(p) = &mut self.pending {
-            p.deadline_ms = p.edited_at_ms.saturating_add(delay_ms);
-        }
     }
 
     /// Workspace switch/close or target/command change: retire all work
@@ -240,7 +241,7 @@ impl LiveCompileScheduler {
         }
         self.pending = Some(PendingEdit {
             edited_at_ms: now_ms,
-            deadline_ms: now_ms.saturating_add(self.delay_ms),
+            first_edited_at_ms: self.pending.map_or(now_ms, |p| p.first_edited_at_ms),
             generation: self.generation,
         });
         Vec::new()
@@ -347,9 +348,10 @@ impl LiveCompileScheduler {
             return;
         }
         let Some(pending) = self.pending else { return };
+        let Some(deadline_ms) = self.pending_deadline() else { return };
         if !self.enabled
             || composing
-            || now_ms < pending.deadline_ms
+            || now_ms < deadline_ms
             || pending.generation != self.generation
         {
             return;
@@ -362,7 +364,7 @@ impl LiveCompileScheduler {
         });
         requests.push(LiveRequest::StartLive {
             token,
-            deadline_ms: pending.deadline_ms,
+            deadline_ms,
         });
     }
 }
@@ -392,17 +394,27 @@ mod tests {
     }
 
     #[test]
-    fn rapid_edits_coalesce_to_one_deadline() {
+    fn continuous_edits_are_bounded_but_never_bypass_ime() {
+        for delay in [MIN_DELAY_MS, DEFAULT_DELAY_MS, REMOTE_MIN_DELAY_MS, MAX_DELAY_MS] {
+            let mut s = enabled();
+            s.set_delay(delay);
+            s.note_edit(0);
+            for now in (100..=delay * 2).step_by(100) {
+                assert!(s.note_edit(now).is_empty());
+                assert!(s.poll(now, true).is_empty());
+            }
+            let token = live_start(&s.poll(delay * 2, false));
+            assert_eq!(s.active(), Some(token));
+            assert!(s.poll(delay * 4, false).is_empty());
+            let (status, requests) = s.completed(token, delay * 4, false);
+            assert_eq!(status, LiveCompletion::Current(token));
+            assert!(requests.is_empty());
+        }
         let mut s = enabled();
-        assert!(s.note_edit(0).is_empty());
-        assert!(s.note_edit(300).is_empty());
-        assert!(s.note_edit(600).is_empty());
-        assert_eq!(s.pending_deadline(), Some(1_300));
-        assert!(s.poll(1_299, false).is_empty());
-        let token = live_start(&s.poll(1_300, false));
-        assert_eq!(s.active(), Some(token));
-        // The started run consumed the pending edit — no second start.
-        assert!(s.poll(5_000, false).is_empty());
+        s.note_edit(u64::MAX - 100);
+        assert_eq!(s.pending_deadline(), Some(u64::MAX));
+        assert!(s.poll(u64::MAX - 1, false).is_empty());
+        live_start(&s.poll(u64::MAX, false));
     }
 
     #[test]
