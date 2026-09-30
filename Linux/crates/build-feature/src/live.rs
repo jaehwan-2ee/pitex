@@ -88,13 +88,6 @@ pub enum LiveCompletion {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct PendingEdit {
-    /// First pending edit: subsequent input never postpones this window.
-    edited_at_ms: u64,
-    generation: u64,
-}
-
-#[derive(Debug, Clone, Copy)]
 struct ActiveRun {
     token: LiveRunToken,
     /// A cancel request was already emitted — never emit another.
@@ -108,7 +101,8 @@ pub struct LiveCompileScheduler {
     /// Bumped by `invalidate()`/toggle-off; older-generation work is dead.
     generation: u64,
     next_id: u64,
-    pending: Option<PendingEdit>,
+    /// First pending edit; every context invalidation clears it.
+    pending: Option<u64>,
     active: Option<ActiveRun>,
     /// A manual build asked for while a live run still holds the slot.
     queued_manual: bool,
@@ -141,7 +135,7 @@ impl LiveCompileScheduler {
     }
     /// Coalescing deadline, one delay from the first pending edit.
     pub fn pending_deadline(&self) -> Option<u64> {
-        self.pending.map(|p| p.edited_at_ms.saturating_add(self.delay_ms))
+        self.pending.map(|edited_at| edited_at.saturating_add(self.delay_ms))
     }
     /// The run currently holding the slot.
     pub fn active(&self) -> Option<LiveRunToken> {
@@ -234,10 +228,7 @@ impl LiveCompileScheduler {
             return Vec::new();
         }
         if self.pending.is_none() {
-            self.pending = Some(PendingEdit {
-                edited_at_ms: now_ms,
-                generation: self.generation,
-            });
+            self.pending = Some(now_ms);
         }
         Vec::new()
     }
@@ -342,12 +333,10 @@ impl LiveCompileScheduler {
             self.dispatch_manual(requests);
             return;
         }
-        let Some(pending) = self.pending else { return };
         let Some(deadline_ms) = self.pending_deadline() else { return };
         if !self.enabled
             || composing
             || now_ms < deadline_ms
-            || pending.generation != self.generation
         {
             return;
         }

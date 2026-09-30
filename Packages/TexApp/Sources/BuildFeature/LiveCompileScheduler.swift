@@ -39,16 +39,11 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     /// Bumped by `invalidate()`/toggle-off; older-generation work is dead.
     private var generation: UInt64
     private var nextId: UInt64
-    private var pending: PendingEdit?
+    /// First pending edit; every context invalidation clears it.
+    private var pending: UInt64?
     private var activeRun: ActiveRun?
     /// A manual build asked for while a live run still holds the slot.
     private var queuedManual: Bool
-
-    private struct PendingEdit: Equatable, Sendable {
-        /// First pending edit: subsequent input never postpones this window.
-        var editedAtMs: UInt64
-        var generation: UInt64
-    }
 
     private struct ActiveRun: Equatable, Sendable {
         var token: LiveRunToken
@@ -68,7 +63,7 @@ public struct LiveCompileScheduler: Equatable, Sendable {
 
     /// Coalescing deadline, one delay from the first pending edit.
     public var pendingDeadline: UInt64? {
-        pending.map { $0.editedAtMs.saturatingAdd(delayMs) }
+        pending.map { $0.saturatingAdd(delayMs) }
     }
 
     /// The run currently holding the slot.
@@ -144,7 +139,7 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     public mutating func noteEdit(nowMs: UInt64) -> [LiveRequest] {
         guard enabled else { return [] }
         if pending == nil {
-            pending = PendingEdit(editedAtMs: nowMs, generation: generation)
+            pending = nowMs
         }
         return []
     }
@@ -252,12 +247,10 @@ public struct LiveCompileScheduler: Equatable, Sendable {
             dispatchManual(&requests)
             return
         }
-        guard let pendingEdit = pending,
-              let deadline = pendingDeadline,
+        guard let deadline = pendingDeadline,
               enabled,
               !composing,
-              nowMs >= deadline,
-              pendingEdit.generation == generation
+              nowMs >= deadline
         else { return }
         pending = nil
         let token = mint(kind: .live)
