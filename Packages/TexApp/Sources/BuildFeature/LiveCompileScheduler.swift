@@ -45,10 +45,8 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     private var queuedManual: Bool
 
     private struct PendingEdit: Equatable, Sendable {
-        /// Millisecond timestamp of the newest edit (deadline base, so a
-        /// later `setDelay` re-derives from the edit, not from "now").
+        /// First pending edit: subsequent input never postpones this window.
         var editedAtMs: UInt64
-        var firstEditedAtMs: UInt64
         var generation: UInt64
     }
 
@@ -68,12 +66,9 @@ public struct LiveCompileScheduler: Equatable, Sendable {
         queuedManual = false
     }
 
-    /// Idle deadline, bounded to two delays from the first pending edit.
+    /// Coalescing deadline, one delay from the first pending edit.
     public var pendingDeadline: UInt64? {
-        pending.map {
-            min($0.editedAtMs.saturatingAdd(delayMs),
-                $0.firstEditedAtMs.saturatingAdd(delayMs.saturatingAdd(delayMs)))
-        }
+        pending.map { $0.editedAtMs.saturatingAdd(delayMs) }
     }
 
     /// The run currently holding the slot.
@@ -148,11 +143,9 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     @discardableResult
     public mutating func noteEdit(nowMs: UInt64) -> [LiveRequest] {
         guard enabled else { return [] }
-        pending = PendingEdit(
-            editedAtMs: nowMs,
-            firstEditedAtMs: pending?.firstEditedAtMs ?? nowMs,
-            generation: generation
-        )
+        if pending == nil {
+            pending = PendingEdit(editedAtMs: nowMs, generation: generation)
+        }
         return []
     }
 

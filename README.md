@@ -125,15 +125,15 @@ Settings live under **Settings → Markdown** (right after the renamed
 ### Live compile
 
 Toggle **Live Compile** in the toolbar (or **Settings → Compile → Live
-Compile**) and Pitex rebuilds automatically as you edit. A short debounce
-coalesces edits before each live build saves open edited files —
-there is no shadow copy — and compiles them.
+Compile**) and Pitex rebuilds automatically as you edit. The first edit
+opens a short coalescing window; the build then saves the latest open edited
+files — there is no shadow copy — and compiles them.
 
 - **Idle delay** is configurable from 200 ms to 10 s (default 700 ms).
   Remote projects compile on the connected device and never go below a
   1.5 s effective delay.
-  Continuous typing cannot postpone a pending build beyond twice that
-  delay; an active build or IME composition still holds the build slot.
+  Further typing does not restart this window; an active build or IME
+  composition still holds the build slot.
 - **Isolated output** — live builds write under `.pitex-live/` inside
   the project root, so regular build artifacts, source discovery, and
   remote sync stay untouched. A failed or superseded run keeps the last

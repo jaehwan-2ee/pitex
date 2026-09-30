@@ -89,10 +89,8 @@ pub enum LiveCompletion {
 
 #[derive(Debug, Clone, Copy)]
 struct PendingEdit {
-    /// Millisecond timestamp of the newest edit (deadline base, so a
-    /// later `set_delay` re-derives from the edit, not from "now").
+    /// First pending edit: subsequent input never postpones this window.
     edited_at_ms: u64,
-    first_edited_at_ms: u64,
     generation: u64,
 }
 
@@ -141,13 +139,9 @@ impl LiveCompileScheduler {
     pub fn delay_ms(&self) -> u64 {
         self.delay_ms
     }
-    /// Idle deadline, bounded to two delays from the first pending edit.
+    /// Coalescing deadline, one delay from the first pending edit.
     pub fn pending_deadline(&self) -> Option<u64> {
-        self.pending.map(|p| {
-            p.edited_at_ms.saturating_add(self.delay_ms).min(
-                p.first_edited_at_ms.saturating_add(self.delay_ms.saturating_mul(2)),
-            )
-        })
+        self.pending.map(|p| p.edited_at_ms.saturating_add(self.delay_ms))
     }
     /// The run currently holding the slot.
     pub fn active(&self) -> Option<LiveRunToken> {
@@ -239,11 +233,12 @@ impl LiveCompileScheduler {
         if !self.enabled {
             return Vec::new();
         }
-        self.pending = Some(PendingEdit {
-            edited_at_ms: now_ms,
-            first_edited_at_ms: self.pending.map_or(now_ms, |p| p.first_edited_at_ms),
-            generation: self.generation,
-        });
+        if self.pending.is_none() {
+            self.pending = Some(PendingEdit {
+                edited_at_ms: now_ms,
+                generation: self.generation,
+            });
+        }
         Vec::new()
     }
 
