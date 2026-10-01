@@ -1,0 +1,216 @@
+Assets/equation-preview/renderer-config.js
+  h_d73c695d83f4a7 1-62
+Assets/equation-preview/renderer.css
+  h_d73c695d83f4a7 1-51
+Assets/equation-preview/renderer.html
+  h_d73c695d83f4a7 1-20
+Assets/equation-preview/renderer.js
+  h_d73c695d83f4a7 1-218
+Assets/equation-preview/vendor/VERSIONS
+  h_d73c695d83f4a7 1-61
+Assets/equation-preview/vendor/manifest.json
+  h_d73c695d83f4a7 1-70
+Assets/equation-preview/vendor/mathjax/LICENSE
+  h_d73c695d83f4a7 1-202
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/action.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/ams.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/amscd.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/autoload.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bbm.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bboldx.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bbox.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/begingroup.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/boldsymbol.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/braket.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bussproofs.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/cancel.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/cases.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/centernot.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/color.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/colortbl.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/colorv2.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/configmacros.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/dsfont.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/empheq.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/enclose.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/extpfeil.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/fontsizev3.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/gensymb.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/html.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/mathtools.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/mhchem.js
+  h_d73c695d83f4a7 1-34
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/newcommand.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/noerrors.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/noundefined.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/physics.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/require.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/setoptions.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/tagformat.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/texhtml.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/textcomp.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/textmacros.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/unicode.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/units.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/upgreek.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/verb.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/mathjax-tex-font/OFL-1.1.txt
+  h_d73c695d83f4a7 1-43
+Assets/equation-preview/vendor/mathjax/mathjax-tex-font/package.json
+  h_d73c695d83f4a7 1-88
+Assets/equation-preview/vendor/mathjax/mathjax-tex-font/svg.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/tex-svg-nofont.js
+  h_d73c695d83f4a7 1
+Assets/equation-preview/vendor/mathjax/ui/safe.js
+  h_d73c695d83f4a7 1
+Development/README.md
+  h_d73c695d83f4a7 13,56-129
+Fixtures/equation-preview/syntax.json
+  h_d73c695d83f4a7 1-701
+Linux/Cargo.lock
+  h_d73c695d83f4a7 98
+Linux/README.md
+  h_d73c695d83f4a7 26
+Linux/crates/build-core/Cargo.toml
+  h_d73c695d83f4a7 14-16
+Linux/crates/build-core/src/equation_exact.rs
+  h_d73c695d83f4a7 1-430
+Linux/crates/build-core/src/lib.rs
+  h_d73c695d83f4a7 25-26,3081-3112,3114
+Linux/crates/build-core/tests/equation_exact.rs
+  h_d73c695d83f4a7 1-237
+Linux/crates/editor-feature/src/equation_preview.rs
+  h_d73c695d83f4a7 1-1513
+Linux/crates/editor-feature/src/lib.rs
+  h_d73c695d83f4a7 4
+Linux/crates/editor-feature/tests/equation_preview.rs
+  h_d73c695d83f4a7 1-980
+Linux/crates/language-core/src/equation_preview.rs
+  h_d73c695d83f4a7 1-1474
+Linux/crates/language-core/src/lib.rs
+  h_d73c695d83f4a7 7,54
+Linux/crates/language-core/tests/equation_preview_syntax.rs
+  h_d73c695d83f4a7 1-212
+Linux/crates/pitex-shell/Cargo.toml
+  h_d73c695d83f4a7 65,69-71
+Linux/crates/pitex-shell/build.rs
+  h_d73c695d83f4a7 1-14,17-71
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_d73c695d83f4a7 233-236,358-359,429-437,641-642,712,839-881,884-886,1129-1134,1140,1306-1307,1500-1501,4985-4987,5218-5222,5363-5365,5476-5488
+Linux/crates/pitex-shell/src/equation_preview.rs
+  h_d73c695d83f4a7 1-1741
+Linux/crates/pitex-shell/src/lib.rs
+  h_d73c695d83f4a7 13-14
+Linux/crates/pitex-shell/src/panes.rs
+  h_d73c695d83f4a7 2096-2223
+Linux/crates/pitex-shell/src/settings.rs
+  h_d73c695d83f4a7 359-409
+Linux/crates/pitex/Cargo.toml
+  h_d73c695d83f4a7 19,23,49-75,82,87-99
+Mac/Pitex.xcodeproj/project.pbxproj
+  h_d73c695d83f4a7 55-56,97-98,199,212,313,346
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 126,187-191,297-310
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 127,188-192,297-310
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 126,187-191,297-310
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 126,187-191,297-310
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 127,188-192,297-310
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 126,187-191,297-310
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 127,188-192,297-310
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 265-267,314-315,782-787,793-794,884,1050-1051,1177-1178,2442-2451,2689-2694
+Mac/Sources/Features/BuildSupport.swift
+  h_d73c695d83f4a7 71-72
+Mac/Sources/Features/EditorContainerView.swift
+  h_d73c695d83f4a7 37-39,180-181,207-209,231-235,281
+Mac/Sources/Features/EquationPreview.swift
+  h_d73c695d83f4a7 1-1085
+Mac/Sources/Features/SettingsView.swift
+  h_d73c695d83f4a7 119-151,194-198,240-244,258-274,588-625
+Mac/Sources/Features/WorkspaceView.swift
+  h_d73c695d83f4a7 405-406
+Packages/TexApp/Sources/EditorFeature/EquationPreviewEngine.swift
+  h_d73c695d83f4a7 1-752
+Packages/TexApp/Sources/EditorFeature/EquationPreviewTypes.swift
+  h_d73c695d83f4a7 1-228
+Packages/TexApp/Tests/TexAppTests/EquationPreviewEngineTests.swift
+  h_d73c695d83f4a7 1-742
+Packages/TexCore/Sources/BuildCore/EquationExactRenderer.swift
+  h_d73c695d83f4a7 1-282
+Packages/TexCore/Sources/LanguageCore/EquationPreviewContext.swift
+  h_d73c695d83f4a7 1-249
+Packages/TexCore/Sources/LanguageCore/EquationPreviewSyntax.swift
+  h_d73c695d83f4a7 1-814
+Packages/TexCore/Sources/LanguageCore/LanguageCore.swift
+  h_d73c695d83f4a7 24
+Packages/TexCore/Tests/TexCoreTests/EquationExactRendererTests.swift
+  h_d73c695d83f4a7 1-140
+Packages/TexCore/Tests/TexCoreTests/EquationPreviewSyntaxTests.swift
+  h_d73c695d83f4a7 1-153
+README.md
+  h_d73c695d83f4a7 125-181,243
+Tools/check-equation-preview-macos.py
+  h_d73c695d83f4a7 1-2384
+Tools/fetch-equation-preview-assets.mjs
+  h_d73c695d83f4a7 1-189
+Tools/generate-sbom.mjs
+  h_d73c695d83f4a7 4,28-62,80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91c81f32cbbabcd5f455aa9530a9b0f9a743d3d1",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
