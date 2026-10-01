@@ -123,6 +123,7 @@
 "build.issues" = "Vấn đề";
 
 "command.sync_forward" = "Hiển thị vùng chọn trong PDF";
+"command.exact_equation_preview" = "Xem trước chính xác công thức";
 
 "sidebar.outline" = "Đề cương";
 "sidebar.labels" = "Nhãn";
@@ -183,6 +184,11 @@
 "editor.toggle_assistant" = "Bật/tắt trợ lý";
 "editor.toggle_bottom" = "Bật/tắt bảng dưới";
 "editor.flip_panels" = "Đảo các bảng";
+"equation_preview.accessibility_label" = "Xem trước công thức đã kết xuất";
+"equation_preview.unavailable" = "Không có bản xem trước";
+"equation_preview.exact_badge" = "TeX chính xác";
+"equation_preview.fast_badge" = "Xem trước nhanh";
+"equation_preview.exact_unavailable" = "Bản xem trước chính xác cần lệnh biên dịch pdflatex, xelatex, lualatex hoặc latexmk.";
 "editor.reload" = "Tải lại từ đĩa";
 "editor.disk_changed" = "Đã tải lại thay đổi từ đĩa";
 "editor.disk_unchanged" = "Không có thay đổi trên đĩa";
@@ -288,6 +294,20 @@
 "settings.synctex.inverse_highlight" = "Inverse Sync: tô sáng vị trí nguồn trong trình soạn thảo";
 "settings.synctex.forward_highlight" = "Forward Sync: tô sáng vị trí đích trong PDF";
 "settings.synctex.highlight_note" = "Hiển thị vùng tô sáng màu vàng trong chốc lát tại vị trí đích. Việc chuyển đến vị trí vẫn hoạt động khi tắt tô sáng.";
+"settings.editor.equation_preview.title" = "Xem trước công thức";
+"settings.editor.equation_preview.enabled" = "Hiện xem trước công thức";
+"settings.editor.equation_preview.while_typing" = "Xem trước khi đang gõ";
+"settings.editor.equation_preview.placement" = "Vị trí";
+"settings.editor.equation_preview.placement.above" = "Phía trên";
+"settings.editor.equation_preview.placement.below" = "Phía dưới";
+"settings.editor.equation_preview.renderer" = "Bộ kết xuất";
+"settings.editor.equation_preview.renderer.fast" = "Nhanh";
+"settings.editor.equation_preview.renderer.fast_tex" = "Nhanh + TeX dự phòng";
+"settings.editor.equation_preview.delay" = "Độ trễ";
+"settings.editor.equation_preview.delay.instant" = "Tức thì";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "Bản xem trước nhanh kết xuất bằng MathJax tích hợp mà không chạy TeX nên chỉ mang tính xấp xỉ. Bản xem trước chính xác tùy chọn dùng lệnh biên dịch TeX của dự án.";
 "settings.appearance.theme" = "Chủ đề";
 "settings.appearance.language" = "Ngôn ngữ";
 "settings.appearance.language_system" = "Hệ thống";

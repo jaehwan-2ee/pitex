@@ -4,6 +4,7 @@
 
 mod completion;
 mod symbols;
+pub mod equation_preview;
 
 pub use completion::{CompletionContext, CompletionContextDetector, CompletionContextKind};
 pub use symbols::{symbols_in, SymbolCategory, TexSymbol, TEX_SYMBOLS};
@@ -50,7 +51,7 @@ impl SourceRange {
         })
     }
 
-    fn lexer_range(offset: usize, length: usize) -> Self {
+    pub(crate) fn lexer_range(offset: usize, length: usize) -> Self {
         Self {
             utf8_offset: offset as i64,
             utf8_length: length as i64,

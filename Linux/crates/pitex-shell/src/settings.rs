@@ -356,6 +356,57 @@ impl SettingsStore {
         self.prefs.set("pitex.pref.markdown.fontSize", v);
     }
 
+    /// `pitex.pref.equationPreview.enabled` — equation hover/caret preview,
+    /// default on (same keys/defaults as the macOS SettingsStore).
+    pub fn equation_preview_enabled(&self) -> bool {
+        self.prefs.bool("pitex.pref.equationPreview.enabled").unwrap_or(true)
+    }
+    pub fn set_equation_preview_enabled(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.equationPreview.enabled", v);
+    }
+    /// `pitex.pref.equationPreview.whileTyping` — update while typing,
+    /// default on.
+    pub fn equation_preview_while_typing(&self) -> bool {
+        self.prefs.bool("pitex.pref.equationPreview.whileTyping").unwrap_or(true)
+    }
+    pub fn set_equation_preview_while_typing(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.equationPreview.whileTyping", v);
+    }
+    /// `pitex.pref.equationPreview.placement` — "above" | "below"; missing
+    /// or unknown values resolve to "above" so picker tags never desync.
+    pub fn equation_preview_placement(&self) -> &'static str {
+        match self.prefs.string("pitex.pref.equationPreview.placement").as_deref() {
+            Some("below") => "below",
+            _ => "above",
+        }
+    }
+    pub fn set_equation_preview_placement(&mut self, v: &str) {
+        self.prefs.set("pitex.pref.equationPreview.placement", v);
+    }
+    /// `pitex.pref.equationPreview.renderer` — "fast" | "fastWithTeXFallback";
+    /// missing or unknown values resolve to "fast".
+    pub fn equation_preview_renderer(&self) -> &'static str {
+        match self.prefs.string("pitex.pref.equationPreview.renderer").as_deref() {
+            Some("fastWithTeXFallback") => "fastWithTeXFallback",
+            _ => "fast",
+        }
+    }
+    pub fn set_equation_preview_renderer(&mut self, v: &str) {
+        self.prefs.set("pitex.pref.equationPreview.renderer", v);
+    }
+    /// `pitex.pref.equationPreview.delay` — debounce ms; only the persisted
+    /// presets 0/80/150 survive, anything else (absurd, negative, non-preset)
+    /// falls back to the 80 default — mirrors the engine's ALLOWED_DELAYS.
+    pub fn equation_preview_delay_milliseconds(&self) -> i64 {
+        match self.prefs.int("pitex.pref.equationPreview.delay") {
+            Some(v @ (0 | 80 | 150)) => v,
+            _ => 80,
+        }
+    }
+    pub fn set_equation_preview_delay_milliseconds(&mut self, v: i64) {
+        self.prefs.set("pitex.pref.equationPreview.delay", v);
+    }
+
     pub fn update_settings(&mut self, next: PersistedSettings) {
         self.settings = next;
         self.persist_settings();

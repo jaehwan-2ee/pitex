@@ -124,6 +124,7 @@
 "build.issues" = "Problemas";
 
 "command.sync_forward" = "Mostrar selección en el PDF";
+"command.exact_equation_preview" = "Vista previa exacta de la ecuación";
 
 "sidebar.outline" = "Esquema";
 "sidebar.labels" = "Etiquetas";
@@ -184,6 +185,11 @@
 "editor.toggle_assistant" = "Alternar asistente";
 "editor.toggle_bottom" = "Alternar panel inferior";
 "editor.flip_panels" = "Intercambiar paneles";
+"equation_preview.accessibility_label" = "Vista previa de la ecuación renderizada";
+"equation_preview.unavailable" = "Vista previa no disponible";
+"equation_preview.exact_badge" = "TeX exacto";
+"equation_preview.fast_badge" = "Vista previa rápida";
+"equation_preview.exact_unavailable" = "La vista previa exacta necesita un comando de compilación pdflatex, xelatex, lualatex o latexmk.";
 "editor.reload" = "Recargar desde el disco";
 "editor.disk_changed" = "Cambios recargados desde el disco";
 "editor.disk_unchanged" = "No hay cambios en el disco";
@@ -288,6 +294,20 @@
 "settings.synctex.inverse_highlight" = "Sincronización inversa: resaltar la fuente en el editor";
 "settings.synctex.forward_highlight" = "Sincronización directa: resaltar el destino en el PDF";
 "settings.synctex.highlight_note" = "Muestra brevemente un resaltado amarillo en el destino. La navegación sigue funcionando con el resaltado desactivado.";
+"settings.editor.equation_preview.title" = "Vista previa de ecuaciones";
+"settings.editor.equation_preview.enabled" = "Mostrar vista previa de ecuaciones";
+"settings.editor.equation_preview.while_typing" = "Vista previa al escribir";
+"settings.editor.equation_preview.placement" = "Posición";
+"settings.editor.equation_preview.placement.above" = "Encima";
+"settings.editor.equation_preview.placement.below" = "Debajo";
+"settings.editor.equation_preview.renderer" = "Renderizador";
+"settings.editor.equation_preview.renderer.fast" = "Rápido";
+"settings.editor.equation_preview.renderer.fast_tex" = "Rápido + TeX (reserva)";
+"settings.editor.equation_preview.delay" = "Retardo";
+"settings.editor.equation_preview.delay.instant" = "Instantáneo";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "La vista previa rápida usa MathJax integrado sin ejecutar TeX y es aproximada. La vista previa exacta opcional usa el comando de compilación TeX del proyecto.";
 "settings.appearance.theme" = "Tema";
 "settings.appearance.language" = "Idioma";
 "settings.appearance.language_system" = "Sistema";

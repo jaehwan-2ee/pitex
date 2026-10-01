@@ -16,10 +16,11 @@ path = "src/main.rs"
 pitex-shell = { path = "../pitex-shell", default-features = false }
 
 [features]
-default = ["modern-gtk", "vte", "markdown-preview"]
+default = ["modern-gtk", "vte", "markdown-preview", "equation-preview"]
 modern-gtk = ["pitex-shell/modern-gtk"]
 vte = ["pitex-shell/vte"]
 markdown-preview = ["pitex-shell/markdown-preview"]
+equation-preview = ["pitex-shell/equation-preview"]
 
 # Debian package — `cargo deb -p pitex` builds the Ubuntu 24.04+ variant
 # (GTK 4.10+/libadwaita 1.4+/VTE embedded terminal). `$auto` resolves the
@@ -45,13 +46,54 @@ assets = [
         "usr/share/pixmaps/dev.pitex.app.png",
         "644",
     ],
+    # The equation preview embeds MathJax (Apache-2.0) and the mathjax-tex
+    # font (SIL OFL 1.1) in the binary; their notices and provenance ship here.
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/LICENSE",
+        "usr/share/doc/pitex/equation-preview/mathjax/LICENSE",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/OFL-1.1.txt",
+        "usr/share/doc/pitex/equation-preview/mathjax-tex-font/OFL-1.1.txt",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/package.json",
+        "usr/share/doc/pitex/equation-preview/mathjax-tex-font/package.json",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/VERSIONS",
+        "usr/share/doc/pitex/equation-preview/VERSIONS",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/manifest.json",
+        "usr/share/doc/pitex/equation-preview/manifest.json",
+        "644",
+    ],
 ]
 
 # Ubuntu 22.04 variant: GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — disables
 # `modern-gtk` so the compat code paths compile instead. Same package name:
 # it's an alternative build of the same app, not a separate package.
 # `markdown-preview` stays on: Jammy's updates ship libwebkitgtk-6.0-dev.
+# The equation preview (GTK 4.10 API) is not built, so its notices stay out.
 [package.metadata.deb.variants.ubuntu2204]
 name = "pitex"
 default-features = false
 features = ["markdown-preview"]
+assets = [
+    ["target/release/pitex", "usr/bin/pitex", "755"],
+    [
+        "../../packaging/dev.pitex.app.desktop",
+        "usr/share/applications/dev.pitex.app.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/dev.pitex.app.png",
+        "usr/share/pixmaps/dev.pitex.app.png",
+        "644",
+    ],
+]

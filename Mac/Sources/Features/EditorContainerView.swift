@@ -34,6 +34,9 @@ struct EditorContainerView: NSViewRepresentable {
     /// source line through it and takes preview-driven scrolls from it.
     /// Nil outside Markdown documents.
     var scrollSync: MarkdownScrollSync?
+    /// The workspace's equation hover/caret preview — bound to this text
+    /// view while it is mounted.
+    var equationPreview: EquationPreviewController?
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = adapter.textView
@@ -174,6 +177,8 @@ struct EditorContainerView: NSViewRepresentable {
             }
         }
         context.coordinator.textView = textView
+        context.coordinator.equationPreview = equationPreview
+        equationPreview?.attach(textView: textView, scrollView: scrollView)
 
         context.coordinator.lastAppearanceKey = appearanceKey
         applyAppearance(to: scrollView)
@@ -199,6 +204,9 @@ struct EditorContainerView: NSViewRepresentable {
         }
         coordinator.foldEngine?.detach()
         coordinator.bracketMatcher?.detach()
+        if let textView = coordinator.textView {
+            coordinator.equationPreview?.detach(from: textView)
+        }
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -219,6 +227,11 @@ struct EditorContainerView: NSViewRepresentable {
         if let completion, context.coordinator.completion !== completion {
             context.coordinator.completion = completion
             completion.overlay = context.coordinator.ghost
+        }
+        // Same late-binding rule for the equation preview.
+        if let equationPreview, context.coordinator.equationPreview !== equationPreview {
+            context.coordinator.equationPreview = equationPreview
+            equationPreview.attach(textView: adapter.textView, scrollView: scrollView)
         }
         // Re-applying fonts/colors and repainting every overlay on each
         // SwiftUI pass costs an O(document) minimap draw per keystroke; only
@@ -265,6 +278,7 @@ struct EditorContainerView: NSViewRepresentable {
         var scrollSync: MarkdownScrollSync?
         var scrollObserver: NSObjectProtocol?
         var completion: GhostCompletionCoordinator?
+        var equationPreview: EquationPreviewController?
         var onSyncRequest: ((Int, Int) -> Void)?
         var onBuildRequest: (() -> Void)?
         var lastAppearanceKey: AppearanceKey?

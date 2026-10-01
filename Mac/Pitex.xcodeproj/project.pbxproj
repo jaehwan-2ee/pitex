@@ -52,6 +52,8 @@
 		10000000000000000000001D /* PDFFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000011 /* PDFFeature */; };
 		100000000000000000000041 /* PitexIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000041 /* PitexIcon.icon */; };
 		100000000000000000000042 /* markdown-preview.html in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000042 /* markdown-preview.html */; };
+		100000000000000000000046 /* EquationPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000045 /* EquationPreview.swift */; };
+		100000000000000000000047 /* equation-preview in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000046 /* equation-preview */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -92,6 +94,8 @@
 		200000000000000000000044 /* SSHViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHViews.swift; sourceTree = "<group>"; };
 		200000000000000000000041 /* PitexIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PitexIcon.icon; sourceTree = "<group>"; };
 		200000000000000000000042 /* markdown-preview.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "markdown-preview.html"; sourceTree = "<group>"; };
+		200000000000000000000045 /* EquationPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquationPreview.swift; sourceTree = "<group>"; };
+		200000000000000000000046 /* equation-preview */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "equation-preview"; path = "../Assets/equation-preview"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -192,6 +196,7 @@
 				200000000000000000000043 /* RemoteSupport.swift */,
 				200000000000000000000044 /* SSHViews.swift */,
 				200000000000000000000033 /* SubscriptionUsage.swift */,
+				200000000000000000000045 /* EquationPreview.swift */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -204,6 +209,7 @@
 				200000000000000000000041 /* PitexIcon.icon */,
 				200000000000000000000030 /* PitexAgent */,
 				200000000000000000000042 /* markdown-preview.html */,
+				200000000000000000000046 /* equation-preview */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -304,6 +310,7 @@
 				100000000000000000000041 /* PitexIcon.icon in Resources */,
 				100000000000000000000009 /* PitexAgent in Resources */,
 				100000000000000000000042 /* markdown-preview.html in Resources */,
+				100000000000000000000047 /* equation-preview in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -336,6 +343,7 @@
 				100000000000000000000028 /* SubscriptionUsage.swift in Sources */,
 				100000000000000000000044 /* RemoteSupport.swift in Sources */,
 				100000000000000000000045 /* SSHViews.swift in Sources */,
+				100000000000000000000046 /* EquationPreview.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

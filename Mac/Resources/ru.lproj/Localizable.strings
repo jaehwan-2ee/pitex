@@ -124,6 +124,7 @@
 "build.issues" = "Проблемы";
 
 "command.sync_forward" = "Показать выделение в PDF";
+"command.exact_equation_preview" = "Точный предпросмотр формулы";
 
 "sidebar.outline" = "Структура";
 "sidebar.labels" = "Метки";
@@ -184,6 +185,11 @@
 "editor.toggle_assistant" = "Переключить ассистента";
 "editor.toggle_bottom" = "Переключить нижнюю панель";
 "editor.flip_panels" = "Поменять панели местами";
+"equation_preview.accessibility_label" = "Отрисованный предпросмотр формулы";
+"equation_preview.unavailable" = "Предпросмотр недоступен";
+"equation_preview.exact_badge" = "Точный TeX";
+"equation_preview.fast_badge" = "Быстрый предпросмотр";
+"equation_preview.exact_unavailable" = "Точный предпросмотр требует команду сборки pdflatex, xelatex, lualatex или latexmk.";
 "editor.reload" = "Перезагрузить с диска";
 "editor.disk_changed" = "Изменения перезагружены с диска";
 "editor.disk_unchanged" = "Изменений на диске нет";
@@ -288,6 +294,20 @@
 "settings.synctex.inverse_highlight" = "Обратная синхронизация: подсвечивать источник в редакторе";
 "settings.synctex.forward_highlight" = "Прямая синхронизация: подсвечивать место назначения в PDF";
 "settings.synctex.highlight_note" = "Кратковременно показывать жёлтую подсветку в месте назначения. Навигация работает и при выключенной подсветке.";
+"settings.editor.equation_preview.title" = "Предпросмотр формул";
+"settings.editor.equation_preview.enabled" = "Показывать предпросмотр формул";
+"settings.editor.equation_preview.while_typing" = "Предпросмотр во время ввода";
+"settings.editor.equation_preview.placement" = "Расположение";
+"settings.editor.equation_preview.placement.above" = "Сверху";
+"settings.editor.equation_preview.placement.below" = "Снизу";
+"settings.editor.equation_preview.renderer" = "Рендерер";
+"settings.editor.equation_preview.renderer.fast" = "Быстрый";
+"settings.editor.equation_preview.renderer.fast_tex" = "Быстрый + TeX-резерв";
+"settings.editor.equation_preview.delay" = "Задержка";
+"settings.editor.equation_preview.delay.instant" = "Мгновенно";
+"settings.editor.equation_preview.delay.80" = "80 мс";
+"settings.editor.equation_preview.delay.150" = "150 мс";
+"settings.editor.equation_preview.footnote" = "Быстрый предпросмотр рисуется встроенным MathJax без запуска TeX и является приблизительным. Необязательный точный предпросмотр использует команду сборки TeX проекта.";
 "settings.appearance.theme" = "Тема";
 "settings.appearance.language" = "Язык";
 "settings.appearance.language_system" = "Системный";

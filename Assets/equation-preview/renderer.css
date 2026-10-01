@@ -1,0 +1,51 @@
+:root {
+  --pitex-fg: #1d1d1f;
+  --pitex-bg: #ffffff;
+  --pitex-font-size: 16px;
+  color-scheme: light dark;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--pitex-bg);
+  color: var(--pitex-fg);
+  /* Large expressions scroll inside the clamped native popover. */
+  overflow: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+#display, #measure {
+  box-sizing: border-box;
+  padding: 12px;
+  font-size: var(--pitex-font-size);
+  line-height: normal;
+  white-space: nowrap;
+}
+
+/* A block (not inline-block) so no line-box descender space pushes the
+   page past the measured size and summons a scrollbar. */
+#display {
+  display: block;
+  width: max-content;
+}
+
+/* Off-screen metric source for MathJax.getMetricsFor. */
+#measure {
+  display: inline-block;
+  position: absolute;
+  visibility: hidden;
+  left: -10000px;
+  top: 0;
+}
+
+#display svg {
+  display: block;
+  overflow: visible;
+}
+
+#display svg * {
+  pointer-events: none;
+}

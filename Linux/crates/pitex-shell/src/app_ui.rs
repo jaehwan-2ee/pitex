@@ -230,6 +230,10 @@ pub struct AppState {
     /// never touches the chat transcript. Rebound per session in
     /// `attach_session`, shut down with the workspace.
     pub completion: Rc<GhostCompletionCoordinator>,
+    /// Equation hover/caret preview — one MathJax web view per window,
+    /// rebound per session in `attach_session`.
+    #[cfg(all(feature = "equation-preview", unix))]
+    pub equation_preview: Rc<crate::equation_preview::EquationPreviewHost>,
     /// The fold chip layer currently overlaid on the editor scroller —
     /// tracked so `rebind_editor_widget` can remove the previous one.
     pub fold_chip: RefCell<Option<gtk4::DrawingArea>>,
@@ -351,6 +355,8 @@ impl AppState {
             search: None,
             fold: None,
             completion: GhostCompletionCoordinator::new(),
+            #[cfg(all(feature = "equation-preview", unix))]
+            equation_preview: crate::equation_preview::EquationPreviewHost::new(),
             fold_chip: RefCell::new(None),
             rendered_agent_revision: Cell::new(0),
             transcript_rendered_at: Cell::new(std::time::Instant::now()),
@@ -418,6 +424,15 @@ impl AppState {
                             .map(|st| st.completion_context())
                     })
                     .unwrap_or_default()
+            })
+        }));
+        // Included definitions come from open buffers before disk.
+        #[cfg(all(feature = "equation-preview", unix))]
+        state.equation_preview.set_open_text_provider(Box::new(|path| {
+            STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .and_then(|state| state.try_borrow().ok().and_then(|st| st.open_document_text(path)))
             })
         }));
         state
@@ -623,6 +638,8 @@ impl AppState {
 
     pub fn persist_commands(&mut self) {
         self.model.persist_commands(&mut self.store);
+        // The exact equation preview follows the build command's engine.
+        self.sync_equation_preview();
     }
 
     pub fn sync_build_entries(&self) {
@@ -692,6 +709,7 @@ impl AppState {
         // Unset role colors default to the effective mode's palette, so the
         // scheme must be in place before `stored_hex` reads below.
         self.appearance.resolved_dark.set(manager.is_dark());
+        self.sync_equation_preview();
         // Generate a GtkSourceView style scheme from the palette — the
         // native mechanism for editor/gutter/line-number colors.
         let prefs = self.store.prefs();
@@ -818,7 +836,53 @@ impl AppState {
         // The ghost label tracks the editor font so suggestion text and
         // document text share family and size.
         self.completion.refresh_font(&self.editor_font_desc());
+        self.sync_equation_preview();
     }
+
+    /// Unsaved text of an open document — the equation preview reads
+    /// included definitions from buffers before disk.
+    pub fn open_document_text(&self, path: &std::path::Path) -> Option<String> {
+        let root = self.model.project_url.as_ref()?;
+        let relative = WorkspaceModel::relative_path(path, root).ok()?;
+        self.model
+            .registered_sessions
+            .iter()
+            .find(|session| session.path() == &relative)
+            .map(|session| session.snapshot().text)
+    }
+
+    /// Push settings, theme, font, build command and main file to the
+    /// equation preview — each part is a no-op when unchanged.
+    #[cfg(all(feature = "equation-preview", unix))]
+    pub fn sync_equation_preview(&self) {
+        use editor_feature::equation_preview::{EquationPreviewAppearance, EquationPreviewScheme, EquationPreviewSettings};
+        let settings = EquationPreviewSettings::from_persisted(
+            self.store.equation_preview_enabled(),
+            self.store.equation_preview_while_typing(),
+            self.store.equation_preview_placement(),
+            self.store.equation_preview_renderer(),
+            self.store.equation_preview_delay_milliseconds(),
+        );
+        let manager = adw::StyleManager::default();
+        let scheme = match (manager.is_high_contrast(), manager.is_dark()) {
+            (true, true) => EquationPreviewScheme::HighContrastDark,
+            (true, false) => EquationPreviewScheme::HighContrastLight,
+            (false, true) => EquationPreviewScheme::Dark,
+            (false, false) => EquationPreviewScheme::Light,
+        };
+        // Math reads best a little larger than body text.
+        let appearance = EquationPreviewAppearance { scheme, font_size: self.appearance.font_size.max(1.0) + 3.0 };
+        self.equation_preview.set_language(self.language);
+        self.equation_preview.sync(
+            settings,
+            appearance,
+            &self.model.build_command_text,
+            self.model.build_source_url(),
+        );
+    }
+
+    #[cfg(not(all(feature = "equation-preview", unix)))]
+    pub fn sync_equation_preview(&self) {}
 
     /// `rehighlight()` — re-tokenize and push decorations + structure.
     pub fn rehighlight(&self) {
@@ -1062,11 +1126,18 @@ impl AppState {
             self.completion
                 .attach(adapter.view(), adapter.buffer(), &ghost_label);
         }
+        #[cfg(all(feature = "equation-preview", unix))]
+        {
+            self.equation_preview.set_project_root(self.model.project_url.clone());
+            self.equation_preview.set_document(self.model.active_document_url.clone());
+            self.equation_preview.attach(adapter.view(), adapter.buffer());
+        }
         self.rebind_editor_widget();
         self.apply_editor_preferences();
         self.apply_theme();
         self.rehighlight();
         self.install_editor_controllers();
+        self.sync_equation_preview();
     }
 
     /// Swap the editor child inside the scroller and (re)wire the minimap.
@@ -1232,6 +1303,8 @@ impl AppState {
 
     /// After any text-affecting change: footer, save button, structure lists.
     pub fn refresh_after_document_change(&mut self) {
+        // The resolved main document may have changed with the edit.
+        self.sync_equation_preview();
         self.refresh_footer();
         self.refresh_tabs();
         self.refresh_sidebar();
@@ -1424,6 +1497,8 @@ impl AppState {
         // `completion?.shutdown()` — the dedicated subprocess dies with the
         // workspace and `attach` respawns it on the next document.
         self.completion.shutdown();
+        #[cfg(all(feature = "equation-preview", unix))]
+        self.equation_preview.shutdown();
         if let Some(agent) = self.agent.as_mut() {
             agent.shutdown();
         }
@@ -4907,6 +4982,9 @@ pub fn run(app_version: &str) -> i32 {
                     st.model.wait_for_pending_writes();
                     // `flushRemote` on terminate — the last upload, bounded.
                     st.model.flush_remote(std::time::Duration::from_secs(10));
+                    // Quit skips `close_workspace`: drop the exact-preview temp tree too.
+                    #[cfg(all(feature = "equation-preview", unix))]
+                    st.equation_preview.shutdown();
                 }
             }
         });
@@ -5137,6 +5215,11 @@ fn build_chrome(
         Some(&tr(lang, "command.sync_forward")),
         Some("win.syncforward"),
     );
+    #[cfg(all(feature = "equation-preview", unix))]
+    build_section.append(
+        Some(&tr(lang, "command.exact_equation_preview")),
+        Some("win.exactequation"),
+    );
     primary.append_section(Some(&tr(lang, "command.build_menu")), &build_section);
     let view_section = gio::Menu::new();
     view_section.append(
@@ -5277,6 +5360,9 @@ fn build_chrome(
     app.set_accels_for_action("win.cancelbuild", &["<Control>period"]);
     app.set_accels_for_action("win.runcustom", &["<Control><Alt>b"]);
     app.set_accels_for_action("win.syncforward", &["<Control><Shift>j"]);
+    // ⌘⌥E on macOS: exact TeX render of the equation at the caret/pointer.
+    #[cfg(all(feature = "equation-preview", unix))]
+    app.set_accels_for_action("win.exactequation", &["<Control><Alt>e"]);
     app.set_accels_for_action("win.sidebar", &["<Control>t"]);
     app.set_accels_for_action("win.inspector", &["<Control><Alt>p"]);
     app.set_accels_for_action("win.bottompanel", &["<Control><Shift>y"]);
@@ -5387,6 +5473,19 @@ fn build_chrome(
         sync_action.connect_activate(move |_, _| state.borrow_mut().sync_forward_action());
     }
     window.add_action(&sync_action);
+    #[cfg(all(feature = "equation-preview", unix))]
+    {
+        let exact_action = gio::SimpleAction::new("exactequation", None);
+        let state = state.clone();
+        exact_action.connect_activate(move |_, _| {
+            // Clone out first: the request may re-enter state through GTK.
+            let host = state.try_borrow().ok().map(|s| s.equation_preview.clone());
+            if let Some(host) = host {
+                host.request_exact();
+            }
+        });
+        window.add_action(&exact_action);
+    }
     // Open Recent — the menu item carries the recents index as an int target.
     // `win.openrecent(5)` parses `5` via g_variant_parse → int64 ("x").
     let openrecent_action = gio::SimpleAction::new(

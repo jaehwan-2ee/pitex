@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,6 +25,41 @@ async function swiftComponents() {
   if (resolved) for (const pin of JSON.parse(resolved).pins ?? []) output.push({ type: 'library', name: pin.identity, version: pin.state?.version ?? pin.state?.revision ?? 'unresolved', externalReferences: pin.location ? [{ type: 'vcs', url: pin.location }] : undefined, properties: [{ name: 'pitex:swift-resolved', value: slash(relative(ROOT, resolvedPath)) }] });
   return output;
 }
+// Vendored runtime assets pinned by Assets/*/vendor/manifest.json (produced
+// by the matching Tools/fetch-*-assets script) — read the manifest, never a
+// second hand-maintained inventory that could drift from it.
+async function vendorComponents() {
+  const output = [];
+  const assetsDir = join(ROOT, 'Assets');
+  for (const asset of (await readdir(assetsDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!asset.isDirectory()) continue;
+    const manifestPath = join(assetsDir, asset.name, 'vendor', 'manifest.json');
+    const text = await optionalText(manifestPath);
+    if (text === null) continue;
+    const manifest = JSON.parse(text);
+    const fileCount = Object.keys(manifest.files ?? {}).length;
+    for (const pkg of manifest.packages ?? []) {
+      const component = {
+        type: 'library',
+        name: pkg.name,
+        version: pkg.version,
+        group: `${asset.name}/vendor`,
+        licenses: [pkg.license.includes(' ') ? { expression: pkg.license } : { license: { id: pkg.license } }],
+        externalReferences: [
+          { type: 'distribution', url: pkg.url, hashes: [{ alg: 'SHA-512', content: Buffer.from(pkg.integrity.replace(/^sha512-/, ''), 'base64').toString('hex') }] },
+          { type: 'website', url: pkg.home },
+        ],
+        properties: [
+          { name: 'pitex:manifest', value: slash(relative(ROOT, manifestPath)) },
+          { name: 'pitex:vendored-files', value: `${fileCount}` },
+          { name: 'pitex:integrity', value: pkg.integrity },
+        ],
+      };
+      output.push(component);
+    }
+  }
+  return output;
+}
 function toolVersion(command, args = ['--version']) {
   const result = spawnSync(command, args, { cwd: ROOT, shell: false, encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024, env: { PATH: process.env.PATH ?? '', LANG: 'C', LC_ALL: 'C', NO_COLOR: '1' } });
   if (result.error?.code === 'ENOENT') return 'unavailable';
@@ -42,7 +77,7 @@ async function xcodeComponent() {
   return { type: 'application', name: 'Pitex-Xcode-source-config', version: 'source', properties: properties.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 export async function generateSbom() {
-  const components = [...await swiftComponents(), await xcodeComponent()];
+  const components = [...await swiftComponents(), await xcodeComponent(), ...await vendorComponents()];
   for (const command of ['latexmk', 'pdflatex', 'xelatex', 'lualatex', 'synctex']) components.push({ type: 'application', name: command, version: toolVersion(command) });
   components.sort((a, b) => `${a.type}:${a.group ?? ''}:${a.name}:${a.version}`.localeCompare(`${b.type}:${b.group ?? ''}:${b.name}:${b.version}`));
   return { bomFormat: 'CycloneDX', specVersion: '1.6', version: 1, metadata: { component: { type: 'application', name: 'Pitex-source', version: 'provisional-g005' }, properties: [{ name: 'pitex:deterministic', value: 'true' }, { name: 'pitex:source-root', value: '.' }] }, components };

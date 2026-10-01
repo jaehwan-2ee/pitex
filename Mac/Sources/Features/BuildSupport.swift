@@ -68,7 +68,8 @@ actor StreamingBuildExecutor: BuildProcessExecuting {
 
     /// Finder does not load shell profiles. Include the standard macOS TeX
     /// locations for both the engine and subprocesses such as xdvipdfmx/bibtex.
-    private static func buildEnvironment(_ policy: EnvironmentPolicy) async -> EnvironmentPolicy {
+    /// The exact equation preview reuses it so both find the same engine.
+    static func buildEnvironment(_ policy: EnvironmentPolicy) async -> EnvironmentPolicy {
         guard case var .inherit(overrides) = policy else { return policy }
         let path = overrides["PATH"] ?? ProcessInfo.processInfo.environment["PATH"]
             ?? "/usr/bin:/bin:/usr/sbin:/sbin"

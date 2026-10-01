@@ -62,7 +62,10 @@ windows = { version = "0.62", optional = true, features = [
 # explicitly), WebView2 on Windows — and each `dep:` activates only on
 # its own target.
 [features]
-default = ["modern-gtk", "vte", "markdown-preview"]
+default = ["modern-gtk", "vte", "markdown-preview", "equation-preview"]
 modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
 vte = ["dep:vte4"]
 markdown-preview = ["dep:webkit6", "dep:webview2-com", "dep:windows"]
+# Equation hover/caret preview: WebKitGTK 6.0 MathJax renderer on Unix
+# (Ubuntu 24.04 API level); assets are embedded by build.rs.
+equation-preview = ["modern-gtk", "dep:webkit6"]

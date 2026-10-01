@@ -1,0 +1,61 @@
+mathjax                    4.1.3  Apache-2.0  https://github.com/mathjax/MathJax
+@mathjax/mathjax-tex-font  4.1.3  Apache-2.0 + OFL-1.1  https://github.com/mathjax/MathJax-fonts
+
+Vendored from the npm registry tarballs by Tools/fetch-equation-preview-assets.mjs,
+which verifies each tarball against the pinned npm dist.integrity (sha512)
+before extracting and records a sha256 per file in manifest.json.
+`node Tools/fetch-equation-preview-assets.mjs --check` re-verifies the tree.
+
+Entry point: mathjax/tex-svg-nofont.js — the TeX->SVG combined component
+with NO embedded font (loader, startup, core, input/tex, output/svg,
+ui/menu).  The mathjax-tex font ships as mathjax-tex-font/svg.js, which
+contains all glyph data inline — this package has no dynamic font files, so
+rendering never loads anything asynchronously.
+
+The renderer page MUST set
+    MathJax.loader.paths.mathjax = <URL of this mathjax/ directory>
+    MathJax.loader.paths.fonts   = <same directory>
+    MathJax.output.font          = 'mathjax-tex'
+before tex-svg-nofont.js executes (inline or via <script src>).  Rationale:
+
+  * output.font — without it the bundle defaults to 'mathjax-newcm' and the
+    loader looks for mathjax-newcm-font/svg.js, which is intentionally NOT
+    vendored (its upstream NewCM glyph provenance is GUST/GPL-3+FE+DE —
+    rejected for this license-sensitive slice).  The lookup then fails
+    closed against the local tree; it cannot reach the network because
+    paths.fonts is local and the page's CSP/resource policy is restrictive.
+  * paths.fonts — upstream default is https://cdn.jsdelivr.net/npm/@mathjax.
+    The bundle derives paths["mathjax-tex"]="[fonts]/mathjax-tex-font" and
+    loads "[mathjax-tex]/svg" → mathjax-tex-font/svg.js locally.
+  * paths.mathjax — TeX autoload and \require resolve extension files as
+    "[mathjax]/input/tex/extensions/<name>.js"; all 41 extension files are
+    vendored under input/tex/extensions/, so autoload never leaves the
+    directory.  \require accepts alnum names only; unvendored names fail
+    closed against the local path.
+
+Font provenance and license: mathjax-tex is the original MathJax TeX font
+set (MathJax-authored glyph data, the same font MathJax v2/v3 shipped).
+The npm package.json declares Apache-2.0 for the package, while the font's
+own legal declaration is SIL OFL 1.1:
+  upstream source: @mathjax/mathjax-tex-font@4.1.3 tarball,
+    file def/mathjax-tex.ts lines 1547-1550
+    (legal: { copyright: 'Copyright (c) 2022, MathJax, Inc.',
+              license: SIL_LICENSE, licenseURL: SIL_URL }),
+    sha256(bbb6865312e7a6d42d142e641d3075616635c88d75f741adb1ce533ae5255953).
+Both notices are honored: the npm-package Apache-2.0 text is mathjax/LICENSE,
+and the canonical OFL-1.1 text is mathjax-tex-font/OFL-1.1.txt (sha256
+8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd, SPDX
+license-list-data).  mathjax-tex-font/package.json is retained as the npm
+provenance record.
+
+Coverage: mathjax-tex covers all standard AMS math required by the preview
+(fractions, roots, sums/integrals, all listed environments, \mathbb, \mathcal,
+\mathfrak, \text, accents, delimiters, extensible arrows).  Some exotic
+Unicode ranges that mathjax-newcm supported (e.g. braille, phonetics, PUA)
+render as missing glyphs rather than fetching anything — integrators should
+route such input to the opt-in exact-TeX path rather than pretend fidelity.
+
+Not vendored: a11y/*, sre/*, input/mml/entities.js — the preview is TeX->SVG
+only; assistive-MML/explorer/speech features must stay disabled or those
+components would attempt component loads.  ui/safe.js is vendored for an
+optional MathJax-side sanitizer (loader.load('ui/safe')).
