@@ -1,0 +1,14 @@
+Mac/Sources/Features/AgentPanel.swift
+  h_bcbc8ae9e599aa 212,215-218,253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e304c335a170f5bcbaa07ee51181954fc0c55ad5",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
