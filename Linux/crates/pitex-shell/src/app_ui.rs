@@ -593,11 +593,13 @@ impl AppState {
 
     /// Name of the rendered PDF — the basename; the artifact's full
     /// project-relative path stays in `latest_built_pdf_name` for fetch
-    /// and download.
+    /// and download (an editing preview shows its own session file name).
     pub fn pdf_display_name(&self) -> String {
-        self.model
-            .latest_built_pdf_name
-            .as_deref()
+        let shown = match &self.model.retained_pdf {
+            Some(r) if self.model.displaying_editing_preview() => Some(r.artifact.as_str()),
+            _ => self.model.latest_built_pdf_name.as_deref(),
+        };
+        shown
             .and_then(|n| std::path::Path::new(n).file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "document.pdf".into())
@@ -923,6 +925,7 @@ impl AppState {
         self.model
             .dispatch_live_requests(requests, &self.store, self.language);
         self.arm_live_timer();
+        self.arm_embedded_timer();
         // Structure parse is debounced — it re-parses the whole document
         // and ran on every keystroke.
         self.schedule_structure_refresh();
@@ -965,6 +968,8 @@ impl AppState {
         self.model
             .dispatch_live_requests(requests, &self.store, self.language);
         self.arm_live_timer();
+        self.arm_embedded_timer();
+        self.refresh_preview_label();
         self.refresh_build_ui();
     }
 
@@ -1627,6 +1632,10 @@ impl AppState {
     pub fn close_document(&mut self, url: PathBuf) {
         self.model.close_document(&url);
         self.refresh_after_document_change();
+        // The open-source set changed: refresh so the helper drops the
+        // override and SyncTeX can rebind (no edit-revision bump).
+        self.model.request_embedded_refresh(&self.store);
+        self.arm_embedded_timer();
     }
 
     pub fn reload_active(&mut self) {
@@ -3322,7 +3331,7 @@ impl AppState {
                         nav.set_visible(true);
                     }
                     if let Some(name) = ui.pdf_name_label.borrow().as_ref() {
-                        name.set_text(&self.pdf_display_name());
+                        name.set_text(&self.preview_header_text());
                     }
                 });
                 self.render_pdf_page();
@@ -3812,6 +3821,12 @@ impl AppState {
                                             }
                                         }
                                         st.refresh_after_document_change();
+                                        // TeX may have read it (an unopened
+                                        // \input, a figure, a .bib): the
+                                        // helper rescans what it read.
+                                        let st = &mut *st;
+                                        st.model.request_embedded_refresh(&st.store);
+                                        st.arm_embedded_timer();
                                     }
                                 });
                             },
@@ -3921,6 +3936,9 @@ impl AppState {
                     self.model.apply_activate(activated);
                     self.attach_session(session);
                     self.refresh_after_document_change();
+                    // A clean open changed the all-open-source identity.
+                    self.model.request_embedded_refresh(&self.store);
+                    self.arm_embedded_timer();
                 }
                 // `activateDocument`'s catch publishes `.failed` — the
                 // workspace never went through a loading phase first.
@@ -4055,11 +4073,17 @@ impl AppState {
                 // External edits also move git status — refresh keeps the
                 // panel live like VSCode's filesystem watcher.
                 self.refresh_git();
+                // TeX may have read the changed file.
+                self.model.request_embedded_refresh(&self.store);
+                self.arm_embedded_timer();
             }
             WorkspaceMessage::SaveFinished { path, result } => {
                 self.model.apply_save_finished(&path, result);
                 self.refresh_after_document_change();
                 self.refresh_git();
+                // Saved buffers stop overriding the helper's disk view.
+                self.model.request_embedded_refresh(&self.store);
+                self.arm_embedded_timer();
             }
             WorkspaceMessage::AgentActivityFinished => {
                 let confirm = self.store.confirm_overwrite();
@@ -4068,6 +4092,7 @@ impl AppState {
                     editor.refresh_from_session();
                 }
                 self.refresh_after_document_change();
+                self.arm_embedded_timer();
                 // `agentActivityDidFinish` — agent edits upload too.
                 {
                     self.model.push_remote();
@@ -4088,6 +4113,7 @@ impl AppState {
                         editor.refresh_from_session();
                     }
                     self.refresh_after_document_change();
+                    self.arm_embedded_timer();
                 }
                 self.refresh_remote_status();
             }
@@ -4103,6 +4129,7 @@ impl AppState {
                         editor.refresh_from_session();
                     }
                     self.refresh_after_document_change();
+                    self.arm_embedded_timer();
                 }
                 self.refresh_remote_status();
             }
@@ -4201,6 +4228,13 @@ impl AppState {
                 }
                 self.refresh_git_panel();
             }
+            WorkspaceMessage::EmbeddedPreview { session, event } => {
+                if self.model.apply_embedded_event(session, event) {
+                    self.refresh_pdf_ui();
+                }
+                self.refresh_preview_label();
+                self.refresh_synctex_status();
+            }
         }
         self.drain_side_effects();
     }
@@ -4217,6 +4251,9 @@ thread_local! {
     /// The pending live-compile debounce source — re-armed on every real
     /// edit and after each fire/completion until no work is pending.
     static LIVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// The pending embedded-preview coalescing source (independent of the
+    /// build slot: updates stream while the helper is still working).
+    static EMBEDDED_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
     /// Resolved UI language for `a11y` — readable without borrowing state.
     static LANG: Cell<&'static str> = const { Cell::new("en") };
     /// Pending post-edit re-highlight / structure-refresh sources.
@@ -4260,6 +4297,127 @@ impl AppState {
             .dispatch_live_requests(requests, &self.store, self.language);
         self.refresh_build_ui();
         self.arm_live_timer();
+    }
+}
+
+/// One firing of the embedded-preview coalescing timer: streams the newest
+/// buffers to the helper. A borrowed state re-queues shortly.
+fn embedded_timer_fire() {
+    EMBEDDED_SOURCE.with(|s| s.borrow_mut().take());
+    let borrowed = STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else { return false };
+        let Ok(mut st) = state.try_borrow_mut() else { return true };
+        st.embedded_timer_attempt();
+        false
+    });
+    if borrowed {
+        glib::timeout_add_local_once(Duration::from_millis(50), embedded_timer_fire);
+    }
+}
+
+impl AppState {
+    /// (Re)arm the embedded-preview coalescing timer while an update is
+    /// pending; an IME composition retries instead of sending partial text.
+    fn arm_embedded_timer(&mut self) {
+        EMBEDDED_SOURCE.with(|s| {
+            if let Some(id) = s.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let Some(delay) = self.model.embedded_poll_delay(composing) else {
+            return;
+        };
+        let id = glib::timeout_add_local_once(Duration::from_millis(delay.max(1)), embedded_timer_fire);
+        EMBEDDED_SOURCE.with(|s| *s.borrow_mut() = Some(id));
+    }
+
+    fn embedded_timer_attempt(&mut self) {
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        if composing {
+            self.arm_embedded_timer();
+            return;
+        }
+        self.model.flush_embedded_preview(&self.store);
+        self.refresh_preview_label();
+        self.arm_embedded_timer();
+    }
+
+    /// PDF header: which kind of artifact is on screen. Editing previews
+    /// are never presented as compiler output.
+    pub fn preview_header_text(&self) -> String {
+        use crate::embedded_preview::PreviewStatus;
+        let name = self.pdf_display_name();
+        if self.model.displaying_editing_preview() {
+            let mut text = format!("{} · {name}", tr(self.language, "preview.embedded_label"));
+            match &self.model.embedded.status {
+                PreviewStatus::Updating => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_updating"));
+                }
+                PreviewStatus::Failed(_) | PreviewStatus::Errors(_) => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_failed"));
+                }
+                PreviewStatus::Unavailable(_) => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_unavailable"));
+                }
+                PreviewStatus::Current | PreviewStatus::Off => {}
+            }
+            return text;
+        }
+        let live_artifact = self
+            .model
+            .latest_built_pdf_name
+            .as_deref()
+            .map(|n| n.starts_with(".pitex-live/"))
+            .unwrap_or(false);
+        if live_artifact {
+            name
+        } else {
+            format!("{} · {name}", tr(self.language, "preview.final_label"))
+        }
+    }
+
+    /// Tooltip detail for the header: first TeX error or failure reason.
+    fn preview_header_detail(&self) -> Option<String> {
+        use crate::embedded_preview::PreviewStatus;
+        if crate::embedded_preview::SUPPORTED
+            && self.model.remote.is_some()
+            && self.store.live_compile_enabled()
+            && self.store.live_preview_backend() == "embedded"
+        {
+            return Some(tr(self.language, "preview.embedded_unsupported_remote"));
+        }
+        match &self.model.embedded.status {
+            PreviewStatus::Errors(m) | PreviewStatus::Failed(m) | PreviewStatus::Unavailable(m)
+                if !m.is_empty() =>
+            {
+                Some(m.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn refresh_preview_label(&self) {
+        let text = self.preview_header_text();
+        let detail = self.preview_header_detail();
+        UI.with(|ui| {
+            if let Some(name) = ui.pdf_name_label.borrow().as_ref() {
+                name.set_text(&text);
+                name.set_tooltip_text(detail.as_deref());
+            }
+        });
     }
 }
 
@@ -4907,6 +5065,9 @@ pub fn run(app_version: &str) -> i32 {
                     st.model.wait_for_pending_writes();
                     // `flushRemote` on terminate — the last upload, bounded.
                     st.model.flush_remote(std::time::Duration::from_secs(10));
+                    // The editing-preview helper group and its temporary
+                    // directory go with the app.
+                    st.model.embedded.terminate_now();
                 }
             }
         });

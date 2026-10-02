@@ -234,13 +234,30 @@ impl SyncTeXRunner {
             )
             .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
         self.validate(binding)?;
-        let normalized = Self::normalize(
+        Self::forward_candidate(
             &String::from_utf8_lossy(&result.standard_output),
+            binding,
+            &resolved_source,
+            line,
+            column,
+        )
+    }
+
+    /// Parse and select the `synctex view` result for the bound PDF.
+    fn forward_candidate(
+        stdout: &str,
+        binding: &SyncTeXBinding,
+        resolved_source: &Path,
+        line: i64,
+        column: i64,
+    ) -> Result<SyncTeXQueryCandidate, SyncTeXSupportError> {
+        let normalized = Self::normalize(
+            stdout,
             &[
                 ("Input", resolved_source.to_string_lossy().into_owned()),
                 ("Line", line.to_string()),
                 ("Column", column.to_string()),
-                ("Output", binding.pdf_url.to_string_lossy().into_owned()),
+                ("Output", Self::parser_pdf_url(binding)),
             ],
             binding,
         );
@@ -258,15 +275,9 @@ impl SyncTeXRunner {
                 .unwrap_or(&resolved_source.to_string_lossy()),
         )
         .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
-        let pdf_path = NormalizedSourcePath::new(
-            binding
-                .pdf_url
-                .to_string_lossy()
-                .strip_prefix(&format!("{}/", binding.project_root.to_string_lossy()))
-                .unwrap_or(&binding.pdf_url.to_string_lossy()),
-        )
-        .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
-        let candidate = ExactSyncTeXQuerySelector::forward(
+        let pdf_path = NormalizedSourcePath::new(&Self::parser_pdf_path(binding))
+            .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
+        ExactSyncTeXQuerySelector::forward(
             &document.candidates[..document.candidates.len().min(1)],
             &ForwardSyncQuery {
                 revision: binding.revision.clone(),
@@ -276,8 +287,30 @@ impl SyncTeXRunner {
             },
             &binding.output_hash,
         )
-        .map_err(map_selector_error)?;
-        Ok(candidate)
+        .map_err(map_selector_error)
+    }
+
+    /// Project-relative path the strict query parser sees for the bound
+    /// PDF. An editing preview lives in its session directory outside the
+    /// project, so it goes by its file name; `validate` pins the exact
+    /// bytes (SHA-256 and SyncTeX fingerprint) around every query.
+    fn parser_pdf_path(binding: &SyncTeXBinding) -> String {
+        match binding.pdf_url.strip_prefix(&binding.project_root) {
+            Ok(relative) => relative.to_string_lossy().into_owned(),
+            Err(_) => binding
+                .pdf_url
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn parser_pdf_url(binding: &SyncTeXBinding) -> String {
+        binding
+            .project_root
+            .join(Self::parser_pdf_path(binding))
+            .to_string_lossy()
+            .into_owned()
     }
 
     /// `inverse` — `synctex edit -o page:x:y:pdf`.
@@ -330,7 +363,7 @@ impl SyncTeXRunner {
                 ("v", point.y.to_string()),
                 ("W", "0".to_string()),
                 ("H", "0".to_string()),
-                ("Output", binding.pdf_url.to_string_lossy().into_owned()),
+                ("Output", Self::parser_pdf_url(binding)),
             ],
             binding,
         );
@@ -341,14 +374,8 @@ impl SyncTeXRunner {
                 .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?,
         )
         .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
-        let pdf_path = NormalizedSourcePath::new(
-            binding
-                .pdf_url
-                .to_string_lossy()
-                .strip_prefix(&format!("{}/", binding.project_root.to_string_lossy()))
-                .unwrap_or(&binding.pdf_url.to_string_lossy()),
-        )
-        .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
+        let pdf_path = NormalizedSourcePath::new(&Self::parser_pdf_path(binding))
+            .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
         let candidate = ExactSyncTeXQuerySelector::inverse(
             &document.candidates[..document.candidates.len().min(1)],
             &InverseSyncQuery {
@@ -468,6 +495,11 @@ impl SyncTeXRunner {
                     }
                 });
                 value = standardize(candidate).to_string_lossy().into_owned();
+                // The CLI's Output is the `-o` PDF; one outside the project
+                // (an editing preview) is renamed like `parser_pdf_path`.
+                if key == "Output" && !binding.pdf_url.starts_with(&binding.project_root) {
+                    value = Self::parser_pdf_url(binding);
+                }
             }
             if Self::ALLOWED_FIELDS.contains(&key) {
                 fields.retain(|(k, _)| k != key);
@@ -845,6 +877,35 @@ mod binding_tests {
         // constructed — NormalizedSourcePath rejects it upstream.
         assert!(NormalizedSourcePath::new("../../../escape-target.tex").is_err());
         let _ = std::fs::remove_file(&outside);
+    }
+
+    /// An editing preview's PDF lives in the helper's session directory,
+    /// outside the project. Its forward results must still parse and
+    /// select (the strict parser accepts only project-relative outputs);
+    /// this is the `synctex view` output for such a PDF.
+    #[test]
+    fn forward_result_for_pdf_outside_project_selects() {
+        let dir = Dir::new("preview");
+        let main = standardize(dir.write("proj/main.tex", "main"));
+        let root = standardize(dir.0.join("proj"));
+        let pdf = standardize(dir.0.join("session/p3/main.pdf"));
+        let binding = SyncTeXBinding {
+            revision: SyncTeXRevision::new("preview", 7).unwrap(),
+            output_hash: "ab".repeat(32),
+            pdf_url: pdf.clone(),
+            project_root: root.clone(),
+            source_root: root,
+            source_paths: HashMap::from([(main.to_string_lossy().into_owned(), main.clone())]),
+        };
+        let stdout = format!(
+            "This is SyncTeX command line utility, version 1.5\nSyncTeX result begin\n\
+             Output:{}\nPage:7\nx:308.11\ny:702.63\nh:133.76\nv:702.85\nW:343.71\nH:6.95\n\
+             before:\noffset:-1\nmiddle:\nafter:\nSyncTeX result end\n",
+            pdf.display()
+        );
+        let hit = SyncTeXRunner::forward_candidate(&stdout, &binding, &main, 17, 0)
+            .expect("preview forward result selects");
+        assert_eq!(hit.pdf.page, 7);
     }
 }
 

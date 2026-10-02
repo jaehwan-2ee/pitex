@@ -16,10 +16,13 @@ path = "src/main.rs"
 pitex-shell = { path = "../pitex-shell", default-features = false }
 
 [features]
-default = ["modern-gtk", "vte", "markdown-preview"]
+default = ["modern-gtk", "vte", "markdown-preview", "embedded-preview"]
 modern-gtk = ["pitex-shell/modern-gtk"]
 vte = ["pitex-shell/vte"]
 markdown-preview = ["pitex-shell/markdown-preview"]
+# Only the 24.04 package ships the pitex-preview helpers; the ubuntu2204
+# variant (default-features = false) keeps compiler live builds.
+embedded-preview = ["pitex-shell/embedded-preview"]
 
 # Debian package — `cargo deb -p pitex` builds the Ubuntu 24.04+ variant
 # (GTK 4.10+/libadwaita 1.4+/VTE embedded terminal). `$auto` resolves the
@@ -31,7 +34,7 @@ name = "pitex"
 section = "editors"
 priority = "optional"
 maintainer = "Pitex contributors <https://github.com/jaehwan-2ee/pitex>"
-depends = "$auto"
+depends = "$auto, libteckit0, libharfbuzz0b, libgraphite2-3, libicu74, libfreetype6, libfontconfig1, libpng16-16t64, zlib1g"
 maintainer-scripts = "../../packaging/debian"
 assets = [
     ["target/release/pitex", "usr/bin/pitex", "755"],
@@ -45,13 +48,66 @@ assets = [
         "usr/share/pixmaps/dev.pitex.app.png",
         "644",
     ],
+    # Embedded preview helpers built by the release job (`make -C
+    # PreviewEngine BUILD_DIR=Linux/target/preview-engine`). The client probes
+    # <exe dir>/../lib/pitex/pitex-preview — i.e. /usr/lib/pitex/.
+    # cargo-deb resolves `target/release/`-prefixed paths in the real target
+    # dir, but every other `target/` path relative to THIS manifest dir —
+    # hence ../../target/ here (points at the workspace target dir).
+    [
+        "../../target/preview-engine/bin/pitex-preview",
+        "usr/lib/pitex/pitex-preview",
+        "755",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview-xetex",
+        "usr/lib/pitex/pitex-preview-xetex",
+        "755",
+    ],
+    # Per-library license texts + provenance manifest. The `/*` glob is
+    # required: a bare directory source is filtered out by cargo-deb's
+    # glob resolver and fails with AssetFileNotFound.
+    [
+        "../../../PreviewEngine/licenses/*",
+        "usr/share/doc/pitex/preview-engine/",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/PROVENANCE.md",
+        "usr/share/doc/pitex/preview-engine/PROVENANCE.md",
+        "644",
+    ],
+    # Same provenance manifest the macOS audit consumes — keeps deb and
+    # macOS technical audit evidence identical.
+    [
+        "../../../PreviewEngine/provenance.json",
+        "usr/share/doc/pitex/preview-engine/provenance.json",
+        "644",
+    ],
 ]
 
 # Ubuntu 22.04 variant: GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — disables
 # `modern-gtk` so the compat code paths compile instead. Same package name:
 # it's an alternative build of the same app, not a separate package.
 # `markdown-preview` stays on: Jammy's updates ship libwebkitgtk-6.0-dev.
+# No preview helpers: 22.04 is not an embedded-preview target, so the
+# variant keeps only the app's own assets and pure `$auto` Depends (the
+# base's 24.04 runtime names like libicu74 don't exist on Jammy).
 [package.metadata.deb.variants.ubuntu2204]
 name = "pitex"
 default-features = false
 features = ["markdown-preview"]
+depends = "$auto"
+assets = [
+    ["target/release/pitex", "usr/bin/pitex", "755"],
+    [
+        "../../packaging/dev.pitex.app.desktop",
+        "usr/share/applications/dev.pitex.app.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/dev.pitex.app.png",
+        "usr/share/pixmaps/dev.pitex.app.png",
+        "644",
+    ],
+]

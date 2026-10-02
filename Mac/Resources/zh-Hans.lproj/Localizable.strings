@@ -35,6 +35,7 @@
 "preview.next_page" = "下一页";
 "preview.zoom_in" = "放大";
 "preview.zoom_out" = "缩小";
+"preview.zoom_auto" = "自动调整大小";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "在 PDF 中显示所选内容";
 "preview.synctex_inverse" = "显示源代码";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitex 不会从预览中打开可执行文件。";
 "preview.markdown.runtime_missing" = "Markdown 预览需要 Microsoft Edge WebView2 Runtime。请从 https://developer.microsoft.com/microsoft-edge/webview2/ 安装并重启 Pitex。";
 "preview.markdown.pdf_failed" = "Pitex 无法保存 PDF 副本。";
+"preview.embedded_label" = "编辑预览";
+"preview.final_label" = "最终 PDF";
+"preview.embedded_unavailable" = "嵌入式预览引擎不可用";
+"preview.embedded_failed" = "编辑预览失败";
+"preview.embedded_unsupported_remote" = "嵌入式预览仅适用于本地项目";
+"preview.embedded_updating" = "正在更新编辑预览…";
 
 "assistant.title" = "助手";
 "assistant.sign_in" = "登录";
@@ -257,8 +264,13 @@
 "settings.compile.live" = "实时编译";
 "settings.compile.live_auto" = "编辑时自动构建";
 "settings.compile.live_auto_note" = "实时编译会保存已修改的打开文件，并合并更改进行构建，不会中断正在运行的构建。";
+"settings.compile.live_auto_note_embedded" = "嵌入式预览无需保存文件即可排版当前内容。使用“构建”生成最终 PDF。";
 "settings.compile.live_delay" = "构建延迟（毫秒）";
 "settings.compile.live_follow" = "实时构建后将 PDF 移动到光标位置";
+"settings.compile.live_backend" = "预览后端";
+"settings.compile.live_backend.embedded" = "嵌入式编辑预览";
+"settings.compile.live_backend.compiler" = "编译器兼容预览";
+"settings.compile.live_backend.note" = "嵌入式引擎在不保存源文件的情况下预览编辑内容。使用“构建”按钮以项目编译器生成最终 PDF。";
 "toolbar.live_compile" = "实时编译";
 "settings.markdown.live_preview" = "实时预览";
 "settings.markdown.live_preview_note" = "输入时更新预览。关闭后,预览将在保存时更新。";

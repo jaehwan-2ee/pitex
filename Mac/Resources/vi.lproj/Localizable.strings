@@ -35,6 +35,7 @@
 "preview.next_page" = "Trang sau";
 "preview.zoom_in" = "Phóng to";
 "preview.zoom_out" = "Thu nhỏ";
+"preview.zoom_auto" = "Tự động thay đổi kích thước";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Hiển thị vùng chọn trong PDF";
 "preview.synctex_inverse" = "Hiển thị mã nguồn";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitex sẽ không mở tệp thực thi từ bản xem trước.";
 "preview.markdown.runtime_missing" = "Xem trước Markdown cần Microsoft Edge WebView2 Runtime. Cài đặt từ https://developer.microsoft.com/microsoft-edge/webview2/ rồi khởi động lại Pitex.";
 "preview.markdown.pdf_failed" = "Pitex không lưu được bản sao PDF.";
+"preview.embedded_label" = "Xem trước khi sửa";
+"preview.final_label" = "PDF cuối cùng";
+"preview.embedded_unavailable" = "Công cụ xem trước tích hợp không khả dụng";
+"preview.embedded_failed" = "Xem trước khi sửa thất bại";
+"preview.embedded_unsupported_remote" = "Xem trước tích hợp chỉ khả dụng cho dự án cục bộ";
+"preview.embedded_updating" = "Đang cập nhật xem trước khi sửa…";
 
 "assistant.title" = "Trợ lý";
 "assistant.sign_in" = "Đăng nhập";
@@ -257,8 +264,13 @@
 "settings.compile.live" = "Biên dịch trực tiếp";
 "settings.compile.live_auto" = "Tự động biên dịch khi chỉnh sửa";
 "settings.compile.live_auto_note" = "Biên dịch trực tiếp lưu các tệp đang mở đã sửa và gộp thay đổi, không ngắt lần biên dịch đang chạy.";
+"settings.compile.live_auto_note_embedded" = "Chế độ xem trước chỉnh sửa tích hợp sắp chữ nội dung hiện tại mà không cần lưu tệp. Dùng Biên dịch để tạo PDF cuối cùng.";
 "settings.compile.live_delay" = "Độ trễ biên dịch (ms)";
 "settings.compile.live_follow" = "Chuyển PDF tới con trỏ sau khi biên dịch trực tiếp";
+"settings.compile.live_backend" = "Nền tảng xem trước";
+"settings.compile.live_backend.embedded" = "Xem trước khi sửa tích hợp";
+"settings.compile.live_backend.compiler" = "Xem trước tương thích trình biên dịch";
+"settings.compile.live_backend.note" = "Công cụ tích hợp xem trước các thay đổi mà không lưu tệp nguồn. Dùng Biên dịch để tạo PDF cuối cùng bằng trình biên dịch của dự án.";
 "toolbar.live_compile" = "Biên dịch trực tiếp";
 "settings.markdown.live_preview" = "Xem trước trực tiếp";
 "settings.markdown.live_preview_note" = "Cập nhật bản xem trước khi bạn gõ. Khi tắt, bản xem trước cập nhật khi lưu.";

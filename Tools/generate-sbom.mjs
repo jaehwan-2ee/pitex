@@ -41,8 +41,39 @@ async function xcodeComponent() {
   for (const key of ['MACOSX_DEPLOYMENT_TARGET', 'SDKROOT', 'SUPPORTED_PLATFORMS', 'SWIFT_VERSION']) { const value = config.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm'))?.[1]?.trim(); if (value) properties.push({ name: `xcode:${key}`, value }); }
   return { type: 'application', name: 'Pitex-Xcode-source-config', version: 'source', properties: properties.sort((a, b) => a.name.localeCompare(b.name)) };
 }
+// Embedded preview helpers: the TeXpresso source they derive from and the
+// shared libraries they load, as recorded in PreviewEngine/provenance.json.
+async function previewEngineComponents() {
+  const path = join(ROOT, 'PreviewEngine/provenance.json');
+  const text = await optionalText(path);
+  if (!text) return [];
+  const manifest = JSON.parse(text);
+  const files = manifest.files ?? [];
+  const imported = files.filter((file) => file.origin === 'texpresso');
+  const output = [{
+    type: 'library', name: 'texpresso', group: 'pitex-preview', version: manifest.upstream.commit,
+    externalReferences: [{ type: 'vcs', url: manifest.upstream.url }],
+    properties: [
+      { name: 'pitex:imported-files', value: String(imported.length) },
+      { name: 'pitex:modified-files', value: String(imported.filter((file) => file.modified).length) },
+      { name: 'pitex:provenance', value: 'PreviewEngine/provenance.json' },
+      { name: 'pitex:sha256', value: digest(text) },
+    ],
+  }];
+  for (const dependency of manifest.runtime_dependencies ?? []) output.push({
+    type: 'library', name: dependency.library, group: 'pitex-preview', version: 'system',
+    licenses: dependency.license ? [{ expression: dependency.license }] : undefined,
+    properties: [
+      { name: 'pitex:linkage', value: dependency.linkage },
+      { name: 'pitex:used-by', value: dependency.used_by },
+      ...(dependency.license_notes ? [{ name: 'pitex:license-notes', value: dependency.license_notes }] : []),
+      ...(dependency.source_availability ? [{ name: 'pitex:source-availability', value: dependency.source_availability }] : []),
+    ],
+  });
+  return output;
+}
 export async function generateSbom() {
-  const components = [...await swiftComponents(), await xcodeComponent()];
+  const components = [...await swiftComponents(), await xcodeComponent(), ...await previewEngineComponents()];
   for (const command of ['latexmk', 'pdflatex', 'xelatex', 'lualatex', 'synctex']) components.push({ type: 'application', name: command, version: toolVersion(command) });
   components.sort((a, b) => `${a.type}:${a.group ?? ''}:${a.name}:${a.version}`.localeCompare(`${b.type}:${b.group ?? ''}:${b.name}:${b.version}`));
   return { bomFormat: 'CycloneDX', specVersion: '1.6', version: 1, metadata: { component: { type: 'application', name: 'Pitex-source', version: 'provisional-g005' }, properties: [{ name: 'pitex:deterministic', value: 'true' }, { name: 'pitex:source-root', value: '.' }] }, components };

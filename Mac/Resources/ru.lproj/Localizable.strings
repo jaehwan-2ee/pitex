@@ -35,6 +35,7 @@
 "preview.next_page" = "Следующая страница";
 "preview.zoom_in" = "Увеличить";
 "preview.zoom_out" = "Уменьшить";
+"preview.zoom_auto" = "Автоматически изменять размер";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Показать выделение в PDF";
 "preview.synctex_inverse" = "Показать источник";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitex не открывает исполняемые файлы из просмотра.";
 "preview.markdown.runtime_missing" = "Для просмотра Markdown требуется Microsoft Edge WebView2 Runtime. Установите его с https://developer.microsoft.com/microsoft-edge/webview2/ и перезапустите Pitex.";
 "preview.markdown.pdf_failed" = "Pitex не удалось сохранить копию PDF.";
+"preview.embedded_label" = "Предпросмотр правок";
+"preview.final_label" = "Итоговый PDF";
+"preview.embedded_unavailable" = "Встроенный движок предпросмотра недоступен";
+"preview.embedded_failed" = "Сбой предпросмотра правок";
+"preview.embedded_unsupported_remote" = "Встроенный предпросмотр доступен только для локальных проектов";
+"preview.embedded_updating" = "Обновление предпросмотра правок…";
 
 "assistant.title" = "Ассистент";
 "assistant.sign_in" = "Войти";
@@ -257,8 +264,13 @@
 "settings.compile.live" = "Живая сборка";
 "settings.compile.live_auto" = "Собирать автоматически во время редактирования";
 "settings.compile.live_auto_note" = "Живая сборка сохраняет открытые изменённые файлы и объединяет изменения, не прерывая текущую сборку.";
+"settings.compile.live_auto_note_embedded" = "Встроенный предпросмотр собирает текущее содержимое без сохранения файлов. Используйте Собрать для итогового PDF.";
 "settings.compile.live_delay" = "Задержка сборки (мс)";
 "settings.compile.live_follow" = "Перемещать PDF к курсору после живой сборки";
+"settings.compile.live_backend" = "Движок предпросмотра";
+"settings.compile.live_backend.embedded" = "Встроенный предпросмотр правок";
+"settings.compile.live_backend.compiler" = "Предпросмотр совместимости с компилятором";
+"settings.compile.live_backend.note" = "Встроенный движок показывает правки без сохранения исходных файлов. Используйте Собрать, чтобы создать итоговый PDF с компилятором проекта.";
 "toolbar.live_compile" = "Живая сборка";
 "settings.markdown.live_preview" = "Просмотр в реальном времени";
 "settings.markdown.live_preview_note" = "Обновлять просмотр во время ввода. Когда выключено, просмотр обновляется при сохранении.";

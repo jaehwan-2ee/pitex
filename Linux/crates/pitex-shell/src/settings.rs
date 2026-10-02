@@ -206,6 +206,24 @@ impl SettingsStore {
     pub fn set_live_compile_follow_cursor(&mut self, v: bool) {
         self.prefs.set("pitex.pref.build.liveCompileFollowCursor", v);
     }
+    /// `pitex.pref.build.livePreviewBackend` — which engine produces the
+    /// live editing preview: `"embedded"` (previews edits without saving
+    /// source files) or `"compiler"` (project toolchain compatibility
+    /// path). Missing or unknown stored values resolve to `"embedded"`;
+    /// a persisted `"compiler"` choice is kept. Manual Build still uses
+    /// the selected project compiler either way.
+    pub fn live_preview_backend(&self) -> &'static str {
+        match self.prefs.string("pitex.pref.build.livePreviewBackend").as_deref() {
+            Some("compiler") => "compiler",
+            _ => "embedded",
+        }
+    }
+    /// Stores only `"embedded"`/`"compiler"`; anything else persists as
+    /// `"embedded"`.
+    pub fn set_live_preview_backend(&mut self, v: &str) {
+        let v = if v == "compiler" { "compiler" } else { "embedded" };
+        self.prefs.set("pitex.pref.build.livePreviewBackend", v);
+    }
     /// `pitex.pref.update.autoInstall` — on launch, check GitHub Releases
     /// and install a newer package without asking.
     pub fn auto_install_updates(&self) -> bool {

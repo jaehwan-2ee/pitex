@@ -387,3 +387,25 @@ jobs:
       - name: Window routing protocol (loopback IPC)
         run: cargo test -p pitex-shell --lib window_ipc
         working-directory: Windows
+
+  preview-engine:
+    name: Embedded preview helpers
+    # License boundary check: build the helpers standalone and audit their
+    # linkage (TECkit must stay a shared dep; no xdvipdfmx/MuPDF/dpx).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config \
+            libteckit-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
+            libfreetype-dev libfontconfig-dev libpng-dev zlib1g-dev
+      - name: Build helpers
+        run: make -C PreviewEngine BUILD_DIR="$RUNNER_TEMP/pitex-preview-engine"
+      - name: Boundary selftest (specials/cmap/truncation)
+        run: make -C PreviewEngine selftest BUILD_DIR="$RUNNER_TEMP/pitex-preview-engine"
+      - name: Audit helper linkage
+        run: bash PreviewEngine/tools/audit-linkage.sh "$RUNNER_TEMP/pitex-preview-engine/bin"
+      - name: Bundle source-record check
+        run: bash Tools/check-bundle-source-record.sh

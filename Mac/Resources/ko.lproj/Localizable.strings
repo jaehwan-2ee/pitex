@@ -35,6 +35,7 @@
 "preview.next_page" = "다음 페이지";
 "preview.zoom_in" = "확대";
 "preview.zoom_out" = "축소";
+"preview.zoom_auto" = "자동 크기 조절";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "PDF에서 선택 항목 보기";
 "preview.synctex_inverse" = "소스 보기";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitex는 미리보기에서 실행 파일을 열지 않습니다.";
 "preview.markdown.runtime_missing" = "Markdown 미리보기에는 Microsoft Edge WebView2 Runtime이 필요합니다. https://developer.microsoft.com/microsoft-edge/webview2/ 에서 설치한 후 Pitex를 다시 시작하세요.";
 "preview.markdown.pdf_failed" = "PDF 사본을 저장하지 못했습니다.";
+"preview.embedded_label" = "편집 미리보기";
+"preview.final_label" = "최종 PDF";
+"preview.embedded_unavailable" = "내장 미리보기 엔진을 사용할 수 없습니다";
+"preview.embedded_failed" = "편집 미리보기에 실패했습니다";
+"preview.embedded_unsupported_remote" = "내장 미리보기는 로컬 프로젝트에서만 사용할 수 있습니다";
+"preview.embedded_updating" = "편집 미리보기 업데이트 중…";
 
 "assistant.title" = "어시스턴트";
 "assistant.sign_in" = "로그인";
@@ -257,8 +264,13 @@
 "settings.compile.live" = "실시간 컴파일";
 "settings.compile.live_auto" = "편집 중 자동으로 빌드";
 "settings.compile.live_auto_note" = "실시간 컴파일은 열려 있는 수정된 파일을 저장하고 변경 사항을 모아 빌드합니다. 진행 중인 빌드는 중단하지 않습니다.";
+"settings.compile.live_auto_note_embedded" = "내장 미리보기는 파일을 저장하지 않고 현재 내용을 조판합니다. 빌드로 최종 PDF를 만드세요.";
 "settings.compile.live_delay" = "빌드 대기 시간 (ms)";
 "settings.compile.live_follow" = "실시간 빌드 후 PDF를 커서 위치로 이동";
+"settings.compile.live_backend" = "미리보기 백엔드";
+"settings.compile.live_backend.embedded" = "내장 편집 미리보기";
+"settings.compile.live_backend.compiler" = "컴파일러 호환 미리보기";
+"settings.compile.live_backend.note" = "내장 엔진은 소스 파일을 저장하지 않고 편집 내용을 미리 봅니다. 빌드를 사용해 프로젝트 컴파일러로 최종 PDF를 만드세요.";
 "toolbar.live_compile" = "실시간 컴파일";
 "settings.markdown.live_preview" = "실시간 미리보기";
 "settings.markdown.live_preview_note" = "입력하는 동안 미리보기를 업데이트합니다. 끄면 저장할 때 미리보기가 업데이트됩니다.";

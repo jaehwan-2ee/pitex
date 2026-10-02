@@ -133,6 +133,9 @@ impl Fixture {
         );
         let mut store = SettingsStore::new(Preferences::standard());
         store.set_live_compile_enabled(true);
+        // These scenarios exercise the compiler live-build path; the
+        // embedded editing preview is the default backend.
+        store.set_live_preview_backend("compiler");
         store.set_live_compile_delay_milliseconds(700);
         store.settings.build.custom_shell_acknowledged = true;
         let mut model = WorkspaceModel::new();

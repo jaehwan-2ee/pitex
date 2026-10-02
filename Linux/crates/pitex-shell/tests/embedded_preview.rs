@@ -1,0 +1,319 @@
+//! Embedded editing preview — model-level behavior against a stub helper
+//! that speaks the real `pitex-preview` stdio protocol (no TeX needed):
+//! the final-build floor is an *edit revision*, so updates sent after a
+//! manual build started (a queued pre-build edit flushed late, the
+//! save-only update caused by the build's pre-save, a rescan) never put a
+//! preview over the final PDF, while a real later edit — also one made
+//! while the build runs — resumes drafting.
+
+#![cfg(all(unix, feature = "embedded-preview"))]
+
+use document_session_core::{DocumentMutation, DocumentSaveState};
+use pitex_shell::model::{WorkspaceMessage, WorkspaceModel};
+use pitex_shell::settings::{Preferences, SettingsStore};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant};
+
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(tag: &str) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "pitex-shell-embedded-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+    fn join(&self, rest: &str) -> PathBuf {
+        self.0.join(rest)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Minimal protocol peer: every update is published immediately as a
+/// complete one-page artifact of its generation; releases delete it. With
+/// `PITEX_STUB_GATE=<file>`, a publication waits until that file exists.
+const STUB: &str = r#"#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift 2;; *) shift;; esac; done
+seq=0
+printf '{"event":"ready"}\n'
+while IFS= read -r line; do
+  case "$line" in
+    *'"op":"update"'*)
+      gen=$(printf '%s' "$line" | sed -n 's/.*"generation":\([0-9][0-9]*\).*/\1/p')
+      while [ -n "$PITEX_STUB_GATE" ] && [ ! -e "$PITEX_STUB_GATE" ]; do sleep 0.02; done
+      seq=$((seq+1))
+      mkdir -p "$OUT/p$seq"
+      printf '%%PDF-1.4\n%% stub generation %s\n' "$gen" > "$OUT/p$seq/main.pdf"
+      : > "$OUT/p$seq/main.synctex"
+      printf '{"event":"published","seq":%s,"generation":%s,"complete":true,"coherent":true,"pages":1,"current_pages":1,"errors":0,"dir":"%s/p%s","pdf":"%s/p%s/main.pdf","synctex":"%s/p%s/main.synctex"}\n' "$seq" "$gen" "$OUT" "$seq" "$OUT" "$seq" "$OUT" "$seq" ;;
+    *'"op":"release"'*)
+      s=$(printf '%s' "$line" | sed -n 's/.*"seq":\([0-9][0-9]*\).*/\1/p')
+      rm -rf "$OUT/p$s" ;;
+    *'"op":"quit"'*) exit 0 ;;
+  esac
+done
+"#;
+
+struct Fixture {
+    _dir: TempDir,
+    model: WorkspaceModel,
+    rx: Receiver<WorkspaceMessage>,
+    store: SettingsStore,
+}
+
+impl Fixture {
+    fn open(tag: &str, command: &str) -> Self {
+        let dir = TempDir::new(tag);
+        std::fs::write(
+            dir.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}\n",
+        )
+        .unwrap();
+        let mut store = SettingsStore::new(Preferences::standard());
+        store.set_live_compile_enabled(true);
+        store.set_live_preview_backend("embedded");
+        store.settings.build.custom_shell_acknowledged = true;
+        let mut model = WorkspaceModel::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        model.set_event_sink(tx.clone());
+        model.open(dir.0.clone(), tx);
+        let mut fx = Self { _dir: dir, model, rx, store };
+        let WorkspaceMessage::OpenFinished(result) =
+            fx.pump(|m| matches!(m, WorkspaceMessage::OpenFinished(_)))
+        else {
+            unreachable!()
+        };
+        let opened = result.unwrap_or_else(|_| panic!("open failed"));
+        fx.model.apply_open(&mut fx.store, opened);
+        fx.model.build_command_text = command.to_string();
+        fx
+    }
+
+    /// Applies every message in arrival order (like the GTK dispatch)
+    /// until one matching `want` has been applied, and returns it.
+    fn pump(&mut self, want: impl Fn(&WorkspaceMessage) -> bool) -> WorkspaceMessage {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let message = self
+                .rx
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("a workspace message arrived before the deadline");
+            let matched = want(&message);
+            match &message {
+                WorkspaceMessage::SaveFinished { path, result } => {
+                    self.model.apply_save_finished(path, result.clone())
+                }
+                WorkspaceMessage::BuildEvent { build, event } => {
+                    self.model.apply_build_event(build, event.clone())
+                }
+                WorkspaceMessage::BuildFinished { build, outcome, output_pdf } => {
+                    self.model.apply_build_finished(
+                        build.clone(),
+                        outcome.clone(),
+                        output_pdf,
+                        &self.store,
+                        "en",
+                    );
+                }
+                WorkspaceMessage::EmbeddedPreview { session, event } => {
+                    self.model.apply_embedded_event(*session, event.clone());
+                }
+                _ => {}
+            }
+            if matched {
+                return message;
+            }
+        }
+    }
+
+    fn published(&mut self) {
+        self.pump(|m| {
+            matches!(
+                m,
+                WorkspaceMessage::EmbeddedPreview {
+                    event: pitex_shell::embedded_preview::PreviewEvent::Published(_),
+                    ..
+                }
+            )
+        });
+    }
+
+    fn build_finished(&mut self) {
+        self.pump(|m| matches!(m, WorkspaceMessage::BuildFinished { .. }));
+    }
+
+    /// A real text edit through the editor mutation path + live bridge.
+    fn edit(&mut self, text: &str) {
+        let session = self
+            .model
+            .registered_sessions
+            .iter()
+            .find(|s| s.path().raw_value() == "main.tex")
+            .cloned()
+            .expect("main.tex session");
+        let snap = session.snapshot();
+        session
+            .apply(
+                DocumentMutation::ReplaceRange {
+                    utf16_offset: snap.text.encode_utf16().count(),
+                    utf16_length: 0,
+                    text: text.to_string(),
+                },
+                snap.revision,
+            )
+            .unwrap();
+        self.model.document_snapshot = Some(session.snapshot());
+        let requests = self.model.note_source_edit(&self.store);
+        self.model.dispatch_live_requests(requests, &self.store, "en");
+    }
+
+    /// The coalescing timer fires.
+    fn flush(&mut self) {
+        self.model.flush_embedded_preview(&self.store);
+    }
+
+    fn showing_final(&self) -> bool {
+        !self.model.displaying_editing_preview()
+            && self.model.latest_built_pdf_name.as_deref() == Some("main.pdf")
+    }
+}
+
+fn install_stub(dir: &Path) -> PathBuf {
+    let path = dir.join("pitex-preview");
+    std::fs::write(&path, STUB).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// Queued pre-build edit, then the pre-save/save-only and rescan updates
+/// arriving after the final build succeeded, then a real edit.
+fn late_prebuild_updates_never_cover_final() {
+    let mut fx = Fixture::open("late", "cp {file} {outdir}/main.pdf");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+    assert!(fx.model.displaying_editing_preview(), "initial preview is shown");
+
+    fx.edit("% typed before Build\n");
+    // Build before the 120 ms coalescing window elapsed.
+    fx.model.start_build(&fx.store, "en");
+    fx.build_finished();
+    assert!(fx.showing_final(), "final PDF replaces the preview");
+
+    // The queued edit's timer now fires; its buffers were saved by the
+    // build's pre-save, so this is a save-only update with a newer
+    // transport generation.
+    fx.flush();
+    fx.published();
+    assert!(fx.showing_final(), "late pre-build update must not cover the final PDF");
+    // A disk rescan/save refresh sends yet another generation.
+    fx.model.request_embedded_refresh(&fx.store);
+    fx.flush();
+    fx.published();
+    assert!(fx.showing_final(), "rescan update must not cover the final PDF");
+    assert_eq!(
+        fx.model.embedded.status,
+        pitex_shell::embedded_preview::PreviewStatus::Current,
+        "the header must not keep saying 'updating' over the current final PDF"
+    );
+
+    // A real edit after the build resumes drafting.
+    fx.edit("% typed after Build\n");
+    fx.flush();
+    fx.published();
+    assert!(fx.model.displaying_editing_preview(), "a later edit shows the editing preview again");
+}
+
+/// Pre-build preview arriving while the build runs is displaced by the
+/// final PDF; an edit typed while the build runs keeps drafting after it.
+fn previews_during_running_build() {
+    let mut fx = Fixture::open("running", "sleep 1 && cp {file} {outdir}/main.pdf");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+
+    fx.edit("% before Build\n");
+    fx.model.start_build(&fx.store, "en");
+    fx.flush(); // queued pre-build edit, published while the build runs
+    fx.published();
+    fx.build_finished();
+    assert!(fx.showing_final(), "a preview of pre-build edits yields to the final PDF");
+
+    fx.model.start_build(&fx.store, "en");
+    fx.edit("% typed while building\n");
+    fx.flush();
+    fx.published();
+    fx.build_finished();
+    assert!(
+        fx.model.displaying_editing_preview(),
+        "an edit made during the build keeps the editing preview after it succeeds"
+    );
+    // The final build's name/bytes stay paired for download and the
+    // assistant context while the preview is on screen.
+    assert_eq!(fx.model.latest_built_pdf_name.as_deref(), Some("main.pdf"));
+    assert!(matches!(
+        fx.model.build_state,
+        pitex_shell::model::WorkspaceBuildState::Succeeded { .. }
+    ));
+}
+
+/// The user saves after an update was sent but before its publication
+/// arrives: the saved (now clean) buffer still holds exactly the compiled
+/// text, so the preview binds for SyncTeX.
+fn save_before_publication_keeps_synctex(gate: &Path) {
+    std::env::set_var("PITEX_STUB_GATE", gate);
+    std::fs::write(gate, "").unwrap();
+    let mut fx = Fixture::open("save", "true");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+
+    std::fs::remove_file(gate).unwrap();
+    fx.edit("% draft\n");
+    fx.flush();
+    fx.model.save();
+    fx.pump(|m| matches!(m, WorkspaceMessage::SaveFinished { .. }));
+    std::fs::write(gate, "").unwrap();
+    fx.published();
+
+    let main = fx.model.project_url.clone().unwrap().join("main.tex");
+    let session = fx.model.registered_sessions.iter().find(|s| s.path().raw_value() == "main.tex").unwrap();
+    let snap = session.snapshot();
+    assert_eq!(snap.save_state, DocumentSaveState::Clean, "the save landed first");
+    let expected = std::collections::HashMap::from([(main, snap.content_hash.raw_value)]);
+    assert_eq!(
+        fx.model.embedded.bound_snapshot.as_ref(),
+        Some(&expected),
+        "SyncTeX binds: the clean buffer is the compiled source"
+    );
+    std::env::remove_var("PITEX_STUB_GATE");
+}
+
+/// One entry point — settings and helper lookup are process-global.
+#[test]
+fn embedded_preview_final_floor() {
+    let data = TempDir::new("data");
+    std::env::set_var("XDG_DATA_HOME", data.join("data"));
+    std::env::set_var("XDG_CONFIG_HOME", data.join("config"));
+    std::env::set_var("XDG_CACHE_HOME", data.join("cache"));
+    std::env::set_var("XDG_RUNTIME_DIR", data.join("run"));
+    std::fs::create_dir_all(data.join("run")).unwrap();
+    std::env::set_var("PITEX_PREVIEW_HELPER", install_stub(&data.0));
+
+    late_prebuild_updates_never_cover_final();
+    previews_during_running_build();
+    save_before_publication_keeps_synctex(&data.join("gate"));
+}

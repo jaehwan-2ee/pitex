@@ -1735,7 +1735,15 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     let live_group = adw::PreferencesGroup::new();
     live_group.set_title(&tr(lang, "settings.compile.live"));
     let (live_auto_row, live_auto) = compat::switch_row(&tr(lang, "settings.compile.live_auto"));
-    live_auto_row.set_subtitle(&tr(lang, "settings.compile.live_auto_note"));
+    // The auto-save warning only applies to the compiler path; the embedded
+    // engine typesets in-memory buffers, so pick the note by backend and
+    // keep it updated from the backend row's callback below.
+    let live_auto_note_embedded = tr(lang, "settings.compile.live_auto_note_embedded");
+    let live_auto_note_compiler = tr(lang, "settings.compile.live_auto_note");
+    live_auto_row.set_subtitle(match state.borrow().store.live_preview_backend() {
+        "embedded" => &live_auto_note_embedded,
+        _ => &live_auto_note_compiler,
+    });
     live_auto.set_active(state.borrow().store.live_compile_enabled());
     {
         let state = state.clone();
@@ -1772,6 +1780,47 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         });
     }
     live_group.add(&live_follow_row);
+    // Backend picker — `pitex.pref.build.livePreviewBackend`: embedded
+    // editing preview vs compiler compatibility path. Manual Build still
+    // uses the project compiler; this row only picks the preview source.
+    let live_backend = adw::ComboRow::new();
+    live_backend.set_title(&tr(lang, "settings.compile.live_backend"));
+    live_backend.set_subtitle(&tr(lang, "settings.compile.live_backend.note"));
+    let backend_items = [
+        tr(lang, "settings.compile.live_backend.embedded"),
+        tr(lang, "settings.compile.live_backend.compiler"),
+    ];
+    let backend_strs: Vec<&str> = backend_items.iter().map(String::as_str).collect();
+    live_backend.set_model(Some(&gtk4::StringList::new(&backend_strs)));
+    live_backend.set_selected(match state.borrow().store.live_preview_backend() {
+        "compiler" => 1,
+        _ => 0,
+    });
+    {
+        let state = state.clone();
+        let live_auto_row = live_auto_row.clone();
+        live_backend.connect_selected_notify(move |r| {
+            let v = ["embedded", "compiler"]
+                .get(r.selected() as usize)
+                .copied()
+                .unwrap_or("embedded");
+            live_auto_row.set_subtitle(if v == "embedded" {
+                &live_auto_note_embedded
+            } else {
+                &live_auto_note_compiler
+            });
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_live_preview_backend(v);
+                // Retires the other backend's session/runs immediately.
+                s.apply_live_settings();
+            }
+        });
+    }
+    // Builds without the helper (Ubuntu 22.04, Windows) keep the compiler
+    // live path unchanged and offer no embedded choice.
+    if crate::embedded_preview::SUPPORTED {
+        live_group.add(&live_backend);
+    }
     compile.add(&live_group);
 
     let shell_group = adw::PreferencesGroup::new();

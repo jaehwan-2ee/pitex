@@ -124,9 +124,69 @@ Settings live under **Settings → Markdown** (right after the renamed
 
 ### Live compile
 
-Toggle **Live Compile** in the toolbar (or **Settings → Compile → Live
-Compile**) and Pitex rebuilds automatically as you edit. The first edit
-opens a short coalescing window; the build then saves the latest open edited
+Toggle **Live Compile** in the toolbar (or **Settings → TeX Compile → Live
+Compile**) and the preview follows your edits. **Preview backend** picks
+how:
+
+#### Embedded editing preview (default on macOS and Ubuntu 24.04)
+
+A XeTeX engine derived from [TeXpresso](https://github.com/let-def/texpresso)
+runs in a helper process and typesets exactly what the editor holds —
+unsaved changes included — without saving your files or writing anything
+into the project.
+
+- The preview header says **Editing preview** (with *Updating editing
+  preview…* while a pass runs) or **Final PDF** after a successful
+  **Build**. Editing feedback streams independently of the final compiler;
+  the helper resumes from a safe checkpoint when available. Native-font
+  safety barriers can require a fresh engine process instead.
+- Partial publications can combine fresh prefix pages with a stale tail
+  from the previous pass; they do not mean the whole document is current.
+- **Build** still creates the final PDF with the project compiler
+  (pdflatex, xelatex, lualatex, latexmk, …). The final PDF is never covered
+  by an older draft: it stays on screen until you edit again, and an edit
+  typed while the build runs keeps the newer editing preview.
+- **SyncTeX** works on an editing preview once it matches the editor text
+  (saving does not break the match). A newer source revision or stale-tail
+  pages disable mapping until a coherent publication matches the current
+  text; the status line says why.
+- Changes to files you have not opened (figures, `\input` files, `.bib`)
+  are picked up when Pitex notices them: on Linux as soon as a project
+  file changes on disk (new files after a rescan or assistant run); on
+  macOS at the next edit, save, rescan or assistant run.
+- Temporary files: preview PDFs live in a private per-session directory
+  (Linux `$XDG_RUNTIME_DIR/pitex-preview/`, macOS `$TMPDIR/pitex-preview/`)
+  that is removed when the preview stops or Pitex quits; leftovers from a
+  crash are removed on the next start. The engine's TeX file index is
+  cached in `~/.cache/pitex/preview-engine` (Linux) or
+  `~/Library/Caches/Pitex/preview-engine` (macOS). The first launch on a
+  machine generates engine formats; simultaneous first launches serialize
+  on a lock, so the first-ever preview may take a few seconds.
+- Known differences from the final build: the preview always uses XeTeX
+  (pdfTeX/LuaTeX-only documents may differ or fail — switch to the
+  compiler backend for those); fonts are embedded whole, so preview PDFs
+  are larger; PostScript specials, PDF links/annotations/outlines and
+  shell-escape (e.g. `minted`) are not previewed; vertical native-font
+  text is shown horizontally.
+- **macOS CoreText ceiling**: safe font barriers remain enabled. In one
+  warm-format-cache, 12-page VM fixture with named platform fonts first
+  used on page 12, helper update-write → publication-receipt times for two
+  unsaved page-3 edits were 379/381 ms in hybrid PDFs (11 fresh pages plus
+  one stale page, without SyncTeX). All 12 pages were fresh (coherent
+  publication) after 1177/1145 ms and aux-converged after 1923/1904 ms,
+  rounded to the nearest millisecond. Each edit required a fresh root,
+  one font-barrier restart
+  and one convergence rerun—not checkpoint-only replay. These are helper
+  receipt observations on a macOS 26.5.2 ARM64 VM, not editor/display or
+  physical-hardware guarantees. See the
+  [conditioned measurement and limits](Development/README.md#change-note-macos-coretext-late-font-ceiling).
+- Remote (SSH) projects, the Ubuntu 22.04 package and Windows use the
+  compiler backend.
+
+#### Compiler compatibility preview
+
+Rebuilds with the project compiler as you edit. The first edit opens a
+short coalescing window; the build then saves the latest open edited
 files — there is no shadow copy — and compiles them.
 
 - **Build delay** is configurable from 200 ms to 10 s (default 700 ms).
@@ -250,7 +310,8 @@ in the [build instructions](Development/README.md).
 
 - A TeX distribution for real document builds — TeX Live, BasicTeX
   (macOS), or MiKTeX (Windows). The editor and PDF preview work without
-  one; builds cannot run.
+  one; builds cannot run. The embedded editing preview reads the same
+  TeX Live / MacTeX installation (XeTeX formats and fonts included).
 - **Bun or Node.js + npm** — the AI assistant downloads its `pi` agent
   runtime into the app-local support folder on first launch. Without a
   package manager the assistant stays unavailable; everything else works.
@@ -327,3 +388,34 @@ Pitex is source-available under the
 [PolyForm Shield License 1.0.0](LICENSE): free to use, modify, and
 share, including commercially — but you may not use it to compete with
 the project or its author.
+
+The embedded editing preview helpers (`pitex-preview`,
+`pitex-preview-xetex`) are built from [PreviewEngine/](PreviewEngine/),
+which contains code from TeXpresso (MIT), XeTeX (SIL/MIT-style) and
+Tectonic (MIT). They link dynamically to system or bundled libraries,
+including TECkit (LGPL-2.1-or-later, used unmodified and replaceable — see
+"Corresponding source" in `PreviewEngine/licenses/THIRD-PARTY.md`). Within
+the helper binaries themselves, TeXpresso's GPL'd `dpx` component
+(xdvipdfmx) and the MuPDF/SDL renderer were removed rather than imported;
+dynamically loaded system libraries keep their own licenses.
+See [PreviewEngine/PROVENANCE.md](PreviewEngine/PROVENANCE.md)
+and [PreviewEngine/licenses/](PreviewEngine/licenses/); the deb installs
+them under `/usr/share/doc/pitex/preview-engine/`, the macOS app under
+`Contents/Resources/PreviewEngine/`.
+
+The macOS PDF preview column is rendered by **pdf.js** inside a `WKWebView`,
+served offline from the app bundle over the `pitex-pdfjs://` custom scheme —
+it replaces PDFKit's `PDFView`. The payload is vendored `pdfjs-dist`
+(Apache-2.0) plus Pitex-authored `viewer.html`/`viewer.mjs`/`bridge.js` glue,
+under [Mac/Resources/pdfjs/](Mac/Resources/pdfjs/). Per `VERSIONS` and
+`MANIFEST.sha256`, upstream build files are byte-identical to the npm tarball
+(`pdfjs-dist` 6.3.289). The four `LiberationSans-*.ttf` fonts and their
+license copies are **deliberately excluded** from the production payload:
+Liberation 1.x is GPLv2-with-font-exceptions with an unresolved
+corresponding-source question, and pdf.js only fetches it as the last-resort
+fallback for non-embedded Helvetica (local Helvetica/Arial resolve first on
+macOS), so exclusion drops the Liberation-specific GPLv2 obligations at no
+expected rendering cost. Third-party notices shipped in that folder cover
+Apache-2.0 (pdf.js), Adobe (cmaps), Foxit, JBIG2, OpenJPEG, qcms, and CC0
+(iccs); other copyleft components (PreviewEngine, above) keep their own
+notices and obligations.

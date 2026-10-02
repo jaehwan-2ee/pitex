@@ -432,6 +432,10 @@ extension WorkspaceModel {
     /// goes through the live-compile scheduler — manual work never
     /// overlaps a live run, it queues behind its cancellation instead.
     func startBuild() async {
+        let context = projectGeneration
+        let editor = environment?.editor
+        await editor?.flushPendingChanges()
+        guard projectGeneration == context, environment?.editor === editor else { return }
         performLiveRequests(liveScheduler.requestManual())
     }
 
@@ -493,6 +497,7 @@ extension WorkspaceModel {
               Self.liveCompileExtensions.contains(
                   (snapshot.path.rawValue as NSString).pathExtension.lowercased()
               ) else { return }
+        noteEmbeddedPreviewEdit()
         performLiveRequests(liveScheduler.noteEdit(nowMs: Self.nowMs()))
     }
 
@@ -506,7 +511,10 @@ extension WorkspaceModel {
         liveScheduler.setDelay(remote != nil
             ? max(configured, LiveCompileScheduler.remoteMinDelayMs)
             : configured)
-        performLiveRequests(liveScheduler.setEnabled(settings.liveCompileEnabled))
+        // The embedded editing preview replaces the compiler live path for
+        // local projects; manual builds keep using requestManual().
+        performLiveRequests(liveScheduler.setEnabled(settings.liveCompileEnabled && !embeddedPreviewEnabled))
+        syncEmbeddedPreview()
     }
 
     /// Re-arms the coalescing Task at the scheduler's pending deadline.
@@ -617,13 +625,19 @@ extension WorkspaceModel {
         pendingLogText = ""
         pendingBuildIssues = []
         buildIssues = []
-        invalidateSyncTeXForBuild()
+        // An editing preview's binding lives in its own session directory,
+        // which this build never writes — it stays usable meanwhile.
+        if retainedPDF?.isEmbeddedPreview != true { invalidateSyncTeXForBuild() }
         guard let buildID = try? BuildID(rawValue: "build-\(UUID().uuidString.lowercased())") else {
             buildState = .failed("The build could not be started.")
             finishScheduledRun(token)
             return
         }
         activeBuildID = buildID
+        // Every edit noted so far — queued ones included — is part of what
+        // a manual build compiles: previews without a newer edit never
+        // replace its PDF.
+        if !live { noteEmbeddedFinalBuildStarted() }
         // Root discovery must see edits to inactive main/preamble files too.
         if let problem = await persistDirtySessions() {
             if runStillCurrent(token, context: context, root: root) {
@@ -882,12 +896,16 @@ extension WorkspaceModel {
                 latestBuiltPDFName = outputPDF
                 // Bytes + artifact + source identity survive the next
                 // build's status churn — this is what the preview retains.
-                retainedPDF = RetainedPDF(
-                    data: pdfData, artifactPath: outputPDF,
-                    sourceTarget: relativeSource
-                )
-                let pdfURL = root.appendingPathComponent(outputPDF).standardizedFileURL
-                await refreshSyncTeXBinding(pdfURL: pdfURL, sourceRelativePath: relativeSource)
+                // An editing preview already showing an edit made after
+                // this manual build started stays on screen instead.
+                if live || !keepEmbeddedPreviewOverFinalBuild() {
+                    retainedPDF = RetainedPDF(
+                        data: pdfData, artifactPath: outputPDF,
+                        sourceTarget: relativeSource
+                    )
+                    let pdfURL = root.appendingPathComponent(outputPDF).standardizedFileURL
+                    await refreshSyncTeXBinding(pdfURL: pdfURL, sourceRelativePath: relativeSource)
+                }
                 guard runStillCurrent(token, context: context, root: root) else { break }
                 // Live outputs hide under .pitex-live — rescanning the
                 // whole project on every debounced success is wasted work.

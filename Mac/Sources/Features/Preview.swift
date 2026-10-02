@@ -1,4 +1,4 @@
-import PDFKit
+import CoreGraphics
 import SwiftUI
 import SyncTeXCore
 import TexDomain
@@ -101,6 +101,7 @@ struct Preview: View {
                     Text(verbatim: pdfDisplayName)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+                    outputKindBadge(retained)
                     Spacer()
                     Button {
                         openPDFExternally()
@@ -108,7 +109,7 @@ struct Preview: View {
                         Image(systemName: "arrow.up.forward.app")
                     }
                     .buttonStyle(.borderless)
-                    .disabled(pdfFileURL == nil)
+                    .disabled(!retained.isEmbeddedPreview && pdfFileURL == nil)
                     .help(String(localized: "preview.open_external"))
                     .accessibilityIdentifier("pitex.pdf.openExternal")
                     Button {
@@ -131,6 +132,7 @@ struct Preview: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 Divider()
+                embeddedStatusLine
                 if case let .failed(reason) = workspace.buildState {
                     // The last-good PDF stays up but the failure is
                     // still visible — details live in Build Log/Issues.
@@ -160,6 +162,7 @@ struct Preview: View {
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("pitex.pdf")
             } else {
+                embeddedStatusLine
                 ContentUnavailableView(
                     "preview.no_pdf",
                     systemImage: "doc.richtext",
@@ -190,6 +193,56 @@ struct Preview: View {
         .accessibilityIdentifier("pitex.synctexStatus")
     }
 
+    /// Editing preview vs final compiler output — a preview is never
+    /// presented as the project compiler's PDF. Live compiler builds
+    /// under `.pitex-live` carry neither label.
+    @ViewBuilder
+    private func outputKindBadge(_ retained: RetainedPDF) -> some View {
+        if retained.isEmbeddedPreview || retained.isFinalOutput {
+            let key: LocalizedStringKey = retained.isEmbeddedPreview ? "preview.embedded_label" : "preview.final_label"
+            let tint = retained.isEmbeddedPreview ? Color.orange : Color.green
+            Text(key)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().strokeBorder(tint))
+                .accessibilityIdentifier("pitex.preview.outputKind")
+        }
+    }
+
+    /// Embedded engine progress (updating/failed/unavailable), separate
+    /// from the final build's state.
+    @ViewBuilder
+    private var embeddedStatusLine: some View {
+        if let status = embeddedStatus {
+            Text(verbatim: status.text)
+                .font(.caption)
+                .foregroundStyle(status.color)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("pitex.preview.embeddedStatus")
+            Divider()
+        }
+    }
+
+    private var embeddedStatus: (text: String, color: Color)? {
+        func joined(_ key: String.LocalizationValue, _ detail: String) -> String {
+            let title = String(localized: key)
+            return detail.isEmpty ? title : "\(title): \(detail)"
+        }
+        switch workspace.embeddedPreviewStatus {
+        case .off, .current: return nil
+        case .updating: return (String(localized: "preview.embedded_updating"), .secondary)
+        case let .errors(first): return first.isEmpty ? nil : (first, .orange)
+        case let .failed(message): return (joined("preview.embedded_failed", message), .red)
+        case let .unavailable(reason): return (joined("preview.embedded_unavailable", reason), .orange)
+        case .unsupportedRemote: return (String(localized: "preview.embedded_unsupported_remote"), .secondary)
+        }
+    }
+
     /// Display name of the rendered PDF — the artifact's basename even
     /// when the real file hides under `.pitex-live`.
     private var pdfDisplayName: String {
@@ -199,18 +252,34 @@ struct Preview: View {
         return (path as NSString).lastPathComponent
     }
 
+    /// Saved/opened copies of an editing preview keep its label in the
+    /// file name so they are never mistaken for the final PDF.
+    private var exportName: String {
+        guard workspace.retainedPDF?.isEmbeddedPreview == true else { return pdfDisplayName }
+        let stem = (pdfDisplayName as NSString).deletingPathExtension
+        return "\(stem) (\(String(localized: "preview.embedded_label"))).pdf"
+    }
+
     /// On-disk URL of the last built PDF — the SyncTeX binding carries it
     /// once a build has succeeded; before binding it derives from the
     /// retained artifact path (which may live under `.pitex-live`).
+    /// Editing previews have none: their session artifacts are released
+    /// as newer ones arrive.
     private var pdfFileURL: URL? {
+        guard let retained = workspace.retainedPDF, !retained.isEmbeddedPreview else { return nil }
         if let url = workspace.syncTeXBinding?.pdfURL { return url }
-        guard let root = workspace.projectURL,
-              let artifact = workspace.retainedPDF?.artifactPath else { return nil }
-        return root.appendingPathComponent(artifact)
+        guard let root = workspace.projectURL else { return nil }
+        return retained.fileURL(projectRoot: root)
     }
 
-    /// Opens the built PDF in the system default PDF viewer (Preview.app).
+    /// Opens the built PDF in the system default PDF viewer (Preview.app);
+    /// an editing preview opens as a labeled copy of the bytes on screen.
     private func openPDFExternally() {
+        if let retained = workspace.retainedPDF, retained.isEmbeddedPreview {
+            guard let url = try? WorkspaceModel.exportEmbeddedPreviewCopy(retained.data, named: exportName) else { return }
+            NSWorkspace.shared.open(url)
+            return
+        }
         guard let url = pdfFileURL else { return }
         NSWorkspace.shared.open(url)
     }
@@ -218,7 +287,7 @@ struct Preview: View {
     /// "Download": saves a copy of the rendered PDF via a save panel.
     private func downloadPDF(_ data: Data) {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = pdfDisplayName
+        panel.nameFieldStringValue = exportName
         panel.allowedContentTypes = [.pdf]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? data.write(to: url)
@@ -249,6 +318,16 @@ struct Preview: View {
     }
 }
 
+/// Offline pdf.js/WKWebView renderer (replaces PDFKit's PDFView). The
+/// standalone feasibility run (r5) proved the behaviors this view needs:
+/// a real module worker under a custom scheme, CSP-clean loading,
+/// geometry/rotate/crop, Cmd-click inverse, UserUnit, and position keep
+/// across same-target swaps. Detach/attach mounts a fresh view (SwiftUI
+/// dismantle → makeNSView), which the F1 ready-queue makes safe.
+///
+/// Everything lives behind the same boundary as before: `data`/`target`
+/// swaps in updateNSView, SyncTeX highlight notifications, and the
+/// Cmd+click → onInverseSync contract. No PDFKit.
 private struct PDFDocumentView: NSViewRepresentable {
     let data: Data
     /// Workspace + source identity of these bytes — a different build
@@ -261,35 +340,64 @@ private struct PDFDocumentView: NSViewRepresentable {
     var highlightSync = false
     var onInverseSync: (Int, SyncTeXCore.PDFPoint) -> Void = { _, _ in }
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displaysPageBreaks = true
-        view.document = PDFDocument(data: data)
+    /// This WKWebView's JSC lacks ReadableStream's async iterator —
+    /// pdf.js getTextContent/find use `for await` on it (proven by the
+    /// standalone run: `__pitexPolyfill.needed == true`). Injected into
+    /// the page world before any pdf.js code runs. The worker-side site
+    /// degrades gracefully on its own (sync fallback).
+    private static let streamIteratorPolyfill = """
+        (() => {
+          const P = typeof ReadableStream === "function" ? ReadableStream.prototype : null;
+          const needed = !!P && typeof P[Symbol.asyncIterator] !== "function";
+          if (needed) {
+            // ponytail: minimal Streams async iterator; no cancel() on early exit (pdf.js consumes to end or error)
+            P[Symbol.asyncIterator] = async function* () {
+              const reader = this.getReader();
+              try { for (;;) { const { done, value } = await reader.read(); if (done) return; yield value; } }
+              finally { reader.releaseLock(); }
+            };
+          }
+          window.__pitexPolyfill = { readableStream: !!P, needed };
+        })();
+        """
 
-        // Cmd-click on a PDF location triggers inverse SyncTeX — the
-        // reference editor's Ctrl-click equivalent. A local event monitor is
-        // used instead of an NSClickGestureRecognizer: recognizers lose
-        // clicks to PDFView's own tracking, while the monitor sees the raw
-        // event first and can swallow it before selection/link behavior.
-        context.coordinator.syncMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: .leftMouseDown
-        ) { [weak coordinator = context.coordinator] event in
-            let consumed = MainActor.assumeIsolated {
-                coordinator?.handleSyncClick(event) ?? false
-            }
-            return consumed ? nil : event
-        }
+    func makeNSView(context: Context) -> WKWebView {
+        let coordinator = context.coordinator
+        coordinator.renderedData = data
+        coordinator.renderedTarget = target
+        coordinator.onInverseSync = onInverseSync
+        coordinator.highlightSync = highlightSync
 
-        context.coordinator.pdfView = view
-        context.coordinator.renderedData = data
-        context.coordinator.renderedTarget = target
-        context.coordinator.onInverseSync = onInverseSync
-        context.coordinator.highlightSync = highlightSync
+        let content = WKUserContentController()
+        // The content controller retains its handlers — proxy weakly.
+        content.add(WeakScriptMessageHandler(coordinator), name: "pitexPdf")
+        content.addUserScript(WKUserScript(
+            source: Self.streamIteratorPolyfill,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: .page))
+
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = content
+        configuration.setURLSchemeHandler(coordinator.scheme, forURLScheme: "pitex-pdfjs")
+
+        let view = PDFJSWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = coordinator
+        coordinator.webView = view
+        view.addGestureRecognizer(NSMagnificationGestureRecognizer(
+            target: coordinator, action: #selector(Coordinator.handleMagnify(_:))))
+        // Zoom step parity with the PDFView control (2^(1/4) ≈ 1.1892 measured
+        // in C-v7; FLAGGED — confirmed by the C-v9 control in≥2/out≥2 series).
+        let zoomStep = pow(2.0, 0.25)
+        view.onZoomIn = { [weak coordinator] in coordinator?.zoomBy(zoomStep) }
+        view.onZoomOut = { [weak coordinator] in coordinator?.zoomBy(1.0 / zoomStep) }
+        view.onAutoResize = { [weak coordinator] in coordinator?.autoResize() }
+        view.load(URLRequest(url: URL(string: "pitex-pdfjs://app/viewer.html")!))
+
+        coordinator.load(data: data, sameTarget: false)
 
         NotificationCenter.default.addObserver(
-            context.coordinator,
+            coordinator,
             selector: #selector(Coordinator.highlightRequested(_:)),
             name: .syncTeXHighlightRequested,
             object: workspace
@@ -297,7 +405,7 @@ private struct PDFDocumentView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: PDFView, context: Context) {
+    func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.highlightSync = highlightSync
         let sameTarget = context.coordinator.renderedTarget == target
@@ -310,148 +418,293 @@ private struct PDFDocumentView: NSViewRepresentable {
                     rendered.baseAddress == incoming.baseAddress
                 }
             }
-        // Rebuilding `view.document` resets the PDF to its first page, so
-        // equal bytes — same storage or a byte-compare hit — must return
-        // early; only genuinely new build output reloads the view. The
-        // identity must also match: same bytes under a DIFFERENT source
-        // still swap so renderedTarget advances and the position resets.
         if sameTarget && (unchanged || context.coordinator.renderedData == data) { return }
-        // Capture BEFORE the swap: index and point come from the SAME
-        // currentDestination — in continuous mode currentPage can differ
-        // from currentDestination.page near page boundaries, and mixing
-        // them jumps. index(for:) yields NSNotFound (not nil) for a page
-        // outside the old document — normalize it so the currentPage
-        // fallback can apply; a nil point never pairs a fallback index
-        // with a destination that resolved to no page.
-        let destination = sameTarget ? view.currentDestination : nil
-        let destinationIndex = destination?.page
-            .flatMap { view.document?.index(for: $0) }
-            .flatMap { $0 == NSNotFound ? nil : $0 }
-        let oldIndex = sameTarget
-            ? destinationIndex ?? view.currentPage
-                .flatMap { view.document?.index(for: $0) }
-                .flatMap { $0 == NSNotFound ? nil : $0 }
-            : nil
-        let point = destinationIndex != nil ? destination?.point : nil
-        let autoScales = view.autoScales
-        let scaleFactor = view.scaleFactor
-        context.coordinator.clearSyncHighlight()
         context.coordinator.renderedData = data
         context.coordinator.renderedTarget = target
-        view.document = PDFDocument(data: data)
-        guard sameTarget, let document = view.document, document.pageCount > 0 else { return }
-        view.autoScales = autoScales
-        if !autoScales { view.scaleFactor = scaleFactor }
-        if let oldIndex {
-            // The new document may be shorter — clamp the index, not a page.
-            let clamped = min(max(oldIndex, 0), document.pageCount - 1)
-            if let page = document.page(at: clamped) {
-                if let point {
-                    view.go(to: PDFDestination(page: page, at: point))
-                } else {
-                    // No destination was set — keep the page itself.
-                    view.go(to: page)
-                }
-            }
-        }
+        context.coordinator.load(data: data, sameTarget: sameTarget)
+        NSLog("[preview] pdf.js document swap target=%@ bytes=%d gen=%d",
+              target, data.count, context.coordinator.generation)
     }
 
-    static func dismantleNSView(_ nsView: PDFView, coordinator: Coordinator) {
-        coordinator.clearSyncHighlight()
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        NSLog("[preview] teardown target=%@", coordinator.renderedTarget)
         NotificationCenter.default.removeObserver(coordinator)
-        if let monitor = coordinator.syncMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        // Best-effort page shutdown (worker destroy). The web view's
+        // teardown kills it anyway; this just closes the loop cleanly.
+        view.callAsyncJavaScript(
+            "return window.pitex?.shutdown?.() ?? true;",
+            in: nil, in: .page, completionHandler: { _ in })
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
+    /// Serves the bundled pdf.js payload plus per-generation document
+    /// bytes on `pitex-pdfjs://`. Retention is lifecycle-driven: the
+    /// registry holds only the displayed, in-flight and pending
+    /// generations; older ones are evicted when a newer gen displays
+    /// (superseded loads destroy their own tasks JS-side). `Data` shares
+    /// storage with `retainedPDF`, so holding the current gen is free —
+    /// the memory risk is the WebContent process, which the perf gate
+    /// measures separately.
     @MainActor
-    final class Coordinator: NSObject {
-        weak var pdfView: PDFView?
+    final class PDFJSSchemeHandler: NSObject, WKURLSchemeHandler {
+        private var generations: [Int: Data] = [:]
+
+        func publish(_ gen: Int, data: Data) {
+            generations[gen] = data
+        }
+
+        /// F5: on `displayed(g)` only strictly-older gens are dead;
+        /// displayed/in-flight/pending keep their bytes. `Int.max`
+        /// clears everything (post-termination).
+        func evictBelow(_ g: Int) {
+            for key in generations.keys where key < g {
+                generations.removeValue(forKey: key)
+            }
+        }
+
+        func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+            let path = task.request.url?.path ?? ""
+            let data: Data
+            let type: String
+            if path.hasPrefix("/doc/") {
+                let gen = Int(path.dropFirst(5).dropLast(4)) ?? -1
+                guard let d = generations[gen] else {
+                    task.didFailWithError(URLError(.fileDoesNotExist)); return
+                }
+                data = d; type = "application/pdf"
+            } else {
+                let rel = String(path.dropFirst())
+                guard let base = Bundle.main.resourceURL?
+                        .appendingPathComponent("pdfjs")
+                        .standardizedFileURL else {
+                    task.didFailWithError(URLError(.fileDoesNotExist)); return
+                }
+                let full = base.appendingPathComponent(rel).standardizedFileURL
+                // serve only files inside the pdfjs resource dir (no
+                // traversal out of the bundle)
+                guard full.path.hasPrefix(base.path + "/"),
+                      let d = try? Data(contentsOf: full) else {
+                    task.didFailWithError(URLError(.fileDoesNotExist)); return
+                }
+                data = d
+                type = rel.hasSuffix(".mjs") ? "text/javascript"
+                     : rel.hasSuffix(".js")  ? "text/javascript"
+                     : rel.hasSuffix(".css") ? "text/css"
+                     : rel.hasSuffix(".wasm") ? "application/wasm"
+                     : rel.hasSuffix(".pdf") ? "application/pdf"
+                     : rel.hasSuffix(".html") ? "text/html"
+                     : "application/octet-stream"
+            }
+            // Whole response delivered synchronously inside start() — a
+            // stop() can never interleave between didReceive/didFinish.
+            task.didReceive(URLResponse(url: task.request.url!, mimeType: type,
+                                        expectedContentLength: data.count,
+                                        textEncodingName: nil))
+            task.didReceive(data)
+            task.didFinish()
+        }
+
+        func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+    }
+
+    /// pdf.js preview surface. The context menu gains Zoom In / Zoom Out /
+    /// Automatically Resize — the PDFView parity items (F7; the control's
+    /// stock menu is confirmed in the parity screenshot gate). No Reload
+    /// item is filtered: recovery is self-healing — every `ready`
+    /// re-pushes the current document, whatever caused it (F6).
+    final class PDFJSWebView: WKWebView {
+        var onZoomIn: () -> Void = {}
+        var onZoomOut: () -> Void = {}
+        var onAutoResize: () -> Void = {}
+
+        override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+            menu.addItem(.separator())
+            let zoomIn = NSMenuItem(title: String(localized: "preview.zoom_in"),
+                action: #selector(zoomInAction), keyEquivalent: "")
+            zoomIn.target = self
+            let zoomOut = NSMenuItem(title: String(localized: "preview.zoom_out"),
+                action: #selector(zoomOutAction), keyEquivalent: "")
+            zoomOut.target = self
+            let auto = NSMenuItem(title: String(localized: "preview.zoom_auto"),
+                action: #selector(autoResizeAction), keyEquivalent: "")
+            auto.target = self
+            menu.addItem(zoomIn); menu.addItem(zoomOut); menu.addItem(auto)
+            super.willOpenMenu(menu, with: event)
+        }
+        @objc private func zoomInAction() { onZoomIn() }
+        @objc private func zoomOutAction() { onZoomOut() }
+        @objc private func autoResizeAction() { onAutoResize() }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        weak var webView: WKWebView?
+        let scheme = PDFJSSchemeHandler()
         var renderedData = Data()
         /// Workspace + source identity of the rendered document —
         /// distinguishes a rebuild of the same target (preserve
         /// position) from a target or workspace switch (reset).
         var renderedTarget = ""
-        var syncMonitor: Any?
+        var generation = 0
+        /// True once the page posted `ready`; loads queue until then.
+        private(set) var ready = false
+        private var pendingLoad: (data: Data, sameTarget: Bool)?
         var onInverseSync: (Int, SyncTeXCore.PDFPoint) -> Void = { _, _ in }
         var highlightSync = false {
-            didSet { if !highlightSync { clearSyncHighlight() } }
-        }
-        private var syncHighlight: PDFAnnotation?
-        private var highlightTask: Task<Void, Never>?
-
-        func clearSyncHighlight() {
-            highlightTask?.cancel()
-            highlightTask = nil
-            if let syncHighlight { syncHighlight.page?.removeAnnotation(syncHighlight) }
-            syncHighlight = nil
+            didSet { if oldValue != highlightSync { pushHighlightSync() } }
         }
 
-        /// Cmd+click inside the PDF fires inverse SyncTeX and reports the
-        /// event as consumed so text selection and link following stay out of
-        /// the way; every other click passes through to the PDF view.
-        func handleSyncClick(_ event: NSEvent) -> Bool {
-            guard event.modifierFlags.contains(.command),
-                  let view = pdfView,
-                  event.window === view.window
-            else { return false }
-            let location = view.convert(event.locationInWindow, from: nil)
-            guard view.bounds.contains(location),
-                  let page = view.page(for: location, nearest: true)
-            else { return false }
-            // PDFKit page space is bottom-left origin; `synctex edit` wants
-            // top-left origin points — the same flip the forward highlight
-            // performs in reverse.
-            let pagePoint = view.convert(location, to: page)
-            let mediaBox = page.bounds(for: .mediaBox)
-            guard let point = try? SyncTeXCore.PDFPoint(
-                x: Double(pagePoint.x - mediaBox.origin.x),
-                y: Double(mediaBox.maxY - pagePoint.y)
-            ) else { return false }
-            // `index(for:)` is 0-based; `synctex edit` numbers pages from 1.
-            onInverseSync((view.document?.index(for: page) ?? 0) + 1, point)
-            return true
+        /// MediaBox list via the CG parser — the same geometry oracle the
+        /// proof used; pdf.js needs user-space boxes for inverse + goto.
+        private func mediaBoxes(_ data: Data) -> [[Double]] {
+            guard let dp = CGDataProvider(data: data as CFData),
+                  let doc = CGPDFDocument(dp), doc.numberOfPages > 0 else { return [] }
+            return (1...doc.numberOfPages).map { i in
+                let r = doc.page(at: i)?.getBoxRect(.mediaBox) ?? .zero
+                return [Double(r.minX), Double(r.minY), Double(r.maxX), Double(r.maxY)]
+            }
         }
 
+        private func js(_ body: String, arguments: [String: Any] = [:]) {
+            webView?.callAsyncJavaScript(
+                body, arguments: arguments, in: nil, in: .page,
+                completionHandler: { r in
+                    if case let .failure(e) = r {
+                        NSLog("[preview] js error: %@", "\(e)")
+                    }
+                })
+        }
+
+        /// Queue-or-fire document push. `sameTarget` tells the JS side to
+        /// capture the current position before the swap and restore it on
+        /// pagesinit (proven by the standalone position-keep check).
+        func load(data: Data, sameTarget: Bool) {
+            // Before `ready`, window.pitex doesn't exist — queue newest
+            // wins (F1). Generation only counts pushes that reached JS.
+            guard ready else { pendingLoad = (data, sameTarget); return }
+            generation += 1
+            scheme.publish(generation, data: data)
+            js("return window.pitex.load(gen, mediaBoxes, sameTarget);",
+               arguments: ["gen": generation,
+                           "mediaBoxes": mediaBoxes(data),
+                           "sameTarget": sameTarget])
+        }
+
+        func pushHighlightSync() {
+            guard ready else { return }
+            js("return window.pitex.setHighlightSync(on);",
+               arguments: ["on": highlightSync])
+        }
+
+        /// Pinch-magnify → pdf.js scale (F4): per-event factor, passed as
+        /// an argument; pdf.js re-renders at the new resolution.
+        @objc func handleMagnify(_ g: NSMagnificationGestureRecognizer) {
+            let factor = 1 + g.magnification
+            g.magnification = 0
+            js("return window.pitex.zoomBy(f);", arguments: ["f": factor])
+        }
+
+        /// WebContent died → reload the page. `ready` posts again and the
+        /// pending-document repush heals the view (F6 public path).
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            NSLog("[preview] pdf.js WebContent terminated; reloading")
+            ready = false
+            scheme.evictBelow(Int.max)
+            pendingLoad = nil    // `ready` re-pushes renderedData
+            webView.reload()
+        }
+
+        /// Context-menu zoom parity (F7): PDFView's Zoom In/Out steps.
+        func zoomBy(_ factor: Double) {
+            js("return window.pitex.zoomBy(f);", arguments: ["f": factor])
+        }
+        /// "Automatically Resize" = the PDFView default scale mode ≈
+        /// pdf.js page-width fit.
+        func autoResize() {
+            js("return window.pitex.autoResize();")
+        }
+
+
+        // MARK: WKScriptMessageHandler — the page reports inverse sync,
+        // links, errors.
+
+        func userContentController(
+            _ controller: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard let m = message.body as? [String: Any],
+                  let type = m["type"] as? String else { return }
+            switch type {
+            case "ready":
+                ready = true
+                // Observe the polyfill outcome — missing record means the
+                // user script never ran (loud, not silent).
+                webView?.callAsyncJavaScript(
+                    "return window.__pitexPolyfill ?? null;",
+                    arguments: [:], in: nil, in: .page) { r in
+                        if case let .success(v) = r {
+                            NSLog("[preview] pdf.js stream-polyfill %@", "\(v)")
+                        }
+                    }
+                pushHighlightSync()
+                // F6 public recovery: every `ready` — initial, menu
+                // reload, or post-crash reload — re-pushes the queued or
+                // current document.
+                if let p = pendingLoad ?? (renderedData.isEmpty ? nil : (renderedData, false)) {
+                    pendingLoad = nil
+                    load(data: p.data, sameTarget: p.sameTarget)
+                }
+            case "displayed":
+                // F5: evict only strictly-older gens — an in-flight middle
+                // gen must keep its bytes or its fetch 404s.
+                if let g = m["gen"] as? Int {
+                    scheme.evictBelow(g)
+                }
+            case "load-error", "destroy-error":
+                NSLog("[preview] pdf.js %@: %@", type, "\(m)")
+            case "inverse":
+                guard let page = m["page"] as? Int,
+                      let x = m["x"] as? Double, let y = m["y"] as? Double,
+                      let point = try? SyncTeXCore.PDFPoint(x: x, y: y)
+                else { return }
+                onInverseSync(page, point)
+            case "link":
+                if let u = m["url"] as? String, let url = URL(string: u),
+                   url.scheme == "https" || url.scheme == "http" {
+                    NSWorkspace.shared.open(url)
+                }
+            case "jserror", "csp":
+                NSLog("[preview] pdf.js %@: %@", type, "\(m)")
+            default: break
+            }
+        }
+
+        // MARK: WKNavigationDelegate — only our own scheme navigates.
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor action: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
+            action.request.url?.scheme == "pitex-pdfjs" ? .allow : .cancel
+        }
+
+        /// Forward SyncTeX: scroll ALWAYS, overlay only under
+        /// highlightSync (the JS side gates the highlight itself).
         @objc func highlightRequested(_ notification: Notification) {
-            guard let view = pdfView,
-                  let info = notification.userInfo,
-                  let pageNumber = info["page"] as? Int,
-                  let document = view.document,
-                  pageNumber > 0, pageNumber <= document.pageCount,
-                  let page = document.page(at: pageNumber - 1)
-            else { return }
-            // SyncTeX's v is the box's bottom edge, measured from the page
-            // top. Its height extends upward in PDFKit's page coordinates.
+            guard let info = notification.userInfo,
+                  let page = info["page"] as? Int else { return }
             let x = info["x"] as? Double ?? 0
             let v = info["y"] as? Double ?? 0
-            let width = info["width"] as? Double ?? 0
-            let height = info["height"] as? Double ?? 0
-            let mediaBox = page.bounds(for: .mediaBox)
-            let pdfY = mediaBox.maxY - v
-            let bounds = NSRect(
-                x: mediaBox.origin.x + x,
-                y: pdfY,
-                width: max(width, 4),
-                height: max(height, 4)
-            )
-            clearSyncHighlight()
-            view.go(to: bounds.insetBy(dx: -8, dy: -8), on: page)
-            guard highlightSync else { return }
-            let marker = PDFAnnotation(bounds: bounds, forType: .highlight, withProperties: nil)
-            marker.color = NSColor.systemYellow.withAlphaComponent(0.35)
-            marker.shouldPrint = false
-            page.addAnnotation(marker)
-            syncHighlight = marker
-            highlightTask = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
-                self?.clearSyncHighlight()
-            }
+            let w = info["width"] as? Double ?? 0
+            let h = info["height"] as? Double ?? 0
+            js("return window.pitex.goto(gen, p, x, v, w, h);",
+               arguments: ["gen": generation, "p": page,
+                           "x": x, "v": v, "w": w, "h": h])
         }
     }
 }
+
 
 extension Notification.Name {
     static let syncTeXHighlightRequested = Notification.Name("pitex.synctex.highlight")

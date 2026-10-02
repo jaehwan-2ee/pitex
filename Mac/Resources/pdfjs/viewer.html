@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<!-- Pitex offline pdf.js proof viewer.
+     Served ONLY from pitex-pdfjs:// (custom scheme). One shared PDFWorker
+     per view; documents load at /doc/<gen>.pdf through the same handler.
+     CSP: default-src 'none'; self-only script/worker/connect; inline style
+     needed by pdf_viewer.css-driven layout + dynamic styles; img/font for
+     blob/data internals. securitypolicyviolation is bridged to native. -->
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:">
+<link rel="stylesheet" href="/pdf_viewer.css">
+<style>
+  html,body{margin:0;height:100%;background:#555}
+  #viewerContainer{position:absolute;inset:0;overflow:auto}
+  #viewer.pdfViewer{--scale-factor:1}
+  .page{margin:8px auto}
+  /* corr5: pdf.js .pdfViewer.removePageBorders .page{margin:0 auto 10px} would
+     otherwise beat the rule above (equal specificity, later file). Re-assert an
+     8px top margin; border:none from the vendor rule still applies. */
+  .pdfViewer.removePageBorders .page{margin:8px auto;border:none}
+  .pitex-hl{position:absolute;background:rgba(255,220,0,.35);pointer-events:none;z-index:5}
+</style>
+<body>
+<div id="viewerContainer"><div id="viewer" class="pdfViewer"></div></div>
+<script src="/bridge.js"></script>
+<script type="module" src="/viewer.mjs"></script>
+

@@ -1,0 +1,20 @@
+pdfjs-dist            6.3.289  Apache-2.0  https://www.npmjs.com/package/pdfjs-dist
+
+Vendored from the npm registry tarball (sha256
+06f25e887adc6489f04c9fcb14198c77e4e5623a59a0bba5c4cea5838a4f1241).
+This directory is the offline WKWebView payload served on pitex-pdfjs://;
+upstream build files are byte-identical to the tarball. viewer.html,
+viewer.mjs and bridge.js are Pitex-authored glue.
+
+DELIBERATE UPSTREAM EXCLUSION (packaging decision 2026-10-02):
+the four LiberationSans-{Regular,Bold,Italic,BoldItalic}.ttf and both
+LICENSE_LIBERATION copies were REMOVED from this payload. Liberation 1.x
+is GPLv2 with font exceptions and carries an unresolved corresponding-
+source question; pdf.js fetches LiberationSans only as the last-resort
+fallback for non-embedded Helvetica (local Helvetica/Arial resolve first
+on macOS), so exclusion removes the Liberation-specific GPLv2 obligations at no
+expected rendering cost; other copyleft components (e.g. PreviewEngine)
+keep their own notices. See pdfjs-integration-GATES.md Addendum B.
+
+Third-party license notices included: Apache-2.0 (pdf.js), Adobe (cmaps),
+Foxit (Foxit PFB fonts), JBIG2, OpenJPEG, qcms, CC0 (iccs).

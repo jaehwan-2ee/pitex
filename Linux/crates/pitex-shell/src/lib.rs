@@ -10,6 +10,7 @@ pub mod agent;
 pub mod app_ui;
 pub mod compat;
 pub mod completion;
+pub mod embedded_preview;
 pub mod fold;
 pub mod ghost_completion;
 pub mod git;

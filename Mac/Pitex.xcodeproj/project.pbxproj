@@ -45,6 +45,7 @@
 		100000000000000000000043 /* RemoteCore in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000013 /* RemoteCore */; };
 		100000000000000000000044 /* RemoteSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000043 /* RemoteSupport.swift */; };
 		100000000000000000000045 /* SSHViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000044 /* SSHViews.swift */; };
+		1000000000000000000000E1 /* EmbeddedPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000E1 /* EmbeddedPreview.swift */; };
 		100000000000000000000019 /* SyncTeXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000D /* SyncTeXCore */; };
 		10000000000000000000001A /* AICore in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000E /* AICore */; };
 		10000000000000000000001B /* EditorFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 30000000000000000000000F /* EditorFeature */; };
@@ -52,6 +53,7 @@
 		10000000000000000000001D /* PDFFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000011 /* PDFFeature */; };
 		100000000000000000000041 /* PitexIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000041 /* PitexIcon.icon */; };
 		100000000000000000000042 /* markdown-preview.html in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000042 /* markdown-preview.html */; };
+		600000000000000000000043 /* pdfjs in Resources */ = {isa = PBXBuildFile; fileRef = 700000000000000000000043 /* pdfjs */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -90,8 +92,10 @@
 		200000000000000000000033 /* SubscriptionUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionUsage.swift; sourceTree = "<group>"; };
 		200000000000000000000043 /* RemoteSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSupport.swift; sourceTree = "<group>"; };
 		200000000000000000000044 /* SSHViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHViews.swift; sourceTree = "<group>"; };
+		2000000000000000000000E1 /* EmbeddedPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmbeddedPreview.swift; sourceTree = "<group>"; };
 		200000000000000000000041 /* PitexIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PitexIcon.icon; sourceTree = "<group>"; };
 		200000000000000000000042 /* markdown-preview.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "markdown-preview.html"; sourceTree = "<group>"; };
+		700000000000000000000043 /* pdfjs */ = {isa = PBXFileReference; lastKnownFileType = folder; path = pdfjs; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -191,6 +195,7 @@
 				200000000000000000000032 /* UpdateSupport.swift */,
 				200000000000000000000043 /* RemoteSupport.swift */,
 				200000000000000000000044 /* SSHViews.swift */,
+				2000000000000000000000E1 /* EmbeddedPreview.swift */,
 				200000000000000000000033 /* SubscriptionUsage.swift */,
 			);
 			path = Features;
@@ -204,6 +209,7 @@
 				200000000000000000000041 /* PitexIcon.icon */,
 				200000000000000000000030 /* PitexAgent */,
 				200000000000000000000042 /* markdown-preview.html */,
+				700000000000000000000043 /* pdfjs */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -304,6 +310,7 @@
 				100000000000000000000041 /* PitexIcon.icon in Resources */,
 				100000000000000000000009 /* PitexAgent in Resources */,
 				100000000000000000000042 /* markdown-preview.html in Resources */,
+				600000000000000000000043 /* pdfjs in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -336,6 +343,7 @@
 				100000000000000000000028 /* SubscriptionUsage.swift in Sources */,
 				100000000000000000000044 /* RemoteSupport.swift in Sources */,
 				100000000000000000000045 /* SSHViews.swift in Sources */,
+				1000000000000000000000E1 /* EmbeddedPreview.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -35,6 +35,7 @@
 "preview.next_page" = "Next Page";
 "preview.zoom_in" = "Zoom In";
 "preview.zoom_out" = "Zoom Out";
+"preview.zoom_auto" = "Automatically Resize";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Show Selection in PDF";
 "preview.synctex_inverse" = "Show Source";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitex won't open executable files from the preview.";
 "preview.markdown.runtime_missing" = "Markdown preview needs the Microsoft Edge WebView2 Runtime. Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and restart Pitex.";
 "preview.markdown.pdf_failed" = "Pitex couldn't save the PDF copy.";
+"preview.embedded_label" = "Editing preview";
+"preview.final_label" = "Final PDF";
+"preview.embedded_unavailable" = "Embedded preview engine unavailable";
+"preview.embedded_failed" = "Editing preview failed";
+"preview.embedded_unsupported_remote" = "Embedded preview is available for local projects only";
+"preview.embedded_updating" = "Updating editing preview…";
 
 "assistant.title" = "Assistant";
 "assistant.sign_in" = "Sign In";
@@ -257,8 +264,13 @@
 "settings.compile.live" = "Live Compile";
 "settings.compile.live_auto" = "Automatically build while editing";
 "settings.compile.live_auto_note" = "Live compile saves open edited files and groups changes into builds without interrupting a running build.";
+"settings.compile.live_auto_note_embedded" = "Embedded preview typesets the current file contents without saving them. Use Build to create the final PDF.";
 "settings.compile.live_delay" = "Build delay (ms)";
 "settings.compile.live_follow" = "Move the PDF to the cursor after a live build";
+"settings.compile.live_backend" = "Preview backend";
+"settings.compile.live_backend.embedded" = "Embedded editing preview";
+"settings.compile.live_backend.compiler" = "Compiler compatibility preview";
+"settings.compile.live_backend.note" = "The embedded engine previews edits without saving source files. Use Build to create the final PDF with the project compiler.";
 "toolbar.live_compile" = "Live Compile";
 "settings.markdown.live_preview" = "Live preview";
 "settings.markdown.live_preview_note" = "Update the preview while typing. When off, the preview updates when you save.";

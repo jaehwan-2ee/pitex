@@ -1,0 +1,955 @@
+{
+ "excluded_upstream_components": [
+  {
+   "license": "GPL-2.0-or-later (xdvipdfmx)",
+   "reason": "Incompatible copyleft. The engine only used it to size PDF/PNG/JPEG/BMP pictures; replaced by Pitex-authored shared/pdfread.c and shared/imginfo.c written from the format specifications. PDF output is produced by the Pitex-authored driver/xdv2pdf.c instead of xdvipdfmx.",
+   "upstream": "src/engine/dpx/"
+  },
+  {
+   "license": "LGPL-2.1-or-later OR CPL-0.5-or-later (SIL TECkit)",
+   "reason": "Not vendored. The engine dynamically links the distribution's unmodified, replaceable libTECkit shared library (Ubuntu libteckit0, Homebrew teckit).",
+   "upstream": "src/engine/engine/teckit-*"
+  },
+  {
+   "license": "MIT source, but links MuPDF (AGPL-3.0/commercial) and SDL",
+   "reason": "The MuPDF display-list renderer and SDL window are replaced by the Pitex XDV->PDF writer and the native Pitex PDF views.",
+   "upstream": "src/frontend/ (renderer, incdvi, main, editor, SDL/MuPDF UI)"
+  },
+  {
+   "license": "MIT source, built on MuPDF fz_* APIs",
+   "reason": "MuPDF-coupled XDV renderer; replaced by driver/xdv.c, driver/xdv2pdf.c, driver/fonts.c, driver/images.c, driver/pdfw.c.",
+   "upstream": "src/dvi/"
+  },
+  {
+   "license": "MIT",
+   "reason": "External `tectonic` CLI file provider (process spawn / automatic bundle download) was removed; texlive_provider.c is the only provider. Covered by TeXpresso's root MIT license (Frédéric Bour).",
+   "upstream": "src/common/tectonic_provider.c"
+  },
+  {
+   "license": "MIT",
+   "reason": "Build glue and editor integrations for the upstream application.",
+   "upstream": "mupdf-config.sh, Makefile, emacs/, doc/, test/"
+  }
+ ],
+ "files": [
+  {
+   "license_in_file": "none-in-file",
+   "origin": "pitex",
+   "path": "Makefile",
+   "sha256": "32776cbe43c1766cbaa29c87fead7c5b9284f5bac8558e0913e0e3e241604fdc"
+  },
+  {
+   "license_in_file": "n/a (documentation)",
+   "origin": "pitex",
+   "path": "PROTOCOL.md",
+   "sha256": "0607271c78452032f496bb96b9855cbc0283e82ed513b63c33c9595af8439b20"
+  },
+  {
+   "license_in_file": "n/a (documentation)",
+   "origin": "pitex",
+   "path": "PROVENANCE.md",
+   "sha256": "6b1787128c615159af94791efc8acd706cd5d47b1958e048dc22dfa19c6f738e"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "driver/engine_tex.c",
+   "sha256": "65014172c29ab91f09ca82ea5441e99b19d1753791977fdd3ae1ba1535fc902d",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/engine_tex.c",
+   "upstream_sha256": "7524c865deaa521423f064be750ef6dac9214071914c6b3a8afbf77710ac5323"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "driver/engine_tex.h",
+   "sha256": "4f900363ab91b529ee00c4d790bcbabd22a955adc5906d889f4b9cf290c9e7ee",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/engine.h",
+   "upstream_sha256": "b29852b6e12ff23eb8acd4ed0faf2d9e5c7258e681d94e844c7785ccc3f543aa"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/fonts.c",
+   "sha256": "311ffeadc9e8d7c58b5ae236556f0501076e912dbee30d8356c2e527ad35967c"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/fonts.h",
+   "sha256": "95753acf8daa7956c46e4da339a01da05384da65df3dfb9782ea9886c92bfb1c"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "driver/fs.c",
+   "sha256": "33c0df43b422893240adcb705937ed10552c7c8c772ceed1052262d622e7fd87",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/fs.c",
+   "upstream_sha256": "c7311c4c02d12468f888ad617b8a0e0c0656d635aa2bdca27357043269df51d4"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/images.c",
+   "sha256": "dac30848c0be31dea815e9e55aae09712a84edbc8e5d2bb893bac597f4a6cc04"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/images.h",
+   "sha256": "1d4070de1e564539eba25ec038e152819d469e04d061db1e6ef6febbe98566a2"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/json.c",
+   "sha256": "92f5f4418dfbc8e65ab4df4b373ca06b384b0ea80ada9ff0f36ea65235b6814d"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/json.h",
+   "sha256": "306825e66eed65470ef75bb3c39d23c757ea631dee3c276266e69720712168a0"
+  },
+  {
+   "adapts": "update/close handling adapted from src/frontend/main.c interpret_open/interpret_close (MIT); the rest is Pitex-authored",
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/main.c",
+   "sha256": "e48a502f874985e3768fe47b563093c3648e2e4e9ea7d579eaf23f112ef97083"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "driver/myabort.c",
+   "sha256": "0e50ddfd9cb96269c73a96ed6fa589e4d219ff4f661844dad67f7e2c4ad6d8ea",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/myabort.c",
+   "upstream_sha256": "0e50ddfd9cb96269c73a96ed6fa589e4d219ff4f661844dad67f7e2c4ad6d8ea"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "driver/myabort.h",
+   "sha256": "e93c547bd6a89cf60604c9532627472026e58efe70307b2ae5abdf40f3c19860",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/myabort.h",
+   "upstream_sha256": "e93c547bd6a89cf60604c9532627472026e58efe70307b2ae5abdf40f3c19860"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/pdfw.c",
+   "sha256": "cbf96f90d49c29f792bf30739955d37f20308e57bf44d5d32d2e5b387160ae54"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/pdfw.h",
+   "sha256": "145c526f40fa7028a807483f43e5ac880dd8a4a4c8e911654f503a2b124b00ef"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "driver/sprotocol.c",
+   "sha256": "159ea6616d3f6d10e68ac67f990ab8b411f1b10f6f51749ed7bfee657c02b29d",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/sprotocol.c",
+   "upstream_sha256": "43e184a5d02940cc698f64eac8a7118b6f94997855789b8303aa3ef470fecde6"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "driver/sprotocol.h",
+   "sha256": "9ba19a0e8860fb3ebb3d6be171ec1c9faaa6bd304bc1af2087156d3e040991ee",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/sprotocol.h",
+   "upstream_sha256": "5de1d5b082319305a947706a153e3aa26edbf1c8253833e9ec1dfa7bc4520bf2"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "driver/state.c",
+   "sha256": "d387f78b9e51b89fe68e4a39bb84d14c5239b42875b344266ac760349c6f0efc",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/state.c",
+   "upstream_sha256": "c5dc0c7acfa7431413df510f7609b4f22086dac39d567fb5d378e1590529922e"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "driver/state.h",
+   "sha256": "384ee4b6e5bd181c5ba4a10852ea0ef41c67d370ba2868e32997e112706a2d55",
+   "upstream_license": "MIT",
+   "upstream_path": "src/frontend/state.h",
+   "upstream_sha256": "4af74fa103348ebb0b53f40053c03a97b575a7f71d564fea8b870d27b070810a"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/tbuf.c",
+   "sha256": "f0e93864c2704615f92a02344527f682904c7afebdac5742247d13032d913b23"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/tbuf.h",
+   "sha256": "ffe51612f4f0c4987432ad407415baab0e4fcc06789fa133413924b8aaba1255"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/xdv.c",
+   "sha256": "dcef536147aed64ba735923de909a94b6ca868c506408bcf62e90ef6ef532988"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/xdv.h",
+   "sha256": "745dbe6001b69856fdf33e72fb9dad2a3a8a53687b4d135723ca784544ce2a95"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/xdv2pdf.c",
+   "sha256": "31a9df9e2b23a560e4b8eb32296fefdfd9f4736228446db24a4f2675353f49e4"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "driver/xdv2pdf.h",
+   "sha256": "4314a9584e0c69e4e6f14b70612026e19122a0742e2d893408f92eaa07e83dd5"
+  },
+  {
+   "license_in_file": "n/a (documentation)",
+   "origin": "pitex",
+   "path": "licenses/THIRD-PARTY.md",
+   "sha256": "308b376c807c7eb2b7f4d73ec0a8468b6f3703c95d0c524e1d34bbc8a3905d78"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "licenses/TeXpresso-LICENSE.txt",
+   "sha256": "081b198b8fac5f243b1cf03487af694b4bca7a2007b6a25b4be7f7ae1f8ece67",
+   "upstream_license": "MIT",
+   "upstream_path": "LICENSE",
+   "upstream_sha256": "081b198b8fac5f243b1cf03487af694b4bca7a2007b6a25b4be7f7ae1f8ece67"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "origin": "pitex",
+   "path": "licenses/Tectonic-MIT.txt",
+   "sha256": "36bfe3aba51a9ede1b1440f8c2d346e2fa97391a7594b89622880fd2cd01cfb6"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "origin": "pitex",
+   "path": "licenses/XeTeX-SIL-MIT.txt",
+   "sha256": "1d3366f2dbdfd476413c9fd336faecff08b29c247e0d40fda20b88470a0cf70a"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "shared/imginfo.c",
+   "sha256": "02a6e9dc3b606e1ca7d1800ba47cbc4046b605004d3cf5337e0b8f44f3a97737"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "shared/imginfo.h",
+   "sha256": "43b1a9c20632f6cc58b8e87192314d5818beded3ba8e7a26cd26276b06e84ec7"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "shared/pdfread.c",
+   "sha256": "0d3330e31f8c9c32624421bd7abc1b3079e6d74a8c72eaa79873b45fddc24fb6"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "shared/pdfread.h",
+   "sha256": "85b93fa64a054b621ac438539fb2ccf602b2ea14e221389e010cbfb4216c94dd"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "shared/pitex_buf.c",
+   "sha256": "c7142ee239eca5765b3d70a49ef55c10617ba982437b7a8ed849a5aee2dd4ef3"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "shared/pitex_buf.h",
+   "sha256": "803cd5efda9f459d5b34e0385a2c17e1315b9f0bb918297a22061efb8b4c4aaa"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "origin": "pitex",
+   "path": "tools/audit-linkage.sh",
+   "sha256": "4f4f951f8a9393792b0a219b9dfd37acad20f621c5827cfa77f753269629b480"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "tools/provenance.py",
+   "sha256": "f1e0ed9a12e241ca02890d0c2632bb19a6e2538f057da6601ffecea946e28dd2"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "origin": "pitex",
+   "path": "tools/regress-deleted-file.py",
+   "sha256": "bd66d54d2d7cb7948691de62acc50fe77a025f0d3231069b0807f5d4f8ccffad"
+  },
+  {
+   "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
+   "origin": "pitex",
+   "path": "tools/selftest.c",
+   "sha256": "71fd414864bfc68fff9791a5aa100a97781a53e0e21d11b27706781ec139f18e"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/common/include/common.h",
+   "sha256": "744092712a4dc0d5d55d089db46425866f4d482ccb23831828a3e27ac4672578",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/include/common.h",
+   "upstream_sha256": "744092712a4dc0d5d55d089db46425866f4d482ccb23831828a3e27ac4672578"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/common/include/providers.h",
+   "sha256": "b5df9f0ea6b5f9578dc597c201c83613c3c68371dc29b2932c2c25c5d5343c97",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/include/providers.h",
+   "upstream_sha256": "ff7b6b29fada16fdfb516041cf9222e4ac800fbb0ece3217d33e632c77a1c7f0"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/common/texlive_provider.c",
+   "sha256": "ae03c5637568d6b7518b4cb6e913de0c29ee7f5954c124f51824e83097e90f08",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/common/texlive_provider.c",
+   "upstream_sha256": "99e6c131b1a63b3bd8e6e6badb8d50082560a63fdb674783b4622f2130d70266"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/common/utils.c",
+   "sha256": "21176b545da72eda9c7bcaab9bcd8e372a049d77943c1990333448df8af07ee4",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/common/utils.c",
+   "upstream_sha256": "bbbe81654ca607f8df8fde6e54d932982f9f70509dd83e27d0c5ba7f4defa53f"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-XeTeXOTMath.cpp",
+   "sha256": "a58bf996f4f23b14d2d52dd1e735d9c0785dab782aef59d6f7bd335c32cdf915",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/engine/xetex-XeTeXOTMath.cpp",
+   "upstream_sha256": "a58bf996f4f23b14d2d52dd1e735d9c0785dab782aef59d6f7bd335c32cdf915"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-XeTeXOTMath.h",
+   "sha256": "a45bc8634da7342e2dc2517bc87d78c86b79f3aeab7e1a49603ad9b7373d4b4c",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/engine/xetex-XeTeXOTMath.h",
+   "upstream_sha256": "a45bc8634da7342e2dc2517bc87d78c86b79f3aeab7e1a49603ad9b7373d4b4c"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-constants.h",
+   "sha256": "027b206807621140d62d1f597f4d56a36ead21f7694d05e38f17608f331d2efe",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-constants.h",
+   "upstream_sha256": "027b206807621140d62d1f597f4d56a36ead21f7694d05e38f17608f331d2efe"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-core.h",
+   "sha256": "7f935df61a52e662cefc8f5b75d4a3eafa4f86b3945467338b64e80e865e9117",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-core.h",
+   "upstream_sha256": "7f935df61a52e662cefc8f5b75d4a3eafa4f86b3945467338b64e80e865e9117"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-engine-interface.c",
+   "sha256": "48341feb85b19766e1729c5c3d5dea320bc1261b5b238d4949abab0f37feac77",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-engine-interface.c",
+   "upstream_sha256": "48341feb85b19766e1729c5c3d5dea320bc1261b5b238d4949abab0f37feac77"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-errors.c",
+   "sha256": "2e83608d129e4e6a8af36ecf15dd0e97c81f877d6017de25b0e079bcdcb5939b",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-errors.c",
+   "upstream_sha256": "2e83608d129e4e6a8af36ecf15dd0e97c81f877d6017de25b0e079bcdcb5939b"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-ext.c",
+   "sha256": "fe980109bc8c2378da0177d307c0966e4259c09d6060b6253e7127b0a450d05f",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/engine/xetex-ext.c",
+   "upstream_sha256": "014d9e864dd1e27711ab015c23e61fc765608b17084569d10d07584faf1fcf76"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-ext.h",
+   "sha256": "0e0a203db50fc4bde0275d47c3ef2411364e1a4f0450e46806976041c57c526c",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/engine/xetex-ext.h",
+   "upstream_sha256": "0e0a203db50fc4bde0275d47c3ef2411364e1a4f0450e46806976041c57c526c"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-ini.c",
+   "sha256": "57adb811e1db8b054dd712a6ffa1081656ac871064e3a03b28a6883c333e42ee",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-ini.c",
+   "upstream_sha256": "2917be42f8d0927fd1f42a669afb08a05b6ddd568e94e45ab2b5629678f853d6"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-io.c",
+   "sha256": "88eecdb0f5301b651591ffde19e3bf0fb0b6ada6068290f1ba68fb8076c45188",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-io.c",
+   "upstream_sha256": "fcaba93e692804152359875dfbd28f6ceef79d269a3d9b42975fad30a294813a"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-io.h",
+   "sha256": "f7958dff8c5bd4392ce95c4b1cc7de615d5d5d3a12e19ed4d7c04a30f67f544c",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-io.h",
+   "upstream_sha256": "f7958dff8c5bd4392ce95c4b1cc7de615d5d5d3a12e19ed4d7c04a30f67f544c"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-linebreak.c",
+   "sha256": "75e84a6a7381ecb8a70252a5670dbe089d43f8c920896278023e22746bf00729",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-linebreak.c",
+   "upstream_sha256": "75e84a6a7381ecb8a70252a5670dbe089d43f8c920896278023e22746bf00729"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-macos.c",
+   "sha256": "7c2eb4b68bd757f420978143eb412b36448055c50a653729534c7ef25ea231a7",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/engine/xetex-macos.c",
+   "upstream_sha256": "c54deab9d58cee19dce1d1f200156815064bb11f5a56377e0ccae3d4b5f34b18"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-math.c",
+   "sha256": "f85d2a83b123ab48e2d1cd1e9ce0b55eda2c887ea2a6c2413bf17c76f6ffff9d",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-math.c",
+   "upstream_sha256": "f85d2a83b123ab48e2d1cd1e9ce0b55eda2c887ea2a6c2413bf17c76f6ffff9d"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-output.c",
+   "sha256": "98b9eafdc3fb4f81accd90796a24147429f5cbedbf2ceda3b2038ba9d19a7db9",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-output.c",
+   "upstream_sha256": "98b9eafdc3fb4f81accd90796a24147429f5cbedbf2ceda3b2038ba9d19a7db9"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-pagebuilder.c",
+   "sha256": "ba4b6bfe5d0011f8ab2799da11672c498bc9991125a1abf6e4dd08fbc35d6c92",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-pagebuilder.c",
+   "upstream_sha256": "ba4b6bfe5d0011f8ab2799da11672c498bc9991125a1abf6e4dd08fbc35d6c92"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-pic.c",
+   "sha256": "d71da8ae9402f0cb4afc5d25b5caf1aec1f4194008f1c07adc8e3795057fdee3",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/engine/xetex-pic.c",
+   "upstream_sha256": "11fd83c2238e354b04a8744a78676cc7958a74b318ce5b1b45a84ce000326444"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-scaledmath.c",
+   "sha256": "1e48375298840c99c4184ebba8c1308e87264ca9cc709d547b1dedc398d708fe",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-scaledmath.c",
+   "upstream_sha256": "1e48375298840c99c4184ebba8c1308e87264ca9cc709d547b1dedc398d708fe"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-shipout.c",
+   "sha256": "e25b6c1f7e2d8748ecb47833721e12df968082a09f21fb35683e6a212ad25bd4",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-shipout.c",
+   "upstream_sha256": "e25b6c1f7e2d8748ecb47833721e12df968082a09f21fb35683e6a212ad25bd4"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-stringpool.c",
+   "sha256": "455ab139b760bbc798cf2f3a52132be875e11a0d49c12781a96b566db99ff7c9",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-stringpool.c",
+   "upstream_sha256": "455ab139b760bbc798cf2f3a52132be875e11a0d49c12781a96b566db99ff7c9"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-stringpool.h",
+   "sha256": "94e319f1c43c45b0aeae6c4721fb6bb952de7fa2ad09d1744cca1fcd68991e5e",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-stringpool.h",
+   "upstream_sha256": "94e319f1c43c45b0aeae6c4721fb6bb952de7fa2ad09d1744cca1fcd68991e5e"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-swap.h",
+   "sha256": "e459c08bd6220f27b62c54fe07c45a8170bb782bc12a5f590b6b2315b7a9e278",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/engine/xetex-swap.h",
+   "upstream_sha256": "e459c08bd6220f27b62c54fe07c45a8170bb782bc12a5f590b6b2315b7a9e278"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-synctex.c",
+   "sha256": "7d238107caa028853bc9be5d2ad7d5e6aa53e21fd8cb18d154c56ea5588edc16",
+   "upstream_license": "MIT",
+   "upstream_path": "src/engine/engine/xetex-synctex.c",
+   "upstream_sha256": "7d238107caa028853bc9be5d2ad7d5e6aa53e21fd8cb18d154c56ea5588edc16"
+  },
+  {
+   "license_in_file": "MIT",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-synctex.h",
+   "sha256": "a1d5f9cf321a6d838cc06ab705f7b0efe1d9a729cd446bab2cb8ed9c5580eb47",
+   "upstream_license": "MIT",
+   "upstream_path": "src/engine/engine/xetex-synctex.h",
+   "upstream_sha256": "a1d5f9cf321a6d838cc06ab705f7b0efe1d9a729cd446bab2cb8ed9c5580eb47"
+  },
+  {
+   "license_in_file": "public domain",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-texmfmp.c",
+   "sha256": "4148f4face816d238bf24dc07ad4e62a44048259cd943268f15fe3a53d94dc95",
+   "upstream_license": "public domain",
+   "upstream_path": "src/engine/engine/xetex-texmfmp.c",
+   "upstream_sha256": "4148f4face816d238bf24dc07ad4e62a44048259cd943268f15fe3a53d94dc95"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-xetex0.c",
+   "sha256": "3322aa862118d4432d74ef2004fb8520e344d46d731e3f75f2913cf967aacea2",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-xetex0.c",
+   "upstream_sha256": "3322aa862118d4432d74ef2004fb8520e344d46d731e3f75f2913cf967aacea2"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex-xetexd.h",
+   "sha256": "8edefaa02def55bac25555554d808c844fe1db1cc64fcb41b18eba45bd000c29",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/engine/xetex-xetexd.h",
+   "upstream_sha256": "fa5f4836a2ea6fca9ab525f986bc83b45a54c6cf2b6be889cd58d3f2bbd75ef0"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex_bindings.h",
+   "sha256": "da1c8e360804e4b9a7372497443baccda15448ce98db673d5816c53e2ac5a758",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/engine/xetex_bindings.h",
+   "upstream_sha256": "da1c8e360804e4b9a7372497443baccda15448ce98db673d5816c53e2ac5a758"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/engine/xetex_format.h",
+   "sha256": "f2b41dc1c4328eec879adae12e47ed2261f13ec7f079e292f0fe795713306b2d",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/engine/xetex_format.h",
+   "upstream_sha256": "f2b41dc1c4328eec879adae12e47ed2261f13ec7f079e292f0fe795713306b2d"
+  },
+  {
+   "license_in_file": "MIT (Tectonic Project)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/include/tectonic_bridge_core.h",
+   "sha256": "3a962843772dc52b9056fb660910a4a01672ef89884b4f629a0ee8f5931ee740",
+   "upstream_license": "MIT (Tectonic Project)",
+   "upstream_path": "src/engine/include/tectonic_bridge_core.h",
+   "upstream_sha256": "3a962843772dc52b9056fb660910a4a01672ef89884b4f629a0ee8f5931ee740"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/include/tectonic_bridge_core_generated.h",
+   "sha256": "e5831559c22f8a50344ba3ee98e83e79ede4084e1c5dd657f2f12812f2d36efc",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/include/tectonic_bridge_core_generated.h",
+   "upstream_sha256": "e5831559c22f8a50344ba3ee98e83e79ede4084e1c5dd657f2f12812f2d36efc"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/include/tectonic_bridge_flate.h",
+   "sha256": "aec2cee285ab7d9716825e7bada2665b77dfa0c12a7ec863ff350fad124e21a7",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/include/tectonic_bridge_flate.h",
+   "upstream_sha256": "aec2cee285ab7d9716825e7bada2665b77dfa0c12a7ec863ff350fad124e21a7"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/tectonic_xetex_layout.h",
+   "sha256": "7429af7034f9e61cd1f55ad3706fa7f0764f30f2bf57d512c36e519d2faf4b1b",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/tectonic_xetex_layout.h",
+   "upstream_sha256": "7429af7034f9e61cd1f55ad3706fa7f0764f30f2bf57d512c36e519d2faf4b1b"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontInst.cpp",
+   "sha256": "d6487df22bb4e62e3cbe97e004c539e6abad09f00eb3f320bfbfccdca0d8a315",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontInst.cpp",
+   "upstream_sha256": "d6487df22bb4e62e3cbe97e004c539e6abad09f00eb3f320bfbfccdca0d8a315"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontInst.h",
+   "sha256": "1a901439e649cbba60a26fe03451d134a1cf442953641b7235ab50eebafbb6d5",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontInst.h",
+   "upstream_sha256": "1a901439e649cbba60a26fe03451d134a1cf442953641b7235ab50eebafbb6d5"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontInst_Mac.cpp",
+   "sha256": "4e3e0e5b52d70c075769922c8480e449daaf039a56534d67c6128cd1094a7e81",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontInst_Mac.cpp",
+   "upstream_sha256": "4e3e0e5b52d70c075769922c8480e449daaf039a56534d67c6128cd1094a7e81"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontInst_Mac.h",
+   "sha256": "0eafb570d7e29e02adc33ed439a7c58ccaf3c9bca116ce6f9ff1a312eafc25aa",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontInst_Mac.h",
+   "upstream_sha256": "0eafb570d7e29e02adc33ed439a7c58ccaf3c9bca116ce6f9ff1a312eafc25aa"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontMgr.cpp",
+   "sha256": "6cbe2d2e6303889c9b45c9b1c89114b4bc28adc78a4229650267dbff3b3c23fd",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontMgr.cpp",
+   "upstream_sha256": "6cbe2d2e6303889c9b45c9b1c89114b4bc28adc78a4229650267dbff3b3c23fd"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontMgr.h",
+   "sha256": "a5a0c4e8865983e88d5bf7151182bf6ceb6ef1e0655040bf0a90d30e9be1d833",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontMgr.h",
+   "upstream_sha256": "a5a0c4e8865983e88d5bf7151182bf6ceb6ef1e0655040bf0a90d30e9be1d833"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontMgr_FC.cpp",
+   "sha256": "bffffa93891c0f81fe5760de09e4a8fb224dddba42bf84137ef276108bc94cd9",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontMgr_FC.cpp",
+   "upstream_sha256": "bffffa93891c0f81fe5760de09e4a8fb224dddba42bf84137ef276108bc94cd9"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontMgr_FC.h",
+   "sha256": "4bffd39e4e12bd2d0fe5993955e2b0d7174bfd658347f1a7be40e4f7ff18ddd9",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontMgr_FC.h",
+   "upstream_sha256": "4bffd39e4e12bd2d0fe5993955e2b0d7174bfd658347f1a7be40e4f7ff18ddd9"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontMgr_Mac.h",
+   "sha256": "e95cc613b3bb53c738799f385cfc59312efd6d3ac8172aff879d5a1ea1a88cca",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontMgr_Mac.h",
+   "upstream_sha256": "e95cc613b3bb53c738799f385cfc59312efd6d3ac8172aff879d5a1ea1a88cca"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXFontMgr_Mac.mm",
+   "sha256": "1e8459725fd9478c3810c76ea4b4e91faf8d292cc172297a32590f844184bcc0",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXFontMgr_Mac.mm",
+   "upstream_sha256": "1e8459725fd9478c3810c76ea4b4e91faf8d292cc172297a32590f844184bcc0"
+  },
+  {
+   "license_in_file": "MIT/X11 (SIL International)",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/layout/xetex-XeTeXLayoutInterface.cpp",
+   "sha256": "a0e05dc1db31484c41f1901618dda164219240fa2ea0495bdb5b933eba898bfc",
+   "upstream_license": "MIT/X11 (SIL International)",
+   "upstream_path": "src/engine/layout/xetex-XeTeXLayoutInterface.cpp",
+   "upstream_sha256": "a0e05dc1db31484c41f1901618dda164219240fa2ea0495bdb5b933eba898bfc"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/main/fork.c",
+   "sha256": "91ba78ac139415b48972487a67e2224b1991b93170adaf25e2ce4cfea852279a",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/main/fork.c",
+   "upstream_sha256": "b079bdb4203c309fca63cb7cb6199b62a6a33eabbd38c7c4ff0a7456a1aa1446"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/main/formats.c",
+   "sha256": "222239fa1daa469616b1b50e7e0bd02c7d163d77d6face55b1696fe2d0c9f3cd",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/main/formats.c",
+   "upstream_sha256": "222239fa1daa469616b1b50e7e0bd02c7d163d77d6face55b1696fe2d0c9f3cd"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/main/formats.h",
+   "sha256": "0a840428601c91214ca7edcc71d5ceba09259dbe46e1e4e459c844e86702c798",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/main/formats.h",
+   "upstream_sha256": "0a840428601c91214ca7edcc71d5ceba09259dbe46e1e4e459c844e86702c798"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/main/main.c",
+   "sha256": "dea4f0cc56464bd7ad3008d3e971801f48be4de57aded382c38f4027d401465a",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/main/main.c",
+   "upstream_sha256": "8c9756eda6b16ea39ebb8597eb1385939e86fc1cab03c51b05ad5f5fe6e0accd"
+  },
+  {
+   "license_in_file": "public domain",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/main/picohash.h",
+   "sha256": "9ef0b94df00b8127a47b94450d57d8c8b23074ee86ad22219c333b9ebe5a5eff",
+   "upstream_license": "public domain",
+   "upstream_path": "src/engine/main/picohash.h",
+   "upstream_sha256": "9ef0b94df00b8127a47b94450d57d8c8b23074ee86ad22219c333b9ebe5a5eff"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/main/texpresso_protocol.c",
+   "sha256": "d0c99b9324d74d6054f440727d604d74e005ad373dde9478ee9556433a88c6c7",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/main/texpresso_protocol.c",
+   "upstream_sha256": "7bed92d8d123d6c6d52f5a5acb698102166921bfec825b9e32c906b2519a9dc4"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": true,
+   "origin": "texpresso",
+   "path": "xetex/main/texpresso_protocol.h",
+   "sha256": "9b27739e96e8e38c771211911f52b03b0ce1eabec80b67baff410db96fe78d2f",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/main/texpresso_protocol.h",
+   "upstream_sha256": "78c15585ad98f258e176d1648ac63a84965f7829b0d0bb2c4f3acf27b5482bbd"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "modified": false,
+   "origin": "texpresso",
+   "path": "xetex/main/zlib_md5.c",
+   "sha256": "9a9d79ee28c17c3b0adace9ced1e0f438c7040bf7f1e8df388f709bc096aa0a7",
+   "upstream_license": "none-in-file",
+   "upstream_path": "src/engine/main/zlib_md5.c",
+   "upstream_sha256": "9a9d79ee28c17c3b0adace9ced1e0f438c7040bf7f1e8df388f709bc096aa0a7"
+  }
+ ],
+ "runtime_dependencies": [
+  {
+   "library": "libTECkit",
+   "license": "LGPL-2.1-or-later OR LicenseRef-TECkit-CPL-0.5",
+   "license_notes": "SIL dual choice: LGPL-2.1+ or CPL-0.5+; LGPL-2.1 selected",
+   "linkage": "shared, unmodified, replaceable",
+   "source_availability": "https://github.com/silnrsi/teckit/releases/download/v2.5.13/teckit-2.5.13.tar.xz (sha256 3f55cd3670f1ff1a439d5a40071870b9e4ca2be8877a0eb80e24783cb532b380; configure --with-system-zlib); Debian/Ubuntu: apt source libteckit0",
+   "used_by": "pitex-preview-xetex"
+  },
+  {
+   "library": "HarfBuzz",
+   "license": "MIT",
+   "license_notes": "upstream 'Old MIT' text; SPDX MIT",
+   "linkage": "shared",
+   "source_availability": "https://github.com/harfbuzz/harfbuzz/releases/download/14.5.0/harfbuzz-14.5.0.tar.xz (sha256 b7132e148358a45185c9feafd049dbaf243649d3c44414b3534d9c95d18592b9); Debian/Ubuntu: apt source libharfbuzz0b",
+   "used_by": "pitex-preview-xetex"
+  },
+  {
+   "library": "graphite2",
+   "license": "LGPL-2.1-or-later OR MPL-2.0 OR GPL-2.0-or-later",
+   "license_notes": "shipped under LGPL-2.1-or-later; dynamically linked",
+   "linkage": "shared",
+   "source_availability": "Debian/Ubuntu: apt source libgraphite2-3; macOS bundle: formula + pinned source URL/SHA256 in BUNDLED-VERSIONS.txt",
+   "used_by": "pitex-preview-xetex"
+  },
+  {
+   "library": "FreeType",
+   "license": "FTL OR GPL-2.0-or-later",
+   "license_notes": "FTL selected; copyright © The FreeType Project (www.freetype.org). All rights reserved.",
+   "linkage": "shared",
+   "source_availability": "Debian/Ubuntu: apt source libfreetype6; macOS bundle: formula + pinned source URL/SHA256 in BUNDLED-VERSIONS.txt",
+   "used_by": "pitex-preview-xetex"
+  },
+  {
+   "library": "ICU",
+   "license": "Unicode-3.0",
+   "license_notes": "Unicode License v3; Debian records also mark some ICU data files Expat",
+   "linkage": "shared",
+   "used_by": "pitex-preview-xetex"
+  },
+  {
+   "library": "fontconfig",
+   "license": "HPND-sell-variant",
+   "license_notes": "MIT-style license including permission to sell",
+   "linkage": "shared (Linux)",
+   "used_by": "pitex-preview-xetex"
+  },
+  {
+   "library": "libpng",
+   "license": "Libpng",
+   "license_notes": "PNG Reference Library License v2",
+   "linkage": "shared",
+   "used_by": "pitex-preview-xetex"
+  },
+  {
+   "library": "zlib",
+   "license": "Zlib",
+   "linkage": "shared",
+   "used_by": "both helpers"
+  },
+  {
+   "library": "TeX distribution (TeX Live / MacTeX)",
+   "license_notes": "aggregate data read at run time; per-file licenses (LPPL, GPL variants, OFL, ...) ship inside the distribution itself — not a linked component, no single expression applies",
+   "linkage": "not linked: files read at run time via kpsewhich/ls-R, format generated locally",
+   "used_by": "both helpers"
+  }
+ ],
+ "upstream": {
+  "commit": "e8df7709077b2f86f6e16e6c86ceefb86de06f8d",
+  "root_license": "MIT (Frédéric Bour); per-file notices retained",
+  "url": "https://github.com/let-def/texpresso"
+ }
+}

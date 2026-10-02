@@ -47,6 +47,19 @@ final class SettingsStore: ObservableObject {
     @Published var liveCompileFollowCursor: Bool {
         didSet { UserDefaults.standard.set(liveCompileFollowCursor, forKey: "pitex.pref.build.liveCompileFollowCursor") }
     }
+    /// `pitex.pref.build.livePreviewBackend` — which engine produces the
+    /// live editing preview: `embedded` (previews edits without saving
+    /// source files) or `compiler` (the project toolchain compatibility
+    /// path). Missing or unknown stored values resolve to `embedded`; a
+    /// persisted `compiler` choice is kept. Manual Build still uses the
+    /// selected project compiler either way. (Same key on Linux/Windows.)
+    @Published var livePreviewBackend: String {
+        didSet {
+            let normalized = Self.livePreviewBackendValue(livePreviewBackend)
+            if normalized != livePreviewBackend { livePreviewBackend = normalized }
+            UserDefaults.standard.set(livePreviewBackend, forKey: "pitex.pref.build.livePreviewBackend")
+        }
+    }
     @Published var restoreSession: Bool {
         didSet { UserDefaults.standard.set(restoreSession, forKey: "pitex.pref.editor.restoreSession") }
     }
@@ -138,6 +151,7 @@ final class SettingsStore: ObservableObject {
         liveCompileEnabled = false
         liveCompileDelayMilliseconds = 700
         liveCompileFollowCursor = false
+        livePreviewBackend = "embedded"
         restoreSession = true
         codeFolding = true
         minimap = true
@@ -179,6 +193,7 @@ final class SettingsStore: ObservableObject {
         liveCompileDelayMilliseconds = min(max(liveDelay, Self.liveCompileDelayRange.lowerBound),
                                            Self.liveCompileDelayRange.upperBound)
         liveCompileFollowCursor = defaults.bool(forKey: "pitex.pref.build.liveCompileFollowCursor")
+        livePreviewBackend = Self.livePreviewBackendValue(defaults.string(forKey: "pitex.pref.build.livePreviewBackend"))
         restoreSession = defaults.object(forKey: "pitex.pref.editor.restoreSession") as? Bool ?? true
         codeFolding = defaults.object(forKey: "pitex.pref.editor.codeFolding") as? Bool ?? true
         minimap = defaults.object(forKey: "pitex.pref.editor.minimap") as? Bool ?? true
@@ -210,6 +225,12 @@ final class SettingsStore: ObservableObject {
         case "light", "dark": stored!
         default: "system"
         }
+    }
+
+    /// Missing or unknown `pitex.pref.build.livePreviewBackend` resolves to
+    /// `embedded`; a persisted `compiler` choice is kept.
+    static func livePreviewBackendValue(_ stored: String?) -> String {
+        stored == "compiler" ? "compiler" : "embedded"
     }
 
     func update(_ transform: (PersistedSettings) throws -> PersistedSettings) rethrows {
@@ -423,7 +444,22 @@ struct SettingsView: View {
                 }
                 Toggle("settings.compile.live_follow", isOn: $store.liveCompileFollowCursor)
                     .disabled(!store.liveCompileEnabled)
-                Text("settings.compile.live_auto_note")
+                LabeledContent("settings.compile.live_backend") {
+                    Picker("", selection: $store.livePreviewBackend) {
+                        Text("settings.compile.live_backend.embedded").tag("embedded")
+                        Text("settings.compile.live_backend.compiler").tag("compiler")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Text("settings.compile.live_backend.note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // The auto-save warning only applies to the compiler path;
+                // the embedded engine typesets in-memory buffers.
+                Text(store.livePreviewBackend == "embedded"
+                     ? LocalizedStringKey("settings.compile.live_auto_note_embedded")
+                     : LocalizedStringKey("settings.compile.live_auto_note"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

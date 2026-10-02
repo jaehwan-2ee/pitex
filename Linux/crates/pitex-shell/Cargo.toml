@@ -60,9 +60,12 @@ windows = { version = "0.62", optional = true, features = [
 # like the Ubuntu 22.04 build. `markdown-preview` covers both engines —
 # WebKitGTK 6.0 on Unix (the ubuntu2204 deb variant turns it on
 # explicitly), WebView2 on Windows — and each `dep:` activates only on
-# its own target.
+# its own target. `embedded-preview` enables the embedded editing-preview
+# backend (the `pitex-preview` helper ships only in the Ubuntu 24.04
+# package); builds without it keep compiler live builds as before.
 [features]
-default = ["modern-gtk", "vte", "markdown-preview"]
+default = ["modern-gtk", "vte", "markdown-preview", "embedded-preview"]
 modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
 vte = ["dep:vte4"]
 markdown-preview = ["dep:webkit6", "dep:webview2-com", "dep:windows"]
+embedded-preview = []

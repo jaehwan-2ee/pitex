@@ -19,10 +19,74 @@ jobs:
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      # Helpers land in Contents/Helpers/PreviewEngine (code only) — the
+      # client's first probe path; notices/provenance go to
+      # Contents/Resources/PreviewEngine since macOS treats Helpers as code.
+      # The script rewrites to @loader_path and ad-hoc signs; the DMG step's
+      # strict codesign re-seals the app afterwards. No pbxproj changes.
+      # PITEX_BUNDLE_INSTALL_DEPS=1 permits brew installs ONLY here —
+      # ephemeral CI runner; on user machines the script errors instead.
+      - name: Bundle embedded preview engine
+        env:
+          PITEX_BUNDLE_INSTALL_DEPS: "1"
+        run: |
+          set -euo pipefail
+          # TECkit/HarfBuzz have no usable bottle path (teckit has no
+          # formula at all; harfbuzz's bottle is not relocatable and drags a
+          # ~30-formula source tree), so both are built from pinned upstream
+          # release tarballs into a private prefix. Their licenses are
+          # staged for DEP_LICENSE_DIR; brew kegs cover the rest.
+          PRIV_PREFIX="$RUNNER_TEMP/pe-deps"
+          export DEP_SEARCH_DIRS="$PRIV_PREFIX/lib"
+          export DEP_LICENSE_DIR="$RUNNER_TEMP/pe-deplicenses"
+          mkdir -p "$DEP_LICENSE_DIR/teckit" "$DEP_LICENSE_DIR/harfbuzz" \
+            "$RUNNER_TEMP/pe-src" "$PRIV_PREFIX"
+          brew install pkgconf freetype graphite2 icu4c@78 libpng zlib \
+            autoconf automake libtool meson ninja
+          cd "$RUNNER_TEMP/pe-src"
+          SHA_TK=3f55cd3670f1ff1a439d5a40071870b9e4ca2be8877a0eb80e24783cb532b380
+          SHA_HB=b7132e148358a45185c9feafd049dbaf243649d3c44414b3534d9c95d18592b9
+          curl -fsSLO https://github.com/silnrsi/teckit/releases/download/v2.5.13/teckit-2.5.13.tar.xz
+          curl -fsSLO https://github.com/harfbuzz/harfbuzz/releases/download/14.5.0/harfbuzz-14.5.0.tar.xz
+          echo "$SHA_TK  teckit-2.5.13.tar.xz" | shasum -a 256 -c -
+          echo "$SHA_HB  harfbuzz-14.5.0.tar.xz" | shasum -a 256 -c -
+          tar xJf teckit-2.5.13.tar.xz && cd teckit-2.5.13
+          ./autogen.sh
+          ./configure --prefix="$PRIV_PREFIX" --with-system-zlib
+          make -j"$(sysctl -n hw.ncpu)" && make install
+          cp COPYING "$DEP_LICENSE_DIR/teckit/"
+          cp -R license "$DEP_LICENSE_DIR/teckit/license"
+          cd "$RUNNER_TEMP/pe-src" && tar xJf harfbuzz-14.5.0.tar.xz && cd harfbuzz-14.5.0
+          meson setup build --prefix="$PRIV_PREFIX" --buildtype=release \
+            -Dglib=disabled -Dgobject=disabled -Dcairo=disabled \
+            -Dchafa=disabled -Dicu=disabled -Dgraphite=enabled \
+            -Dgraphite2=enabled -Dfreetype=enabled -Dtests=disabled \
+            -Ddocs=disabled -Dutilities=disabled -Dbenchmark=disabled \
+            -Dintrospection=disabled
+          ninja -C build && ninja -C build install
+          cp COPYING AUTHORS "$DEP_LICENSE_DIR/harfbuzz/" 2>/dev/null || cp COPYING "$DEP_LICENSE_DIR/harfbuzz/"
+          export PKG_CONFIG_PATH="$PRIV_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          APP="$GITHUB_WORKSPACE/build/Build/Products/Release/Pitex.app"
+          # Destination must be the built app in the workspace — cwd is the
+          # harfbuzz source dir after the dep builds; a relative path would
+          # drop Helpers into $RUNNER_TEMP and the DMG would miss them.
+          [ -d "$APP" ] || { echo "release app not found: $APP" >&2; exit 1; }
+          bash "$GITHUB_WORKSPACE/Tools/bundle-preview-engine-macos.sh" \
+            "$RUNNER_TEMP/pitex-preview-engine" "$APP/Contents/Helpers"
+      - name: Audit bundled preview engine
+        run: |
+          APP="build/Build/Products/Release/Pitex.app"
+          bash PreviewEngine/tools/audit-linkage.sh \
+            "$APP/Contents/Helpers/PreviewEngine" \
+            "$APP/Contents/Resources/PreviewEngine"
       - name: Ad-hoc sign and create DMG
         run: |
           APP="build/Build/Products/Release/Pitex.app"
-          codesign --deep --force --sign - "$APP" || true
+          # Hard fail on signing problems — no `|| true`: the bundled helpers
+          # must seal cleanly on the runner (notices live under
+          # Contents/Resources, never Contents/Helpers).
+          codesign --deep --force --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
           hdiutil create -volname Pitex -srcfolder "$APP" -ov -format UDZO \
             "Pitex-${GITHUB_REF_NAME}-macos-arm64.dmg"
       - uses: actions/upload-artifact@v4
@@ -41,9 +105,20 @@ jobs:
           sudo apt-get install -y build-essential pkg-config libssl-dev \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
             libvte-2.91-gtk4-dev libpoppler-glib-dev libwebkitgtk-6.0-dev \
+            libteckit-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
+            libfreetype-dev libfontconfig-dev libpng-dev zlib1g-dev \
             dpkg-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-deb
+      # Helper binaries land under Linux/target/preview-engine where the
+      # [package.metadata.deb] assets pick them up via ../../target/ paths
+      # (cargo-deb 2.x resolves asset paths from the crate manifest dir).
+      # Helpers ship stripped like the main binary — otherwise their DWARF
+      # embeds the runner's build paths in the payload.
+      - name: Build embedded preview helpers
+        run: |
+          make -C PreviewEngine BUILD_DIR="$PWD/Linux/target/preview-engine"
+          strip --strip-unneeded Linux/target/preview-engine/bin/pitex-preview*
       - name: Build deb (modern-gtk variant)
         run: cargo deb --package pitex
         working-directory: Linux

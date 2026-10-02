@@ -152,7 +152,7 @@ actor SyncTeXRunner {
                 "Input": resolvedSource.path,
                 "Line": "\(line)",
                 "Column": "\(column)",
-                "Output": binding.pdfURL.path,
+                "Output": Self.outputIdentity(binding),
             ],
             binding: binding
         )
@@ -167,9 +167,7 @@ actor SyncTeXRunner {
         let sourcePath = try NormalizedSourcePath(
             String(resolvedSource.path.dropPrefix(binding.projectRoot.path + "/"))
         )
-        let pdfPath = try NormalizedSourcePath(
-            String(binding.pdfURL.path.dropPrefix(binding.projectRoot.path + "/"))
-        )
+        let pdfPath = try NormalizedSourcePath(Self.outputIdentity(binding))
         return try ExactSyncTeXQuerySelector.forward(
             Array(document.candidates.prefix(1)),
             query: ForwardSyncQuery(
@@ -214,7 +212,7 @@ actor SyncTeXRunner {
                 "v": "\(point.y)",
                 "W": "0",
                 "H": "0",
-                "Output": binding.pdfURL.path,
+                "Output": Self.outputIdentity(binding),
             ],
             binding: binding
         )
@@ -226,9 +224,7 @@ actor SyncTeXRunner {
                 outputHash: binding.outputHash
             )
         )
-        let pdfPath = try NormalizedSourcePath(
-            String(binding.pdfURL.path.dropPrefix(binding.projectRoot.path + "/"))
-        )
+        let pdfPath = try NormalizedSourcePath(Self.outputIdentity(binding))
         return try ExactSyncTeXQuerySelector.inverse(
             Array(document.candidates.prefix(1)),
             query: InverseSyncQuery(
@@ -258,6 +254,16 @@ actor SyncTeXRunner {
             start = metadata.index(after: end)
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// The bound PDF as the strict parser admits it: its project-relative
+    /// path, or — for an editing preview in its private session directory
+    /// outside the project — its file name. The output hash and .synctex
+    /// fingerprint still pin the exact artifact; any other Output fails.
+    private static func outputIdentity(_ binding: SyncTeXBinding) -> String {
+        let prefix = binding.projectRoot.path + "/"
+        let path = binding.pdfURL.path
+        return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : binding.pdfURL.lastPathComponent
     }
 
     /// Collapses raw `synctex` output to the normalized record shape. Fields not
@@ -322,6 +328,7 @@ actor SyncTeXRunner {
                     // own directory is correct even under .pitex-live.
                     value = URL(fileURLWithPath: value, relativeTo: binding.pdfURL.deletingLastPathComponent())
                         .resolvingSymlinksInPath().standardizedFileURL.path
+                    if value == binding.pdfURL.path { value = Self.outputIdentity(binding) }
                 }
             }
             if Self.allowedFields.contains(key) { fields[key] = value }
