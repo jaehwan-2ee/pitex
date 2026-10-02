@@ -1,0 +1,14 @@
+README.md
+  h_bcbc8ae9e599aa 15-16,348,354-356,414-419,434-436
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aa7d1aaa1e80bc43d56cdeb1f092f04b2b9f3276",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
