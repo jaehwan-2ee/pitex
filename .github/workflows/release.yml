@@ -3,16 +3,30 @@ name: Release
 on:
   push:
     tags: ['v*']
+  pull_request:
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   macos-dmg:
     name: macOS DMG
     runs-on: macos-latest
+    needs: [bundle-helpers]
     steps:
       - uses: actions/checkout@v4
+      - name: Compute release name
+        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+      - name: Download bundled preview-engine payload
+        uses: actions/download-artifact@v4
+        with:
+          name: pe-helpers
+          path: .
+      - name: Unpack payload (preserve exec bits)
+        run: |
+          mkdir -p pe-payload
+          tar -xf pe-payload.tar -C pe-payload
       - name: Build release app
         run: |
           xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
@@ -21,64 +35,76 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
       # Helpers land in Contents/Helpers/PreviewEngine (code only) — the
       # client's first probe path; notices/provenance go to
-      # Contents/Resources/PreviewEngine since macOS treats Helpers as code.
-      # The script rewrites to @loader_path and ad-hoc signs; the DMG step's
-      # strict codesign re-seals the app afterwards. No pbxproj changes.
-      # PITEX_BUNDLE_INSTALL_DEPS=1 permits brew installs ONLY here —
-      # ephemeral CI runner; on user machines the script errors instead.
-      - name: Bundle embedded preview engine
-        env:
-          PITEX_BUNDLE_INSTALL_DEPS: "1"
+      # Contents/Resources/PreviewEngine. The payload was built by the
+      # bundle-helpers job (macos-15) and is installed here.
+      - name: Install bundled preview engine into app
         run: |
           set -euo pipefail
-          # TECkit/HarfBuzz have no usable bottle path (teckit has no
-          # formula at all; harfbuzz's bottle is not relocatable and drags a
-          # ~30-formula source tree), so both are built from pinned upstream
-          # release tarballs into a private prefix. Their licenses are
-          # staged for DEP_LICENSE_DIR; brew kegs cover the rest.
-          PRIV_PREFIX="$RUNNER_TEMP/pe-deps"
-          export DEP_SEARCH_DIRS="$PRIV_PREFIX/lib"
-          export DEP_LICENSE_DIR="$RUNNER_TEMP/pe-deplicenses"
-          mkdir -p "$DEP_LICENSE_DIR/teckit" "$DEP_LICENSE_DIR/harfbuzz" \
-            "$RUNNER_TEMP/pe-src" "$PRIV_PREFIX"
-          brew install pkgconf freetype graphite2 icu4c@78 libpng zlib \
-            autoconf automake libtool meson ninja
-          cd "$RUNNER_TEMP/pe-src"
-          SHA_TK=3f55cd3670f1ff1a439d5a40071870b9e4ca2be8877a0eb80e24783cb532b380
-          SHA_HB=b7132e148358a45185c9feafd049dbaf243649d3c44414b3534d9c95d18592b9
-          curl -fsSLO https://github.com/silnrsi/teckit/releases/download/v2.5.13/teckit-2.5.13.tar.xz
-          curl -fsSLO https://github.com/harfbuzz/harfbuzz/releases/download/14.5.0/harfbuzz-14.5.0.tar.xz
-          echo "$SHA_TK  teckit-2.5.13.tar.xz" | shasum -a 256 -c -
-          echo "$SHA_HB  harfbuzz-14.5.0.tar.xz" | shasum -a 256 -c -
-          tar xJf teckit-2.5.13.tar.xz && cd teckit-2.5.13
-          ./autogen.sh
-          ./configure --prefix="$PRIV_PREFIX" --with-system-zlib
-          make -j"$(sysctl -n hw.ncpu)" && make install
-          cp COPYING "$DEP_LICENSE_DIR/teckit/"
-          cp -R license "$DEP_LICENSE_DIR/teckit/license"
-          cd "$RUNNER_TEMP/pe-src" && tar xJf harfbuzz-14.5.0.tar.xz && cd harfbuzz-14.5.0
-          meson setup build --prefix="$PRIV_PREFIX" --buildtype=release \
-            -Dglib=disabled -Dgobject=disabled -Dcairo=disabled \
-            -Dchafa=disabled -Dicu=disabled -Dgraphite=enabled \
-            -Dgraphite2=enabled -Dfreetype=enabled -Dtests=disabled \
-            -Ddocs=disabled -Dutilities=disabled -Dbenchmark=disabled \
-            -Dintrospection=disabled
-          ninja -C build && ninja -C build install
-          cp COPYING AUTHORS "$DEP_LICENSE_DIR/harfbuzz/" 2>/dev/null || cp COPYING "$DEP_LICENSE_DIR/harfbuzz/"
-          export PKG_CONFIG_PATH="$PRIV_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
           APP="$GITHUB_WORKSPACE/build/Build/Products/Release/Pitex.app"
-          # Destination must be the built app in the workspace — cwd is the
-          # harfbuzz source dir after the dep builds; a relative path would
-          # drop Helpers into $RUNNER_TEMP and the DMG would miss them.
           [ -d "$APP" ] || { echo "release app not found: $APP" >&2; exit 1; }
-          bash "$GITHUB_WORKSPACE/Tools/bundle-preview-engine-macos.sh" \
-            "$RUNNER_TEMP/pitex-preview-engine" "$APP/Contents/Helpers"
+          # pe-payload/ artifact carries Contents/Helpers + Contents/Resources.
+          cp -R pe-payload/Contents/Helpers/.   "$APP/Contents/Helpers/"
+          cp -R pe-payload/Contents/Resources/. "$APP/Contents/Resources/"
       - name: Audit bundled preview engine
         run: |
           APP="build/Build/Products/Release/Pitex.app"
           bash PreviewEngine/tools/audit-linkage.sh \
             "$APP/Contents/Helpers/PreviewEngine" \
             "$APP/Contents/Resources/PreviewEngine"
+          # W7+A2-W1 fail-closed minos audit: every Mach-O under
+          # Contents/Helpers must target ≤ macOS 15.0 (the app minimum).
+          find "$APP/Contents/Helpers" -type f | while read -r bin; do
+            if vtool -show-build "$bin" >/dev/null 2>&1; then
+              m=$(vtool -show-build "$bin" | awk '/minos/{print $2; exit}')
+              [ -n "$m" ] || continue
+              awk "BEGIN{exit !($m <= 15.0)}" \
+                || { echo "minos $m > 15.0: $bin" >&2; exit 1; }
+            fi
+          done
+          # W2 post-bundle: no helper links glib/gobject/gio/intl/pcre, and
+          # every non-system dep is @loader_path-local.
+          find "$APP/Contents/Helpers" -type f | while read -r bin; do
+            otool -L "$bin" 2>/dev/null | grep -qE 'glib|gobject|gio|intl|pcre' \
+              && { echo "forbidden lib in $bin" >&2; exit 1; } || true
+            otool -L "$bin" 2>/dev/null | awk 'NR>1{print $1}' \
+              | grep -vE '^/usr/lib|^/System|@loader_path' \
+              | grep -q . && { echo "non-loader_path dep in $bin" >&2; exit 1; } || true
+          done
+          # W7/A2: pdfjs manifest pin + count + hash; helper name-set + notices.
+          ( cd "$APP/Contents/Resources/pdfjs" \
+            && shasum -a 256 -c MANIFEST.sha256 >/dev/null \
+            && [ "$(find . -type f ! -name MANIFEST.sha256 | wc -l | tr -d ' ')" = 209 ] )
+          [ "$(sha256sum "$APP/Contents/Resources/pdfjs/MANIFEST.sha256" | cut -d' ' -f1)" \
+            = cf0b7eb2630942778746ecf7f6c0e32222220780beb3908a0930d1ed058e6366 ] \
+            || { echo "pdfjs MANIFEST pin mismatch" >&2; exit 1; }
+          # Helper payload NAME sets (not a count — the CI build has no
+          # glib/intl/pcre2). bin: the two helpers; lib: one dylib each.
+          AH="$APP/Contents/Helpers/PreviewEngine"
+          find "$AH" -maxdepth 1 -type f ! -name '*.dylib' -exec basename {} \; \
+            | sort > /tmp/h.txt
+          printf '%s\n' pitex-preview pitex-preview-xetex > /tmp/h.want
+          diff /tmp/h.txt /tmp/h.want || { echo "helper bin set mismatch" >&2; exit 1; }
+          find "$AH/lib" -type f -name '*.dylib' -exec basename {} \; \
+            | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | sort -u > /tmp/l.txt
+          printf '%s\n' libTECkit libfreetype libgraphite2 libharfbuzz \
+            libicudata libicuuc libpng16 libz > /tmp/l.want
+          diff /tmp/l.txt /tmp/l.want || { echo "helper dylib set mismatch" >&2; exit 1; }
+          # Notices: presence of the fixed project/provenance files plus one
+          # license for each bundled lib. No count (harfbuzz AUTHORS may be
+          # copied if present in the tarball). B4/U44: icu4c@78/LICENSE (not
+          # icu4c); no harfbuzz/COPYING — CI builds harfbuzz from source so
+          # its notice is only external/harfbuzz/COPYING.
+          RP="$APP/Contents/Resources/PreviewEngine"
+          for n in BUNDLED-VERSIONS.txt PROVENANCE.md provenance.json \
+            THIRD-PARTY.md TeXpresso-LICENSE.txt Tectonic-MIT.txt \
+            XeTeX-SIL-MIT.txt \
+            external/teckit/COPYING \
+            external/teckit/license/License_LGPLv21.txt \
+            external/harfbuzz/COPYING \
+            freetype/LICENSE.TXT graphite2/LICENSE icu4c@78/LICENSE \
+            libpng/LICENSE zlib/LICENSE; do
+            [ -e "$RP/$n" ] || { echo "missing notice $n" >&2; exit 1; }
+          done
       - name: Ad-hoc sign and create DMG
         run: |
           APP="build/Build/Products/Release/Pitex.app"
@@ -88,7 +114,7 @@ jobs:
           codesign --deep --force --sign - "$APP"
           codesign --verify --deep --strict "$APP"
           hdiutil create -volname Pitex -srcfolder "$APP" -ov -format UDZO \
-            "Pitex-${GITHUB_REF_NAME}-macos-arm64.dmg"
+            "Pitex-${NAME}-macos-arm64.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: dmg
@@ -99,6 +125,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Compute release name
+        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       - name: System dependencies
         run: |
           sudo apt-get update
@@ -125,7 +153,7 @@ jobs:
       - name: Rename artifact
         run: |
           mv Linux/target/debian/pitex_*.deb \
-            "Pitex-${GITHUB_REF_NAME}-ubuntu24.04-amd64.deb"
+            "Pitex-${NAME}-ubuntu24.04-amd64.deb"
       - uses: actions/upload-artifact@v4
         with:
           name: deb-ubuntu2404
@@ -140,6 +168,8 @@ jobs:
     container: ubuntu:22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Compute release name
+        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       - name: System dependencies
         run: |
           apt-get update
@@ -155,7 +185,7 @@ jobs:
       - name: Rename artifact
         run: |
           mv Linux/target/debian/pitex_*.deb \
-            "Pitex-${GITHUB_REF_NAME}-ubuntu22.04-amd64.deb"
+            "Pitex-${NAME}-ubuntu22.04-amd64.deb"
       - uses: actions/upload-artifact@v4
         with:
           name: deb-ubuntu2204
@@ -186,18 +216,31 @@ jobs:
             mingw-w64-ucrt-x86_64-adwaita-icon-theme
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
             zip
+      # B2: after setup-msys2 — the job's default shell is `msys2 {0}`, which
+      # only exists once that action installs it.
+      - name: Compute release name
+        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       - name: Build and bundle
         run: bash Windows/build.sh
       - name: Create zip
         run: |
           cd Windows/dist
-          zip -qr "${GITHUB_WORKSPACE}/Pitex-${GITHUB_REF_NAME}-windows-amd64.zip" pitex
+          zip -qr "${GITHUB_WORKSPACE}/Pitex-${NAME}-windows-amd64.zip" pitex
       - name: Ensure NSIS
         shell: pwsh
         run: |
           if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) {
             choco install nsis -y --no-progress
           }
+      - name: Compute NSIS version
+        run: |
+          if [ "${{ github.ref_type }}" = tag ]; then
+            echo "NSIS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            # N3: no macOS Info.plist key exists here — emit an explicit
+            # placeholder for non-tag (PR/dispatch) installer builds.
+            echo "NSIS_VERSION=0.0.0" >> "$GITHUB_ENV"
+          fi
       # Per-user NSIS installer — the recommended way to install (double-
       # click, Start Menu entry, Add/Remove Programs, no admin). The in-app
       # updater drives it with /S.
@@ -205,8 +248,8 @@ jobs:
         run: |
           cd Windows
           '/c/Program Files (x86)/NSIS/makensis.exe' -V2 \
-            -DVERSION="${GITHUB_REF_NAME#v}" \
-            -DOUTFILE="Pitex-${GITHUB_REF_NAME}-windows-amd64-setup.exe" pitex.nsi
+            -DVERSION="${NSIS_VERSION}" \
+            -DOUTFILE="Pitex-${NAME}-windows-amd64-setup.exe" pitex.nsi
       - uses: actions/upload-artifact@v4
         with:
           name: windows-zip
@@ -216,23 +259,135 @@ jobs:
           name: windows-setup
           path: 'Windows/Pitex-*-setup.exe'
 
+  # W1/A2: helpers bundled on macos-15 so brew bottles + source builds target
+  # the app's macOS 15 floor. Produces the pe-helpers artifact consumed by
+  # macos-dmg. The bundle script requires DEST_DIR = .../Contents/Helpers.
+  bundle-helpers:
+    name: Bundle preview-engine helpers (macos-15)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + bundle preview-engine helpers
+        env:
+          PITEX_BUNDLE_INSTALL_DEPS: "1"
+          MACOSX_DEPLOYMENT_TARGET: "15.0"
+        run: |
+          set -euo pipefail
+          PRIV_PREFIX="$RUNNER_TEMP/pe-deps"
+          export DEP_SEARCH_DIRS="$PRIV_PREFIX/lib"
+          export DEP_LICENSE_DIR="$RUNNER_TEMP/pe-deplicenses"
+          mkdir -p "$DEP_LICENSE_DIR/teckit" "$DEP_LICENSE_DIR/harfbuzz" \
+            "$RUNNER_TEMP/pe-src" "$PRIV_PREFIX" \
+            pe-payload/Contents/Helpers pe-payload/Contents/Resources
+          brew install pkgconf freetype graphite2 icu4c@78 libpng zlib \
+            autoconf automake libtool meson ninja
+          cd "$RUNNER_TEMP/pe-src"
+          SHA_TK=3f55cd3670f1ff1a439d5a40071870b9e4ca2be8877a0eb80e24783cb532b380
+          SHA_HB=b7132e148358a45185c9feafd049dbaf243649d3c44414b3534d9c95d18592b9
+          curl -fsSLO https://github.com/silnrsi/teckit/releases/download/v2.5.13/teckit-2.5.13.tar.xz
+          curl -fsSLO https://github.com/harfbuzz/harfbuzz/releases/download/14.5.0/harfbuzz-14.5.0.tar.xz
+          echo "$SHA_TK  teckit-2.5.13.tar.xz" | shasum -a 256 -c -
+          echo "$SHA_HB  harfbuzz-14.5.0.tar.xz" | shasum -a 256 -c -
+          tar xJf teckit-2.5.13.tar.xz && cd teckit-2.5.13
+          ./autogen.sh
+          ./configure --prefix="$PRIV_PREFIX" --with-system-zlib
+          make -j"$(sysctl -n hw.ncpu)" && make install
+          cp COPYING "$DEP_LICENSE_DIR/teckit/"
+          cp -R license "$DEP_LICENSE_DIR/teckit/license"
+          cd "$RUNNER_TEMP/pe-src" && tar xJf harfbuzz-14.5.0.tar.xz && cd harfbuzz-14.5.0
+          meson setup build --prefix="$PRIV_PREFIX" --buildtype=release \
+            -Dglib=disabled -Dgobject=disabled -Dcairo=disabled \
+            -Dchafa=disabled -Dicu=disabled -Dgraphite=enabled \
+            -Dgraphite2=enabled -Dfreetype=enabled -Dtests=disabled \
+            -Ddocs=disabled -Dutilities=disabled -Dbenchmark=disabled \
+            -Dintrospection=disabled
+          ninja -C build && ninja -C build install
+          cp COPYING AUTHORS "$DEP_LICENSE_DIR/harfbuzz/" 2>/dev/null || cp COPYING "$DEP_LICENSE_DIR/harfbuzz/"
+          export PKG_CONFIG_PATH="$PRIV_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          # W5/A2-D6: keg-only icu4c@78 — resolve via its own pkgconfig dir.
+          # (N4: assignment split from export so a brew failure isn't masked.)
+          ICU_PREFIX="$(brew --prefix icu4c@78)"
+          export ICU_PREFIX
+          PKG_CONFIG_PATH="$ICU_PREFIX/lib/pkgconfig" pkg-config --modversion icu-uc \
+            | grep -q '^78\.' || { echo "ICU major != 78" >&2; exit 1; }
+          # W2/A2: source-built deps must resolve to the private prefix.
+          for p in harfbuzz teckit; do
+            [ "$(pkg-config --variable=prefix "$p" 2>/dev/null)" = "$PRIV_PREFIX" ] \
+              || { echo "bundle: $p resolves to $(pkg-config --variable=prefix "$p" 2>/dev/null), not $PRIV_PREFIX" >&2; exit 1; }
+          done
+          # DEST_DIR must end .../Contents/Helpers (script enforces it).
+          bash "$GITHUB_WORKSPACE/Tools/bundle-preview-engine-macos.sh" \
+            "$RUNNER_TEMP/pitex-preview-engine" \
+            "$GITHUB_WORKSPACE/pe-payload/Contents/Helpers"
+          # B1: the dep builds cd'd into $RUNNER_TEMP/pe-src/… — return to the
+          # workspace before the payload-relative audit + tar.
+          cd "$GITHUB_WORKSPACE"
+          # B3/U43: check the EXPECTED NAMES, not a count (the CI payload has
+          # no glib/intl/pcre2). Helpers = pitex-preview, pitex-preview-xetex
+          # + one each of libTECkit/libfreetype/libgraphite2/libharfbuzz/
+          # libicudata.78/libicuuc.78/libpng16/libz; nothing else.
+          H="$GITHUB_WORKSPACE/pe-payload/Contents/Helpers/PreviewEngine"
+          [ -d "$H" ] || { echo "no helper payload dir: $H" >&2; exit 1; }
+          find "$H" -maxdepth 1 -type f ! -name '*.dylib' -exec basename {} \; \
+            | sort > /tmp/helpers.txt
+          printf '%s\n' pitex-preview pitex-preview-xetex > /tmp/helpers.want
+          diff /tmp/helpers.txt /tmp/helpers.want \
+            || { echo "helper bin set mismatch" >&2; exit 1; }
+          find "$H/lib" -type f -name '*.dylib' -exec basename {} \; \
+            | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | sort -u > /tmp/libs.txt
+          printf '%s\n' libTECkit libfreetype libgraphite2 libharfbuzz \
+            libicudata libicuuc libpng16 libz > /tmp/libs.want
+          diff /tmp/libs.txt /tmp/libs.want \
+            || { echo "helper dylib set mismatch" >&2; exit 1; }
+          # D6: assert the bundled ICU dylibs are major 78.
+          find "$H/lib" -name 'libicuuc.*' | grep -q 'libicuuc\.78\.' \
+            || { echo "bundled ICU not major 78" >&2; exit 1; }
+          # upload-artifact drops file modes (all files 644) — tar the payload
+          # so the helper/dylib exec bits survive into macos-dmg.
+          tar -cf pe-payload.tar -C pe-payload Contents
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pe-helpers
+          path: pe-payload.tar
+
   publish:
     name: Publish GitHub Release
     needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204, windows-zip]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    # W9/A3-D5: publish only on a real tag push — never on pull_request or
+    # workflow_dispatch (where GITHUB_REF_NAME is "<N>/merge").
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v4
+      # D4: fetch only the 5 shipping artifacts — one step each, so the
+      # selection is by name (no glob matcher). pe-helpers is never fetched.
       - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
+        with: { name: dmg,               path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: deb-ubuntu2404,    path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: deb-ubuntu2204,    path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows-zip,       path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows-setup,     path: dist }
       - name: Create release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          # W9: curated notes file when present, else generated notes. The
+          # flag is computed BEFORE the command — never a comment inside the
+          # line-continuation.
+          NOTES_ARGS=(--generate-notes)
+          if [ -f ".github/release-notes/${GITHUB_REF_NAME}.md" ]; then
+            NOTES_ARGS=(--notes-file ".github/release-notes/${GITHUB_REF_NAME}.md")
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             --title "Pitex ${GITHUB_REF_NAME}" \
-            --generate-notes \
+            "${NOTES_ARGS[@]}" \
             dist/*
 
       # Keep the Homebrew cask in jaehwan-2ee/homebrew-tap in step with the
@@ -240,7 +395,7 @@ jobs:
       # the HOMEBREW_TAP_TOKEN secret (a token that can push to the tap
       # repo); the step is skipped silently without it.
       - name: Update Homebrew cask
-        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && env.HOMEBREW_TAP_TOKEN != '' }}
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

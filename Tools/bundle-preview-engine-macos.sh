@@ -56,7 +56,9 @@ fi
 # dependency check and the Makefile find them without extra env wiring.
 if [ -n "$BREW" ]; then
     for pcdir in "$BREW"/opt/*/lib/pkgconfig; do
-        [ -d "$pcdir" ] && export PKG_CONFIG_PATH="$pcdir${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+        # W2/A2: APPEND brew kegs so caller's PKG_CONFIG_PATH / ICU_PREFIX /
+        # private prefix keep precedence — a brew keg must not outrank them.
+        [ -d "$pcdir" ] && export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}$pcdir"
     done
 fi
 
