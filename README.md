@@ -12,6 +12,8 @@ sharing one architecture across platforms.
   Rust crates — `pitex-shell` runs on the MSYS2 GTK stack and
   `windows-platform` implements the Windows side of the `app-ports`
   contracts. Windows support is still beta-quality and may be unstable.
+  *(No prebuilt Windows download is currently published; Windows (beta)
+  support will return in a later release.)*
 
 ## Key features
 
@@ -343,21 +345,15 @@ external terminal emulator, since 22.04 has no VTE-GTK4.
 > error — the install still proceeds. If it bothers you, move the file
 > to `/tmp` first.
 
-### Windows — installer (recommended)
+### Windows
 
 > **Note:** Windows support is **beta** — expect bugs and instability.
 > Please report issues on the
 > [issue tracker](../../issues).
 
-Download `Pitex-*-windows-amd64-setup.exe` and double-click it — a
-per-user NSIS installer puts Pitex in `%LOCALAPPDATA%\Programs\Pitex`
-(no admin rights needed), adds Start Menu/Desktop shortcuts, and
-registers an Add/Remove Programs entry.
-
-`Pitex-*-windows-amd64.zip` is the portable alternative (`pitex.exe` +
-GTK runtime): extract anywhere and run `pitex\bin\pitex.exe`. Like the
-22.04 build, the terminal console hands interactive commands to an
-external terminal (there is no VTE-GTK4 on Windows).
+Windows (beta) support is paused for now and will return in a later
+release — no Windows download is currently published. Building from
+source is described in [Windows/README.md](Windows/README.md).
 
 ## Prerequisites
 
@@ -415,13 +411,12 @@ Windows.
     password prompt), falling back to `sudo apt install` in a terminal
     window. The in-app install verifies the installed package version before
     asking you to restart Pitex. Terminal installs must finish there first.
-  - *Windows*: downloads the `*-setup.exe` installer and runs it silently
-    (`/S`) after the app exits, then relaunches `pitex.exe`. A portable-zip
-    install migrates to `%LOCALAPPDATA%\Programs\Pitex` automatically;
-    zip-only releases fall back to a staged bundle swap. Both helpers wait
-    for the app process to exit and check installation errors before
-    relaunching. Existing custom installer locations are preserved; helper
-    failures open an error log instead of silently relaunching the old app.
+  - *Windows*: no Windows release is currently published, so the update
+    check reports that no suitable download is available. When one is
+    published again, it installs the `*-setup.exe` silently (`/S`) after
+    the app exits, then relaunches `pitex.exe` (a portable-zip install
+    migrates to `%LOCALAPPDATA%\Programs\Pitex`; the helpers wait for the
+    process to exit and check for install errors before relaunching).
 - **Automatically download and install updates** — when on, Pitex runs the
   same check→download→install pass on every launch. Stored as
   `pitex.pref.update.autoInstall` on all platforms.
@@ -436,8 +431,9 @@ or `sudo` for the package install.
   tests (24.04 + 22.04 compat), and the Windows workspace build under
   MSYS2 UCRT64 on every PR.
 - Cutting a release: tag `v*` and push — the release workflow builds the
-  DMG, both deb variants, and the Windows zip, and attaches them to a
-  GitHub Release.
+  DMG and both deb variants and attaches them to a GitHub Release. The
+  Windows build runs on pull requests and manual runs only, not on tag
+  pushes.
 - Report bugs or request features via Issues; changes land via PR.
 
 ## License
