@@ -195,6 +195,9 @@ jobs:
     name: Windows bundle (MSYS2 UCRT64)
     # Portable zip: pitex.exe + the GTK runtime DLLs and resources, bundled
     # by Windows/build.sh under a real UCRT64 toolchain.
+    # C5W (user decision): no Windows download ships with 2.2.0 — the job is
+    # kept for PR/dispatch only as a packaging smoke, never on a tag push.
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: windows-latest
     defaults:
       run:
@@ -352,7 +355,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204, windows-zip]
+    needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -369,10 +372,6 @@ jobs:
         with: { name: deb-ubuntu2404,    path: dist }
       - uses: actions/download-artifact@v4
         with: { name: deb-ubuntu2204,    path: dist }
-      - uses: actions/download-artifact@v4
-        with: { name: windows-zip,       path: dist }
-      - uses: actions/download-artifact@v4
-        with: { name: windows-setup,     path: dist }
       - name: Create release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
