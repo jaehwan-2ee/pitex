@@ -23,7 +23,7 @@ sudo apt-get update
 sudo apt-get install -y \
     build-essential pkg-config libssl-dev \
     libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
-    libvte-2.91-gtk4-dev libpoppler-glib-dev
+    libvte-2.91-gtk4-dev libpoppler-glib-dev libwebkitgtk-6.0-dev
 ```
 
 ## System dependencies (Ubuntu 22.04)

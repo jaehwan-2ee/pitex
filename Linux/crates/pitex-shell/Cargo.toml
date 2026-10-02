@@ -64,8 +64,12 @@ windows = { version = "0.62", optional = true, features = [
 # backend (the `pitex-preview` helper ships only in the Ubuntu 24.04
 # package); builds without it keep compiler live builds as before.
 [features]
-default = ["modern-gtk", "vte", "markdown-preview", "embedded-preview"]
+default = ["modern-gtk", "vte", "markdown-preview", "equation-preview", "embedded-preview"]
 modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
 vte = ["dep:vte4"]
 markdown-preview = ["dep:webkit6", "dep:webview2-com", "dep:windows"]
+# Equation hover/caret preview: WebKitGTK 6.0 MathJax renderer on Unix
+# (Ubuntu 24.04 API level); assets are embedded by build.rs.
+equation-preview = ["modern-gtk", "dep:webkit6"]
 embedded-preview = []
+

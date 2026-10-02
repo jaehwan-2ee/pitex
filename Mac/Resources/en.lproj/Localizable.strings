@@ -130,6 +130,7 @@
 "build.issues" = "Issues";
 
 "command.sync_forward" = "Show Selection in PDF";
+"command.exact_equation_preview" = "Exact Equation Preview";
 
 "sidebar.outline" = "Outline";
 "sidebar.labels" = "Labels";
@@ -190,6 +191,11 @@
 "editor.toggle_assistant" = "Toggle Assistant";
 "editor.toggle_bottom" = "Toggle Bottom Panel";
 "editor.flip_panels" = "Flip Panels";
+"equation_preview.accessibility_label" = "Rendered equation preview";
+"equation_preview.unavailable" = "Preview unavailable";
+"equation_preview.exact_badge" = "Exact TeX";
+"equation_preview.fast_badge" = "Fast preview";
+"equation_preview.exact_unavailable" = "Exact preview needs a pdflatex, xelatex, lualatex or latexmk build command.";
 "editor.reload" = "Reload from Disk";
 "editor.disk_changed" = "Reloaded changes from disk";
 "editor.disk_unchanged" = "No changes on disk";
@@ -300,6 +306,20 @@
 "settings.synctex.inverse_highlight" = "Inverse Sync: highlight the source in the editor";
 "settings.synctex.forward_highlight" = "Forward Sync: highlight the destination in the PDF";
 "settings.synctex.highlight_note" = "Briefly show a yellow highlight at the destination. Navigation still works when highlights are off.";
+"settings.editor.equation_preview.title" = "Equation Preview";
+"settings.editor.equation_preview.enabled" = "Show Equation Preview";
+"settings.editor.equation_preview.while_typing" = "Preview while typing";
+"settings.editor.equation_preview.placement" = "Placement";
+"settings.editor.equation_preview.placement.above" = "Above";
+"settings.editor.equation_preview.placement.below" = "Below";
+"settings.editor.equation_preview.renderer" = "Renderer";
+"settings.editor.equation_preview.renderer.fast" = "Fast";
+"settings.editor.equation_preview.renderer.fast_tex" = "Fast + TeX fallback";
+"settings.editor.equation_preview.delay" = "Delay";
+"settings.editor.equation_preview.delay.instant" = "Instant";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "Fast preview renders with built-in MathJax without running TeX and is approximate. The optional exact preview uses your project's TeX build command.";
 "settings.appearance.theme" = "Theme";
 "settings.appearance.language" = "Language";
 "settings.appearance.language_system" = "System";

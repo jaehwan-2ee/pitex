@@ -122,6 +122,63 @@ Settings live under **Settings → Markdown** (right after the renamed
 22.04 and Windows builds don't include the preview yet — they show a
 "not available in this build" note instead.
 
+### Equation preview
+
+Point at an equation — or move the caret into one — and a rendered preview
+appears above it (Overleaf-style), without building the document.
+Hovering a different equation previews that one without moving the caret;
+moving away, leaving the editor, or pressing **Esc** hides it.
+
+- **What counts as math** — `$…$`, `$$…$$`, `\(…\)`, `\[…\]` and the
+  `math`, `displaymath`, `equation[*]`, `align[*]`, `gather[*]`,
+  `multline[*]`, `flalign[*]`, `alignat[*]`, `eqnarray[*]` environments,
+  plus `aligned`, `gathered`, `split`, `cases`, `array` and the `matrix`
+  family written on their own. Comments, escaped `\$`, `\verb`, verbatim-like
+  environments and `$…$` inside `\text{…}` are read the way TeX reads them;
+  an unfinished equation (a blank line before its closer) shows nothing.
+- **Your macros** — `\newcommand`, `\renewcommand`, `\providecommand`,
+  `\DeclareMathOperator`, `\newenvironment` and `\renewenvironment` apply in
+  document order, including definitions from `\input`/`\include`/`\subfile`/
+  `\import`ed files and project-local `\usepackage` style files (unsaved
+  edits in open tabs count). `\def`/`\let` are not collected.
+- **Fast preview** renders locally with a bundled, offline MathJax 4 (TeX
+  font) inside a sandboxed web view — no network, no TeX run. It is labeled
+  *Fast preview* and is an approximation: package-specific commands MathJax
+  does not know show *Preview unavailable*.
+- **Exact TeX preview** — *Build → Exact Equation Preview* (`⌥⌘E` /
+  `Ctrl+Alt+E`) compiles just that equation with the project's own
+  preamble, engine and shell-escape setting, in a private temporary folder
+  that is deleted afterwards; it never touches the project's PDF or aux
+  files. With *Renderer → Fast + TeX fallback* it also runs automatically
+  for equations the fast preview cannot render, once you pause (never per
+  keystroke).
+  - Supported build commands: `pdflatex`, `xelatex`, `lualatex`, and
+    `latexmk` only in its explicit PDF modes (`latexmk -pdf` /
+    `-pdfxe` / `-pdflua`) plus an unquoted `-pdflatex=<engine>` override.
+    Bare or `.latexmkrc`-driven `latexmk`, quoted/chained overrides
+    (e.g. `-pdflatex="…"`), DVI/PS output, conflicting options, and
+    custom or Tectonic commands report *Exact preview unavailable*
+    rather than guess.
+
+Settings live under **Settings → Editor → Equation Preview**: enable, preview
+while typing, above/below, renderer, and delay (Instant / 80 ms / 150 ms).
+On macOS the rendered preview updates live with the system's **Increase
+Contrast** setting, without changing the equation or taking keyboard focus.
+On Linux it needs WebKitGTK 6.0 (Ubuntu 24.04 package); the Ubuntu 22.04
+build does not include it.
+
+Fast rendering has a 5-second watchdog (10 seconds for renderer startup).
+Three failures in one enabled session stop automatic recovery; turn
+**Enable equation preview** off, then on, to try again. Successful renders,
+editing, theme changes and file switches do not replenish that budget.
+On macOS a truly hung WebKit script can retain its old view/process until
+it returns or Pitex quits; replacing the view does not guarantee immediate
+process cleanup.
+
+Exact TeX jobs time out after 20 seconds. The error display keeps a 4 KiB
+log tail, but stdout from project-enabled shell-escape children is not
+byte-capped before that timeout. The log-tail limit is not a memory cap.
+
 ### Live compile
 
 Toggle **Live Compile** in the toolbar (or **Settings → TeX Compile → Live
@@ -243,6 +300,7 @@ Source and PDF stay locked together:
 | Left Sidebar | `⌘T` | `Ctrl+T` |
 | Right Sidebar | `⌘⌥P` | `Ctrl+Alt+P` |
 | Bottom panel | — | `Ctrl+Shift+Y` |
+| Exact equation preview | `⌥⌘E` | `Ctrl+Alt+E` |
 
 ## Download
 

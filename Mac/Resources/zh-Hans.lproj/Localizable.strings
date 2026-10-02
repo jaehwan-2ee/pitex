@@ -131,6 +131,7 @@
 "build.issues" = "问题";
 
 "command.sync_forward" = "在 PDF 中显示所选内容";
+"command.exact_equation_preview" = "精确公式预览";
 
 "sidebar.outline" = "大纲";
 "sidebar.labels" = "标签";
@@ -191,6 +192,11 @@
 "editor.toggle_assistant" = "切换助手";
 "editor.toggle_bottom" = "切换底部面板";
 "editor.flip_panels" = "翻转面板";
+"equation_preview.accessibility_label" = "渲染后的公式预览";
+"equation_preview.unavailable" = "预览不可用";
+"equation_preview.exact_badge" = "精确 TeX";
+"equation_preview.fast_badge" = "快速预览";
+"equation_preview.exact_unavailable" = "精确预览需要 pdflatex、xelatex、lualatex 或 latexmk 构建命令。";
 "editor.reload" = "从磁盘重新加载";
 "editor.disk_changed" = "已从磁盘重新加载更改";
 "editor.disk_unchanged" = "磁盘上没有更改";
@@ -300,6 +306,20 @@
 "settings.synctex.inverse_highlight" = "反向同步：在编辑器中高亮源代码";
 "settings.synctex.forward_highlight" = "正向同步：在 PDF 中高亮目标位置";
 "settings.synctex.highlight_note" = "在目标位置短暂显示黄色高亮。关闭高亮后导航仍可使用。";
+"settings.editor.equation_preview.title" = "公式预览";
+"settings.editor.equation_preview.enabled" = "显示公式预览";
+"settings.editor.equation_preview.while_typing" = "输入时预览";
+"settings.editor.equation_preview.placement" = "位置";
+"settings.editor.equation_preview.placement.above" = "上方";
+"settings.editor.equation_preview.placement.below" = "下方";
+"settings.editor.equation_preview.renderer" = "渲染器";
+"settings.editor.equation_preview.renderer.fast" = "快速";
+"settings.editor.equation_preview.renderer.fast_tex" = "快速 + TeX 回退";
+"settings.editor.equation_preview.delay" = "延迟";
+"settings.editor.equation_preview.delay.instant" = "即时";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "快速预览使用内置 MathJax 渲染，不运行 TeX，结果为近似效果。可选的精确预览使用项目的 TeX 构建命令。";
 "settings.appearance.theme" = "主题";
 "settings.appearance.language" = "语言";
 "settings.appearance.language_system" = "系统";

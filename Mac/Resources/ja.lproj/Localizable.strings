@@ -130,6 +130,7 @@
 "build.issues" = "問題";
 
 "command.sync_forward" = "PDFで選択範囲を表示";
+"command.exact_equation_preview" = "数式の正確なプレビュー";
 
 "sidebar.outline" = "アウトライン";
 "sidebar.labels" = "ラベル";
@@ -190,6 +191,11 @@
 "editor.toggle_assistant" = "アシスタントを切り替え";
 "editor.toggle_bottom" = "下部パネルを切り替え";
 "editor.flip_panels" = "パネルを反転";
+"equation_preview.accessibility_label" = "レンダリングされた数式プレビュー";
+"equation_preview.unavailable" = "プレビューを表示できません";
+"equation_preview.exact_badge" = "TeX 正確";
+"equation_preview.fast_badge" = "高速プレビュー";
+"equation_preview.exact_unavailable" = "正確なプレビューには pdflatex、xelatex、lualatex、latexmk のいずれかのビルドコマンドが必要です。";
 "editor.reload" = "ディスクから再読み込み";
 "editor.disk_changed" = "ディスクの変更を再読み込みしました";
 "editor.disk_unchanged" = "ディスクに変更はありません";
@@ -300,6 +306,20 @@
 "settings.synctex.inverse_highlight" = "Inverse Sync: エディタのソース位置を強調表示";
 "settings.synctex.forward_highlight" = "Forward Sync: PDF の移動先を強調表示";
 "settings.synctex.highlight_note" = "移動先を黄色で一時的に表示します。強調表示をオフにしても位置への移動は動作します。";
+"settings.editor.equation_preview.title" = "数式プレビュー";
+"settings.editor.equation_preview.enabled" = "数式プレビューを表示";
+"settings.editor.equation_preview.while_typing" = "入力中にプレビュー";
+"settings.editor.equation_preview.placement" = "表示位置";
+"settings.editor.equation_preview.placement.above" = "上";
+"settings.editor.equation_preview.placement.below" = "下";
+"settings.editor.equation_preview.renderer" = "レンダラー";
+"settings.editor.equation_preview.renderer.fast" = "高速";
+"settings.editor.equation_preview.renderer.fast_tex" = "高速 + TeX フォールバック";
+"settings.editor.equation_preview.delay" = "遅延";
+"settings.editor.equation_preview.delay.instant" = "即時";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "高速プレビューは組み込みの MathJax で TeX を実行せずに描画するため近似です。任意の正確なプレビューはプロジェクトの TeX ビルドコマンドを使用します。";
 "settings.appearance.theme" = "テーマ";
 
 "settings.appearance.language" = "言語";

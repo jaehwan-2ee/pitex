@@ -284,6 +284,9 @@ final class WorkspaceModel: ObservableObject {
     /// subprocess that never touches the chat transcript. Created per
     /// project like `agent` and shut down in `close()`.
     private(set) var completion: GhostCompletionCoordinator?
+    /// Overleaf-style equation hover/caret preview — created with the
+    /// project like `completion`, rebound per editor, shut down in `close()`.
+    private(set) var equationPreview: EquationPreviewController?
     private(set) var syncTeXBinding: SyncTeXBinding?
     /// Epoch for SyncTeX work: bumped at every build start and at every
     /// workspace/target switch so an in-flight refresh or query belonging
@@ -330,6 +333,8 @@ final class WorkspaceModel: ObservableObject {
             // A different command means different flags/outputs — live
             // work compiled under the old one is dead.
             performLiveRequests(liveScheduler.invalidate())
+            // The exact equation preview follows the project's engine.
+            equationPreview?.setBuildCommand(buildCommandText)
         }
     }
     /// Free-form terminal command run with ⌃⌘B, remembered per project.
@@ -796,11 +801,19 @@ final class WorkspaceModel: ObservableObject {
             }
             completion.attach(to: appEnvironment.editor)
             self.completion = completion
+            let equationPreview = EquationPreviewController()
+            equationPreview.workspace = EquationPreviewController.Workspace(
+                openText: { [weak self] url in await self?.openDocumentText(url) },
+                projectRoot: root
+            )
+            self.equationPreview = equationPreview
 
             environment = appEnvironment
             activeDocumentURL = initialURL
             openDocuments = [initialURL]
             documentSnapshot = snapshot
+            equationPreview.setDocument(initialURL)
+            equationPreview.setBuildCommand(buildCommandText)
             refreshBuildTarget()
             buildState = .unavailable("No build has run yet for this project.")
             syncTeXState = .unavailable(
@@ -896,6 +909,7 @@ final class WorkspaceModel: ObservableObject {
             documentSnapshot = snapshot
             refreshBuildTarget()
             completion?.attach(to: appEnvironment.editor)
+            equationPreview?.setDocument(url)
             highlighter.attach(to: appEnvironment.editor, fileExtension: url.pathExtension)
             attachCompletion(to: appEnvironment.editor)
             startWatcher(for: url)
@@ -1063,6 +1077,8 @@ final class WorkspaceModel: ObservableObject {
         switch result.kind {
         case .saved:
             refreshGit()
+            // The saved file may feed the math context (\input/\usepackage).
+            equationPreview?.refreshExternalFiles()
         case .saveConflict:
             syncTeXState = .stale("The source changed on disk; SyncTeX locations may be stale.")
         case .skipped:
@@ -1191,6 +1207,8 @@ final class WorkspaceModel: ObservableObject {
         agent?.shutdown()
         agent?.stopConfigWatcher()
         completion?.shutdown()
+        equationPreview?.shutdown()
+        equationPreview = nil
         highlighter.detach()
         let brokerToClose = capabilityBroker
         let leaseToClose = capabilityLease
@@ -2480,6 +2498,16 @@ final class WorkspaceModel: ObservableObject {
             syncTeXBinding = nil
             syncTeXEpoch = UUID()
         }
+        // Equation-preview context and exact preamble start at the main file.
+        equationPreview?.setRootFile(buildSourceURL())
+    }
+
+    /// Unsaved text of an open document — the equation preview reads
+    /// included definitions from buffers before disk.
+    func openDocumentText(_ url: URL) async -> String? {
+        guard let root = projectURL, let relative = try? Self.relativePath(for: url, root: root),
+              let session = registeredSessions.first(where: { $0.path == relative }) else { return nil }
+        return await session.snapshot().text
     }
 
     func buildSourceRelativePath() -> String? {
@@ -2717,6 +2745,12 @@ private struct WorkspaceCommandContent: Commands {
             Button("command.sync_forward") { Task { await workspace.syncForward() } }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
                 .disabled(workspace.syncTeXBinding == nil)
+            Divider()
+            // Compiles only the equation at the caret/pointer, with the
+            // project's engine — the fast preview never runs TeX.
+            Button("command.exact_equation_preview") { workspace.equationPreview?.requestExact() }
+                .keyboardShortcut("e", modifiers: [.command, .option])
+                .disabled(workspace.equationPreview == nil)
         }
         CommandMenu("command.view") {
             Button("command.toggle_inspector") { workspace.toggleInspectorPane() }
