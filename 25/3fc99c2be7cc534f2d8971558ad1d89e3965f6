@@ -1,0 +1,14 @@
+.github/workflows/release.yml
+  h_bcbc8ae9e599aa 198-200,358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "253fc99c2be7cc534f2d8971558ad1d89e3965f6",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
