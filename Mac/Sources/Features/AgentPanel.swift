@@ -209,9 +209,13 @@ struct AgentPanel: View {
             .help(String(localized: "assistant.attach_files_help"))
             .accessibilityIdentifier("pitex.assistant.attach")
 
-            TextField("assistant.message_placeholder", text: $draft)
+            TextField("assistant.message_placeholder", text: $draft, axis: .vertical)
                 .font(.system(size: settings.aiFontSize))
                 .textFieldStyle(.roundedBorder)
+                // Grows with content up to 8 visible lines, then scrolls.
+                // Return still submits (onSubmit -> send); Option+Return inserts
+                // a newline.
+                .lineLimit(1...8)
                 .onSubmit(sendDraft)
                 .accessibilityIdentifier("pitex.assistant.message")
 
@@ -246,7 +250,7 @@ struct AgentPanel: View {
     /// `/`-prefixed drafts complete against pi's advertised commands
     /// (extensions, prompts, skills); picking one fills the composer.
     private var slashMatches: [PiSlashCommand] {
-        guard draft.hasPrefix("/"), draft.rangeOfCharacter(from: .whitespaces) == nil else { return [] }
+        guard draft.hasPrefix("/"), draft.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return [] }
         let query = String(draft.dropFirst())
         return coordinator.commands
             .filter { query.isEmpty || $0.name.lowercased().hasPrefix(query.lowercased()) }
