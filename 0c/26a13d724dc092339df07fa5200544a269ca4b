@@ -1,0 +1,16 @@
+.github/workflows/release.yml
+  h_bcbc8ae9e599aa 6-7,10,16,19-29,38-40,45-47,54-107,117,128-129,156,171-172,188,219-222,228,235-243,251-252,262-352,357-361,364-365,367-375,380-387,390,398
+Tools/bundle-preview-engine-macos.sh
+  h_bcbc8ae9e599aa 59-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0c26a13d724dc092339df07fa5200544a269ca4b",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
