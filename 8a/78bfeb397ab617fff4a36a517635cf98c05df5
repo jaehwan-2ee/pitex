@@ -1,0 +1,362 @@
+.github/workflows/ci.yml
+  h_d73c695d83f4a7 390-411
+.github/workflows/release.yml
+  h_d73c695d83f4a7 22-81,85-89,108-109,113-121
+.gitignore
+  h_d73c695d83f4a7 51-53
+Development/README.md
+  h_d73c695d83f4a7 13-15,18-19,60-161
+Linux/crates/pitex-shell/Cargo.toml
+  h_d73c695d83f4a7 63-65,67,71
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_d73c695d83f4a7 596,598-602,928,971-972,1635-1638,3334,3824-3829,3939-3941,4076-4078,4084-4086,4095,4116,4132,4231-4237,4254-4256,4303-4423,5068-5070
+Linux/crates/pitex-shell/src/embedded_preview.rs
+  h_d73c695d83f4a7 1-926
+Linux/crates/pitex-shell/src/lib.rs
+  h_d73c695d83f4a7 13
+Linux/crates/pitex-shell/src/model.rs
+  h_d73c695d83f4a7 343-348,587,1157-1160,1333,2185,2479-2483,3217-3218,3220-3224,3282-3286,3290,3293-3295,3299,3304-3311,3355-3359,3502-3504,3584-3586,3716-3717,3774,3990-4010,4045-4049,4136-4309,4343-4347,4757-4763
+Linux/crates/pitex-shell/src/panes.rs
+  h_d73c695d83f4a7 1738-1746,1783-1823
+Linux/crates/pitex-shell/src/settings.rs
+  h_d73c695d83f4a7 209-226
+Linux/crates/pitex-shell/src/synctex.rs
+  h_d73c695d83f4a7 237,239-255,260,278-280,290-313,366,377-378,498-502,881-909
+Linux/crates/pitex-shell/tests/embedded_preview.rs
+  h_d73c695d83f4a7 1-319
+Linux/crates/pitex-shell/tests/live_compile.rs
+  h_d73c695d83f4a7 136-138
+Linux/crates/pitex/Cargo.toml
+  h_d73c695d83f4a7 19,23-25,37,51-86,93-95,100-113
+Mac/Pitex.xcodeproj/project.pbxproj
+  h_d73c695d83f4a7 48,56,95,98,198,212,313,346
+Mac/Resources/en.lproj/Localizable.strings
+  h_d73c695d83f4a7 38,50-55,267,270-273
+Mac/Resources/es.lproj/Localizable.strings
+  h_d73c695d83f4a7 38,50-55,267,270-273
+Mac/Resources/ja.lproj/Localizable.strings
+  h_d73c695d83f4a7 38,50-55,267,270-273
+Mac/Resources/ko.lproj/Localizable.strings
+  h_d73c695d83f4a7 38,50-55,267,270-273
+Mac/Resources/pdfjs/LICENSE
+  h_d73c695d83f4a7 1-177
+Mac/Resources/pdfjs/LICENSE_FOXIT
+  h_d73c695d83f4a7 1-27
+Mac/Resources/pdfjs/LICENSE_JBIG2
+  h_d73c695d83f4a7 1-196
+Mac/Resources/pdfjs/LICENSE_OPENJPEG
+  h_d73c695d83f4a7 1-39
+Mac/Resources/pdfjs/LICENSE_PDFJS_JBIG2
+  h_d73c695d83f4a7 1-13
+Mac/Resources/pdfjs/LICENSE_PDFJS_OPENJPEG
+  h_d73c695d83f4a7 1-22
+Mac/Resources/pdfjs/LICENSE_PDFJS_QCMS
+  h_d73c695d83f4a7 1-19
+Mac/Resources/pdfjs/LICENSE_QCMS
+  h_d73c695d83f4a7 1-21
+Mac/Resources/pdfjs/MANIFEST.sha256
+  h_d73c695d83f4a7 1-209
+Mac/Resources/pdfjs/VERSIONS
+  h_d73c695d83f4a7 1-20
+Mac/Resources/pdfjs/bridge.js
+  h_d73c695d83f4a7 1-28
+Mac/Resources/pdfjs/cmaps/CNS2-V.bcmap
+  h_d73c695d83f4a7 1-3
+Mac/Resources/pdfjs/cmaps/ETenms-B5-H.bcmap
+  h_d73c695d83f4a7 1-3
+Mac/Resources/pdfjs/cmaps/GB-H.bcmap
+  h_d73c695d83f4a7 1-4
+Mac/Resources/pdfjs/cmaps/LICENSE
+  h_d73c695d83f4a7 1-36
+Mac/Resources/pdfjs/iccs/LICENSE
+  h_d73c695d83f4a7 1-116
+Mac/Resources/pdfjs/pdf.mjs
+  h_d73c695d83f4a7 1-28266
+Mac/Resources/pdfjs/pdf.worker.mjs
+  h_d73c695d83f4a7 1-65084
+Mac/Resources/pdfjs/pdf_viewer.css
+  h_d73c695d83f4a7 1-6409
+Mac/Resources/pdfjs/pdf_viewer.mjs
+  h_d73c695d83f4a7 1-9834
+Mac/Resources/pdfjs/standard_fonts/LICENSE_FOXIT
+  h_d73c695d83f4a7 1-27
+Mac/Resources/pdfjs/viewer.html
+  h_d73c695d83f4a7 1-27
+Mac/Resources/pdfjs/viewer.mjs
+  h_d73c695d83f4a7 1-328
+Mac/Resources/pdfjs/wasm/LICENSE_JBIG2
+  h_d73c695d83f4a7 1-196
+Mac/Resources/pdfjs/wasm/LICENSE_OPENJPEG
+  h_d73c695d83f4a7 1-39
+Mac/Resources/pdfjs/wasm/LICENSE_PDFJS_JBIG2
+  h_d73c695d83f4a7 1-13
+Mac/Resources/pdfjs/wasm/LICENSE_PDFJS_OPENJPEG
+  h_d73c695d83f4a7 1-22
+Mac/Resources/pdfjs/wasm/LICENSE_PDFJS_QCMS
+  h_d73c695d83f4a7 1-19
+Mac/Resources/pdfjs/wasm/LICENSE_QCMS
+  h_d73c695d83f4a7 1-21
+Mac/Resources/pdfjs/wasm/jbig2_nowasm_fallback.js
+  h_d73c695d83f4a7 1-15
+Mac/Resources/pdfjs/wasm/openjpeg_nowasm_fallback.js
+  h_d73c695d83f4a7 1-17
+Mac/Resources/ru.lproj/Localizable.strings
+  h_d73c695d83f4a7 38,50-55,267,270-273
+Mac/Resources/vi.lproj/Localizable.strings
+  h_d73c695d83f4a7 38,50-55,267,270-273
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_d73c695d83f4a7 38,50-55,267,270-273
+Mac/Sources/AppShell/PitexApp.swift
+  h_d73c695d83f4a7 43-46,51-53,58-71,273-277,869-870,872-876,1010-1011,1151-1152,1179,1417-1419,1465-1471,1474,1496-1499,1560-1563,1693-1695,1803-1806,2231-2232,2348,2476,2817-2821
+Mac/Sources/Features/BuildSupport.swift
+  h_d73c695d83f4a7 435-438,500,514-517,628-630,637-640,899-908
+Mac/Sources/Features/EmbeddedPreview.swift
+  h_d73c695d83f4a7 1-793
+Mac/Sources/Features/Preview.swift
+  h_d73c695d83f4a7 1,104,112,135,165,196-245,255-262,266-267,269,271-272,275-276,278-282,290,321-330,343-362,364-397,400,408,424-488,490-497,499-505,507-508,511-533,535-537,541-543,549-552,555-597,599-605,608-625,628-693,695-696,699-703,708
+Mac/Sources/Features/SettingsView.swift
+  h_d73c695d83f4a7 50-62,154,196,230-235,447-462
+Mac/Sources/Features/SyncTeXSupport.swift
+  h_d73c695d83f4a7 155,170,215,227,259-268,331
+Packages/TexApp/Sources/BuildFeature/EmbeddedPreviewLedger.swift
+  h_d73c695d83f4a7 1-150
+Packages/TexApp/Sources/BuildFeature/EmbeddedPreviewPaths.swift
+  h_d73c695d83f4a7 1-81
+Packages/TexApp/Sources/BuildFeature/EmbeddedPreviewWriter.swift
+  h_d73c695d83f4a7 1-228
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  h_d73c695d83f4a7 214-216,268-276,404,482,496,533-534
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterMutationTests.swift
+  h_d73c695d83f4a7 104-143
+Packages/TexApp/Tests/TexAppTests/EmbeddedPreviewLedgerTests.swift
+  h_d73c695d83f4a7 1-105
+Packages/TexApp/Tests/TexAppTests/EmbeddedPreviewPathsTests.swift
+  h_d73c695d83f4a7 1-108
+Packages/TexApp/Tests/TexAppTests/EmbeddedPreviewWriterTests.swift
+  h_d73c695d83f4a7 1-197
+PreviewEngine/Makefile
+  h_d73c695d83f4a7 1-105
+PreviewEngine/PROTOCOL.md
+  h_d73c695d83f4a7 1-137
+PreviewEngine/PROVENANCE.md
+  h_d73c695d83f4a7 1-104
+PreviewEngine/driver/engine_tex.c
+  h_d73c695d83f4a7 1-1493
+PreviewEngine/driver/engine_tex.h
+  h_d73c695d83f4a7 1-90
+PreviewEngine/driver/fonts.c
+  h_d73c695d83f4a7 1-900
+PreviewEngine/driver/fonts.h
+  h_d73c695d83f4a7 1-101
+PreviewEngine/driver/fs.c
+  h_d73c695d83f4a7 1-192
+PreviewEngine/driver/images.c
+  h_d73c695d83f4a7 1-373
+PreviewEngine/driver/images.h
+  h_d73c695d83f4a7 1-24
+PreviewEngine/driver/json.c
+  h_d73c695d83f4a7 1-336
+PreviewEngine/driver/json.h
+  h_d73c695d83f4a7 1-34
+PreviewEngine/driver/main.c
+  h_d73c695d83f4a7 1-1231
+PreviewEngine/driver/myabort.c
+  h_d73c695d83f4a7 1-41
+PreviewEngine/driver/myabort.h
+  h_d73c695d83f4a7 1-39
+PreviewEngine/driver/pdfw.c
+  h_d73c695d83f4a7 1-288
+PreviewEngine/driver/pdfw.h
+  h_d73c695d83f4a7 1-43
+PreviewEngine/driver/sprotocol.c
+  h_d73c695d83f4a7 1-640
+PreviewEngine/driver/sprotocol.h
+  h_d73c695d83f4a7 1-223
+PreviewEngine/driver/state.c
+  h_d73c695d83f4a7 1-238
+PreviewEngine/driver/state.h
+  h_d73c695d83f4a7 1-103
+PreviewEngine/driver/tbuf.c
+  h_d73c695d83f4a7 1-90
+PreviewEngine/driver/tbuf.h
+  h_d73c695d83f4a7 1-25
+PreviewEngine/driver/xdv.c
+  h_d73c695d83f4a7 1-237
+PreviewEngine/driver/xdv.h
+  h_d73c695d83f4a7 1-44
+PreviewEngine/driver/xdv2pdf.c
+  h_d73c695d83f4a7 1-2640
+PreviewEngine/driver/xdv2pdf.h
+  h_d73c695d83f4a7 1-47
+PreviewEngine/licenses/THIRD-PARTY.md
+  h_d73c695d83f4a7 1-81
+PreviewEngine/licenses/TeXpresso-LICENSE.txt
+  h_d73c695d83f4a7 1-21
+PreviewEngine/licenses/Tectonic-MIT.txt
+  h_d73c695d83f4a7 1-25
+PreviewEngine/licenses/XeTeX-SIL-MIT.txt
+  h_d73c695d83f4a7 1-33
+PreviewEngine/provenance.json
+  h_d73c695d83f4a7 1-955
+PreviewEngine/shared/imginfo.c
+  h_d73c695d83f4a7 1-212
+PreviewEngine/shared/imginfo.h
+  h_d73c695d83f4a7 1-23
+PreviewEngine/shared/pdfread.c
+  h_d73c695d83f4a7 1-1379
+PreviewEngine/shared/pdfread.h
+  h_d73c695d83f4a7 1-83
+PreviewEngine/shared/pitex_buf.c
+  h_d73c695d83f4a7 1-100
+PreviewEngine/shared/pitex_buf.h
+  h_d73c695d83f4a7 1-69
+PreviewEngine/tools/audit-linkage.sh
+  h_d73c695d83f4a7 1-94
+PreviewEngine/tools/provenance.py
+  h_d73c695d83f4a7 1-273
+PreviewEngine/tools/regress-deleted-file.py
+  h_d73c695d83f4a7 1-71
+PreviewEngine/tools/selftest.c
+  h_d73c695d83f4a7 1-337
+PreviewEngine/xetex/common/include/common.h
+  h_d73c695d83f4a7 1-73
+PreviewEngine/xetex/common/include/providers.h
+  h_d73c695d83f4a7 1-59
+PreviewEngine/xetex/common/texlive_provider.c
+  h_d73c695d83f4a7 1-556
+PreviewEngine/xetex/common/utils.c
+  h_d73c695d83f4a7 1-254
+PreviewEngine/xetex/engine/xetex-XeTeXOTMath.cpp
+  h_d73c695d83f4a7 1-521
+PreviewEngine/xetex/engine/xetex-XeTeXOTMath.h
+  h_d73c695d83f4a7 1-67
+PreviewEngine/xetex/engine/xetex-constants.h
+  h_d73c695d83f4a7 1-403
+PreviewEngine/xetex/engine/xetex-core.h
+  h_d73c695d83f4a7 1-60
+PreviewEngine/xetex/engine/xetex-engine-interface.c
+  h_d73c695d83f4a7 1-101
+PreviewEngine/xetex/engine/xetex-errors.c
+  h_d73c695d83f4a7 1-175
+PreviewEngine/xetex/engine/xetex-ext.c
+  h_d73c695d83f4a7 1-2160
+PreviewEngine/xetex/engine/xetex-ext.h
+  h_d73c695d83f4a7 1-200
+PreviewEngine/xetex/engine/xetex-ini.c
+  h_d73c695d83f4a7 1-3883
+PreviewEngine/xetex/engine/xetex-io.c
+  h_d73c695d83f4a7 1-555
+PreviewEngine/xetex/engine/xetex-io.h
+  h_d73c695d83f4a7 1-39
+PreviewEngine/xetex/engine/xetex-linebreak.c
+  h_d73c695d83f4a7 1-2843
+PreviewEngine/xetex/engine/xetex-macos.c
+  h_d73c695d83f4a7 1-666
+PreviewEngine/xetex/engine/xetex-math.c
+  h_d73c695d83f4a7 1-3833
+PreviewEngine/xetex/engine/xetex-output.c
+  h_d73c695d83f4a7 1-768
+PreviewEngine/xetex/engine/xetex-pagebuilder.c
+  h_d73c695d83f4a7 1-804
+PreviewEngine/xetex/engine/xetex-pic.c
+  h_d73c695d83f4a7 1-636
+PreviewEngine/xetex/engine/xetex-scaledmath.c
+  h_d73c695d83f4a7 1-513
+PreviewEngine/xetex/engine/xetex-shipout.c
+  h_d73c695d83f4a7 1-2473
+PreviewEngine/xetex/engine/xetex-stringpool.c
+  h_d73c695d83f4a7 1-206
+PreviewEngine/xetex/engine/xetex-stringpool.h
+  h_d73c695d83f4a7 1-27
+PreviewEngine/xetex/engine/xetex-swap.h
+  h_d73c695d83f4a7 1-85
+PreviewEngine/xetex/engine/xetex-synctex.c
+  h_d73c695d83f4a7 1-1299
+PreviewEngine/xetex/engine/xetex-synctex.h
+  h_d73c695d83f4a7 1-125
+PreviewEngine/xetex/engine/xetex-texmfmp.c
+  h_d73c695d83f4a7 1-467
+PreviewEngine/xetex/engine/xetex-xetex0.c
+  h_d73c695d83f4a7 1-18700
+PreviewEngine/xetex/engine/xetex-xetexd.h
+  h_d73c695d83f4a7 1-1208
+PreviewEngine/xetex/engine/xetex_bindings.h
+  h_d73c695d83f4a7 1-35
+PreviewEngine/xetex/engine/xetex_format.h
+  h_d73c695d83f4a7 1-1224
+PreviewEngine/xetex/include/tectonic_bridge_core.h
+  h_d73c695d83f4a7 1-268
+PreviewEngine/xetex/include/tectonic_bridge_core_generated.h
+  h_d73c695d83f4a7 1-328
+PreviewEngine/xetex/include/tectonic_bridge_flate.h
+  h_d73c695d83f4a7 1-105
+PreviewEngine/xetex/layout/tectonic_xetex_layout.h
+  h_d73c695d83f4a7 1-208
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst.cpp
+  h_d73c695d83f4a7 1-561
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst.h
+  h_d73c695d83f4a7 1-148
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst_Mac.cpp
+  h_d73c695d83f4a7 1-176
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst_Mac.h
+  h_d73c695d83f4a7 1-64
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr.cpp
+  h_d73c695d83f4a7 1-671
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr.h
+  h_d73c695d83f4a7 1-187
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_FC.cpp
+  h_d73c695d83f4a7 1-386
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_FC.h
+  h_d73c695d83f4a7 1-66
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_Mac.h
+  h_d73c695d83f4a7 1-75
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_Mac.mm
+  h_d73c695d83f4a7 1-250
+PreviewEngine/xetex/layout/xetex-XeTeXLayoutInterface.cpp
+  h_d73c695d83f4a7 1-1139
+PreviewEngine/xetex/main/fork.c
+  h_d73c695d83f4a7 1-123
+PreviewEngine/xetex/main/formats.c
+  h_d73c695d83f4a7 1-70
+PreviewEngine/xetex/main/formats.h
+  h_d73c695d83f4a7 1-17
+PreviewEngine/xetex/main/main.c
+  h_d73c695d83f4a7 1-1153
+PreviewEngine/xetex/main/picohash.h
+  h_d73c695d83f4a7 1-794
+PreviewEngine/xetex/main/texpresso_protocol.c
+  h_d73c695d83f4a7 1-448
+PreviewEngine/xetex/main/texpresso_protocol.h
+  h_d73c695d83f4a7 1-105
+PreviewEngine/xetex/main/zlib_md5.c
+  h_d73c695d83f4a7 1-94
+README.md
+  h_d73c695d83f4a7 127-189,313-314,391-421
+Tools/bundle-preview-engine-macos.sh
+  h_d73c695d83f4a7 1-345
+Tools/check-bundle-source-record.sh
+  h_d73c695d83f4a7 1-85
+Tools/check-document-layout.py
+  h_d73c695d83f4a7 14,25-51,76-79,163-178,184-194,196-199,203-231,234-247,373-376,381-382,384-394,396,490-501,513-521,531-533,537-544
+Tools/check-embedded-preview-macos.py
+  h_d73c695d83f4a7 1-1166
+Tools/check-macos-synctex.py
+  h_d73c695d83f4a7 9,12,14,22-46,49,51,54-73,89-93,95-102,104-151,160-162,166-167,169-251,253-275,278-282,287-441,593-597,614,627,632-652
+Tools/check-pdfjs-perf.py
+  h_d73c695d83f4a7 1-1240
+Tools/check-workspace-navigation.py
+  h_d73c695d83f4a7 13-14,25,31-58,74-77,88-98,157-201,217-225,227-235,237-241,245-268,270-279,283,290-293,298-305,308-315,321-331,344-358,360-368,376-404,563,565-581,588-593,598-602,604-612,628,631-637,639-665,667,671,676-677,681-689,706,719,749-757,760-767,772,774-787
+Tools/generate-sbom.mjs
+  h_d73c695d83f4a7 44-74,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a78bfeb397ab617fff4a36a517635cf98c05df5",
+  "prompts": {},
+  "humans": {
+    "h_d73c695d83f4a7": {
+      "author": "user.email <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
