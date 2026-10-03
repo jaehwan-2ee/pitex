@@ -132,7 +132,6 @@ struct Preview: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 Divider()
-                embeddedStatusLine
                 if case let .failed(reason) = workspace.buildState {
                     // The last-good PDF stays up but the failure is
                     // still visible — details live in Build Log/Issues.
@@ -161,6 +160,10 @@ struct Preview: View {
                 )
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("pitex.pdf")
+                // The embedded status overlays the PDF instead of sitting in
+                // the column above it: a row that is inserted and removed on
+                // every typing cycle moved the PDF view by its own height.
+                .overlay(alignment: .top) { embeddedStatusOverlay }
             } else {
                 embeddedStatusLine
                 ContentUnavailableView(
@@ -216,16 +219,35 @@ struct Preview: View {
     @ViewBuilder
     private var embeddedStatusLine: some View {
         if let status = embeddedStatus {
-            Text(verbatim: status.text)
-                .font(.caption)
-                .foregroundStyle(status.color)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .accessibilityIdentifier("pitex.preview.embeddedStatus")
+            embeddedStatusText(status)
             Divider()
         }
+    }
+
+    /// Over the PDF view, never in the column above it, so no status
+    /// changes the PDF view's frame. Non-hit-testing: Cmd-click, scrolling
+    /// and selection reach the PDF underneath.
+    @ViewBuilder
+    private var embeddedStatusOverlay: some View {
+        if let status = embeddedStatus {
+            VStack(spacing: 0) {
+                embeddedStatusText(status)
+                Divider()
+            }
+            .background(.regularMaterial)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func embeddedStatusText(_ status: (text: String, color: Color)) -> some View {
+        Text(verbatim: status.text)
+            .font(.caption)
+            .foregroundStyle(status.color)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .accessibilityIdentifier("pitex.preview.embeddedStatus")
     }
 
     private var embeddedStatus: (text: String, color: Color)? {
