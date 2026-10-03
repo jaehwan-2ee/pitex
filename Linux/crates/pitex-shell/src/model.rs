@@ -2479,7 +2479,7 @@ impl WorkspaceModel {
         // Agent/remote writes and new files may be anything TeX reads; the
         // helper rescans (no edit revision: not a user edit).
         if self.embedded.is_running() {
-            self.embedded.request_flush(self.live_now_ms());
+            self.embedded.request_flush_forced(self.live_now_ms());
         }
     }
 
@@ -4182,6 +4182,36 @@ impl WorkspaceModel {
         }
     }
 
+    /// `request_embedded_refresh` for a cause the flush key cannot see: the next flush sends even with an unchanged key.
+    pub fn request_embedded_refresh_forced(&mut self, store: &SettingsStore) {
+        if self.embedded_wanted(store) && self.embedded.is_running() {
+            self.embedded.request_flush_forced(self.live_now_ms());
+        }
+    }
+
+    /// A change of `path` on disk (the watcher, `DiskChanged`), requested AFTER `process_disk_change` adopted it. An open source TeX reads from the
+    /// editor is in the flush key through its content hash, so its change shows there and the refresh is not forced; any other file TeX may read
+    /// (an unopened `\input`, a figure, an open `.md`) is not in the key: its event forces the flush.
+    pub fn request_embedded_refresh_for_disk_change(&mut self, path: &Path, store: &SettingsStore) {
+        if self.is_embedded_key_source(path) {
+            self.request_embedded_refresh(store);
+        } else {
+            self.request_embedded_refresh_forced(store);
+        }
+    }
+
+    /// An open session whose extension is one the editor feeds the helper (`LIVE_SOURCE_EXTENSIONS`): its content hash is in the flush key.
+    fn is_embedded_key_source(&self, path: &Path) -> bool {
+        let Some(root) = self.project_url.as_ref() else { return false };
+        let live_extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| Self::LIVE_SOURCE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+            .unwrap_or(false);
+        live_extension
+            && self.registered_sessions.iter().any(|s| root.join(s.path().raw_value()).as_path() == path)
+    }
+
     /// The coalescing timer fired: stream the newest buffers now. Never
     /// waits for the helper's current work — it rolls back and restarts.
     pub fn flush_embedded_preview(&mut self, store: &SettingsStore) {
@@ -4207,13 +4237,19 @@ impl WorkspaceModel {
             .filter(|(_, _, _, modified)| *modified)
             .map(|(path, hash, text, _)| (path, hash, text))
             .collect();
-        self.embedded.flush(crate::embedded_preview::UpdateContext {
+        let outcome = self.embedded.flush(crate::embedded_preview::UpdateContext {
             root: &root,
             main_relative: &main,
             buffers,
             identity,
             sink,
         });
+        // A skipped flush gets no `idle` reply: bind SyncTeX here, as the `idle` outcome would.
+        if outcome == crate::embedded_preview::FlushOutcome::Skipped && self.displaying_editing_preview() {
+            if let Some(publication) = self.embedded.rebind_candidate() {
+                self.bind_editing_preview(&publication);
+            }
+        }
     }
 
     /// Helper output. Returns true when the displayed PDF changed.

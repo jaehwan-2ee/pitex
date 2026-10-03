@@ -355,6 +355,28 @@ struct Displayed {
     publication: Publication,
 }
 
+/// What an update carries minus what cannot change the helper's result: the project and main file, the edit revision, and the identity of every open
+/// TeX source (path → content hash). Dirtiness is not part of it (a save leaves the hash alone); the revision is (an edit followed by its undo restores
+/// the hash but is two edits). An update with the same key as the last SENT one tells the helper nothing new.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlushKey {
+    root: PathBuf,
+    main_relative: String,
+    revision: u64,
+    identity: BufferSnapshot,
+}
+
+/// What `EmbeddedPreview::flush` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlushOutcome {
+    /// An update was posted to the helper (generation incremented, status Updating).
+    Sent,
+    /// The key equals the last sent one and the request was not forced: nothing was posted, nothing else changed.
+    Skipped,
+    /// No helper session could be started (the status says why).
+    NotStarted,
+}
+
 /// Controller state held by the workspace model.
 ///
 /// Two counters: `generation` numbers transport updates (saves, closes and
@@ -382,6 +404,10 @@ pub struct EmbeddedPreview {
     /// Monotonic ms of the first unsent edit.
     pub pending_since: Option<u64>,
     pub status: PreviewStatus,
+    /// Key of the last update SENT in this session; `None` before the first one and after the session ends or the helper reports a failure/error.
+    last_flush: Option<FlushKey>,
+    /// A request that must send even when the key is unchanged; consumed by the next `flush`.
+    pending_force: bool,
 }
 
 impl Default for EmbeddedPreview {
@@ -398,6 +424,8 @@ impl Default for EmbeddedPreview {
             pending_floor: None,
             pending_since: None,
             status: PreviewStatus::Off,
+            last_flush: None,
+            pending_force: false,
         }
     }
 }
@@ -445,6 +473,13 @@ impl EmbeddedPreview {
         }
     }
 
+    /// Like `request_flush`, but the next flush sends even when its key equals the last sent one: for a cause the key cannot see (a file that is not
+    /// an open source: an unopened `\input`, an open `.md`; agent completion; remote pull).
+    pub fn request_flush_forced(&mut self, now_ms: u64) {
+        self.pending_force = true;
+        self.request_flush(now_ms);
+    }
+
     pub fn poll_delay(&self, now_ms: u64, composing: bool) -> Option<u64> {
         let since = self.pending_since?;
         let due = since + COALESCE_MS;
@@ -484,6 +519,7 @@ impl EmbeddedPreview {
     }
 
     fn reset_session_state(&mut self) {
+        self.last_flush = None;
         self.history.clear();
         self.displayed = None;
         self.bound_snapshot = None;
@@ -587,16 +623,52 @@ impl EmbeddedPreview {
         }
     }
 
-    /// Stream the newest buffer state (starting the helper if needed).
-    pub fn flush(&mut self, ctx: UpdateContext) {
+    /// Whether an update with `key` must go to the helper: always when forced, otherwise only when it differs from the last sent one. Records the key
+    /// when it says yes.
+    pub fn should_send(&mut self, key: &FlushKey, force: bool) -> bool {
+        if force || self.last_flush.as_ref() != Some(key) {
+            self.last_flush = Some(key.clone());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// After a skipped flush no `idle` reply will come, so the publication on screen may bind SyncTeX now — the step an `idle` outcome performs
+    /// (`ApplyOutcome::Rebind`). `None` when it is already bound or nothing is displayed.
+    pub fn rebind_candidate(&self) -> Option<Publication> {
+        if self.bound_snapshot.is_some() {
+            return None;
+        }
+        let d = self.displayed.as_ref()?;
+        let mut p = d.publication.clone();
+        p.generation = d.generation;
+        Some(p)
+    }
+
+    /// Stream the newest buffer state (starting the helper if needed), unless its key equals the last sent one and the request was not forced.
+    pub fn flush(&mut self, ctx: UpdateContext) -> FlushOutcome {
         self.pending_since = None;
+        let force = std::mem::take(&mut self.pending_force);
         if self.session.is_none() {
             if let Err(e) = self.spawn(&ctx) {
                 self.status = PreviewStatus::Unavailable(e);
-                return;
+                return FlushOutcome::NotStarted;
             }
         }
-        let Some(session) = self.session.as_ref() else { return };
+        if self.session.is_none() {
+            return FlushOutcome::NotStarted;
+        }
+        let key = FlushKey {
+            root: ctx.root.to_path_buf(),
+            main_relative: ctx.main_relative.to_string(),
+            revision: self.edit_revision,
+            identity: ctx.identity.clone(),
+        };
+        if !self.should_send(&key, force) {
+            return FlushOutcome::Skipped;
+        }
+        let Some(session) = self.session.as_ref() else { return FlushOutcome::NotStarted };
         self.generation += 1;
         self.history.push_back(SentUpdate {
             generation: self.generation,
@@ -609,6 +681,7 @@ impl EmbeddedPreview {
         let generation = self.generation;
         session.post(move |o| o.update = Some((generation, ctx.buffers)));
         self.status = PreviewStatus::Updating;
+        FlushOutcome::Sent
     }
 
     fn release(&self, seq: u64) {
@@ -715,6 +788,7 @@ impl EmbeddedPreview {
                 ApplyOutcome::Display(p)
             }
             PreviewEvent::Failed { generation, message } => {
+                self.last_flush = None; // the next request retries even with an unchanged key
                 if generation >= self.generation {
                     self.status = PreviewStatus::Failed(message);
                 }
@@ -756,6 +830,7 @@ impl EmbeddedPreview {
                 ApplyOutcome::Rebind(p)
             }
             PreviewEvent::Error { code, message } => {
+                self.last_flush = None;
                 if matches!(code.as_str(), "no_tex" | "no_engine" | "usage") {
                     self.session = None;
                     self.reset_session_state();
@@ -923,5 +998,146 @@ mod tests {
         let mut rest = String::new();
         std::io::Read::read_to_string(&mut reader, &mut rest).unwrap();
         assert_eq!(rest, "{\"op\":\"quit\"}\n");
+    }
+
+    // ---- the flush key (C30L): an update the helper already has is not sent again ----
+
+    fn fake_session() -> Session {
+        Session { id: 1, child: None, outbox: Arc::default(), dir: PathBuf::from("/nonexistent/pitex-test-session") }
+    }
+
+    fn running() -> EmbeddedPreview {
+        let mut ep = EmbeddedPreview::default();
+        ep.session = Some(fake_session());
+        ep
+    }
+
+    fn ctx<'a>(main: &'a str, files: &[(&str, u64)]) -> UpdateContext<'a> {
+        UpdateContext {
+            root: Path::new("/p"),
+            main_relative: main,
+            buffers: Vec::new(),
+            identity: files.iter().map(|(p, h)| (PathBuf::from(*p), *h)).collect(),
+            sink: std::sync::mpsc::channel().0,
+        }
+    }
+
+    fn queued_generation(ep: &EmbeddedPreview) -> Option<u64> {
+        ep.session.as_ref().unwrap().outbox.0.lock().unwrap().update.as_ref().map(|u| u.0)
+    }
+
+    const MAIN: &[(&str, u64)] = &[("/p/main.tex", 7)];
+
+    #[test]
+    fn equal_unforced_key_sends_nothing() {
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        ep.status = PreviewStatus::Current;
+        let generation = ep.generation;
+        ep.request_flush(100);
+        assert_eq!(ep.pending_since, Some(100));
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Skipped);
+        assert_eq!(ep.generation, generation, "no generation churn");
+        assert_eq!(ep.status, PreviewStatus::Current, "no Updating flash");
+        assert_eq!(ep.history.len(), 1, "no history entry");
+        assert_eq!(queued_generation(&ep), Some(generation), "nothing new posted to the helper");
+        assert_eq!(ep.pending_since, None, "a skipped flush clears the window, or poll_delay would busy-loop");
+        assert_eq!(ep.poll_delay(1_000, false), None);
+    }
+
+    #[test]
+    fn changed_hash_sends_once() {
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        let changed = &[("/p/main.tex", 8)][..];
+        assert_eq!(ep.flush(ctx("main.tex", changed)), FlushOutcome::Sent);
+        assert_eq!(ep.flush(ctx("main.tex", changed)), FlushOutcome::Skipped);
+        assert_eq!(ep.generation, 2);
+        // A source opened or closed changes the identity too.
+        let two = &[("/p/main.tex", 8), ("/p/chapter.tex", 1)][..];
+        assert_eq!(ep.flush(ctx("main.tex", two)), FlushOutcome::Sent);
+    }
+
+    #[test]
+    fn revision_only_change_sends() {
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        ep.note_edit(0); // an edit, then its undo: same hash, a new revision
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        assert_eq!(ep.generation, 2);
+    }
+
+    #[test]
+    fn forced_request_sends_even_with_an_equal_key() {
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        ep.request_flush_forced(5);
+        assert!(ep.pending_force);
+        assert_eq!(ep.pending_since, Some(5));
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        assert!(!ep.pending_force, "the force flag is consumed");
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Skipped, "the next unforced request skips again");
+        assert_eq!(ep.generation, 2);
+    }
+
+    #[test]
+    fn another_main_file_sends() {
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        assert_eq!(ep.flush(ctx("other.tex", MAIN)), FlushOutcome::Sent);
+    }
+
+    #[test]
+    fn key_is_cleared_when_the_session_ends_or_the_helper_fails() {
+        // stop (respawn on the next request)
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        ep.stop();
+        ep.session = Some(fake_session());
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent, "first flush after stop");
+        // the helper exits
+        assert!(matches!(ep.apply(1, PreviewEvent::Exited), ApplyOutcome::Nothing));
+        assert!(ep.session.is_none());
+        ep.session = Some(fake_session());
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent, "first flush after the helper exited");
+        // a failed pass
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Skipped);
+        ep.apply(1, PreviewEvent::Failed { generation: ep.generation, message: "boom".into() });
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent, "retry after a failure");
+        // a non-fatal helper error
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Skipped);
+        ep.apply(1, PreviewEvent::Error { code: "oops".into(), message: "x".into() });
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent, "retry after an error");
+        // a fatal helper error ends the session
+        ep.apply(1, PreviewEvent::Error { code: "no_tex".into(), message: "x".into() });
+        assert!(ep.session.is_none());
+        ep.session = Some(fake_session());
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent, "first flush after a fatal error");
+    }
+
+    fn publication(generation: u64) -> Publication {
+        Publication {
+            seq: 1,
+            generation,
+            complete: true,
+            pages: 1,
+            errors: 0,
+            first_error: None,
+            pdf: PathBuf::from("/s/p1/main.pdf"),
+            synctex: Some(PathBuf::from("/s/p1/main.synctex")),
+            coherent: true,
+            bytes: None,
+        }
+    }
+
+    #[test]
+    fn skipped_flush_may_rebind_synctex_only_when_unbound_and_displaying() {
+        let mut ep = running();
+        assert!(ep.rebind_candidate().is_none(), "nothing displayed");
+        ep.displayed = Some(Displayed { seq: 1, generation: 3, revision: 0, publication: publication(1) });
+        let p = ep.rebind_candidate().expect("displayed and unbound");
+        assert_eq!((p.seq, p.generation), (1, 3), "bound against the generation the idle reply confirmed");
+        ep.bound_snapshot = Some(BufferSnapshot::new());
+        assert!(ep.rebind_candidate().is_none(), "already bound");
     }
 }

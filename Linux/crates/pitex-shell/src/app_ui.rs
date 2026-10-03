@@ -3900,7 +3900,7 @@ impl AppState {
                                         // \input, a figure, a .bib): the
                                         // helper rescans what it read.
                                         let st = &mut *st;
-                                        st.model.request_embedded_refresh(&st.store);
+                                        st.model.request_embedded_refresh_for_disk_change(&p, &st.store);
                                         st.arm_embedded_timer();
                                     }
                                 });
@@ -4149,7 +4149,7 @@ impl AppState {
                 // panel live like VSCode's filesystem watcher.
                 self.refresh_git();
                 // TeX may have read the changed file.
-                self.model.request_embedded_refresh(&self.store);
+                self.model.request_embedded_refresh_for_disk_change(&path, &self.store);
                 self.arm_embedded_timer();
             }
             WorkspaceMessage::SaveFinished { path, result } => {

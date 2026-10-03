@@ -184,6 +184,32 @@ impl Fixture {
         self.model.flush_embedded_preview(&self.store);
     }
 
+    /// A BOUNDED negative wait: applies every message that arrives for `duration` (like `pump`) and fails if a publication shows up.
+    fn quiet(&mut self, duration: Duration) {
+        let deadline = Instant::now() + duration;
+        while let Ok(message) = self.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            assert!(
+                !matches!(
+                    &message,
+                    WorkspaceMessage::EmbeddedPreview {
+                        event: pitex_shell::embedded_preview::PreviewEvent::Published(_),
+                        ..
+                    }
+                ),
+                "no publication was expected"
+            );
+            match &message {
+                WorkspaceMessage::SaveFinished { path, result } => {
+                    self.model.apply_save_finished(path, result.clone())
+                }
+                WorkspaceMessage::EmbeddedPreview { session, event } => {
+                    self.model.apply_embedded_event(*session, event.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn showing_final(&self) -> bool {
         !self.model.displaying_editing_preview()
             && self.model.latest_built_pdf_name.as_deref() == Some("main.pdf")
@@ -219,10 +245,24 @@ fn late_prebuild_updates_never_cover_final() {
     fx.flush();
     fx.published();
     assert!(fx.showing_final(), "late pre-build update must not cover the final PDF");
-    // A disk rescan/save refresh sends yet another generation.
+    // A save/disk refresh that changes nothing the helper could see (unforced, equal key) sends nothing: no new generation, no publication (a
+    // bounded wait, not the 30 s pump), the final PDF stays and the header stays Current.
+    let sent = fx.model.embedded.generation;
     fx.model.request_embedded_refresh(&fx.store);
     fx.flush();
+    fx.quiet(Duration::from_millis(400));
+    assert_eq!(fx.model.embedded.generation, sent, "an equal-key refresh sends no update");
+    assert!(fx.showing_final(), "an equal-key refresh must not cover the final PDF");
+    assert_eq!(
+        fx.model.embedded.status,
+        pitex_shell::embedded_preview::PreviewStatus::Current,
+        "a skipped refresh leaves the header Current"
+    );
+    // A FORCED refresh (agent completion, remote pull, a disk event on a file that is not an open source) sends yet another generation.
+    fx.model.request_embedded_refresh_forced(&fx.store);
+    fx.flush();
     fx.published();
+    assert_eq!(fx.model.embedded.generation, sent + 1, "a forced refresh sends a new generation");
     assert!(fx.showing_final(), "rescan update must not cover the final PDF");
     assert_eq!(
         fx.model.embedded.status,
@@ -302,6 +342,58 @@ fn save_before_publication_keeps_synctex(gate: &Path) {
     std::env::remove_var("PITEX_STUB_GATE");
 }
 
+/// What the flush key cannot see is forced: a disk event on an UNOPENED `\input` (the watcher reports any project file) reaches the helper although no
+/// hash changed, while an event on an OPEN source whose content did not change sends nothing (its hash is in the key).
+fn disk_events_force_only_what_the_key_cannot_see() {
+    let mut fx = Fixture::open("disk", "true");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+    let root = fx.model.project_url.clone().unwrap();
+    let sent = fx.model.embedded.generation;
+
+    let tail = root.join("tail.tex");
+    std::fs::write(&tail, "\\section{Tail}\n").unwrap();
+    fx.model.request_embedded_refresh_for_disk_change(&tail, &fx.store);
+    fx.flush();
+    fx.published();
+    assert_eq!(fx.model.embedded.generation, sent + 1, "an unopened \\input changed on disk is sent");
+
+    fx.model.request_embedded_refresh_for_disk_change(&root.join("main.tex"), &fx.store);
+    fx.flush();
+    fx.quiet(Duration::from_millis(400));
+    assert_eq!(fx.model.embedded.generation, sent + 1, "a disk event on an unchanged open source sends nothing");
+}
+
+/// An external change to the open, clean main.tex is adopted by `process_disk_change`; the refresh requested AFTER the adoption (the app does it in that
+/// order) sees the changed hash and sends.
+fn adopted_disk_change_reaches_the_helper() {
+    let mut fx = Fixture::open("adopt", "true");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+    let main = fx.model.project_url.clone().unwrap().join("main.tex");
+    let sent = fx.model.embedded.generation;
+
+    std::fs::write(
+        &main,
+        "\\documentclass{article}\n\\begin{document}\nchanged on disk\n\\end{document}\n",
+    )
+    .unwrap();
+    fx.model.process_disk_change(&main, false);
+    fx.model.request_embedded_refresh_for_disk_change(&main, &fx.store);
+    fx.flush();
+    fx.published();
+    assert_eq!(fx.model.embedded.generation, sent + 1, "the adopted change reached the helper");
+    let session = fx
+        .model
+        .registered_sessions
+        .iter()
+        .find(|s| s.path().raw_value() == "main.tex")
+        .expect("main.tex session");
+    assert!(session.snapshot().text.contains("changed on disk"), "the clean session adopted the disk text");
+}
+
 /// One entry point — settings and helper lookup are process-global.
 #[test]
 fn embedded_preview_final_floor() {
@@ -316,4 +408,6 @@ fn embedded_preview_final_floor() {
     late_prebuild_updates_never_cover_final();
     previews_during_running_build();
     save_before_publication_keeps_synctex(&data.join("gate"));
+    disk_events_force_only_what_the_key_cannot_see();
+    adopted_disk_change_reaches_the_helper();
 }
