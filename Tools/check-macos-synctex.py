@@ -607,6 +607,16 @@ final class GhostCompletionCoordinator {
     func accept() -> Bool { false }
     func dismiss() {}
 }
+
+/// Stand-in for EquationPreview.swift's controller — the excerpted
+/// EditorContainerView only calls attach/detach and compares identity
+/// (`!==`), so a class with those two members is enough; the real file is
+/// not compiled (it pulls SettingsStore and StreamingBuildExecutor).
+@MainActor
+final class EquationPreviewController {
+    func attach(textView: NSTextView, scrollView: NSScrollView) {}
+    func detach(from textView: NSTextView) {}
+}
 '''
     (root / "Check.swift").write_text(
         "import AppKit\nimport EditorMacAdapter\nimport LanguageCore\nimport PDFKit\n"
