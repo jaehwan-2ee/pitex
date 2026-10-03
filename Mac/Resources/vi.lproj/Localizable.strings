@@ -272,6 +272,7 @@
 "settings.compile.live_auto_note" = "Biên dịch trực tiếp lưu các tệp đang mở đã sửa và gộp thay đổi, không ngắt lần biên dịch đang chạy.";
 "settings.compile.live_auto_note_embedded" = "Chế độ xem trước chỉnh sửa tích hợp sắp chữ nội dung hiện tại mà không cần lưu tệp. Dùng Biên dịch để tạo PDF cuối cùng.";
 "settings.compile.live_delay" = "Độ trễ biên dịch (ms)";
+"settings.compile.live_delay_note" = "Tùy chọn này chỉ áp dụng khi chọn nền tảng “Xem trước tương thích trình biên dịch”.";
 "settings.compile.live_follow" = "Chuyển PDF tới con trỏ sau khi biên dịch trực tiếp";
 "settings.compile.live_backend" = "Nền tảng xem trước";
 "settings.compile.live_backend.embedded" = "Xem trước khi sửa tích hợp";

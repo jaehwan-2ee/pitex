@@ -502,6 +502,9 @@ struct SettingsView: View {
                         .frame(width: 90)
                         .disabled(!store.liveCompileEnabled)
                 }
+                Text("settings.compile.live_delay_note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("settings.compile.live_follow", isOn: $store.liveCompileFollowCursor)
                     .disabled(!store.liveCompileEnabled)
                 LabeledContent("settings.compile.live_backend") {

@@ -272,6 +272,7 @@
 "settings.compile.live_auto_note" = "实时编译会保存已修改的打开文件，并合并更改进行构建，不会中断正在运行的构建。";
 "settings.compile.live_auto_note_embedded" = "嵌入式预览无需保存文件即可排版当前内容。使用“构建”生成最终 PDF。";
 "settings.compile.live_delay" = "构建延迟（毫秒）";
+"settings.compile.live_delay_note" = "此选项仅在选择“编译器兼容预览”后端时适用。";
 "settings.compile.live_follow" = "实时构建后将 PDF 移动到光标位置";
 "settings.compile.live_backend" = "预览后端";
 "settings.compile.live_backend.embedded" = "嵌入式编辑预览";

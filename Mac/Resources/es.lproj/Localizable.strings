@@ -272,6 +272,7 @@
 "settings.compile.live_auto_note" = "La compilación en vivo guarda los archivos abiertos modificados y agrupa los cambios sin interrumpir la compilación en curso.";
 "settings.compile.live_auto_note_embedded" = "La vista previa integrada compila el contenido actual sin guardar los archivos. Usa Compilar para crear el PDF final.";
 "settings.compile.live_delay" = "Espera de compilación (ms)";
+"settings.compile.live_delay_note" = "Esta opción solo se aplica cuando el motor «Vista previa de compatibilidad del compilador» está seleccionado.";
 "settings.compile.live_follow" = "Mover el PDF al cursor tras compilar en vivo";
 "settings.compile.live_backend" = "Motor de vista previa";
 "settings.compile.live_backend.embedded" = "Vista previa de edición integrada";

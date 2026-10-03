@@ -272,6 +272,7 @@
 "settings.compile.live_auto_note" = "ライブコンパイルは開いている変更済みファイルを保存し、実行中のビルドを中断せずに変更をまとめてビルドします。";
 "settings.compile.live_auto_note_embedded" = "埋め込みプレビューは保存せずに現在の内容を組版します。最終 PDF は「ビルド」で作成します。";
 "settings.compile.live_delay" = "ビルド待機時間（ms）";
+"settings.compile.live_delay_note" = "このオプションは、「コンパイラ互換プレビュー」バックエンドを選択した場合にのみ適用されます。";
 "settings.compile.live_follow" = "ライブビルド後にカーソル位置へ PDF を移動";
 "settings.compile.live_backend" = "プレビューバックエンド";
 "settings.compile.live_backend.embedded" = "埋め込み編集プレビュー";

@@ -272,6 +272,7 @@
 "settings.compile.live_auto_note" = "Live compile saves open edited files and groups changes into builds without interrupting a running build.";
 "settings.compile.live_auto_note_embedded" = "Embedded preview typesets the current file contents without saving them. Use Build to create the final PDF.";
 "settings.compile.live_delay" = "Build delay (ms)";
+"settings.compile.live_delay_note" = "This option applies only when the “Compiler compatibility preview” backend is selected.";
 "settings.compile.live_follow" = "Move the PDF to the cursor after a live build";
 "settings.compile.live_backend" = "Preview backend";
 "settings.compile.live_backend.embedded" = "Embedded editing preview";

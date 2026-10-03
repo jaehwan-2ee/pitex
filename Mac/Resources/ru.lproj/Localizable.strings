@@ -272,6 +272,7 @@
 "settings.compile.live_auto_note" = "Живая сборка сохраняет открытые изменённые файлы и объединяет изменения, не прерывая текущую сборку.";
 "settings.compile.live_auto_note_embedded" = "Встроенный предпросмотр собирает текущее содержимое без сохранения файлов. Используйте Собрать для итогового PDF.";
 "settings.compile.live_delay" = "Задержка сборки (мс)";
+"settings.compile.live_delay_note" = "Эта настройка применяется только при выборе движка «Предпросмотр совместимости с компилятором».";
 "settings.compile.live_follow" = "Перемещать PDF к курсору после живой сборки";
 "settings.compile.live_backend" = "Движок предпросмотра";
 "settings.compile.live_backend.embedded" = "Встроенный предпросмотр правок";
