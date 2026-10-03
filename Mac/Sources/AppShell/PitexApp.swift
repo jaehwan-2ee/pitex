@@ -1738,8 +1738,11 @@ final class WorkspaceModel: ObservableObject {
                   return session.path == path
               }) else { return }
         // Any observed change of an open file (edit, replace, delete): the
-        // helper re-stats what TeX read from disk on every update.
-        requestEmbeddedPreviewFlush()
+        // helper re-stats what TeX read from disk on every update. A source
+        // (`liveCompileExtensions`) is in the flush key through its content
+        // hash, so its change shows there; any other open file TeX may read
+        // (a .md) is not, so its event forces the flush.
+        requestEmbeddedPreviewFlush(force: !Self.liveCompileExtensions.contains(url.pathExtension.lowercased()))
         // Hoisted: a trailing closure can't sit inside a guard condition.
         let disk = try? await Task.detached(priority: .userInitiated) {
             let text = try Self.readExactUTF8(url)
@@ -1781,6 +1784,10 @@ final class WorkspaceModel: ObservableObject {
         ), snapshot.path == documentSnapshot?.path {
             documentSnapshot = updated
         }
+        // The flush requested at entry may have run before the adoption above
+        // changed this session's hash (a non-active source raises no edit): ask
+        // again so a changed hash reaches the helper. Unchanged — it is skipped.
+        requestEmbeddedPreviewFlush()
         // A watched non-active file's labels/citations changed on disk too —
         // the mtime key in the structure caches picks it up on this pass.
         scheduleStructureRefresh()
@@ -1850,7 +1857,7 @@ final class WorkspaceModel: ObservableObject {
         // The agent's tools (or a remote pull) may have rewritten project
         // files no editor has open — inputs the preview engine reads from
         // disk.
-        requestEmbeddedPreviewFlush()
+        requestEmbeddedPreviewFlush(force: true)
     }
 
     // MARK: - Sidebar structure
@@ -2276,7 +2283,7 @@ final class WorkspaceModel: ObservableObject {
             refreshBuildTarget()
             refreshStructure()
             // Explicit rescan: re-stat unopened inputs too.
-            requestEmbeddedPreviewFlush()
+            requestEmbeddedPreviewFlush(force: true)
         }
     }
 

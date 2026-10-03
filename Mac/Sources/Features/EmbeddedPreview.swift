@@ -370,6 +370,16 @@ private final class EmbeddedPreviewEventSink: @unchecked Sendable {
     }
 }
 
+/// What a flush sends, minus what cannot change the helper's result: the project and main file, the edit revision, and the content hash of every
+/// open source TeX reads from the editor (`liveCompileExtensions`). Dirtiness is not part of it (a save leaves the hash alone); the revision is (an edit
+/// followed by its undo restores the hash but is two edits). An update with the same key as the last SENT one tells the helper nothing new.
+struct EmbeddedFlushKey: Equatable {
+    let root: String
+    let main: String
+    let revision: UInt64
+    let sources: [String: UInt64]
+}
+
 /// Workspace-owned controller state (extensions cannot hold storage).
 @MainActor
 final class EmbeddedPreviewState {
@@ -381,6 +391,10 @@ final class EmbeddedPreviewState {
     var timer: Task<Void, Never>?
     var flushing = false
     var flushAgain = false
+    /// The key of the last update SENT in this session; nil before the first one and after the session ends or the helper reports a failure/error.
+    var lastFlushKey: EmbeddedFlushKey?
+    /// A request that must send even when the key is unchanged (`requestEmbeddedPreviewFlush(force:)`); consumed by the next flush.
+    var forceNextFlush = false
     static var sessionCount: UInt64 = 0
 }
 
@@ -424,6 +438,7 @@ extension WorkspaceModel {
             invalidateSyncTeX(reason: "SyncTeX is unavailable for this editing preview; edit or build to refresh it.")
         }
         state.displayed = nil
+        state.lastFlushKey = nil
         state.session?.shutdown()
         state.session = nil
         if resetContext { state.ledger.resetContext() } else { state.ledger.resetSession() }
@@ -448,13 +463,19 @@ extension WorkspaceModel {
     /// Something besides an edit needs streaming: arms — never extends —
     /// the coalescing window. Callers: save, document close, disk events of
     /// open files (their watchers), agent completion/remote pull, rescan.
+    /// A flush whose key (`EmbeddedFlushKey`) equals the last sent one sends
+    /// nothing — unless `force`: what the key cannot see changed (a file the
+    /// editor has not open, an open file TeX reads that is not a source: a
+    /// disk event on it, agent completion, remote pull, rescan).
     /// Limitation: unopened project files have no watcher on macOS, so an
     /// external change to one (another editor, a script, `git checkout`)
     /// reaches the preview only with the next update of any kind — the
     /// helper re-stats everything TeX read then. Manual builds read the
     /// disk directly and are unaffected.
-    func requestEmbeddedPreviewFlush() {
-        guard embeddedPreviewEnabled, projectURL != nil, embeddedPreview.timer == nil else { return }
+    func requestEmbeddedPreviewFlush(force: Bool = false) {
+        guard embeddedPreviewEnabled, projectURL != nil else { return }
+        if force { embeddedPreview.forceNextFlush = true }
+        guard embeddedPreview.timer == nil else { return }
         armEmbeddedPreviewTimer(milliseconds: Self.embeddedCoalesceMs)
     }
 
@@ -549,6 +570,9 @@ extension WorkspaceModel {
 
     private func flushEmbeddedPreviewOnce() async {
         guard embeddedPreviewEnabled, case .ready = phase, let root = projectURL else { return }
+        // Taken before the first await: a forced request arriving meanwhile belongs to the next flush.
+        let force = embeddedPreview.forceNextFlush
+        embeddedPreview.forceNextFlush = false
         let context = projectGeneration
         guard let main = buildSourceRelativePath() else {
             setEmbeddedPreviewStatus(.unavailable(
@@ -572,16 +596,24 @@ extension WorkspaceModel {
             }
         }
         guard let session = state.session else { return }
-        let generation = state.ledger.recordUpdate(
-            sources: Dictionary(captured.sources.map { ($0.path, $0.hash) }, uniquingKeysWith: { first, _ in first }),
-            revision: captured.revision
+        let key = EmbeddedFlushKey(
+            root: root.path, main: main, revision: captured.revision,
+            sources: Dictionary(captured.sources.map { ($0.path, $0.hash) }, uniquingKeysWith: { first, _ in first })
         )
+        if !force, state.lastFlushKey == key {
+            // The helper already has exactly this: no generation, no update, no `.updating` (it would answer `idle` and reset the status — a flash
+            // with nothing behind it). That `idle` is also what rebinds SyncTeX after a save, so do it here.
+            if syncTeXBinding == nil { bindEmbeddedPreviewSyncTeX() }
+            return
+        }
+        let generation = state.ledger.recordUpdate(sources: key.sources, revision: captured.revision)
         // The full dirty set: the writer sends only what the helper does
         // not hold yet and closes what it no longer should.
         session.sendUpdate(generation: generation, buffers: Dictionary(
             captured.sources.filter(\.dirty).map { ($0.path, EmbeddedPreviewOutbox.Buffer(hash: $0.hash, text: $0.text)) },
             uniquingKeysWith: { first, _ in first }
         ))
+        state.lastFlushKey = key
         setEmbeddedPreviewStatus(.updating)
     }
 
@@ -610,6 +642,7 @@ extension WorkspaceModel {
         // Generations stay monotonic across respawns (final floor).
         embeddedPreview.ledger.resetSession()
         embeddedPreview.displayed = nil
+        embeddedPreview.lastFlushKey = nil
     }
 
     // MARK: Helper events
@@ -625,6 +658,7 @@ extension WorkspaceModel {
         case let .published(publication):
             displayEmbeddedPublication(publication, session: session)
         case let .failed(generation, message):
+            state.lastFlushKey = nil   // the next request retries even with an unchanged key
             if generation >= state.ledger.generation { setEmbeddedPreviewStatus(.failed(message)) }
         case let .idle(generation, seq):
             // `seq` is current for `generation` too — its SyncTeX may bind
@@ -638,6 +672,7 @@ extension WorkspaceModel {
                 setEmbeddedPreviewStatus(displayedEmbeddedStatus())
             }
         case let .error(code, message):
+            state.lastFlushKey = nil
             if ["no_tex", "no_engine", "usage"].contains(code) {
                 stopEmbeddedPreview(resetContext: false)
                 setEmbeddedPreviewStatus(.unavailable(message))
