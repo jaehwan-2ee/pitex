@@ -55,7 +55,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("products", type=Path)
 parser.add_argument("payload", type=Path)
 parser.add_argument("repo", type=Path)
-parser.add_argument("--scenario", choices=("all", "smoke", "full", "tmp-root"), default="all")
+parser.add_argument("--scenario", choices=("all", "smoke", "full", "tmp-root", "c23"), default="all")
 parser.add_argument("--artifacts", type=Path,
                     help="Owned evidence directory; captured before cleanup and each next launch.")
 args = parser.parse_args()
@@ -292,6 +292,142 @@ enum LaunchFlag {
         workspace.embeddedPreviewStatus == .updating
     }
 
+    /// L-C23 (rule v3, hashed before the rerun: C23-PROOF-RULE.md + v2 + v3). The embedded
+    /// status used to be a row in the column above the PDF view, inserted
+    /// and removed on every typing cycle, so it moved the PDF view by its
+    /// own height; it is an overlay now. The frame and the page index are
+    /// compared EXACTLY; the point within 1e-6 pt (floating-point noise).
+    struct PDFPosition: Equatable {
+        let frame: CGRect   // PDFView bounds in window coordinates
+        let page: Int       // page index of currentDestination
+        let x: Double       // currentDestination.point (page coordinates)
+        let y: Double
+    }
+    static func pdfPosition() -> PDFPosition? {
+        guard let view = pdfView(in: workspace.window?.contentView), let document = view.document,
+              let destination = view.currentDestination, let page = destination.page else { return nil }
+        return PDFPosition(frame: view.convert(view.bounds, to: nil), page: document.index(for: page),
+                           x: Double(destination.point.x), y: Double(destination.point.y))
+    }
+    static func runStatusLayoutStability() async {
+        require(workspace.embeddedPreviewStatus == .current,
+                "L-C23 needs a settled .current status, got \(workspace.embeddedPreviewStatus)")
+        guard let view = pdfView(in: workspace.window?.contentView), let document = view.document else {
+            require(false, "L-C23: no PDFView/document"); return
+        }
+        require(document.pageCount >= 2, "L-C23 needs a PDF with >= 2 pages, got \(document.pageCount)")
+        view.go(to: PDFDestination(page: document.page(at: 1)!, at: NSPoint(x: 40, y: 400)))
+        try? await Task.sleep(for: .milliseconds(300))
+        guard let base = pdfPosition() else { require(false, "L-C23: no baseline position"); return }
+        stage("L-C23 baseline frame=\(base.frame) page=\(base.page) point=(\(base.x), \(base.y))")
+
+        // Part 1: every embedded status, forced; frame + position EXACTLY the baseline.
+        let statuses: [(String, EmbeddedPreviewStatus)] = [
+            ("updating", .updating), ("errors", .errors("E1")), ("failed", .failed("F1")),
+            ("unavailable", .unavailable("U1")), ("unsupportedRemote", .unsupportedRemote), ("current", .current)]
+        var failures: [String] = []
+        for (name, status) in statuses {
+            workspace.embeddedPreviewStatus = status
+            try? await Task.sleep(for: .milliseconds(300))
+            guard workspace.embeddedPreviewStatus == status else {
+                failures.append("\(name): the forced status was overwritten (\(workspace.embeddedPreviewStatus))")
+                continue
+            }
+            guard let m = pdfPosition() else { failures.append("\(name): no PDFView"); continue }
+            // Frame and page index EXACT; the point within 1e-6 pt (rule v3: the point is a
+            // Double derived from PDFKit's layout; run 1 saw 3.7e-11 pt of float noise).
+            let exact = m.frame == base.frame && m.page == base.page
+                && abs(m.x - base.x) <= 1e-6 && abs(m.y - base.y) <= 1e-6
+            stage("L-C23 part1 status=\(name) frame=\(m.frame) dOriginY=\(m.frame.origin.y - base.frame.origin.y) "
+                  + "dHeight=\(m.frame.height - base.frame.height) page=\(m.page) point=(\(m.x), \(m.y)) "
+                  + "dPoint=(\(m.x - base.x), \(m.y - base.y)) " + (exact ? "SAME" : "MOVED"))
+            if !exact { failures.append("\(name): frame/position differs from the baseline") }
+        }
+        require(failures.isEmpty, "L-C23 part 1: the embedded status moved the PDF view: \(failures)")
+        stage("L-C23 part 1 ok: PDFView frame and position identical for all six statuses")
+
+        // Part 3 (hit-testing): the status overlay takes no hits. A point 10 pt below the
+        // PDF view's top edge (under the overlay's text) must still hit the PDFView or one of
+        // its descendants; the class that was hit is printed.
+        func hitProbe() -> (cls: String, ok: Bool) {
+            guard let view = pdfView(in: workspace.window?.contentView),
+                  let content = workspace.window?.contentView else { return ("no PDFView", false) }
+            let frame = view.convert(view.bounds, to: nil)
+            let point = NSPoint(x: frame.midX, y: frame.maxY - 10)
+            guard let hit = (content.superview ?? content).hitTest(point) else { return ("nil", false) }
+            return (String(describing: type(of: hit)), hit === view || hit.isDescendant(of: view))
+        }
+        let currentHit = hitProbe()
+        workspace.embeddedPreviewStatus = .errors("E1")
+        try? await Task.sleep(for: .milliseconds(300))
+        require(workspace.embeddedPreviewStatus == .errors("E1"), "L-C23 part 3: the forced status was overwritten")
+        let overlayHit = hitProbe()
+        stage("L-C23 part3 hit-test 10 pt below the PDF top: .current -> \(currentHit.cls) (PDFView or descendant: \(currentHit.ok)); "
+              + ".errors -> \(overlayHit.cls) (PDFView or descendant: \(overlayHit.ok))")
+        require(overlayHit.ok, "L-C23 part 3: with the status overlay shown, a point under it did not hit the PDFView "
+                + "(hit \(overlayHit.cls)): the overlay takes hits")
+        workspace.embeddedPreviewStatus = .current
+        try? await Task.sleep(for: .milliseconds(300))
+        require(workspace.embeddedPreviewStatus == .current, "L-C23 part 3: could not restore .current")
+
+        // Part 2: a real same-target publish/swap, sampled every ~16 ms.
+        insert("\nC23SwapProbe\\par\n")
+        let t0 = ContinuousClock.now
+        let deadline = t0 + .seconds(60)
+        var samples = 0, frameMismatches = 0, positionChanges = 0, printed = 0
+        var maxDX = 0.0, maxDY = 0.0, pageChanged = false, maxGapMs = 0.0
+        var previous = base, lastSample = t0, statusesSeen: [String] = []
+        var settledAt: ContinuousClock.Instant?
+        while ContinuousClock.now < deadline {
+            let now = ContinuousClock.now
+            maxGapMs = max(maxGapMs, Double((now - lastSample).components.attoseconds) / 1e15)
+            lastSample = now
+            if let m = pdfPosition() {
+                samples += 1
+                if m.frame != base.frame {
+                    frameMismatches += 1
+                    if frameMismatches <= 5 { stage("L-C23 part2 FRAME MOVED frame=\(m.frame) status=\(workspace.embeddedPreviewStatus)") }
+                }
+                if m.page != base.page { pageChanged = true }
+                maxDX = max(maxDX, abs(m.x - base.x)); maxDY = max(maxDY, abs(m.y - base.y))
+                if m.frame != previous.frame || m.page != previous.page
+                    || abs(m.x - previous.x) > 1e-6 || abs(m.y - previous.y) > 1e-6 {
+                    positionChanges += 1
+                    if printed < 40 {
+                        printed += 1
+                        stage("L-C23 part2 sample#\(samples) t=\(Int(Double((now - t0).components.attoseconds) / 1e15))ms "
+                              + "status=\(workspace.embeddedPreviewStatus) page=\(m.page) dx=\(m.x - base.x) dy=\(m.y - base.y) "
+                              + "frameDiffers=\(m.frame != base.frame)")
+                    }
+                    previous = m
+                }
+            }
+            let label = String(describing: workspace.embeddedPreviewStatus)
+            if statusesSeen.last != label { statusesSeen.append(label) }
+            if settledAt == nil, workspace.embeddedPreviewStatus == .current,
+               workspace.retainedPDF?.isEmbeddedPreview == true,
+               workspace.embeddedPreview.displayed?.complete == true,
+               pdfText(workspace.retainedPDF!.data).contains("C23SwapProbe") {
+                settledAt = now
+            }
+            if let settledAt, now - settledAt > .milliseconds(300) { break }
+            try? await Task.sleep(for: .milliseconds(16))
+        }
+        require(settledAt != nil, "L-C23 part 2: the probe edit never reached a .current preview within 60 s")
+        let finalM = pdfPosition()
+        stage("L-C23 part2 statuses seen=\(statusesSeen) samples=\(samples) maxSampleGap=\(Int(maxGapMs))ms "
+              + "frameMismatches=\(frameMismatches) positionChanges=\(positionChanges) pageChanged=\(pageChanged) "
+              + "max|dx|=\(maxDX) max|dy|=\(maxDY) final=\(finalM.map { "page=\($0.page) point=(\($0.x), \($0.y))" } ?? "none")")
+        // Rule 2a: the frame is exact at every sample.
+        require(frameMismatches == 0, "L-C23 part 2: the PDFView frame changed during a real publish/swap (\(frameMismatches) of \(samples) samples)")
+        // Rule 2b: a measurement; a change is a FINDING, not a silent pass and not a C23 failure.
+        if pageChanged || max(maxDX, maxDY) > 1.0 {
+            print("FINDING L-C23 part 2: the viewport changed across the swap: pageChanged=\(pageChanged) max|dx|=\(maxDX) max|dy|=\(maxDY) pt")
+            fflush(nil)
+        }
+        stage("L-C23 ok: frame exact at every sample; viewport across the swap measured (see part2 lines)")
+    }
+
     /// B1 regression: type a marker, let it publish, save — the very next
     /// publication after the save must still carry the marker. The buggy
     /// path (B1) restores stale fs_data on the coalesced close and shows
@@ -499,6 +635,15 @@ enum LaunchFlag {
                 "preview produced final artifacts in the project")
         require(projectNames() == before, "project tree changed by preview")
         stage("S1 ok: unsaved edit previewed, disk + final artifacts untouched")
+
+        // --- L-C23: the embedded status must not move the PDF view ------
+        await runStatusLayoutStability()
+        if scenario == "c23" {
+            // S1 + L-C23 only: no pointer events are injected by either.
+            print("CHECK_COMPLETE")
+            fflush(nil)
+            exit(0)
+        }
 
         // --- B1: coalesced save must not roll the preview back to
         // pre-save text (edit → save → one update → marker stays).
@@ -1073,7 +1218,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-embedded-check-") as directory:
 
     try:
         scenarios = ("full", "tmp-root") if args.scenario == "all" else (args.scenario,)
-        outputs = [(scenario, run_app(fixture if scenario == "full" else tmp_fixture, scenario))
+        outputs = [(scenario, run_app(fixture if scenario in ("full", "c23") else tmp_fixture, scenario))
                    for scenario in scenarios]
     finally:
         shutil.rmtree(tmp_fixture, ignore_errors=True)
