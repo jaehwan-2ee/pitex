@@ -528,12 +528,38 @@ enum LaunchFlag {
         await c30Settle("after-burst")
 
         // C30-adopt: a flush requested AFTER the adoption must see the changed hash.
+        // Rule v1.6: a file created AFTER the project scan is invisible to `activateDocument`, which returns SILENTLY unless `projectFiles.contains(url)` (PitexApp.swift:875-877),
+        // and a URL spelled differently from the scan's entry (/var vs /private/var) is rejected the same way. So every activation here goes through the `projectFiles` ENTRY of
+        // the file (matched by the resolved, standardized path), and each one carries a LOUD postcondition on `activeDocumentURL` (and, for a late file, on the session).
+        // A late file is opened by rescanProject() -> wait for membership -> activate the listed URL. The rescan's forced flush runs before the stage's settle, outside every measured window.
+        func resolvedPath(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
+        func listedEntry(_ file: URL) -> URL? { workspace.projectFiles.first(where: { resolvedPath($0) == resolvedPath(file) }) }
+        func activeIs(_ file: URL) -> Bool { workspace.activeDocumentURL.map(resolvedPath) == resolvedPath(file) }
+        func openLate(_ file: URL, label: String) async {
+            let relative = file.lastPathComponent
+            workspace.rescanProject()
+            let member = await until(10) { listedEntry(file) != nil }
+            require(member, "[c30] \(label) NOT RUN: \(relative) did not become a member of projectFiles <= 10 s after rescanProject() (this blocks the acceptance of C30)")
+            guard let listed = listedEntry(file) else { return }
+            await workspace.activateDocument(listed)
+            require(activeIs(file), "[c30] \(label) NOT RUN: \(relative) is not the active document after activation (this blocks the acceptance of C30)")
+            let opened = workspace.registeredSessions.contains { $0.path.rawValue == relative }
+            require(opened, "[c30] \(label) NOT RUN: \(relative) did not open as a document session (this blocks the acceptance of C30)")
+        }
+        func reactivateMain(_ label: String) async {
+            guard let listed = listedEntry(main) else {
+                require(false, "[c30] \(label) NOT RUN: main.tex is not a member of projectFiles (cannot re-activate it; this blocks the acceptance of C30)")
+                return
+            }
+            await workspace.activateDocument(listed)
+            require(activeIs(main), "[c30] \(label) NOT RUN: main.tex is not the active document after re-activation (this blocks the acceptance of C30)")
+        }
         let extra = project.appendingPathComponent("c30extra.tex")
         c30Write("C30AdoptA\\par\n", to: extra)
         insert("\n\\input{c30extra}\n")
-        _ = await until(60) { c30PDFHas("C30AdoptA") }
-        await workspace.activateDocument(extra)
-        await workspace.activateDocument(main)
+        require(await until(60) { c30PDFHas("C30AdoptA") }, "[c30] C30-adopt NOT RUN: C30AdoptA never reached the displayed PDF <= 60 s (this blocks the acceptance of C30)")
+        await openLate(extra, label: "C30-adopt")
+        await reactivateMain("C30-adopt")
         await c30Settle("adopt-open")
         c30Write("C30AdoptB\\par\n", to: extra)
         c30Expect(await until(30) { c30PDFHas("C30AdoptB") }, "C30-adopt(i): a clean OPEN non-active source changed on disk reached the PDF <= 30 s")
@@ -548,11 +574,9 @@ enum LaunchFlag {
         let md = project.appendingPathComponent("c30nonkey.md")
         c30Write("C30NonKeyA\\par\n", to: md)
         insert("\n\\input{c30nonkey.md}\n")
-        _ = await until(60) { c30PDFHas("C30NonKeyA") }
-        await workspace.activateDocument(md)
-        let opened = workspace.registeredSessions.contains { $0.path.rawValue == "c30nonkey.md" }
-        await workspace.activateDocument(main)
-        require(opened, "[c30] C30-force-open-nonkey NOT RUN: c30nonkey.md did not open as a document session (this blocks the acceptance of C30)")
+        require(await until(60) { c30PDFHas("C30NonKeyA") }, "[c30] C30-force-open-nonkey NOT RUN: C30NonKeyA never reached the displayed PDF <= 60 s (this blocks the acceptance of C30)")
+        await openLate(md, label: "C30-force-open-nonkey")
+        await reactivateMain("C30-force-open-nonkey")
         await c30Settle("nonkey-open")
         c30Write("C30NonKeyB\\par\n", to: md)
         c30Expect(await until(30) { c30PDFHas("C30NonKeyB") }, "C30-force-open-nonkey: an open non-key file TeX reads, changed on disk, reached the PDF <= 30 s")
