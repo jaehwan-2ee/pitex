@@ -532,6 +532,22 @@ enum LaunchFlag {
         // and a URL spelled differently from the scan's entry (/var vs /private/var) is rejected the same way. So every activation here goes through the `projectFiles` ENTRY of
         // the file (matched by the resolved, standardized path), and each one carries a LOUD postcondition on `activeDocumentURL` (and, for a late file, on the session).
         // A late file is opened by rescanProject() -> wait for membership -> activate the listed URL. The rescan's forced flush runs before the stage's settle, outside every measured window.
+        // Rule v1.8 (PRINT-ONLY, no stage logic changed): `[c30] DIAG` lines. After each activation: the active document, the resolved build target, the embedded status, the session, the retained PDF;
+        // at each late SETTLE-TIMEOUT: every settle condition separately and the U/S/Q/P deltas over the whole settle. (c30Settle itself lies before :529 and is untouched; the wrapper reads the same state right after it returns.)
+        func diagName(_ url: URL?) -> String { url?.lastPathComponent ?? "nil" }
+        func diagLine(_ what: String) {
+            let preview = workspace.embeddedPreview
+            print("[c30] DIAG \(what): active=\(diagName(workspace.activeDocumentURL)) buildSource=\(diagName(workspace.buildSourceURL())) status=\(workspace.embeddedPreviewStatus) statusIsCurrent=\(workspace.embeddedPreviewStatus == .current) displayedComplete=\(preview.displayed.map { String($0.complete) } ?? "nil") timerArmed=\(preview.timer != nil) session=\(preview.session != nil) retainedPDF=\(workspace.retainedPDF != nil) saveState=\(String(describing: workspace.documentSnapshot?.saveState))")
+            fflush(nil)
+        }
+        func settleDiag(_ label: String) async {
+            let before = c30Now()
+            let calm = await c30Settle(label)
+            let after = c30Now()
+            if !calm {
+                diagLine("SETTLE-TIMEOUT \(label) (every settle condition above separately; deltas over the whole settle U=\(after.u - before.u) S=\(after.s - before.s) Q=\(after.q - before.q) P=\(after.p - before.p))")
+            }
+        }
         func resolvedPath(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
         func listedEntry(_ file: URL) -> URL? { workspace.projectFiles.first(where: { resolvedPath($0) == resolvedPath(file) }) }
         func activeIs(_ file: URL) -> Bool { workspace.activeDocumentURL.map(resolvedPath) == resolvedPath(file) }
@@ -542,6 +558,7 @@ enum LaunchFlag {
             require(member, "[c30] \(label) NOT RUN: \(relative) did not become a member of projectFiles <= 10 s after rescanProject() (this blocks the acceptance of C30)")
             guard let listed = listedEntry(file) else { return }
             await workspace.activateDocument(listed)
+            diagLine("after activation of \(relative) (\(label))")
             require(activeIs(file), "[c30] \(label) NOT RUN: \(relative) is not the active document after activation (this blocks the acceptance of C30)")
             let opened = workspace.registeredSessions.contains { $0.path.rawValue == relative }
             require(opened, "[c30] \(label) NOT RUN: \(relative) did not open as a document session (this blocks the acceptance of C30)")
@@ -552,6 +569,7 @@ enum LaunchFlag {
                 return
             }
             await workspace.activateDocument(listed)
+            diagLine("after re-activation of main.tex (\(label))")
             require(activeIs(main), "[c30] \(label) NOT RUN: main.tex is not the active document after re-activation (this blocks the acceptance of C30)")
         }
         let extra = project.appendingPathComponent("c30extra.tex")
@@ -560,15 +578,15 @@ enum LaunchFlag {
         require(await until(60) { c30PDFHas("C30AdoptA") }, "[c30] C30-adopt NOT RUN: C30AdoptA never reached the displayed PDF <= 60 s (this blocks the acceptance of C30)")
         await openLate(extra, label: "C30-adopt")
         await reactivateMain("C30-adopt")
-        await c30Settle("adopt-open")
+        await settleDiag("adopt-open")
         c30Write("C30AdoptB\\par\n", to: extra)
         c30Expect(await until(30) { c30PDFHas("C30AdoptB") }, "C30-adopt(i): a clean OPEN non-active source changed on disk reached the PDF <= 30 s")
-        await c30Settle("adopt-i")
+        await settleDiag("adopt-i")
         await workspace.save()
         let mainText = (try? String(contentsOf: main, encoding: .utf8)) ?? ""
         c30Write(mainText.replacingOccurrences(of: "\\end{document}", with: "C30AdoptC\\par\n\\end{document}"), to: main)
         c30Expect(await until(30) { c30PDFHas("C30AdoptC") }, "C30-adopt(ii): after a save whose FLUSH is skipped (an equal key; the save itself writes the unsaved \\input{c30extra} edit) the ACTIVE clean main.tex changed on disk reached the PDF <= 30 s")
-        await c30Settle("adopt-ii")
+        await settleDiag("adopt-ii")
 
         // C30-force-open-nonkey and C30-nonkey-save: an open file that is NOT a source (a .md) that TeX reads.
         let md = project.appendingPathComponent("c30nonkey.md")
@@ -577,10 +595,10 @@ enum LaunchFlag {
         require(await until(60) { c30PDFHas("C30NonKeyA") }, "[c30] C30-force-open-nonkey NOT RUN: C30NonKeyA never reached the displayed PDF <= 60 s (this blocks the acceptance of C30)")
         await openLate(md, label: "C30-force-open-nonkey")
         await reactivateMain("C30-force-open-nonkey")
-        await c30Settle("nonkey-open")
+        await settleDiag("nonkey-open")
         c30Write("C30NonKeyB\\par\n", to: md)
         c30Expect(await until(30) { c30PDFHas("C30NonKeyB") }, "C30-force-open-nonkey: an open non-key file TeX reads, changed on disk, reached the PDF <= 30 s")
-        await c30Settle("nonkey-b")
+        await settleDiag("nonkey-b")
         let mdBytes = (try? Data(contentsOf: md)) ?? Data()
         let nonkey = await c30Window("C30-nonkey-save", seconds: 10) {
             try? mdBytes.write(to: md, options: .atomic)
