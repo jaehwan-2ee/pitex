@@ -20,35 +20,9 @@ import tempfile
 
 CHECK = r'''
 import AppKit
+import PDFKit
 import SwiftUI
 import WebKit
-/// Records every bridge post so the checker can FAIL on error traffic
-/// product code only logs. The compiled Preview.swift copy is patched to
-/// call BridgeProbe.log at the message-handler entry.
-enum BridgeProbe {
-    nonisolated(unsafe) static var posts: [[String: Any]] = []
-    static func log(_ type: String, _ m: [String: Any]) {
-        posts.append(["type": type, "m": m])
-    }
-    /// "" when clean; error traffic and a missing/destroyed worker-ok fail.
-    static func audit() -> String {
-        var bad: [String] = []
-        var workerOK = false
-        for p in posts {
-            let t = p["type"] as? String ?? ""
-            if ["load-error", "destroy-error", "csp", "jserror"].contains(t) {
-                bad.append(t)
-            }
-            if t == "worker-ok" {
-                let destroyed = (p["m"] as? [String: Any])?["destroyed"] as? Bool ?? false
-                if destroyed { bad.append("worker-ok destroyed") } else { workerOK = true }
-            }
-        }
-        if !workerOK { bad.append("no worker-ok post") }
-        return bad.isEmpty ? "" : "bridge audit failed: " + bad.joined(separator: ", ")
-    }
-}
-
 
 // Hosted macOS runners expose a 1024pt screen. Keep this test's requested
 // viewport, including portions outside that screen, so native pane minima
@@ -73,10 +47,7 @@ final class LayoutFixtureWindow: NSWindow {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         Task { @MainActor in
-            do { try await run()
-                let e = BridgeProbe.audit()
-                precondition(e.isEmpty, e)
-                print("CHECK_COMPLETE"); fflush(nil); exit(0) }
+            do { try await run(); print("CHECK_COMPLETE"); fflush(nil); exit(0) }
             catch { print("HARNESS_ERROR", error); fflush(nil); exit(1) }
         }
         app.run()
@@ -160,91 +131,30 @@ final class LayoutFixtureWindow: NSWindow {
             view.window === host.window && view.isDescendant(of: host)
                 && !view.isHiddenOrHasHiddenAncestor && view.visibleRect.width > 0 && view.visibleRect.height > 0
         }
-        // The PDF surface is now a WKWebView hosting the offline pdf.js
-        // viewer (pitex-pdfjs://). Distinguish it from the Markdown web
-        // view by scheme; readiness rides on `pitex.state()` plus a real
-        // rendered canvas inside the scroll container's viewport.
-        func pitexWeb(_ host: NSView) -> WKWebView? {
-            descendants(host).compactMap { $0 as? WKWebView }
-                .first { $0.url?.scheme == "pitex-pdfjs" && mounted($0, in: host) }
-        }
-        var lastJSError = ""
-        var lastProbe = "none"
-        func js(_ web: WKWebView, _ body: String) async -> Any? {
-            lastJSError = ""
-            do {
-                return try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page)
-            } catch { lastJSError = "\(error)"; return nil }
-        }
+        // activeDocumentURL and phase alone are insufficient: both publish
+        // before SwiftUI replaces the editor and PDFKit/WebKit content.
         func rendered(_ workspace: WorkspaceModel, _ host: NSView, _ url: URL) async throws {
             let expectedText = try String(contentsOf: url, encoding: .utf8)
             let deadline = ContinuousClock.now + .seconds(12)
             while .now < deadline {
                 try await tick(host)
-                let urlOk = workspace.activeDocumentURL == url
-                let editor = workspace.environment?.editor.textView
-                let editorMounted = editor.map { mounted($0, in: host) } ?? false
-                let editorText = editor.map { $0.string == expectedText } ?? false
-                guard urlOk, let editor, editorMounted, editorText else {
-                    lastProbe = "url=\(urlOk) editorMounted=\(editorMounted) editorText=\(editorText)"
-                    continue
-                }
-                let webs = descendants(host).compactMap { $0 as? WKWebView }
-                    .filter { mounted($0, in: host) }
-                let pdf = pitexWeb(host)
+                guard workspace.activeDocumentURL == url,
+                      let editor = workspace.environment?.editor.textView,
+                      mounted(editor, in: host), editor.string == expectedText else { continue }
+                let views = descendants(host)
+                let pdfs = views.compactMap { $0 as? PDFView }.filter { mounted($0, in: host) }
+                let webs = views.compactMap { $0 as? WKWebView }.filter { mounted($0, in: host) }
                 if url.pathExtension == "md" {
-                    guard pdf == nil, webs.count == 1, !webs[0].isLoading else {
-                        lastProbe = "md pdf=\(pdf != nil) webs=\(webs.count) loading=\(webs.first?.isLoading ?? false)"
-                        continue
-                    }
+                    guard pdfs.isEmpty, webs.count == 1, !webs[0].isLoading else { continue }
                     let ready = try? await webs[0].evaluateJavaScript(
                         "document.readyState === 'complete' && document.querySelector('h1')?.textContent === 'Layout Markdown fixture'")
                     if ready as? Bool == true { return }
-                    lastProbe = "md ready=\(String(describing: ready))"
-                } else {
-                    // Observability only — same conditions as v4, each recorded
-                    // at its own failure so a non-JS miss can't be blamed on js().
-                    if pdf == nil {
-                        lastProbe = "no pitex-pdfjs webview"
-                    } else if webs.count != 1 || webs[0] !== pdf {
-                        lastProbe = "webs=\(webs.count) pdfMatch=\(webs.first === pdf)"
-                    } else {
-                        let v = await js(pdf!, """
-                            return (() => {
-                              if (!window.pitex) return false;
-                              const g = window.pitex.state();
-                              if (g < 0) return false;
-                              const p = window.pitex.position(g);
-                              const pages = document.querySelectorAll(".page");
-                              if (!p || p.page < 1 || pages.length !== 1) return false;
-                              const canvas = pages[0].querySelector("canvas");
-                              if (!canvas) return false;
-                              const r = canvas.getBoundingClientRect();
-                              const c = document.getElementById("viewerContainer").getBoundingClientRect();
-                              return r.width > 0 && r.height > 0
-                                  && r.bottom > c.top && r.top < c.bottom
-                                  && r.right > c.left && r.left < c.right;
-                            })();
-                            """)
-                        if v as? Bool == true { return }
-                        lastProbe = "js value=\(String(describing: v)) err=\(lastJSError.isEmpty ? "none" : lastJSError)"
-                    }
+                } else if webs.isEmpty, pdfs.count == 1, pdfs[0].document?.pageCount == 1,
+                          pdfs[0].currentPage != nil, pdfs[0].documentView?.visibleRect.isEmpty == false {
+                    return
                 }
             }
-            // One bounded diagnostic on the failure path — the settled
-            // pre-gate-vs-js attribution, not part of the assertion.
-            var diag = ""
-            if let pdf = pitexWeb(host) {
-                if let d = await js(pdf, """
-                    return (() => { const g = window.pitex ? window.pitex.state() : -1;
-                      const pages = document.querySelectorAll(".page").length;
-                      const p = g >= 0 ? window.pitex.position(g) : null;
-                      const cv = document.querySelector(".page canvas");
-                      return {g, page: p?.page ?? -1, pages, canvas: !!cv}; })();
-                    """) { diag = "; diag=\(d)" }
-                else { diag = "; diag js err=\(lastJSError)" }
-            }
-            fail("HARNESS_ERROR", "New editor and rendered preview never mounted for \(url.lastPathComponent); widths=\(widths(host)); lastGuard=\(lastProbe)\(diag)", host)
+            fail("HARNESS_ERROR", "New editor and rendered preview never mounted for \(url.lastPathComponent); widths=\(widths(host))", host)
         }
         // Every sample after the new content renders must match. Waiting
         // until the expected geometry appears would hide jumps/late drift.
@@ -370,30 +280,15 @@ final class LayoutFixtureWindow: NSWindow {
         try await expect(host, a, "sidebar hide/show restores all widths")
         workspace.detachPreview()
         _ = try await stable(host, "preview detached")
-        let anyPitexWeb = descendants(host).contains {
-            ($0 as? WKWebView)?.url?.scheme == "pitex-pdfjs"
-        }
-        require(widths(host).count == 2 && !anyPitexWeb, "Inline preview did not detach", host)
+        require(widths(host).count == 2 && !descendants(host).contains { $0 is PDFView }, "Inline preview did not detach", host)
         guard let detached = workspace.detachedPreviewWindow?.contentView else {
             fail("HARNESS_ERROR", "Detached preview window missing", host)
         }
         let detachedDeadline = ContinuousClock.now + .seconds(5)
-        var detachedReady = false
-        while !detachedReady && .now < detachedDeadline {
+        while !descendants(detached).contains(where: { ($0 as? PDFView)?.document?.pageCount == 1 }) && .now < detachedDeadline {
             try await tick(detached)
-            if let web = pitexWeb(detached) {
-                detachedReady = await js(web, """
-                    return (() => {
-                      if (!window.pitex) return false;
-                      const g = window.pitex.state();
-                      if (g < 0) return false;
-                      const p = window.pitex.position(g);
-                      return !!p && p.page >= 1
-                          && document.querySelectorAll(".page").length === 1; })();
-                    """) as? Bool == true
-            }
         }
-        require(detachedReady, "Detached PDF never rendered", host)
+        require(descendants(detached).contains { ($0 as? PDFView)?.document?.pageCount == 1 }, "Detached PDF never rendered", host)
         workspace.attachPreview()
         try await rendered(workspace, host, tex)
         try await expect(host, a, "detach/attach restores all widths")
@@ -487,18 +382,6 @@ def run_check(repo, products, source_ref=None):
         for locale in (repo / 'Mac/Resources').glob('*.lproj'):
             shutil.copytree(locale, resources / locale.name)
         shutil.copyfile(repo / 'Mac/Resources/markdown-preview.html', resources / 'markdown-preview.html')
-        # The pdf.js viewer payload — without it every rendered probe 404s.
-        # Baseline builds the OLD sources (PDFKit) and ignores the payload.
-        pdfjs_dest = resources / 'pdfjs'
-        pdfjs_src = source_root / 'Mac/Resources/pdfjs'
-        if not pdfjs_src.exists():
-            pdfjs_src = repo / 'Mac/Resources/pdfjs'
-        shutil.copytree(pdfjs_src, pdfjs_dest)
-        import hashlib
-        manifest = [l.split(None, 1) for l in (pdfjs_dest / 'MANIFEST.sha256').read_text().splitlines() if l.strip()]
-        bad = [p for h, p in manifest
-               if hashlib.sha256((pdfjs_dest / p.lstrip('./')).read_bytes()).hexdigest() != h]
-        assert not bad, f'{mode}: pdfjs payload diverged from MANIFEST.sha256: {bad}'
         (bundle / 'Info.plist').write_bytes(plistlib.dumps({
             'CFBundleExecutable': 'check', 'CFBundleIdentifier': f'test.pitex.document-layout.{mode}',
             'CFBundleDevelopmentRegion': 'en', 'CFBundlePackageType': 'APPL',
@@ -510,15 +393,6 @@ def run_check(repo, products, source_ref=None):
         (fixture / 'spsa-proof-review.md').write_text('# Layout Markdown fixture\n\nA different editor and rendered preview.\n')
         check = root / 'Check.swift'
         check.write_text(CHECK)
-        # BridgeProbe patch into the compiled Preview.swift copy.
-        preview_main = source_root / 'Mac/Sources/Features/Preview.swift'
-        preview_text = preview_main.read_text()
-        bridge_anchor = '            guard let m = message.body as? [String: Any],\n                  let type = m["type"] as? String else { return }'
-        assert preview_text.count(bridge_anchor) == 1
-        preview_copy = root / 'Preview.swift'
-        preview_copy.write_text(preview_text.replace(
-            bridge_anchor,
-            bridge_anchor + '\n            BridgeProbe.log(type, m)'))
         app_main = source_root / 'Mac/Sources/AppShell/PitexApp.swift'
         stripped = root / 'PitexApp.swift'
         app_text = app_main.read_text()
@@ -528,9 +402,7 @@ def run_check(repo, products, source_ref=None):
         stripped.write_text(app_text.replace(anchor, 'struct PitexApp', 1))
         command = ['xcrun', 'swiftc', '-parse-as-library', '-swift-version', '6',
                    '-target', 'arm64-apple-macos15.0', '-I', str(products), str(check), str(stripped),
-                   *map(str, sorted(p for p in (source_root / 'Mac/Sources').rglob('*.swift')
-                              if p not in (app_main, preview_main))),
-                    str(preview_copy),
+                   *map(str, sorted(p for p in (source_root / 'Mac/Sources').rglob('*.swift') if p != app_main)),
                    *map(str, sorted(products.glob('*.o'))), '-o', str(bundle / 'MacOS/check')]
         with (artifacts / 'compile.log').open('w') as log:
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)

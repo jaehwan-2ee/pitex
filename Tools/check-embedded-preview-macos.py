@@ -39,7 +39,6 @@ Config are read; nothing inside it is written).
 """
 from pathlib import Path
 import argparse
-import hashlib
 import json
 import signal
 import time
@@ -93,14 +92,6 @@ assert native_resolution["sdk"] and Path(native_resolution["sdk"]).is_dir()
 native_environment = {**os.environ, "SDKROOT": native_resolution["sdk"]}
 print(f"[diag] compiler={native_resolution['swiftc']} SDK={native_resolution['sdk']} version={native_resolution['sdkVersion']}", flush=True)
 
-def verify_pdfjs_manifest(pdfjs_dir: Path):
-    """Release-parity gate: the bundled payload must match MANIFEST.sha256."""
-    lines = [l.split(None, 1) for l in (pdfjs_dir / "MANIFEST.sha256").read_text().splitlines() if l.strip()]
-    assert lines, f"pdfjs manifest empty at {pdfjs_dir}"
-    bad = [p for h, p in lines
-           if hashlib.sha256((pdfjs_dir / p.lstrip("./")).read_bytes()).hexdigest() != h]
-    assert not bad, f"pdfjs payload diverged from MANIFEST.sha256: {bad}"
-
 pages = "\\par\\medskip\n".join(
     f"Typesetting filler paragraph {i} with enough content to keep the "
     f"engine busy so intermediate publications arrive before the pass "
@@ -133,34 +124,6 @@ import Darwin
 import PDFKit
 import SwiftUI
 import SyncTeXCore
-import WebKit
-
-/// Records every bridge post so the checker can FAIL on error traffic
-/// product code only logs. The compiled Preview.swift copy is patched to
-/// call BridgeProbe.log at the message-handler entry.
-enum BridgeProbe {
-    nonisolated(unsafe) static var posts: [[String: Any]] = []
-    static func log(_ type: String, _ m: [String: Any]) {
-        posts.append(["type": type, "m": m])
-    }
-    /// "" when clean; error traffic and a missing/destroyed worker-ok fail.
-    static func audit() -> String {
-        var bad: [String] = []
-        var workerOK = false
-        for p in posts {
-            let t = p["type"] as? String ?? ""
-            if ["load-error", "destroy-error", "csp", "jserror"].contains(t) {
-                bad.append(t)
-            }
-            if t == "worker-ok" {
-                let destroyed = (p["m"] as? [String: Any])?["destroyed"] as? Bool ?? false
-                if destroyed { bad.append("worker-ok destroyed") } else { workerOK = true }
-            }
-        }
-        if !workerOK { bad.append("no worker-ok post") }
-        return bad.isEmpty ? "" : "bridge audit failed: " + bad.joined(separator: ", ")
-    }
-}
 
 enum LaunchFlag {
     nonisolated(unsafe) static var didFinishLaunching = false
@@ -365,27 +328,10 @@ enum LaunchFlag {
         stage("B1 ok: save did not roll the preview back")
     }
 
-    /// The rendered preview surface is the WKWebView hosting
-    /// pitex-pdfjs://app/viewer.html — find it by scheme, never class.
-    static func pdfWebView(in view: NSView?) -> WKWebView? {
+    static func pdfView(in view: NSView?) -> PDFView? {
         guard let view else { return nil }
-        if let web = view as? WKWebView, web.url?.scheme == "pitex-pdfjs" { return web }
-        return view.subviews.lazy.compactMap { pdfWebView(in: $0) }.first
-    }
-    /// JS probe in the page world. `state()` reports the displayed
-    /// generation; gen-parameterized calls need that real number.
-    /// Last js() error — appended to live-poll FAILs instead of being
-    /// swallowed by try? (stage-1 REVIEW-2 observability).
-    static var lastJSError = ""
-    static var lastProbe = "none"
-    static func js(_ body: String) async -> Any? {
-        lastJSError = ""
-        guard let web = pdfWebView(in: workspace.window?.contentView) else {
-            lastJSError = "no pitex-pdfjs web view"; return nil
-        }
-        do {
-            return try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page)
-        } catch { lastJSError = "\(error)"; return nil }
+        if let pdf = view as? PDFView { return pdf }
+        return view.subviews.lazy.compactMap { pdfView(in: $0) }.first
     }
 
     /// Two unsaved native body edits prove both initial startup and incrementality.
@@ -452,34 +398,17 @@ enum LaunchFlag {
         require((try? Data(contentsOf: project.appendingPathComponent("main.tex"))) == disk,
                 "unsaved previews changed main.tex bytes")
         require(projectNames() == before, "unsaved previews changed the project tree")
-        require(await untilAsync(15) {
-            let text = await self.js("return (async () => { const g = window.pitex.state(); return await window.pitex.text(g); })();") as? String ?? ""
-            lastProbe = "len=\(text.count) start=\(text.contains("StartMarker")) "
-                + "edit=\(text.contains("EditOneMarker"))"
-                + (lastJSError.isEmpty ? "" : " err=\(lastJSError)")
+        require(await until(15) {
+            let text = pdfView(in: workspace.window?.contentView)?.document?.string ?? ""
             return text.contains("StartMarker") && text.contains("EditOneMarker")
-        }, "pdf.js surface did not render the two-marker document "
-            + "(last probe: \(Driver.lastProbe); last js error: \(Driver.lastJSError.isEmpty ? "none" : Driver.lastJSError))")
-        // Scroll to the last page through the real viewer surface:
-        // setView targets the last .page element, then position() reports
-        // the viewer's current page.
-        _ = await js("""
-            return (() => { const g = window.pitex.state();
-              const last = document.querySelectorAll(".page").length;
-              return last > 0 && window.pitex.setView(g, "page-width", last); })();
-            """)
-        _ = await untilAsync(15) {
-            await self.js("""
-                return (() => { const g = window.pitex.state();
-                  const last = document.querySelectorAll(".page").length;
-                  const p = window.pitex.position(g);
-                  return last > 0 && p && p.page === last; })();
-                """) as? Bool == true
+        }, "PDFKit surface did not install the two-marker document")
+        if let view = pdfView(in: workspace.window?.contentView), let document = view.document,
+           let lastPage = document.page(at: document.pageCount - 1) {
+            view.go(to: lastPage)
         }
         stage("two unsaved BODY edits passed: dirty snapshots, owned canonical helper, new generation, both PDF markers, unchanged disk")
         try? await Task.sleep(for: .seconds(2))
         if scenario != "smoke" { await saveMarkerRegression("TmpRootSaveMarker") }
-        do { let e = BridgeProbe.audit(); require(e.isEmpty, e) }
         print("CHECK_COMPLETE")
         fflush(nil)
         exit(0)
@@ -805,7 +734,6 @@ enum LaunchFlag {
         stage("S7 ok: FNTB barrier observed, 2-page fontspec preview matches reference")
 
         print("[winnum] \(workspace.window?.windowNumber ?? -1)")
-        do { let e = BridgeProbe.audit(); require(e.isEmpty, e) }
         print("CHECK_COMPLETE")
         fflush(nil)
         exit(0)
@@ -882,24 +810,14 @@ with tempfile.TemporaryDirectory(prefix="pitex-embedded-check-") as directory:
         update_call)
     embedded_copy = root / "EmbeddedPreview.swift"
     embedded_copy.write_text(embedded_source)
-    # BridgeProbe: the compiled Preview.swift copy records every bridge post.
-    preview_main = repo / "Mac/Sources/Features/Preview.swift"
-    preview_source = preview_main.read_text()
-    bridge_anchor = '            guard let m = message.body as? [String: Any],\n                  let type = m["type"] as? String else { return }'
-    assert preview_source.count(bridge_anchor) == 1
-    preview_copy = root / "Preview.swift"
-    preview_copy.write_text(preview_source.replace(
-        bridge_anchor,
-        bridge_anchor + '\n            BridgeProbe.log(type, m)'))
     (root / "Check.swift").write_text(check)
     binary = root / "check-bin"
     compile_cmd = [native_resolution["swiftc"], "-sdk", native_resolution["sdk"],
                    "-parse-as-library", "-swift-version", "6",
                    "-target", "arm64-apple-macos15.0", "-I", str(products),
                    str(root / "Check.swift"), str(app_copy), str(embedded_copy),
-                   str(preview_copy),
                    *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift")
-                     if p not in (app_main, embedded_main, preview_main)],
+                     if p not in (app_main, embedded_main)],
                    *[str(p) for p in products.glob("*.o")], "-o", str(binary)]
     shutil.copy2(root / "Check.swift", artifacts / "Check.swift")
     shutil.copy2(embedded_copy, artifacts / "EmbeddedPreview.swift")
@@ -945,14 +863,12 @@ with tempfile.TemporaryDirectory(prefix="pitex-embedded-check-") as directory:
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
     for locale in (repo / "Mac/Resources").glob("*.lproj"):
         shutil.copytree(locale, resources / locale.name)
-    for name in ("markdown-preview.html", "PitexAgent", "pdfjs"):
+    for name in ("markdown-preview.html", "PitexAgent"):
         item = repo / "Mac/Resources" / name
         if item.is_dir():
             shutil.copytree(item, resources / name)
         elif item.exists():
             shutil.copy2(item, resources / name)
-    # Release-parity gate: every rendered probe 404s without the payload.
-    verify_pdfjs_manifest(resources / "pdfjs")
     for bundle in products.glob("*.bundle"):
         shutil.copytree(bundle, resources / bundle.name)
     # The real bundled helper payload at the production lookup location.

@@ -22,40 +22,11 @@ products = Path(sys.argv[1]).resolve()
 check = r'''
 import AppKit
 import Combine
-import CryptoKit
 import EditorMacAdapter
 import ObjectiveC
 import PDFKit
 import SwiftUI
 import SyncTeXCore
-import WebKit
-/// Records every bridge post so the checker can FAIL on error traffic
-/// product code only logs. The compiled Preview.swift copy is patched to
-/// call BridgeProbe.log at the message-handler entry.
-enum BridgeProbe {
-    nonisolated(unsafe) static var posts: [[String: Any]] = []
-    static func log(_ type: String, _ m: [String: Any]) {
-        posts.append(["type": type, "m": m])
-    }
-    /// "" when clean; error traffic and a missing/destroyed worker-ok fail.
-    static func audit() -> String {
-        var bad: [String] = []
-        var workerOK = false
-        for p in posts {
-            let t = p["type"] as? String ?? ""
-            if ["load-error", "destroy-error", "csp", "jserror"].contains(t) {
-                bad.append(t)
-            }
-            if t == "worker-ok" {
-                let destroyed = (p["m"] as? [String: Any])?["destroyed"] as? Bool ?? false
-                if destroyed { bad.append("worker-ok destroyed") } else { workerOK = true }
-            }
-        }
-        if !workerOK { bad.append("no worker-ok post") }
-        return bad.isEmpty ? "" : "bridge audit failed: " + bad.joined(separator: ", ")
-    }
-}
-
 
 @MainActor private enum FindIndicatorRecorder {
     static var original: IMP?
@@ -71,10 +42,7 @@ enum BridgeProbe {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         Task { @MainActor in
-            do { try await run()
-                let __e = BridgeProbe.audit()
-                precondition(__e.isEmpty, __e)
-                print("CHECK_COMPLETE"); fflush(nil); exit(0) }
+            do { try await run(); print("CHECK_COMPLETE"); fflush(nil); exit(0) }
             catch { print("FAIL", error); fflush(nil); exit(1) }
         }
         app.run()
@@ -85,17 +53,6 @@ enum BridgeProbe {
             guard condition else { print("FAIL", message); fflush(nil); exit(1) }
         }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        /// The rendered preview surface: the WKWebView hosting the offline
-        /// pdf.js viewer — identified by its app scheme, never class.
-        func pitexWeb(_ host: NSView) -> WKWebView? {
-            descendants(host).compactMap { $0 as? WKWebView }
-                .first { $0.url?.scheme == "pitex-pdfjs" }
-        }
-        /// Page-world JS probe. `pitex.state()` yields the displayed
-        /// generation; gen-parameterized calls need that number.
-        func js(_ web: WKWebView, _ body: String) async throws -> Any? {
-            try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page)
-        }
         let defaults = UserDefaults.standard
         let keys = ["pitex.pref.synctex.inverseHighlight", "pitex.pref.synctex.forwardHighlight"]
         let saved = keys.map { defaults.object(forKey: $0) }
@@ -154,51 +111,13 @@ enum BridgeProbe {
         split.setPosition(240, ofDividerAt: 0)
         split.setPosition(835, ofDividerAt: 1)
         try await settle()
-        // Data-side PDFKit oracle stays: MediaBoxes + the string payload.
-        let document = PDFDocument(data: workspace.retainedPDF!.data)!
-        let pdf = pitexWeb(host)!
-        // Wait for the viewer to load and render the retained document —
-        // then snapshot the annotation-layer element count, the extracted
-        // text and the displayed generation as the identity oracles.
-        var docText = ""
-        var annCount = -1
-        var pdfGen = -1
-        var lastProbe = "none"
-        for _ in 0..<100 {
-            do {
-                pdfGen = try await js(pdf, "return window.pitex ? window.pitex.state() : -1;") as? Int ?? -1
-                lastProbe = "g=\(pdfGen)"
-            } catch { pdfGen = -1; lastProbe = "error: \(error)" }
-            if pdfGen >= 0 {
-                docText = ""
-                annCount = -1
-                do {
-                    docText = try await js(pdf, """
-                        return (async () => { const g = window.pitex.state();
-                          return await window.pitex.text(g); })();
-                        """) as? String ?? ""
-                    annCount = try await js(pdf, """
-                        return (() => { const g = window.pitex.state();
-                          let n = 0;
-                          document.querySelectorAll('.annotationLayer')
-                            .forEach(l => { n += l.childElementCount; });
-                          return n; })();
-                        """) as? Int ?? -1
-                    lastProbe = "g=\(pdfGen) ann=\(annCount) text=\(docText.isEmpty ? "empty" : "ok")"
-                } catch { docText = ""; annCount = -1; lastProbe = "inner error: \(error)" }
-                if !docText.isEmpty && annCount >= 0 { break }
-            }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        require(pdfGen >= 0 && annCount >= 0,
-                "pdf.js viewer never rendered the retained document "
-                + "(last probe: \(lastProbe))")
-        // PDFView scaleFactor=1.17 → set the same absolute zoom through the
-        // product's own non-compounding zoom entry point.
-        _ = try await js(pdf, """
-            return (() => { const g = window.pitex.state();
-              return window.pitex.zoomBy(1.17 / window.pitex.position(g).scale); })();
-            """)
+        let pdf = descendants(host).compactMap { $0 as? PDFView }.first!
+        let document = pdf.document!
+        let existingNote = PDFAnnotation(bounds: NSRect(x: 20, y: 20, width: 50, height: 10), forType: .highlight, withProperties: nil)
+        document.page(at: 0)!.addAnnotation(existingNote)
+        let originalAnnotations = (0..<document.pageCount).flatMap { document.page(at: $0)!.annotations }
+        pdf.autoScales = false
+        pdf.scaleFactor = 1.17
         var phases: [WorkspacePhase] = []
         let observation = workspace.$phase.sink { phases.append($0) }
         defer { observation.cancel() }
@@ -214,121 +133,46 @@ enum BridgeProbe {
                                                                     line: Int(parts[1])!, column: 0)
             let expected = try await workspace.syncTeXRunner.inverse(binding: binding, page: forward.pdf.page, point: forward.pdf.point)
             require(expected.source.path.value == String(parts[0]), "Test target must map to the requested source")
-            let pageBox = document.page(at: forward.pdf.page - 1)!.bounds(for: .mediaBox)
-            // Scroll the SyncTeX box through the real coordinator path —
-            // goto() is the production forward-sync entry: scroll always,
-            // overlay gated by the pref (which the checker just set).
-            _ = try await js(pdf, """
-                return (() => { const g = window.pitex.state();
-                  return window.pitex.goto(g, \(forward.pdf.page), \(forward.h),
-                                           \(forward.v), \(forward.width), \(forward.height)); })();
-                """)
+            let page = document.page(at: forward.pdf.page - 1)!
+            let rect = NSRect(x: forward.h, y: page.bounds(for: .mediaBox).maxY - forward.v,
+                              width: max(forward.width, 4), height: max(forward.height, 4))
+            pdf.go(to: rect, on: page)
             try await settle()
-            // Scroll/zoom oracle: the viewer's reported position (page,
-            // scale, scrollTop) replaces the NSScrollView bounds snapshot.
-            let posJSON = (try? await js(pdf, """
-                return (() => { const g = window.pitex.state();
-                  const p = window.pitex.position(g);
-                  const c = document.getElementById("viewerContainer");
-                  return JSON.stringify({p, scrollLeft: c.scrollLeft,
-                    cw: c.clientWidth, ch: c.clientHeight}); })();
-                """)) as? String ?? ""
+            let scroll = descendants(pdf).compactMap { $0 as? NSScrollView }.first!
+            let bounds = scroll.contentView.bounds
             let frames = split.arrangedSubviews.map(\.frame)
-            let scale = ((try? await js(pdf, """
-                return (() => { const g = window.pitex.state();
-                  return window.pitex.position(g).scale; })();
-                """)) as? Double) ?? 0
-            require(abs(scale - 1.17) < 0.001, "PDF zoom must hold the staged 1.17")
+            let scale = pdf.scaleFactor
             phases.removeAll()
             FindIndicatorRecorder.calls.removeAll()
             workspace.environment!.editor.textView.setSelectedRange(NSRange(location: 0, length: 0))
-            // Cmd-click client point: checker-side projection from the
-            // SyncTeX point through the page element's DOM rect — no
-            // product geometry oracle.
-            let probe = (try? await js(pdf, """
-                return (() => {
-                  const g = window.pitex.state();
-                  const pageEl = document.querySelector(
-                    '.page[data-page-number="\(forward.pdf.page)"]');
-                  if (!pageEl) return null;
-                  const r = pageEl.querySelector(".canvasWrapper").getBoundingClientRect();
-                  const c = document.getElementById("viewerContainer").getBoundingClientRect();
-                  const s = r.height / \(pageBox.maxY);
-                  const x = r.left + \(forward.pdf.point.x) * s;
-                  const y = r.top + \(forward.pdf.point.y) * s;
-                  return {x, y, inside: x > c.left && x < c.right && y > c.top && y < c.bottom}; })();
-                """)) as? [String: Any]
-            require(probe?["inside"] as? Bool == true, "Cmd-click target must be visible")
-            // Freeze fix 1: WKWebView.isFlipped is YES on macOS, so the
-            // client y (top-down) is already view-space. Mirror only when the
-            // view is NOT flipped — the runtime value, not an assumption.
-            let clientY = CGFloat(probe!["y"] as! Double)
-            let clickPoint = NSPoint(x: probe!["x"] as! Double,
-                                     y: pdf.isFlipped ? clientY
-                                                      : pdf.bounds.height - clientY)
+            let pdfPoint = NSPoint(x: forward.pdf.point.x,
+                                  y: page.bounds(for: .mediaBox).maxY - forward.pdf.point.y)
+            let clickPoint = pdf.convert(pdfPoint, from: page)
             require(pdf.bounds.contains(clickPoint), "Cmd-click target must be visible")
-            // Delivered-point proof: a capture-phase mousedown listener (once,
-            // passive, no preventDefault) records the client point the page
-            // actually received; capture runs before the product's handler.
-            _ = try await js(pdf, """
-                window.__probeDown = null;
-                document.addEventListener("mousedown", e => {
-                  window.__probeDown = {x: e.clientX, y: e.clientY, meta: e.metaKey};
-                }, {capture: true, once: true});
-                return "armed";
-                """)
             let event = NSEvent.mouseEvent(with: .leftMouseDown, location: pdf.convert(clickPoint, to: nil),
                 modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
-            let postsBefore = BridgeProbe.posts.count
             NSApp.sendEvent(event)
             for _ in 0..<40 {
                 try await Task.sleep(for: .milliseconds(50))
                 if workspace.activeDocumentURL == source, workspace.environment!.editor.selectedRange.location > 0 { break }
             }
             try await settle()
-            // X6: read __probeDown only after the existing wait — a null read
-            // immediately after sendEvent is a queue race, not a miss.
-            let delivered = (try? await js(pdf, "return window.__probeDown || null;"))
-                as? [String: Any]
 
             require(phases.allSatisfy { if case .ready = $0 { true } else { false } },
                     "Switching a source must not replace the workspace with a loading screen")
             require(descendants(host).contains { $0 === split }, "Split view must survive source navigation")
-            let stillSame = ((try? await js(pdf, """
-                return (async () => { const g = window.pitex.state();
-                  return {gen: g, same: g === \(pdfGen),
-                          text: await window.pitex.text(g)}; })();
-                """)) as? [String: Any])
-            require(descendants(host).contains { $0 === pdf }
-                    && (stillSame?["same"] as? Bool) == true
-                    && (stillSame?["text"] as? String) == docText,
+            require(descendants(host).contains { $0 === pdf } && pdf.document === document,
                     "PDF view and document must survive source navigation")
             require(split.arrangedSubviews.map(\.frame) == frames, "User-adjusted pane widths must stay unchanged")
-            let posAfter = ((try? await js(pdf, """
-                return (() => { const g = window.pitex.state();
-                  const p = window.pitex.position(g);
-                  const c = document.getElementById("viewerContainer");
-                  return JSON.stringify({p, scrollLeft: c.scrollLeft,
-                    cw: c.clientWidth, ch: c.clientHeight}); })();
-                """)) as? String) ?? "nil"
-            require(posAfter == posJSON, "PDF zoom and scroll position must stay unchanged")
+            require(abs(pdf.scaleFactor - scale) < 0.001 && scroll.contentView.bounds == bounds,
+                    "PDF zoom and scroll position must stay unchanged")
             require(workspace.activeDocumentURL == source, "Inverse sync must activate the expected source")
             let text = workspace.environment!.editor.textView
             require(text.window === window && window.firstResponder === text, "New editor must be mounted and focused")
             let selected = text.selectedRange()
             let line = (text.string as NSString).substring(to: selected.location).components(separatedBy: "\n").count
-            // Freeze fix 2: record isFlipped + client/view/window coords so a
-            // wrong line is attributable, not opaque.
-            let clickWin = pdf.convert(clickPoint, to: nil)
-            let lastInv = BridgeProbe.posts.dropFirst(postsBefore).last {
-                ($0["type"] as? String) == "inverse" }.map { "\($0)" } ?? "none"
-            require(line == expected.source.line,
-                "Caret must land on the SyncTeX source line "
-                + "(expected=\(expected.source.line) got=\(line) "
-                + "isFlipped=\(pdf.isFlipped) clientY=\(probe!["y"] as! Double) "
-                + "viewPt=\(clickPoint) winPt=\(clickWin) delivered=\(String(describing: delivered)) "
-                + "sel=\(text.selectedRange().location) lastInverse=\(lastInv))")
+            require(line == expected.source.line, "Caret must land on the SyncTeX source line")
             let layout = text.layoutManager!
             let glyph = layout.glyphIndexForCharacter(at: selected.location)
             let caretLine = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
@@ -341,67 +185,20 @@ enum BridgeProbe {
             require(workspace.buildSourceURL() == main, "Inverse sync must retain the main build target")
             print("PASS \(expected.source.path.value):\(line), PDF page \(forward.pdf.page): stable panes, PDF, caret and focus")
 
-            let wrapBefore = ((try? await js(pdf, """
-                return (() => {
-                  const pageEl = document.querySelector(
-                    '.page[data-page-number="\(forward.pdf.page)"]');
-                  const w = pageEl?.querySelector(".canvasWrapper");
-                  // B4: exclude .pitex-hl — the positioning goto's overlay
-                  // (1.5 s timer) may still be mounted at this instant.
-                  return w ? [...w.children]
-                    .filter(e => !e.classList.contains("pitex-hl")).length : -1; })();
-                """)) as? Int) ?? -1
-            require(wrapBefore >= 0, "Forward page must be mounted for the marker check")
-            // N2: the marker must never reach the printed bytes — hash the
-            // PDF shown THIS iteration (navigation may have swapped it).
-            let retainedSHA = SHA256.hash(data: workspace.retainedPDF!.data)
-                .map { String(format: "%02x", $0) }.joined()
             await workspace.syncForward(line: line, column: expected.source.column)
-            // The forward marker is a .pitex-hl overlay in the page's
-            // canvasWrapper — DOM-only, never part of the printed page.
-            var overlayCount = -1
-            for _ in 0..<100 where overlayCount != (workspace.settings.forwardSyncHighlight ? 1 : 0) {
-                overlayCount = ((try? await js(pdf, "return document.querySelectorAll('.pitex-hl').length;")) as? Int) ?? -1
-                if overlayCount == (workspace.settings.forwardSyncHighlight ? 1 : 0) { break }
-                try await Task.sleep(for: .milliseconds(50))
-            }
-            require(overlayCount == (workspace.settings.forwardSyncHighlight ? 1 : 0),
+            let marked = (0..<document.pageCount).flatMap { document.page(at: $0)!.annotations }
+            let markers = marked.filter { annotation in !originalAnnotations.contains { $0 === annotation } }
+            require(markers.count == (workspace.settings.forwardSyncHighlight ? 1 : 0),
                     "Forward marker must follow only the forward preference")
+            require(markers.allSatisfy { !$0.shouldPrint }, "Navigation markers must not appear in printed PDFs")
             if index == 1 {
                 try await Task.sleep(for: .milliseconds(1700))
             } else {
                 workspace.settings.forwardSyncHighlight = false
                 try await settle()
             }
-            var cleared = -1
-            for _ in 0..<100 where cleared != 0 {
-                cleared = ((try? await js(pdf, "return document.querySelectorAll('.pitex-hl').length;")) as? Int) ?? -1
-                if cleared == 0 { break }
-                try await Task.sleep(for: .milliseconds(50))
-            }
-            let annAfter = ((try? await js(pdf, """
-                return (() => { let n = 0;
-                  document.querySelectorAll('.annotationLayer')
-                    .forEach(l => { n += l.childElementCount; });
-                  return n; })();
-                """)) as? Int) ?? -1
-            // N2: the printed source bytes must be untouched by the marker.
-            let retainedNow = SHA256.hash(data: workspace.retainedPDF!.data)
-                .map { String(format: "%02x", $0) }.joined()
-            require(retainedNow == retainedSHA,
-                    "Forward highlight must never mutate the printed PDF bytes")
-            // N3: the forward page's canvasWrapper must return to its exact
-            // pre-forward childElementCount — annCount can be 0 (vacuous),
-            // this catches a real DOM node the cleanup would miss.
-            let wrapAfter = ((try? await js(pdf, """
-                return (() => {
-                  const pageEl = document.querySelector(
-                    '.page[data-page-number="\(forward.pdf.page)"]');
-                  const w = pageEl?.querySelector(".canvasWrapper");
-                  return w ? [...w.children]
-                    .filter(e => !e.classList.contains("pitex-hl")).length : -1; })();
-                """)) as? Int) ?? -1
-            require(cleared == 0 && annAfter == annCount && wrapAfter == wrapBefore,
+            let cleared = (0..<document.pageCount).flatMap { document.page(at: $0)!.annotations }
+            require(cleared.count == originalAnnotations.count && originalAnnotations.allSatisfy { old in cleared.contains { $0 === old } },
                     "Only the temporary sync marker must be removed on timeout or when disabled")
             print("PASS independent inverse/forward highlights and temporary marker cleanup")
             fflush(nil)
@@ -560,56 +357,36 @@ enum BridgeProbe {
         let detached = workspace.detachedPreviewWindow!
         require(WorkspaceWindows.live.count == liveCount,
                 "The detached preview must not register as a workspace")
-        require(pitexWeb(host) == nil,
+        require(!descendants(host).contains { $0 is PDFView },
                 "The inline preview must unmount while detached")
-        // The detached window mounts its own pdf.js view — its own web
-        // view, own generation sequence, same retained bytes.
-        var detachedPDF: WKWebView?
-        var detachedSame = false
-        for _ in 0..<100 where !detachedSame {
-            if let web = pitexWeb(detached.contentView!), web !== pdf {
-                detachedPDF = web
-                let text = (try? await js(web, """
-                    return (async () => { const g = window.pitex.state();
-                      return g < 0 ? "" : await window.pitex.text(g); })();
-                    """)) as? String
-                if text == docText { detachedSame = true }
-            }
-            if !detachedSame { try await Task.sleep(for: .milliseconds(50)) }
-        }
-        require(detachedPDF != nil && detachedPDF !== pdf && detachedSame,
-                "The detached window must host its own pdf.js view over the same document")
+        let detachedPDF = descendants(detached.contentView!).compactMap { $0 as? PDFView }.first!
+        require(detachedPDF !== pdf && detachedPDF.document?.pageCount == document.pageCount,
+                "The detached window must host its own PDFView over the same document")
 
         // Forward sync restores a minimized detached window and lands on it.
         workspace.settings.forwardSyncHighlight = true
         detached.miniaturize(nil)
         try await settle()
         require(detached.isMiniaturized, "Fixture must be able to minimize the detached window")
-        let detachedAnnBefore = ((try? await js(detachedPDF!, """
-            return (() => { let n = 0;
-              document.querySelectorAll('.annotationLayer')
-                .forEach(l => { n += l.childElementCount; });
-              return n; })();
-            """)) as? Int) ?? -1
+        // Identity diff like the inline check — PDFAnnotation `type`
+        // strings differ across PDFKit versions (e.g. slash prefixes).
+        let detachedBefore = (0..<detachedPDF.document!.pageCount).flatMap {
+            detachedPDF.document!.page(at: $0)!.annotations
+        }
         await workspace.syncForward()
         try await settle()
         require(!detached.isMiniaturized && detached.isVisible,
                 "Forward sync must restore and present the detached preview")
-        var detachedOverlays = -1
-        for _ in 0..<100 where detachedOverlays != 1 {
-            detachedOverlays = ((try? await js(detachedPDF!, "return document.querySelectorAll('.pitex-hl').length;")) as? Int) ?? -1
-            if detachedOverlays == 1 { break }
-            try await Task.sleep(for: .milliseconds(50))
+        let detachedAfter = (0..<detachedPDF.document!.pageCount).flatMap {
+            detachedPDF.document!.page(at: $0)!.annotations
         }
-        let detachedAnnAfter = ((try? await js(detachedPDF!, """
-            return (() => { let n = 0;
-              document.querySelectorAll('.annotationLayer')
-                .forEach(l => { n += l.childElementCount; });
-              return n; })();
-            """)) as? Int) ?? -1
-        require(detachedOverlays == 1 && detachedAnnAfter == detachedAnnBefore,
-                "Forward marker must land on the detached PDF: overlays=\(detachedOverlays) "
-                + "ann=\(detachedAnnBefore)→\(detachedAnnAfter), "
+        let detachedMarkers = detachedAfter.filter { marker in
+            !detachedBefore.contains { $0 === marker }
+        }
+        require(detachedMarkers.count == 1 && detachedMarkers.allSatisfy { !$0.shouldPrint },
+                "Forward marker must land on the detached PDF: new=\(detachedMarkers.count) "
+                + "of before=\(detachedBefore.count) after=\(detachedAfter.count), "
+                + "types=\(detachedMarkers.map { $0.type ?? "nil" }), "
                 + "caret=\(workspace.environment!.editor.selectedRange), "
                 + "sync=\(workspace.syncTeXState)")
 
@@ -625,68 +402,31 @@ enum BridgeProbe {
             binding: binding, page: forward.pdf.page, point: forward.pdf.point)
         require(expected.source.path.value == String(inverseParts[0]),
                 "The detached-sync target must map back to the requested source")
-        let pageBox = document.page(at: forward.pdf.page - 1)!.bounds(for: .mediaBox)
+        let page = detachedPDF.document!.page(at: forward.pdf.page - 1)!
         // Same point math as the inline-navigation loop above: scroll the
         // SyncTeX box into view first, then click the precise point the
-        // expected inverse was computed from. goto() routes through the
-        // detached coordinator's own generation.
-        _ = try await js(detachedPDF!, """
-            return (() => { const g = window.pitex.state();
-              return window.pitex.goto(g, \(forward.pdf.page), \(forward.h),
-                                       \(forward.v), \(forward.width), \(forward.height)); })();
-            """)
+        // expected inverse was computed from.
+        let rect = NSRect(x: forward.h, y: page.bounds(for: .mediaBox).maxY - forward.v,
+                          width: max(forward.width, 4), height: max(forward.height, 4))
+        detachedPDF.go(to: rect, on: page)
         try await settle()
-        let probe = (try? await js(detachedPDF!, """
-            return (() => {
-              const pageEl = document.querySelector(
-                '.page[data-page-number="\(forward.pdf.page)"]');
-              if (!pageEl) return null;
-              const r = pageEl.querySelector(".canvasWrapper").getBoundingClientRect();
-              const c = document.getElementById("viewerContainer").getBoundingClientRect();
-              const s = r.height / \(pageBox.maxY);
-              const x = r.left + \(forward.pdf.point.x) * s;
-              const y = r.top + \(forward.pdf.point.y) * s;
-              return {x, y, inside: x > c.left && x < c.right && y > c.top && y < c.bottom}; })();
-            """)) as? [String: Any]
-        require(probe?["inside"] as? Bool == true, "Cmd-click target must be visible")
-        // Freeze fix 1: runtime isFlipped — WKWebView reports YES on macOS,
-        // so client y is already top-down view space.
-        let clientY = CGFloat(probe!["y"] as! Double)
-        let clickPoint = NSPoint(x: probe!["x"] as! Double,
-                                 y: detachedPDF!.isFlipped ? clientY
-                                                           : detachedPDF!.bounds.height - clientY)
-        require(detachedPDF!.bounds.contains(clickPoint), "Cmd-click target must be visible")
-        _ = try await js(detachedPDF!, """
-            window.__probeDown = null;
-            document.addEventListener("mousedown", e => {
-              window.__probeDown = {x: e.clientX, y: e.clientY, meta: e.metaKey};
-            }, {capture: true, once: true});
-            return "armed";
-            """)
+        let pdfPoint = NSPoint(x: forward.pdf.point.x,
+                               y: page.bounds(for: .mediaBox).maxY - forward.pdf.point.y)
+        let clickPoint = detachedPDF.convert(pdfPoint, from: page)
+        require(detachedPDF.bounds.contains(clickPoint), "Cmd-click target must be visible")
         let event = NSEvent.mouseEvent(with: .leftMouseDown,
-            location: detachedPDF!.convert(clickPoint, to: nil),
+            location: detachedPDF.convert(clickPoint, to: nil),
             modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: detached.windowNumber, context: nil,
             eventNumber: 1, clickCount: 1, pressure: 1)!
-        let postsBeforeD = BridgeProbe.posts.count
         NSApp.sendEvent(event)
         try await waitFor(workspace.activeDocumentURL == inverseSource,
                         "Inverse sync from the detached preview must activate the expected source")
         try await settle()
-        let deliveredD = (try? await js(detachedPDF!, "return window.__probeDown || null;"))
-            as? [String: Any]
         let text = workspace.environment!.editor.textView
         let line = (text.string as NSString).substring(to: text.selectedRange().location)
             .components(separatedBy: "\n").count
-        let clickWinD = detachedPDF!.convert(clickPoint, to: nil)
-        let lastInvD = BridgeProbe.posts.dropFirst(postsBeforeD).last {
-            ($0["type"] as? String) == "inverse" }.map { "\($0)" } ?? "none"
-        require(line == expected.source.line,
-            "Caret must land on the inverse-sync line "
-            + "(expected=\(expected.source.line) got=\(line) "
-            + "isFlipped=\(detachedPDF!.isFlipped) clientY=\(probe!["y"] as! Double) "
-            + "viewPt=\(clickPoint) winPt=\(clickWinD) delivered=\(String(describing: deliveredD)) "
-            + "sel=\(text.selectedRange().location) lastInverse=\(lastInvD))")
+        require(line == expected.source.line, "Caret must land on the inverse-sync line")
         require(window.isKeyWindow,
                 "Inverse sync from the detached preview must front the editor window")
         require(detached.isVisible, "The detached window must stay open after inverse sync")
@@ -703,7 +443,7 @@ enum BridgeProbe {
         require(workspace.hasProject, "Cmd-W on the detached preview must keep the project alive")
         require(window.isVisible, "The workspace window must stay open")
         require(detached.contentView == nil, "The reattached window must drop its hosted view")
-        require(pitexWeb(host) != nil,
+        require(descendants(host).contains { $0 is PDFView },
                 "The inline preview must remount after reattach")
 
         // The window's own close button reattaches the same way.
@@ -716,7 +456,7 @@ enum BridgeProbe {
                 "Closing the detached window must reattach the pane")
         require(closed.contentView == nil && closed.delegate == nil,
                 "A closed detached window must drop its view and delegate")
-        require(pitexWeb(host) != nil,
+        require(descendants(host).contains { $0 is PDFView },
                 "The inline preview must remount after the detached window closes")
 
         // Closing the owning workspace closes and releases the window.
@@ -746,36 +486,16 @@ with tempfile.TemporaryDirectory(prefix="pitex-navigation-", dir="/tmp") as dire
     }))
     for locale in (repo / "Mac/Resources").glob("*.lproj"):
         shutil.copytree(locale, resources / locale.name)
-    # The pdf.js viewer payload — every rendered probe 404s without it.
-    # Verified against MANIFEST.sha256 (Release-parity gate).
-    import hashlib
-    pdfjs_dest = resources / "pdfjs"
-    shutil.copytree(repo / "Mac/Resources/pdfjs", pdfjs_dest)
-    manifest = [l.split(None, 1) for l in (pdfjs_dest / "MANIFEST.sha256").read_text().splitlines() if l.strip()]
-    bad = [p for h, p in manifest
-           if hashlib.sha256((pdfjs_dest / p.lstrip("./")).read_bytes()).hexdigest() != h]
-    assert not bad, f"pdfjs payload diverged from MANIFEST.sha256: {bad}"
     source = root / "Check.swift"
     source.write_text(check)
-    preview_main = repo / "Mac/Sources/Features/Preview.swift"
-    _prev = preview_main.read_text()
-    _anchor = ('            guard let m = message.body as? [String: Any],\n'
-               '                  let type = m["type"] as? String else { return }')
-    assert _prev.count(_anchor) == 1
-    preview_copy = root / "Preview.swift"
-    preview_copy.write_text(_prev.replace(
-        _anchor, _anchor + '\n            BridgeProbe.log(type, m)'))
     app_main = repo / "Mac/Sources/AppShell/PitexApp.swift"
     stripped = root / "PitexApp.swift"
     stripped.write_text(app_main.read_text().replace("@main\nstruct PitexApp", "struct PitexApp"))
     executable = bundle / "MacOS/check"
     _cc = subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-target", "arm64-apple-macos15.0",
                     "-I", str(products), str(source), str(stripped),
-                    *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift")
-                     if p not in (app_main, preview_main)],
-                     str(preview_copy),
-                    *[str(p) for p in products.glob("*.o")], "-o", str(executable)],
-                   check=False, capture_output=True, text=True)
+                    *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main],
+                    *[str(p) for p in products.glob("*.o")], "-o", str(executable)], check=False, capture_output=True, text=True)
     print(_cc.stdout + _cc.stderr, end="")
     if _cc.returncode != 0:
         sys.exit(f"FAIL: swiftc rc={_cc.returncode} — no functional verdict")
