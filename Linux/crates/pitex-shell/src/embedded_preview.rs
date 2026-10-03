@@ -877,6 +877,7 @@ mod tests {
     /// against the stuck line (the replaced updates never reached the
     /// helper), so it still closes `a`.
     #[test]
+    #[cfg(unix)]
     fn stalled_helper_keeps_one_pending_update() {
         use std::os::unix::net::UnixStream;
         let (helper, client) = UnixStream::pair().unwrap();

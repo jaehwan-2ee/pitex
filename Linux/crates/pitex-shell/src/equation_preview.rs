@@ -1302,6 +1302,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn external_file_read_cap_and_open_buffer_precedence() {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
@@ -1389,6 +1390,7 @@ mod tests {
     }
 
     /// Only the previously unexercised host paths; no old contract replay.
+    #[cfg(unix)]
     fn new_host_boundaries() {
         use std::os::unix::fs::DirBuilderExt;
         COMPLETED_EXACT_JOBS.with(|jobs| jobs.borrow_mut().clear());
@@ -1545,6 +1547,7 @@ mod tests {
     /// single test.
     #[test]
     #[ignore = "needs WebKitGTK 6.0, a display and pdflatex: xvfb-run -a cargo test -p pitex-shell --lib equation_preview -- --ignored"]
+    #[cfg(unix)]
     fn renderer_page_contract() {
         gtk4::init().expect("gtk init");
         if std::env::var("PITEX_EQUATION_NEW_HOST_PROOFS_ONLY").as_deref() == Ok("1") {
