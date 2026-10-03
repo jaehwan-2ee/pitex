@@ -364,7 +364,15 @@ private final class EquationPreviewContentView: NSView {
 
 @MainActor
 final class EquationPreviewPopover: NSObject, NSPopoverDelegate {
-    static let maximumSize = CGSize(width: 720, height: 360)
+    static let maximumWidth: CGFloat = 720
+    /// Height cap: a fraction of the host screen so many short rows fit
+    /// without an internal scroller, still hard-bounded for small screens.
+    static let maximumHeightFraction: CGFloat = 0.55
+    static let maximumHeightCeiling: CGFloat = 720
+    static func maximumHeight(for screen: NSScreen?) -> CGFloat {
+        let visible = (screen ?? NSScreen.main)?.visibleFrame.height ?? maximumHeightCeiling
+        return min(max(360, visible * maximumHeightFraction), maximumHeightCeiling)
+    }
     static let padding: CGFloat = 12
     static let badgeHeight: CGFloat = 16
 
@@ -459,9 +467,24 @@ final class EquationPreviewPopover: NSObject, NSPopoverDelegate {
         badge.stringValue = label
         badge.isHidden = label.isEmpty
         let badgeHeight = label.isEmpty ? 0 : Self.badgeHeight
-        // Clamp to 720×360 overall; larger expressions scroll inside.
-        let bodySize = CGSize(width: min(max(size.width, 80), Self.maximumSize.width),
-                              height: min(size.height, Self.maximumSize.height - badgeHeight))
+        let maxBodyHeight = Self.maximumHeight(for: view.window?.screen) - badgeHeight
+        // A classic (legacy) scroller takes its thickness out of the viewport
+        // it sits in: a vertical one squeezes the width (summoning a
+        // horizontal one) and a horizontal one squeezes the height (summoning
+        // a vertical one). Reserve it whenever the content will scroll on
+        // that axis. Overlay scrollers float over the content and reserve
+        // nothing; scrollerWidth still reports 17 for them (measured), hence
+        // the style check.
+        let thickness: CGFloat = NSScroller.preferredScrollerStyle == .legacy
+            ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        var scrollsVertically = size.height > maxBodyHeight
+        var scrollsHorizontally = size.width > Self.maximumWidth
+        scrollsVertically = scrollsVertically || size.height + (scrollsHorizontally ? thickness : 0) > maxBodyHeight
+        scrollsHorizontally = scrollsHorizontally || size.width + (scrollsVertically ? thickness : 0) > Self.maximumWidth
+        // Clamp to 720pt wide and the screen-relative height; larger
+        // expressions scroll inside.
+        let bodySize = CGSize(width: min(max(size.width + (scrollsVertically ? thickness : 0), 80), Self.maximumWidth),
+                              height: min(size.height + (scrollsHorizontally ? thickness : 0), maxBodyHeight))
         let total = CGSize(width: bodySize.width, height: bodySize.height + badgeHeight)
         let bodyFrame = NSRect(x: 0, y: badgeHeight, width: bodySize.width, height: bodySize.height)
         webView?.frame = bodyFrame

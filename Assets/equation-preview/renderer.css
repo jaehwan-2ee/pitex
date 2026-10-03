@@ -17,6 +17,14 @@ html, body {
   cursor: default;
 }
 
+/* Only the viewport (html) scrolls. With overflow:auto on body as well, a
+   classic vertical scroller on html narrows body, body grows its own
+   horizontal scroller, that adds height, and html keeps its vertical one:
+   both scrollbars latch on for a formula that fits. */
+body {
+  overflow: visible;
+}
+
 #display, #measure {
   box-sizing: border-box;
   padding: 12px;

@@ -686,7 +686,9 @@ private struct PlacementGeometry: Equatable, Sendable {
         /// not production size constants or source-length heuristics.
         func fastPreviewMetrics(_ label: String) async -> (
             svgHeight: Double, displayHeight: Double, viewportWidth: Double,
-            viewportHeight: Double, scrollWidth: Double, scrollHeight: Double
+            viewportHeight: Double, scrollWidth: Double, scrollHeight: Double,
+            clientWidth: Double, clientHeight: Double, bodyClientWidth: Double,
+            bodyScrollWidth: Double, bodyIsScrollContainer: Double
         ) {
             let page = visibleFastPage(label)
             let deadline = ContinuousClock.now + .seconds(5)
@@ -695,17 +697,24 @@ private struct PlacementGeometry: Equatable, Sendable {
                     const display = document.getElementById('display');
                     const svg = display && display.querySelector('svg');
                     if (!svg || !document.scrollingElement) throw new Error('rendered SVG missing');
+                    const body = document.body, root = document.documentElement;
+                    const scrolls = (v) => v === 'auto' || v === 'scroll';
+                    const cs = getComputedStyle(body);
                     return JSON.stringify({
                         svgHeight: svg.getBoundingClientRect().height,
                         displayHeight: display.getBoundingClientRect().height,
                         viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
                         scrollWidth: document.scrollingElement.scrollWidth,
-                        scrollHeight: document.scrollingElement.scrollHeight
+                        scrollHeight: document.scrollingElement.scrollHeight,
+                        clientWidth: root.clientWidth, clientHeight: root.clientHeight,
+                        bodyClientWidth: body.clientWidth, bodyScrollWidth: body.scrollWidth,
+                        bodyIsScrollContainer: (scrolls(cs.overflowX) || scrolls(cs.overflowY)) ? 1 : 0
                     });
                     """, arguments: [:], in: nil, contentWorld: .page) as? String
                 let data = reply.map { Data($0.utf8) }
                 let metrics = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: NSNumber] }
-                let fields = ["svgHeight", "displayHeight", "viewportWidth", "viewportHeight", "scrollWidth", "scrollHeight"]
+                let fields = ["svgHeight", "displayHeight", "viewportWidth", "viewportHeight", "scrollWidth", "scrollHeight",
+                              "clientWidth", "clientHeight", "bodyClientWidth", "bodyScrollWidth", "bodyIsScrollContainer"]
                 require(metrics != nil && fields.allSatisfy { metrics?[$0]?.doubleValue.isFinite == true },
                         "\(label): live SVG/viewport metrics unavailable, reply=\(String(describing: reply))")
                 let width = metrics!["viewportWidth"]!.doubleValue
@@ -714,7 +723,10 @@ private struct PlacementGeometry: Equatable, Sendable {
                 // Await that actual geometry, not a fixed settling delay.
                 if width == Double(page.bounds.width) && height == Double(page.bounds.height) {
                     return (metrics!["svgHeight"]!.doubleValue, metrics!["displayHeight"]!.doubleValue,
-                            width, height, metrics!["scrollWidth"]!.doubleValue, metrics!["scrollHeight"]!.doubleValue)
+                            width, height, metrics!["scrollWidth"]!.doubleValue, metrics!["scrollHeight"]!.doubleValue,
+                            metrics!["clientWidth"]!.doubleValue, metrics!["clientHeight"]!.doubleValue,
+                            metrics!["bodyClientWidth"]!.doubleValue, metrics!["bodyScrollWidth"]!.doubleValue,
+                            metrics!["bodyIsScrollContainer"]!.doubleValue)
                 }
                 require(ContinuousClock.now < deadline,
                         "\(label): browser viewport did not settle to native bounds \(page.bounds), reply=\(String(describing: reply))")
@@ -1086,15 +1098,24 @@ private struct PlacementGeometry: Equatable, Sendable {
         let pop = previewState()
         require(pop.role.contains("image") && pop.source.contains("\\begin{align}") && pop.source.contains("r_39 &= 39"),
                 "large preview must render the complete 39-row align source, got role=\(pop.role) source='\(pop.source)'")
+        // New bound: fraction of the host screen's visible height (hard-
+        // capped). Recompute here from the checker window's screen — the
+        // same source present() uses — so it is not a hard-coded constant.
+        let maxPreviewHeight = min(max(360, (window.screen?.visibleFrame.height ?? 720) * 0.55), 720)
+        let badgeH: Double = 16
         let largeMetrics = await fastPreviewMetrics("large align")
         let largeContentBounds = previewContentBounds("large align")
-        require(largeContentBounds.height == 360,
-                "oversized 39-row fixture must clamp the whole content to 360pt, got \(largeContentBounds)")
-        require(largeMetrics.svgHeight > 360 && largeMetrics.displayHeight > largeMetrics.viewportHeight
+        require(largeContentBounds.height == maxPreviewHeight,
+                "oversized 39-row fixture must clamp the whole content to the screen-relative cap \(maxPreviewHeight), got \(largeContentBounds)")
+        require(largeMetrics.svgHeight > (maxPreviewHeight - badgeH)
+                && largeMetrics.displayHeight > largeMetrics.viewportHeight
                 && largeMetrics.viewportWidth > 0 && largeMetrics.viewportHeight > 0
                 && largeMetrics.viewportHeight <= Double(largeContentBounds.height)
-                && largeMetrics.scrollHeight > largeMetrics.viewportHeight,
-                "large fixture must contain a real oversized SVG in a scrollable clamped viewport, got \(largeMetrics)")
+                && largeMetrics.scrollHeight > largeMetrics.viewportHeight
+                && largeMetrics.scrollWidth <= largeMetrics.clientWidth
+                && largeMetrics.bodyScrollWidth <= largeMetrics.bodyClientWidth
+                && largeMetrics.bodyIsScrollContainer == 0,
+                "large fixture must contain a real oversized SVG in a scrollable clamped viewport (html scrolls vertically; neither html nor body overflows horizontally), got \(largeMetrics)")
         let outerBounds = popoverScreenRect(pop.win)
         stage("large align content=\(largeContentBounds) (badge included); outer CG frame=\(outerBounds); live SVG/viewport=\(largeMetrics)")
         let scrolledY = await scrollFastPreview(to: largeMetrics.scrollHeight, label: "large align scroll")
@@ -1145,6 +1166,38 @@ private struct PlacementGeometry: Equatable, Sendable {
                 && smallMetrics.scrollHeight <= smallMetrics.viewportHeight,
                 "small equation must render without retaining large-expression overflow, got \(smallMetrics)")
         stage("large-to-small shrink content=\(smallContentBounds); outer CG frame=\(popoverScreenRect(previewState().win)); live SVG/viewport=\(smallMetrics)")
+        // ── C18: many-short-row aligns must preview with no horizontal
+        // scroller at html OR body, and with no vertical scroller while they
+        // fit under the cap. With classic scrollers the old CSS made <body> a
+        // scroll container too: html's vertical scroller narrowed body, body
+        // grew a horizontal one, whose height kept html's vertical one on
+        // (both scrollbars for a formula that fits). The html-only check
+        // above cannot see that latch, so body is asserted explicitly.
+        for (rows, prefix) in [(5, "a"), (20, "b"), (60, "c")] {
+            let needle = "\(prefix)_\(rows) &= \(rows)"
+            let nl = loc(needle)
+            require(nl != NSNotFound, "short-row fixture '\(needle)' missing")
+            tv()!.scrollRangeToVisible(NSRange(location: nl, length: 0))
+            await pump(0.3)
+            caret(nl + 3)
+            require(await awaitPreview(15, matching: fastOf("\(prefix)_1 &= 1")),
+                    "\(rows)-row align must preview")
+            let m = await fastPreviewMetrics("align \(rows)-row")
+            require(m.bodyIsScrollContainer == 0,
+                    "\(rows)-row align: body must not be a scroll container (only html scrolls), got \(m)")
+            require(m.scrollWidth <= m.clientWidth && m.bodyScrollWidth <= m.bodyClientWidth,
+                    "\(rows)-row align must not overflow horizontally at html or body, got \(m)")
+            if m.displayHeight <= maxPreviewHeight - badgeH {
+                require(m.scrollHeight <= m.clientHeight,
+                        "\(rows)-row align fits under the \(maxPreviewHeight)pt cap and must not scroll vertically, got \(m)")
+            }
+            stage("align \(rows)-row: html scroll/client=\(m.scrollWidth)/\(m.clientWidth) x \(m.scrollHeight)/\(m.clientHeight) body scroll/client w=\(m.bodyScrollWidth)/\(m.bodyClientWidth) bodyScrolls=\(m.bodyIsScrollContainer)")
+        }
+        // Later stages hover/caret targets in the first ~20 lines: bring the
+        // editor back to the origin saved before the scroll stage.
+        clip.scroll(to: savedOrigin)
+        editorScroll!.reflectScrolledClipView(clip)
+        await pump(0.3)
 
         // whileTyping=false: typing suppresses; navigation resumes. Park
         // first so nothing visible can satisfy the negative, and let the
@@ -1709,6 +1762,18 @@ Late $\sum_{k=1}^{n} k$ uncached target for the D4a hang check.
 \begin{align}
 %(rows)s
 \end{align}
+
+\begin{align}
+%(rows_a)s
+\end{align}
+
+\begin{align}
+%(rows_b)s
+\end{align}
+
+\begin{align}
+%(rows_c)s
+\end{align}
 %(filler)s
 \end{document}
 """
@@ -2219,7 +2284,12 @@ with tempfile.TemporaryDirectory(prefix="pitex-eqpreview-", dir="/tmp") as direc
     fixture.mkdir()
     rows = "\n".join(f"r_{i} &= {i} \\\\" for i in range(1, 40))
     filler = "\n".join(f"Filler line {i} keeps the document scrollable." for i in range(1, 91))
-    (fixture / "main.tex").write_text(FIXTURE_MAIN % {"rows": rows, "filler": filler})
+    rows_a = "\n".join(f"a_{i} &= {i} \\\\" for i in range(1, 6))
+    rows_b = "\n".join(f"b_{i} &= {i} \\\\" for i in range(1, 21))
+    rows_c = "\n".join(f"c_{i} &= {i} \\\\" for i in range(1, 61))
+    (fixture / "main.tex").write_text(FIXTURE_MAIN % {
+        "rows": rows, "rows_a": rows_a, "rows_b": rows_b, "rows_c": rows_c,
+        "filler": filler})
     (fixture / "other.tex").write_text(FIXTURE_OTHER)
     (fixture / "macros.tex").write_text(FIXTURE_MACROS)
     (fixture / "notes.md").write_text("Markdown context\n$E = mc^2$\n")
