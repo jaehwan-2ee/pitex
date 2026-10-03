@@ -70,13 +70,6 @@ jobs:
               | grep -vE '^/usr/lib|^/System|@loader_path' \
               | grep -q . && { echo "non-loader_path dep in $bin" >&2; exit 1; } || true
           done
-          # W7/A2: pdfjs manifest pin + count + hash; helper name-set + notices.
-          ( cd "$APP/Contents/Resources/pdfjs" \
-            && shasum -a 256 -c MANIFEST.sha256 >/dev/null \
-            && [ "$(find . -type f ! -name MANIFEST.sha256 | wc -l | tr -d ' ')" = 209 ] )
-          [ "$(shasum -a 256 "$APP/Contents/Resources/pdfjs/MANIFEST.sha256" | cut -d' ' -f1)" \
-            = cf0b7eb2630942778746ecf7f6c0e32222220780beb3908a0930d1ed058e6366 ] \
-            || { echo "pdfjs MANIFEST pin mismatch" >&2; exit 1; }
           # Helper payload NAME sets (not a count — the CI build has no
           # glib/intl/pcre2). bin: the two helpers; lib: one dylib each.
           AH="$APP/Contents/Helpers/PreviewEngine"

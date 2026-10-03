@@ -457,19 +457,6 @@ and [PreviewEngine/licenses/](PreviewEngine/licenses/); the deb installs
 them under `/usr/share/doc/pitex/preview-engine/`, the macOS app under
 `Contents/Resources/PreviewEngine/`.
 
-The macOS PDF preview column is rendered by **pdf.js** inside a `WKWebView`,
-served offline from the app bundle over the `pitex-pdfjs://` custom scheme —
-it replaces PDFKit's `PDFView`. The payload is vendored `pdfjs-dist`
-(Apache-2.0) plus Pitex-authored `viewer.html`/`viewer.mjs`/`bridge.js` glue,
-under [Mac/Resources/pdfjs/](Mac/Resources/pdfjs/). Per `VERSIONS` and
-`MANIFEST.sha256`, upstream build files are byte-identical to the npm tarball
-(`pdfjs-dist` 6.3.289). The four `LiberationSans-*.ttf` fonts and their
-license copies are **deliberately excluded** from the production payload:
-Liberation 1.x is GPLv2-with-font-exceptions with an unresolved
-corresponding-source question, and pdf.js only fetches it as the last-resort
-fallback for non-embedded Helvetica (local Helvetica/Arial resolve first on
-macOS), so exclusion drops the Liberation-specific GPLv2 obligations at no
-expected rendering cost. Third-party notices shipped in that folder cover
-Apache-2.0 (pdf.js), Adobe (cmaps), Foxit, JBIG2, OpenJPEG, qcms, and CC0
-(iccs); other copyleft components (PreviewEngine, above) keep their own
-notices and obligations.
+The macOS PDF preview column is PDFKit's `PDFView` (a system framework); the
+app bundles no third-party PDF viewer code. The copyleft components above
+(PreviewEngine) keep their own notices and obligations.
