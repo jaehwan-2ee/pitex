@@ -413,3 +413,35 @@ fn windows_root_and_paths_normalize_and_select() {
         SyncTeXQueryError::PathOutsideRoot { .. }
     ));
 }
+
+/// The Windows spelling transform is always compiled so it can be exercised
+/// on Linux — the Windows CI job runs only the pitex-shell forward test, not
+/// synctex-core's own suite, so the spelling table needs host-side coverage.
+/// `to_parser_path` applies this only under cfg(windows); on Linux a Windows
+/// root/path still fails PathOutsideRoot (tested above).
+#[test]
+fn windows_spelling_to_parser_path_table() {
+    use synctex_core::windows_spelling_to_parser_path as w;
+    // drive-letter absolute (backslash and forward-slash separator)
+    assert_eq!(w("C:\\ws\\proj\\m.tex").unwrap(), "/C:/ws/proj/m.tex");
+    assert_eq!(w("C:/ws/proj/m.tex").unwrap(), "/C:/ws/proj/m.tex");
+    assert_eq!(w("c:\\ws\\proj\\m.tex").unwrap(), "/C:/ws/proj/m.tex");
+    assert_eq!(w("C:\\ws/proj\\m.tex").unwrap(), "/C:/ws/proj/m.tex");
+    // verbatim disk + UNC
+    assert_eq!(w("\\\\?\\C:\\ws\\proj\\m.tex").unwrap(), "/C:/ws/proj/m.tex");
+    assert_eq!(w("\\\\?\\D:\\a\\pitex\\x").unwrap(), "/D:/a/pitex/x");
+    assert_eq!(w("\\\\?\\UNC\\srv\\sh\\m.tex").unwrap(), "//srv/sh/m.tex");
+    assert_eq!(w("\\\\srv\\sh\\m.tex").unwrap(), "//srv/sh/m.tex");
+    // 8.3 short-name temp dir (GitHub runner C:\Users\RUNNER~1\...)
+    assert_eq!(
+        w("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\pitex-stx-preview\\session\\p3\\main.pdf")
+            .unwrap(),
+        "/C:/Users/RUNNER~1/AppData/Local/Temp/pitex-stx-preview/session/p3/main.pdf"
+    );
+    // NOT Windows spellings -> None (caller keeps the raw string, still
+    // rejected by the strict parser)
+    assert!(w("/ws/proj/a\\b.tex").is_none());   // POSIX name with backslash
+    assert!(w("/ws/proj/m.tex").is_none());      // plain POSIX
+    assert!(w("C:rel\\x").is_none());            // bare drive, no separator
+    assert!(w("relative\\path").is_none());      // relative backslash
+}

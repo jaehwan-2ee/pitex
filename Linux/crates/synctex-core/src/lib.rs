@@ -493,43 +493,50 @@ impl SyncTeXQueryParser {
 }
 
 
-/// Re-roots a Windows path spelling to the parser's absolute POSIX form.
-/// Compiled ONLY on Windows — everywhere else the original POSIX-only strict
-/// rules apply unchanged (a `\` or non-'/' path still fails PathOutsideRoot).
-/// `C:\p\f` -> `/C:/p/f`; verbatim `\\?\C:\…` -> `/C:/…`; UNC
-/// `\\server\share` -> `//server/share`; the drive letter is upper-cased and
-/// backslashes become '/'. Unrecognised spellings pass through unchanged so
-/// the existing `contains('\\')` rejection still fires on them.
-#[cfg(windows)]
-fn to_parser_path(raw: &str) -> String {
+/// Pure transform: if `raw` is a recognisable Windows spelling, return it
+/// re-rooted to the parser's absolute POSIX form; `None` for a string that is
+/// not a Windows spelling. Always compiled so the spelling table is testable
+/// on any host; only `to_parser_path` decides whether it is APPLIED.
+///   X:\ or X:/          -> /X:/…    (drive, checked before the no-backslash
+///                                    fast path so C:/… is handled too)
+///   \\?\X:\…          -> /X:/…    (verbatim disk)
+///   \\?\UNC\s\s       -> //s/s    (verbatim UNC)
+///   \\server\share     -> //server/share
+/// Drive letter upper-cased; backslashes -> '/'. `None` => the caller keeps
+/// the raw string so the existing contains('\\') rejection still fires.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn windows_spelling_to_parser_path(raw: &str) -> Option<String> {
     let b = raw.as_bytes();
-    // Drive-letter absolute (X:\ or X:/) is checked FIRST — a forward-slash
-    // drive path contains no backslash and would otherwise pass through and
-    // fail the '/' check on Windows.
+    // Drive-letter absolute (X:\ or X:/) — checked FIRST so a forward-slash
+    // drive path (no backslash) is still re-rooted.
     if b.len() >= 3 && b[1] == b':' && b[0].is_ascii_alphabetic()
         && (b[2] == b'\\' || b[2] == b'/') {
-        return format!("/{}{}", (b[0] as char).to_ascii_uppercase(),
-                       &raw[1..].replace('\\', "/"));
+        return Some(format!("/{}{}", (b[0] as char).to_ascii_uppercase(),
+                            &raw[1..].replace('\\', "/")));
     }
     if !raw.contains('\\') {
-        return raw.to_string();
+        return None;
     }
-    // verbatim: \\?\X:\.. or \\?\UNC\server\share
     if let Some(rest) = raw.strip_prefix("\\\\?\\") {
         let r = rest.replace('\\', "/");
-        if let Some(u) = r.strip_prefix("UNC/") { return format!("//{}", u); }
+        if let Some(u) = r.strip_prefix("UNC/") { return Some(format!("//{}", u)); }
         if r.len() >= 2 && r.as_bytes()[1] == b':' && r.as_bytes()[0].is_ascii_alphabetic() {
-            return format!("/{}{}", (r.as_bytes()[0] as char).to_ascii_uppercase(), &r[1..]);
+            return Some(format!("/{}{}", (r.as_bytes()[0] as char).to_ascii_uppercase(), &r[1..]));
         }
-        return r;
+        return Some(r);
     }
-    // UNC share: \\server\share
     if let Some(rest) = raw.strip_prefix("\\\\") {
-        return format!("//{}", rest.replace('\\', "/"));
+        return Some(format!("//{}", rest.replace('\\', "/")));
     }
-    raw.to_string()
+    None
 }
-/// Non-Windows: identity — the strict POSIX rules apply unchanged.
+
+/// On Windows, apply the re-rooting. Everywhere else: identity — the strict
+/// POSIX rules apply byte-for-byte unchanged.
+#[cfg(windows)]
+fn to_parser_path(raw: &str) -> String {
+    windows_spelling_to_parser_path(raw).unwrap_or_else(|| raw.to_string())
+}
 #[cfg(not(windows))]
 fn to_parser_path(raw: &str) -> String {
     raw.to_string()

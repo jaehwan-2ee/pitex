@@ -18,7 +18,28 @@ use synctex_core::{
     SyncTeXQueryParser, SyncTeXRevision, SyncTeXInput,
 };
 
+#[cfg(windows)]
+use synctex_core::windows_spelling_to_parser_path;
 use crate::model::standardize;
+
+/// Re-roots a Windows path spelling (`C:\…`, `\\?\…`, `\\s\s`) to the
+/// parser's absolute form. It does NOT expand 8.3 short names — two spellings
+/// compare equal only when the transform yields the same string. Windows-only.
+#[cfg(windows)]
+fn parser_form(p: &Path) -> String {
+    let raw = p.to_string_lossy();
+    windows_spelling_to_parser_path(&raw).unwrap_or_else(|| raw.into_owned())
+}
+/// Does `child` name `ancestor` or live under it? Windows-only: compares the
+/// re-rooted parser form (verbatim vs plain `\`/`/` spellings collapse); it
+/// does not expand 8.3 short names. Non-Windows callers keep PathBuf
+/// semantics.
+#[cfg(windows)]
+fn path_is_within(child: &Path, ancestor: &Path) -> bool {
+    let (c, a) = (parser_form(child), parser_form(ancestor));
+    c == a || c.starts_with(&format!("{a}/"))
+}
+
 
 #[derive(Debug)]
 pub enum SyncTeXSupportError {
@@ -268,6 +289,21 @@ impl SyncTeXRunner {
                 .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?,
         )
         .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
+        // Windows: the resolved source and project root may disagree in
+        // spelling (verbatim/8.3/long), so strip with a parser-form fallback.
+        #[cfg(windows)]
+        let source_path = NormalizedSourcePath::new(&resolved_source
+            .to_string_lossy()
+            .strip_prefix(&format!("{}/", binding.project_root.to_string_lossy()))
+            .map(str::to_string)
+            .or_else(|| {
+                parser_form(&resolved_source.to_path_buf())
+                    .strip_prefix(&format!("{}/", parser_form(&binding.project_root)))
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| resolved_source.to_string_lossy().into_owned()))
+        .map_err(|e| SyncTeXSupportError::Query(e.to_string()))?;
+        #[cfg(not(windows))]
         let source_path = NormalizedSourcePath::new(
             resolved_source
                 .to_string_lossy()
@@ -295,6 +331,22 @@ impl SyncTeXRunner {
     /// project, so it goes by its file name; `validate` pins the exact
     /// bytes (SHA-256 and SyncTeX fingerprint) around every query.
     fn parser_pdf_path(binding: &SyncTeXBinding) -> String {
+        // spelling-agnostic: on Windows the bound pdf and project root can be
+        // canonicalized into different spellings (verbatim/8.3/long), so
+        // compare the re-rooted parser form, not PathBuf::strip_prefix.
+        #[cfg(windows)]
+        {
+            let (pdf, root) = (parser_form(&binding.pdf_url), parser_form(&binding.project_root));
+            if let Some(rel) = pdf.strip_prefix(&format!("{root}/")) {
+                return rel.to_string();
+            }
+            return binding
+                .pdf_url
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+        }
+        #[cfg(not(windows))]
         match binding.pdf_url.strip_prefix(&binding.project_root) {
             Ok(relative) => relative.to_string_lossy().into_owned(),
             Err(_) => binding
@@ -500,6 +552,13 @@ impl SyncTeXRunner {
                 if key == "Output" && !binding.pdf_url.starts_with(&binding.project_root) {
                     value = Self::parser_pdf_url(binding);
                 }
+            }
+            // Windows only: an Output path carries backslashes and skipped the
+            // canonicalize-and-rename block above, so rename it here. Outside a
+            // Windows spelling this is unreachable (the block handles POSIX).
+            #[cfg(windows)]
+            if key == "Output" && !path_is_within(&binding.pdf_url, &binding.project_root) {
+                value = Self::parser_pdf_url(binding);
             }
             if Self::ALLOWED_FIELDS.contains(&key) {
                 fields.retain(|(k, _)| k != key);
@@ -904,7 +963,24 @@ mod binding_tests {
             pdf.display()
         );
         let hit = SyncTeXRunner::forward_candidate(&stdout, &binding, &main, 17, 0)
-            .expect("preview forward result selects");
+            .unwrap_or_else(|e| {
+                panic!(
+                    "preview forward result selects: {e:?}\n                     normalized stdout would be:\n{}\n                     binding project_root={} pdf_url={} parser_pdf_url={}",
+                    SyncTeXRunner::normalize(
+                        &stdout,
+                        &[
+                            ("Input", main.to_string_lossy().into_owned()),
+                            ("Line", "17".to_string()),
+                            ("Column", "0".to_string()),
+                            ("Output", SyncTeXRunner::parser_pdf_url(&binding)),
+                        ],
+                        &binding,
+                    ),
+                    binding.project_root.display(),
+                    binding.pdf_url.display(),
+                    SyncTeXRunner::parser_pdf_url(&binding),
+                )
+            });
         assert_eq!(hit.pdf.page, 7);
     }
 }
