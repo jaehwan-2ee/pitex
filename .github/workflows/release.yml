@@ -380,14 +380,18 @@ jobs:
           set -e
           D24=$(ls dist/*ubuntu24.04*.deb); D22=$(ls dist/*ubuntu22.04*.deb)
           echo "24.04: $D24"; echo "22.04: $D22"
-          # J1: conffiles member has no ./ prefix
           dpkg-deb -c "$D24" | grep -q 'etc/apparmor\.d/pitex' \
             || { echo "24.04 deb lacks the profile file" >&2; exit 1; }
-          dpkg-deb --ctrl-tarfile "$D24" | tar -xO conffiles | grep -q '/etc/apparmor\.d/pitex' \
+          # dpkg-deb -I prints the conffiles member regardless of how the
+          # builder names it in control.tar (CI cargo-deb uses ./conffiles,
+          # local cargo-deb uses conffiles); tar -xO is not portable here.
+          dpkg-deb -I "$D24" conffiles | grep -qx '/etc/apparmor.d/pitex' \
             || { echo "24.04 profile not a conffile" >&2; exit 1; }
           ! dpkg-deb -c "$D22" | grep -q 'apparmor' \
             || { echo "22.04 deb must not ship the profile" >&2; exit 1; }
-          ! dpkg-deb --ctrl-tarfile "$D22" | tar -xO conffiles 2>/dev/null | grep -q 'apparmor' \
+          # No conffiles member -> dpkg-deb -I exits nonzero -> the grep sees
+          # nothing -> the ! check passes.
+          ! dpkg-deb -I "$D22" conffiles 2>/dev/null | grep -q 'apparmor' \
             || { echo "22.04 deb must not declare the conffile" >&2; exit 1; }
       - name: Upgrade path - install 2.1.6 first, then this deb (no prompt)
         run: |
@@ -408,12 +412,17 @@ jobs:
       - name: Confirm the profile loaded
         run: |
           set -e
-          grep -q '^pitex ' /sys/kernel/security/apparmor/profiles \
-            || { echo "profile not loaded"; cat /sys/kernel/security/apparmor/profiles >&2; exit 1; }
+          PROFILES=$(sudo cat /sys/kernel/security/apparmor/profiles) \
+            || { echo "cannot read apparmor profiles" >&2; exit 1; }
+          printf '%s\n' "$PROFILES" | grep -q '^pitex ' \
+            || { echo "profile not loaded"; printf '%s\n' "$PROFILES" >&2; exit 1; }
       - name: Negative control - profile unloaded must abort on open
         run: |
           set -e
           sudo apparmor_parser -R /etc/apparmor.d/pitex 2>/dev/null || true
+          for t in xvfb-run dbus-run-session timeout; do
+            command -v "$t" >/dev/null || { echo "missing $t on the runner" >&2; exit 1; }
+          done
           printf '\\documentclass{article}\\begin{document}x\\end{document}\n' > /tmp/f.tex
           set +e
           GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- timeout 25 /usr/bin/pitex /tmp/f.tex > /tmp/neg.log 2>&1
@@ -448,11 +457,14 @@ jobs:
           set -e
           sudo apt-get purge -y pitex
           [ ! -e /etc/apparmor.d/pitex ] || { echo "conffile left behind" >&2; exit 1; }
-          ! grep -q '^pitex ' /sys/kernel/security/apparmor/profiles \
+          PROFILES=$(sudo cat /sys/kernel/security/apparmor/profiles) \
+            || { echo "cannot read apparmor profiles" >&2; exit 1; }
+          ! printf '%s\n' "$PROFILES" | grep -q '^pitex ' \
             || { echo "profile still loaded after purge" >&2; exit 1; }
       - name: No-AppArmor container installs exit 0 (right deb per image)
         run: |
           set -e
+          command -v docker >/dev/null || { echo "docker missing on the runner" >&2; exit 1; }
           # J3: each deb goes into its own Ubuntu release; 24.04 deps do not
           # exist on 22.04, so the 24.04 deb there is meaningless.
           docker run --rm -v "$PWD/dist":/d ubuntu:24.04 sh -e -c \
