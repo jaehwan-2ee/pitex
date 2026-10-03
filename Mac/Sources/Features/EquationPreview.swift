@@ -513,7 +513,13 @@ final class EquationPreviewPopover: NSObject, NSPopoverDelegate {
     func hide() {
         guard popover.isShown else { return }
         closingOnPurpose = true
+        // close() animates and isShown stays true until the animation ends
+        // (~0.5 s): a present() in that window would only reposition the
+        // closing popover and it would vanish. Close without the animation.
+        let animates = popover.animates
+        popover.animates = false
         popover.close()
+        popover.animates = animates
         closingOnPurpose = false
     }
 
