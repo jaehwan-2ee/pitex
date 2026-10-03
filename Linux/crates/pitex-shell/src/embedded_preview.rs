@@ -407,7 +407,7 @@ impl Default for EmbeddedPreview {
 pub const SUPPORTED: bool = cfg!(all(unix, feature = "embedded-preview"));
 
 /// Coalescing window before a burst of edits is streamed.
-pub const COALESCE_MS: u64 = 120;
+pub const COALESCE_MS: u64 = 100;
 /// Retry interval while an IME composition is open.
 pub const COMPOSING_RETRY_MS: u64 = 150;
 
