@@ -76,9 +76,13 @@ final class EmbeddedPreviewPathsTests: XCTestCase {
     /// exist. Asserted against realpath, so this is vacuous only on a
     /// platform where /tmp is already canonical.
     func testTmpRootAliasSpelling() throws {
+        let input = "/tmp/pitex-\(UUID().uuidString).tex"
         let root = posixRealpath("/tmp")
-        let missing = EmbeddedPreviewPaths.canonical("/tmp/pitex-\(UUID().uuidString).tex")
-        XCTAssertEqual(missing, root + missing.dropFirst("/tmp".count))
+        let missing = EmbeddedPreviewPaths.canonical(input)
+        // Expected = realpath of the existing /tmp prefix + the missing
+        // tail taken verbatim from the INPUT spelling — not derived from the
+        // output (which on Darwin is already the /private spelling).
+        XCTAssertEqual(missing, root + input.dropFirst("/tmp".count))
         XCTAssertTrue(missing.hasPrefix(root + "/"))
     }
 
