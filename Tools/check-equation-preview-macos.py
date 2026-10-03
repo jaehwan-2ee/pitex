@@ -20,7 +20,8 @@ exercises the production EquationPreviewController end to end:
 - \input macro context + external redefinition refresh on app activation;
 - escaped-dollar/comment/verbatim negatives;
 - A->B document switch (late results cannot target the wrong file);
-- Escape, focus loss, scroll out/re-anchor, 720x360 cap, delay, placement
+- Escape, focus loss, scroll out/re-anchor, the popover size cap (720 pt wide;
+  height min(max(360, 55 % of the screen's visible height), 720) pt), delay, placement
   (changed through the real settings sheet, which takes focus; measured
   with finite, current, stable public content/anchor screen rectangles
   in Cocoa y-up coordinates, never CG-list sentinels);
@@ -345,7 +346,19 @@ private struct PlacementGeometry: Equatable, Sendable {
                 NotificationCenter.default.removeObserver(showTok)
                 NotificationCenter.default.removeObserver(closeTok)
             }
-            // K6: capture BOTH baselines AFTER the popover is visible.
+            // The popover was shown just before this call and its show
+            // animation may still be running: on macOS 27.0.1 NSPopoverDidShow
+            // arrives ~0.5 s after popover.present returned. Absorb exactly
+            // THAT pending DidShow before the baselines, without relaxing the
+            // oracle: during the wait there must be NO close and at most ONE
+            // show (a hide/re-show churn would close first).
+            let showsAtEntry = popoverShows
+            let closesAtEntry = popoverCloses
+            _ = await until(1.0) { popoverShows > showsAtEntry }
+            require(popoverCloses == closesAtEntry && popoverShows - showsAtEntry <= 1,
+                    "popover must not close or re-show while its show completes: shows=+\(popoverShows - showsAtEntry) closes=+\(popoverCloses - closesAtEntry)")
+            // K6: capture BOTH baselines AFTER the popover is visible and its
+            // show has completed.
             let showsAtStart = popoverShows
             let closesAtStart = popoverCloses
             for _ in 0..<3 {
@@ -366,7 +379,7 @@ private struct PlacementGeometry: Equatable, Sendable {
             }
             require(popoverShows == showsAtStart && popoverCloses == closesAtStart,
                     "no repeated present without input: shows=\(popoverShows) closes=\(popoverCloses)")
-            stage("D1: 3 debounce cycles — app key/firstResponder stay editor, preview owns no responder, 0 extra show/close")
+            stage("D1: 3 debounce cycles — app key/firstResponder stay editor, preview owns no responder, 0 extra show/close after the show completed")
         }
 
         // ── Real input through the real loops ────────────────────────────
@@ -664,6 +677,15 @@ private struct PlacementGeometry: Equatable, Sendable {
             fflush(nil)
             exit(1)
         }
+        /// The popover's screen-relative height cap: the SAME formula as
+        /// EquationPreviewPopover.maximumHeight(for:), min(max(360, 55 % of
+        /// the screen's visible height), 720) pt. ONE value for the whole
+        /// file. It is fractional on some displays (577.5 pt at 1050 pt), so
+        /// every comparison with native geometry allows < 1 pt (the popover
+        /// window rounds, the page's innerWidth/innerHeight are integers).
+        func previewHeightCap() -> CGFloat {
+            min(max(360, (window.screen?.visibleFrame.height ?? 720) * 0.55), 720)
+        }
         /// Public AX-identified content includes the native badge, unlike
         /// the WebKit body. Window chrome is reported separately.
         func previewContentBounds(_ label: String) -> CGRect {
@@ -671,8 +693,9 @@ private struct PlacementGeometry: Equatable, Sendable {
             require(element != nil && element!.window?.isVisible == true,
                     "\(label): visible preview content must be reachable")
             let bounds = element!.bounds
-            require(bounds.width > 10 && bounds.height > 10 && bounds.width <= 720 && bounds.height <= 360,
-                    "\(label): whole preview content including badge must fit 720x360, got \(bounds)")
+            let heightCap = previewHeightCap()
+            require(bounds.width > 10 && bounds.height > 10 && bounds.width <= 720 && bounds.height < heightCap + 1,
+                    "\(label): whole preview content including badge must fit the 720 pt width cap and the screen-relative height cap \(heightCap) pt (+ < 1 pt window rounding), got \(bounds)")
             return bounds
         }
         func visibleFastPage(_ label: String) -> WKWebView {
@@ -721,7 +744,9 @@ private struct PlacementGeometry: Equatable, Sendable {
                 let height = metrics!["viewportHeight"]!.doubleValue
                 // WebKit applies native frame changes asynchronously.
                 // Await that actual geometry, not a fixed settling delay.
-                if width == Double(page.bounds.width) && height == Double(page.bounds.height) {
+                // < 1 pt: innerWidth/innerHeight are integers, the native
+                // frame can be fractional (the screen-relative height cap).
+                if abs(width - Double(page.bounds.width)) < 1 && abs(height - Double(page.bounds.height)) < 1 {
                     return (metrics!["svgHeight"]!.doubleValue, metrics!["displayHeight"]!.doubleValue,
                             width, height, metrics!["scrollWidth"]!.doubleValue, metrics!["scrollHeight"]!.doubleValue,
                             metrics!["clientWidth"]!.doubleValue, metrics!["clientHeight"]!.doubleValue,
@@ -1098,15 +1123,15 @@ private struct PlacementGeometry: Equatable, Sendable {
         let pop = previewState()
         require(pop.role.contains("image") && pop.source.contains("\\begin{align}") && pop.source.contains("r_39 &= 39"),
                 "large preview must render the complete 39-row align source, got role=\(pop.role) source='\(pop.source)'")
-        // New bound: fraction of the host screen's visible height (hard-
-        // capped). Recompute here from the checker window's screen — the
-        // same source present() uses — so it is not a hard-coded constant.
-        let maxPreviewHeight = min(max(360, (window.screen?.visibleFrame.height ?? 720) * 0.55), 720)
+        // The popover's screen-relative cap (fraction of the host screen's
+        // visible height, hard-capped): the one shared value defined with
+        // previewContentBounds, not a hard-coded constant.
+        let maxPreviewHeight = previewHeightCap()
         let badgeH: Double = 16
         let largeMetrics = await fastPreviewMetrics("large align")
         let largeContentBounds = previewContentBounds("large align")
-        require(largeContentBounds.height == maxPreviewHeight,
-                "oversized 39-row fixture must clamp the whole content to the screen-relative cap \(maxPreviewHeight), got \(largeContentBounds)")
+        require(abs(largeContentBounds.height - maxPreviewHeight) < 1,
+                "oversized 39-row fixture must clamp the whole content to the screen-relative cap \(maxPreviewHeight) (< 1 pt window rounding), got \(largeContentBounds)")
         require(largeMetrics.svgHeight > (maxPreviewHeight - badgeH)
                 && largeMetrics.displayHeight > largeMetrics.viewportHeight
                 && largeMetrics.viewportWidth > 0 && largeMetrics.viewportHeight > 0
