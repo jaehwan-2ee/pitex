@@ -386,7 +386,7 @@ final class EmbeddedPreviewState {
 
 extension WorkspaceModel {
     /// Coalescing window before a burst of edits is streamed.
-    static let embeddedCoalesceMs: UInt64 = 120
+    static let embeddedCoalesceMs: UInt64 = 100
     /// Retry interval while an IME composition is open.
     static let embeddedComposingRetryMs: UInt64 = 150
 
