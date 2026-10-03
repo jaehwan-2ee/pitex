@@ -492,7 +492,52 @@ impl SyncTeXQueryParser {
     }
 }
 
+
+/// Re-roots a Windows path spelling to the parser's absolute POSIX form.
+/// Compiled ONLY on Windows — everywhere else the original POSIX-only strict
+/// rules apply unchanged (a `\` or non-'/' path still fails PathOutsideRoot).
+/// `C:\p\f` -> `/C:/p/f`; verbatim `\\?\C:\…` -> `/C:/…`; UNC
+/// `\\server\share` -> `//server/share`; the drive letter is upper-cased and
+/// backslashes become '/'. Unrecognised spellings pass through unchanged so
+/// the existing `contains('\\')` rejection still fires on them.
+#[cfg(windows)]
+fn to_parser_path(raw: &str) -> String {
+    let b = raw.as_bytes();
+    // Drive-letter absolute (X:\ or X:/) is checked FIRST — a forward-slash
+    // drive path contains no backslash and would otherwise pass through and
+    // fail the '/' check on Windows.
+    if b.len() >= 3 && b[1] == b':' && b[0].is_ascii_alphabetic()
+        && (b[2] == b'\\' || b[2] == b'/') {
+        return format!("/{}{}", (b[0] as char).to_ascii_uppercase(),
+                       &raw[1..].replace('\\', "/"));
+    }
+    if !raw.contains('\\') {
+        return raw.to_string();
+    }
+    // verbatim: \\?\X:\.. or \\?\UNC\server\share
+    if let Some(rest) = raw.strip_prefix("\\\\?\\") {
+        let r = rest.replace('\\', "/");
+        if let Some(u) = r.strip_prefix("UNC/") { return format!("//{}", u); }
+        if r.len() >= 2 && r.as_bytes()[1] == b':' && r.as_bytes()[0].is_ascii_alphabetic() {
+            return format!("/{}{}", (r.as_bytes()[0] as char).to_ascii_uppercase(), &r[1..]);
+        }
+        return r;
+    }
+    // UNC share: \\server\share
+    if let Some(rest) = raw.strip_prefix("\\\\") {
+        return format!("//{}", rest.replace('\\', "/"));
+    }
+    raw.to_string()
+}
+/// Non-Windows: identity — the strict POSIX rules apply unchanged.
+#[cfg(not(windows))]
+fn to_parser_path(raw: &str) -> String {
+    raw.to_string()
+}
+
 fn canonical_root(raw: &str) -> Result<Vec<String>, SyncTeXQueryError> {
+    let raw = to_parser_path(raw);
+    let raw = raw.as_str();
     if !raw.starts_with('/') || raw.contains('\\') || raw.contains('\0') {
         return Err(SyncTeXQueryError::PathOutsideRoot { line: 0 });
     }
@@ -516,6 +561,8 @@ fn canonical_project_path(
     line: usize,
 ) -> Result<NormalizedSourcePath, SyncTeXQueryError> {
     let err = || SyncTeXQueryError::PathOutsideRoot { line };
+    let raw = to_parser_path(raw);
+    let raw = raw.as_str();
     if raw.is_empty() || raw.contains('\\') || raw.contains('\0') {
         return Err(err());
     }

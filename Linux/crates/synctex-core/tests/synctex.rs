@@ -314,3 +314,102 @@ fn normalized_records_from_real_cli_shape() {
     assert_eq!(inverse.source.path.value, "sections/details.tex");
     assert_eq!(inverse.source.line, 6);
 }
+
+/// Non-Windows targets keep the byte-for-byte POSIX-only strict rules:
+/// a legal POSIX name containing a backslash, a drive-letter root, and a
+/// `..` escape are all rejected exactly as before the fix.
+#[cfg(unix)]
+#[test]
+fn non_windows_backslash_and_drive_paths_stay_rejected() {
+    let text = concat!(
+        "SyncTeX Version:1\n",
+        "SyncTeX Fingerprint:7829367\n",
+        "SyncTeX result begin\n",
+        "Input:/ws/proj/a\\b.tex\n",
+        "Line:4\nColumn:0\n",
+        "Output:/ws/proj/build/main.pdf\n",
+        "Page:1\nx:1\ny:2\nh:3\nv:4\nW:5\nH:6\n",
+        "SyncTeX result end\n",
+    );
+    assert!(matches!(
+        SyncTeXQueryParser::parse(text, "/ws/proj", &binding(&revision())).unwrap_err(),
+        SyncTeXQueryError::PathOutsideRoot { .. }
+    ));
+    let windows_text = text.replace(
+        "Input:/ws/proj/a\\b.tex",
+        "Input:C:\\ws\\proj\\main.tex",
+    );
+    assert!(matches!(
+        SyncTeXQueryParser::parse(&windows_text, "C:\\ws\\proj", &binding(&revision()))
+            .unwrap_err(),
+        SyncTeXQueryError::PathOutsideRoot { .. }
+    ));
+    let escape = text.replace(
+        "Input:/ws/proj/a\\b.tex",
+        "Input:/ws/proj/../x.tex",
+    );
+    assert!(matches!(
+        SyncTeXQueryParser::parse(&escape, "/ws/proj", &binding(&revision())).unwrap_err(),
+        SyncTeXQueryError::PathOutsideRoot { .. }
+    ));
+}
+
+/// Regression for the Windows path defect: the strict parser took POSIX-only
+/// paths, so a Windows `C:\…` root and absolute path always errored
+/// `PathOutsideRoot`. On Windows to_parser_path re-roots `C:\…`/`\\?\C:\…`/
+/// `\\server\share` to a POSIX form, so forward results select on Windows.
+/// Runs only on Windows — synctex-core's own tests are not part of the Windows
+/// CI job; the Windows proof is the pitex-shell forward test in that job.
+#[cfg(windows)]
+#[test]
+fn windows_root_and_paths_normalize_and_select() {
+    let text = concat!(
+        "SyncTeX Version:1\n",
+        "SyncTeX Fingerprint:7829367\n",
+        "SyncTeX result begin\n",
+        "Input:C:\\ws\\proj\\main.tex\n",
+        "Line:4\nColumn:0\n",
+        "Output:C:\\ws\\proj\\build\\main.pdf\n",
+        "Page:1\nx:1\ny:2\nh:3\nv:4\nW:5\nH:6\n",
+        "SyncTeX result end\n",
+    );
+    for root in ["C:\\ws\\proj", "\\\\?\\C:\\ws\\proj", "c:\\ws\\proj"] {
+        let doc = SyncTeXQueryParser::parse(text, root, &binding(&revision()))
+            .unwrap_or_else(|e| panic!("windows root {root} rejected: {e:?}"));
+        assert_eq!(doc.candidates.len(), 1, "root {root}");
+    }
+    // forward-slash drive path: no backslash, must still be re-rooted
+    let fwd = text.replace(
+        "Input:C:\\ws\\proj\\main.tex",
+        "Input:C:/ws/proj/main.tex",
+    );
+    let fwd = fwd.replace(
+        "Output:C:\\ws\\proj\\build\\main.pdf",
+        "Output:C:/ws/proj/build/main.pdf",
+    );
+    let doc = SyncTeXQueryParser::parse(&fwd, "C:/ws/proj", &binding(&revision()))
+        .unwrap_or_else(|e| panic!("forward-slash drive root rejected: {e:?}"));
+    assert_eq!(doc.candidates.len(), 1);
+    // mixed: verbatim root + forward-slash drive Input
+    let doc = SyncTeXQueryParser::parse(&fwd, "\\\\?\\C:\\ws\\proj", &binding(&revision()))
+        .unwrap_or_else(|e| panic!("verbatim root + fwd input rejected: {e:?}"));
+    assert_eq!(doc.candidates.len(), 1);
+    // a Windows path OUTSIDE the root is still rejected
+    let outside = text.replace(
+        "Input:C:\\ws\\proj\\main.tex",
+        "Input:C:\\ws\\other\\main.tex",
+    );
+    assert!(matches!(
+        SyncTeXQueryParser::parse(&outside, "C:\\ws\\proj", &binding(&revision())).unwrap_err(),
+        SyncTeXQueryError::PathOutsideRoot { .. }
+    ));
+    // a `..` escape inside a Windows path is still rejected
+    let dotdot = text.replace(
+        "Input:C:\\ws\\proj\\main.tex",
+        "Input:C:\\ws\\proj\\..\\x.tex",
+    );
+    assert!(matches!(
+        SyncTeXQueryParser::parse(&dotdot, "C:\\ws\\proj", &binding(&revision())).unwrap_err(),
+        SyncTeXQueryError::PathOutsideRoot { .. }
+    ));
+}
