@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compute release name
-        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+        run: echo "NAME=$(printf '%s' "$GITHUB_REF_NAME" | tr / -)" >> "$GITHUB_ENV"
       - name: Download bundled preview-engine payload
         uses: actions/download-artifact@v4
         with:
@@ -74,18 +74,18 @@ jobs:
           ( cd "$APP/Contents/Resources/pdfjs" \
             && shasum -a 256 -c MANIFEST.sha256 >/dev/null \
             && [ "$(find . -type f ! -name MANIFEST.sha256 | wc -l | tr -d ' ')" = 209 ] )
-          [ "$(sha256sum "$APP/Contents/Resources/pdfjs/MANIFEST.sha256" | cut -d' ' -f1)" \
+          [ "$(shasum -a 256 "$APP/Contents/Resources/pdfjs/MANIFEST.sha256" | cut -d' ' -f1)" \
             = cf0b7eb2630942778746ecf7f6c0e32222220780beb3908a0930d1ed058e6366 ] \
             || { echo "pdfjs MANIFEST pin mismatch" >&2; exit 1; }
           # Helper payload NAME sets (not a count — the CI build has no
           # glib/intl/pcre2). bin: the two helpers; lib: one dylib each.
           AH="$APP/Contents/Helpers/PreviewEngine"
           find "$AH" -maxdepth 1 -type f ! -name '*.dylib' -exec basename {} \; \
-            | sort > /tmp/h.txt
+            | LC_ALL=C sort > /tmp/h.txt
           printf '%s\n' pitex-preview pitex-preview-xetex > /tmp/h.want
           diff /tmp/h.txt /tmp/h.want || { echo "helper bin set mismatch" >&2; exit 1; }
           find "$AH/lib" -type f -name '*.dylib' -exec basename {} \; \
-            | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | sort -u > /tmp/l.txt
+            | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | LC_ALL=C sort -u > /tmp/l.txt
           printf '%s\n' libTECkit libfreetype libgraphite2 libharfbuzz \
             libicudata libicuuc libpng16 libz > /tmp/l.want
           diff /tmp/l.txt /tmp/l.want || { echo "helper dylib set mismatch" >&2; exit 1; }
@@ -126,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compute release name
-        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+        run: echo "NAME=$(printf '%s' "$GITHUB_REF_NAME" | tr / -)" >> "$GITHUB_ENV"
       - name: System dependencies
         run: |
           sudo apt-get update
@@ -169,7 +169,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compute release name
-        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+        run: echo "NAME=$(printf '%s' "$GITHUB_REF_NAME" | tr / -)" >> "$GITHUB_ENV"
       - name: System dependencies
         run: |
           apt-get update
@@ -222,7 +222,7 @@ jobs:
       # B2: after setup-msys2 — the job's default shell is `msys2 {0}`, which
       # only exists once that action installs it.
       - name: Compute release name
-        run: echo "NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+        run: echo "NAME=$(printf '%s' "$GITHUB_REF_NAME" | tr / -)" >> "$GITHUB_ENV"
       - name: Build and bundle
         run: bash Windows/build.sh
       - name: Create zip
@@ -332,12 +332,12 @@ jobs:
           H="$GITHUB_WORKSPACE/pe-payload/Contents/Helpers/PreviewEngine"
           [ -d "$H" ] || { echo "no helper payload dir: $H" >&2; exit 1; }
           find "$H" -maxdepth 1 -type f ! -name '*.dylib' -exec basename {} \; \
-            | sort > /tmp/helpers.txt
+            | LC_ALL=C sort > /tmp/helpers.txt
           printf '%s\n' pitex-preview pitex-preview-xetex > /tmp/helpers.want
           diff /tmp/helpers.txt /tmp/helpers.want \
             || { echo "helper bin set mismatch" >&2; exit 1; }
           find "$H/lib" -type f -name '*.dylib' -exec basename {} \; \
-            | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | sort -u > /tmp/libs.txt
+            | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | LC_ALL=C sort -u > /tmp/libs.txt
           printf '%s\n' libTECkit libfreetype libgraphite2 libharfbuzz \
             libicudata libicuuc libpng16 libz > /tmp/libs.want
           diff /tmp/libs.txt /tmp/libs.want \
