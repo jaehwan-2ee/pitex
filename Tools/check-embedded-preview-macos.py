@@ -55,7 +55,9 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("products", type=Path)
 parser.add_argument("payload", type=Path)
 parser.add_argument("repo", type=Path)
-parser.add_argument("--scenario", choices=("all", "smoke", "full", "tmp-root", "c23"), default="all")
+parser.add_argument("--scenario", choices=("all", "smoke", "full", "tmp-root", "c23", "c30"), default="all")
+parser.add_argument("--tip", choices=("old", "b", "c"), default="c",
+                    help="--scenario c30 only: the tree under test. old = before C30b/C30, b = C30b, c = C30b + C30 (selects which expectations apply).")
 parser.add_argument("--artifacts", type=Path,
                     help="Owned evidence directory; captured before cleanup and each next launch.")
 args = parser.parse_args()
@@ -120,6 +122,7 @@ fixture_fonts = (
 check = r'''
 import AppKit
 import BuildFeature
+import Combine
 import Darwin
 import PDFKit
 import SwiftUI
@@ -290,6 +293,281 @@ enum LaunchFlag {
     static func sessionDir() -> URL? { workspace.embeddedPreview.session?.directory }
     static func statusIsUpdating() -> Bool {
         workspace.embeddedPreviewStatus == .updating
+    }
+
+    // ===== C30 / C30b stages (rule C30-PROOF-RULE-v1.3). Scenario `c30`; the tip under test comes from PITEX_C30_TIP: old | b | c. =====
+    static let c30Tip = ProcessInfo.processInfo.environment["PITEX_C30_TIP"] ?? "c"
+    static var c30U = 0
+    static var c30S = 0
+    static var c30LastBytes: Data?
+    static var c30Bag: [AnyCancellable] = []
+    static var c30Contaminated = false       // OLD only: set after the first loop-triggering stage (H2)
+    static var c30Timeouts = 0
+    static var c30SkipSettles = false        // OLD: after one SETTLE-TIMEOUT the loop is known to run; do not burn 20 s per stage
+
+    static func c30Install() {
+        c30LastBytes = workspace.retainedPDF?.data    // the subscription replays the current value: not a swap
+        c30Bag.append(workspace.$embeddedPreviewStatus.sink { value in
+            MainActor.assumeIsolated { if value == .updating { c30U += 1 } }
+        })
+        c30Bag.append(workspace.$retainedPDF.sink { value in
+            MainActor.assumeIsolated {
+                if let d = value?.data, d != c30LastBytes { c30S += 1; c30LastBytes = d }
+            }
+        })
+    }
+    typealias C30Counts = (u: Int, s: Int, q: Int, p: Int)
+    static func c30Now() -> C30Counts { (c30U, c30S, checkQCount, checkPCount) }
+
+    /// H1: every settle has a deadline. On expiry it logs SETTLE-TIMEOUT and returns false; it never hangs.
+    @discardableResult
+    static func c30Settle(_ label: String, quiet: Double = 1.0, deadline: Double = 20) async -> Bool {
+        if c30SkipSettles { return false }
+        let start = ContinuousClock.now
+        var last = [c30U, c30S, checkQCount, checkPCount]
+        var since = start
+        while ContinuousClock.now - start < .seconds(deadline) {
+            try? await Task.sleep(for: .milliseconds(40))
+            noteObservations()
+            let counts = [c30U, c30S, checkQCount, checkPCount]
+            if counts != last { last = counts; since = .now }
+            let calm = workspace.embeddedPreviewStatus == .current
+                && workspace.embeddedPreview.displayed?.complete == true
+                && workspace.embeddedPreview.timer == nil
+            if calm && ContinuousClock.now - since >= .seconds(quiet) { return true }
+        }
+        c30Timeouts += 1
+        print("[c30] SETTLE-TIMEOUT \(label) (tip \(c30Tip))"); fflush(nil)
+        if c30Tip == "old" { c30SkipSettles = true }
+        return false
+    }
+
+    /// Runs `action`, waits `seconds`, and returns the counter deltas of the whole window.
+    static func c30Window(_ name: String, seconds: Double, _ action: () async -> Void) async -> C30Counts {
+        let b = c30Now()
+        await action()
+        try? await Task.sleep(for: .seconds(seconds))
+        let e = c30Now()
+        let d: C30Counts = (e.u - b.u, e.s - b.s, e.q - b.q, e.p - b.p)
+        print("[c30] \(name): U=\(d.u) S=\(d.s) Q=\(d.q) P=\(d.p) (tip \(c30Tip)\(c30Contaminated ? ", contaminated" : ""))"); fflush(nil)
+        return d
+    }
+
+    /// A tip-specific expectation. It fails the run only where it applies and the OLD arm is not contaminated by an earlier loop trigger (H2);
+    /// elsewhere it is printed as INFO with its outcome.
+    static func c30Expect(_ condition: Bool, _ message: String, applies: Set<String> = ["old", "b", "c"]) {
+        let contaminated = c30Tip == "old" && c30Contaminated
+        if applies.contains(c30Tip) && !contaminated {
+            require(condition, "[c30] \(message)")
+            print("[c30] ok: \(message)"); fflush(nil)
+        } else {
+            print("[c30] INFO \(condition ? "met" : "not met") (tip \(c30Tip)\(contaminated ? ", contaminated" : "")): \(message)"); fflush(nil)
+        }
+    }
+
+    static func c30EditorText() -> String { workspace.environment?.editor.textView.string ?? "" }
+    static func c30PDFHas(_ marker: String) -> Bool { pdfText(workspace.retainedPDF?.data ?? Data()).contains(marker) }
+    static func c30Sleep(_ ms: Int) async { try? await Task.sleep(for: .milliseconds(ms)) }
+    static func c30Write(_ text: String, to url: URL, atomic: Bool = true) {
+        try? text.write(to: url, atomically: atomic, encoding: .utf8)
+    }
+    /// Overwrite `count` bytes at the first occurrence of `old` with `new` (same length) IN PLACE: same inode, same size.
+    static func c30OverwriteInPlace(_ url: URL, old: String, new: String) -> Bool {
+        precondition(old.utf8.count == new.utf8.count)
+        guard let data = try? Data(contentsOf: url), let range = data.range(of: Data(old.utf8)),
+              let handle = try? FileHandle(forUpdating: url) else { return false }
+        defer { try? handle.close() }
+        do { try handle.seek(toOffset: UInt64(range.lowerBound)); try handle.write(contentsOf: Data(new.utf8)) } catch { return false }
+        return true
+    }
+    static func c30Stat(_ url: URL) -> stat? {
+        var info = stat()
+        return stat(url.path, &info) == 0 ? info : nil
+    }
+    /// Set the modification time to `time` exactly (nanoseconds), leaving the access time alone.
+    static func c30SetMTime(_ url: URL, _ time: timespec) {
+        var times = [timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT)), time]
+        _ = utimensat(AT_FDCWD, url.path, &times, 0)
+    }
+    /// Set the ACCESS time only (what a read does), leaving the modification time alone.
+    static func c30TouchAccessOnly(_ url: URL) {
+        var times = [timespec(tv_sec: 0, tv_nsec: Int(UTIME_NOW)), timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT))]
+        _ = utimensat(AT_FDCWD, url.path, &times, 0)
+    }
+
+    static func runC30() async {
+        c30Install()
+        let main = project.appendingPathComponent("main.tex")
+        stage("C30 start: tip=\(c30Tip) project=\(project.path)")
+        await c30Settle("start")
+
+        // ---- non-triggering stages first (H2) ----
+        let idle = await c30Window("C30-idle-edit", seconds: 10) { }
+        c30Expect(idle.u == 0 && idle.s == 0 && idle.q == 0, "C30-idle-edit: 10 s of nothing after a settled edit gave U=\(idle.u) S=\(idle.s) Q=\(idle.q), need 0/0/0", applies: ["c"])
+
+        await c30Settle("before-edit")
+        let incomplete0 = checkIncompleteCount
+        let edit = await c30Window("C30-edit", seconds: 0) {
+            insert("\nC30EditMarker\\par\n")
+            _ = await until(60) { workspace.embeddedPreviewStatus == .current && c30PDFHas("C30EditMarker") }
+        }
+        let incomplete = checkIncompleteCount - incomplete0
+        require(c30PDFHas("C30EditMarker"), "[c30] C30-edit: the edit never reached the displayed PDF")
+        c30Expect(edit.u >= 1 && edit.u <= 1 + incomplete && edit.s >= 1,
+                  "C30-edit: one edit gave U=\(edit.u) (allowed 1...\(1 + incomplete)) S=\(edit.s) (>= 1)")
+
+        await c30Settle("before-bind")
+        workspace.invalidateSyncTeX(reason: "c30 bind probe")
+        workspace.requestEmbeddedPreviewFlush()
+        c30Expect(await until(10) { workspace.syncTeXBinding != nil },
+                  "C30-bind: SyncTeX rebinds within 10 s after an invalidate and an UNFORCED equal-key flush")
+        workspace.jumpTo(line: 8, column: 0)
+        await workspace.syncForward()
+        if case .stale = workspace.syncTeXState { c30Expect(false, "C30-bind: forward sync went stale on a coherent preview") }
+        c30Expect(await workspace.embeddedPreviewSyncTeXRefusal() == nil, "C30-bind: the S4 refusal is absent on a coherent preview")
+
+        await c30Settle("before-poll")
+        let incomplete1 = checkIncompleteCount
+        var polls = 0, refusals = 0
+        let poll = await c30Window("C30-poll", seconds: 0) {
+            insert("\nC30StaleProbe\\par\n")
+            let t0 = ContinuousClock.now
+            while ContinuousClock.now - t0 < .seconds(10) {
+                polls += 1
+                if await workspace.embeddedPreviewSyncTeXRefusal() != nil { refusals += 1 }
+                await c30Sleep(40)
+            }
+        }
+        let allowance = 1 + (checkIncompleteCount - incomplete1)
+        print("[c30] C30-poll detail: polls=\(polls) refusals=\(refusals) incompletePublications=\(allowance - 1)"); fflush(nil)
+        // Rule v1.4 accepts the C30-edit allowance for the poll stage (1 + incomplete publications: a partial and then the complete pass swap and re-enter
+        // Updating twice); the literal v1.3 bound U <= 1, S <= 1 is printed beside it.
+        c30Expect(poll.u <= allowance && poll.q <= 2 && poll.s <= allowance,
+                  "C30-poll: U=\(poll.u) Q=\(poll.q) S=\(poll.s) (allowance U,S <= \(allowance), Q <= 2); literal v1.3 bound U<=1,S<=1 (printed for the record) would be \(poll.u <= 1 && poll.s <= 1 ? "met" : "NOT met")",
+                  applies: ["c"])
+
+        // C30-force-unopened(rescan): non-triggering (rescanProject reads no open file). The agent half is a loop trigger and runs after C30-loop (rule v1.4).
+        await c30Settle("before-unopened")
+        let tail = project.appendingPathComponent("tail.tex")
+        c30Write("\\section{Omega}\nTailBaseMarker C30TailA\\par\\newpage\nLastPageText\\par\n", to: tail)
+        let q0 = checkQCount
+        workspace.rescanProject()
+        c30Expect(await until(30) { c30PDFHas("C30TailA") }, "C30-force-unopened(rescan): rescanProject() sent the changed UNOPENED tail.tex to the helper (C30TailA in the PDF <= 30 s)")
+        c30Expect(checkQCount - q0 >= 1, "C30-force-unopened(rescan): Q grew by \(checkQCount - q0) (>= 1: a forced flush)")
+
+        // ---- loop-triggering stages (H2): they start the endless loop on OLD ----
+        await c30Settle("before-loop")
+        insert("\nC30LoopEdit\\par\n")
+        let preSave = await c30Settle("loop-pre")
+        if c30Tip == "old" && (!preSave || c30Timeouts > 0) {
+            // v1.4: OLD's loop validity counts only if no loop was running BEFORE the save (P quiet over the pre-save settle, no SETTLE-TIMEOUT so far).
+            print("[c30] OLD: loop already running before the save -> C30-loop INVALID on OLD"); fflush(nil)
+            require(false, "[c30] OLD: loop already running before the save: C30-loop INVALID on OLD (STOP, no claim)")
+        }
+        let loop = await c30Window("C30-loop", seconds: 10) { await workspace.save() }
+        c30Expect(loop.p >= 10, "C30-loop: OLD must reproduce the loop (P=\(loop.p) >= 10): else STOP, no claim", applies: ["old"])
+        c30Expect(loop.p <= 1 && loop.q <= 2, "C30-loop: T_b P=\(loop.p) <= 1 and Q=\(loop.q) <= 2", applies: ["b"])
+        c30Expect(loop.p <= 1 && loop.u == 0 && loop.q == 0 && loop.s == 0,
+                  "C30-loop: T_c P=\(loop.p) <= 1, U=\(loop.u) Q=\(loop.q) S=\(loop.s) all 0", applies: ["c"])
+        if c30Tip == "old" { c30Contaminated = true }
+        await c30Settle("after-loop")
+
+        // C30-force-unopened(agent): refreshAfterAgentActivity() runs processDiskChange for EVERY open session (a mapped read of main.tex), so it is a loop
+        // trigger on OLD: it runs here, after C30-loop (rule v1.4).
+        let agentQ0 = checkQCount
+        c30Write("\\section{Omega}\nTailBaseMarker C30TailB\\par\\newpage\nLastPageText\\par\n", to: tail)
+        await workspace.refreshAfterAgentActivity()
+        c30Expect(await until(30) { c30PDFHas("C30TailB") }, "C30-force-unopened(agent): refreshAfterAgentActivity() sent the changed UNOPENED tail.tex (C30TailB <= 30 s)")
+        c30Expect(checkQCount - agentQ0 >= 1, "C30-force-unopened(agent): Q grew by \(checkQCount - agentQ0) (>= 1: a forced flush)")
+        await c30Settle("after-agent")
+
+        // C30b-external: the filter must not hide real changes (clean, open main.tex).
+        let originalMode = c30Stat(main).map { mode_t($0.st_mode & 0o7777) } ?? 0o644
+        let ext1 = await c30Window("C30b-external(a) in-place same-size change", seconds: 3) {
+            require(c30OverwriteInPlace(main, old: "C30LoopEdit", new: "C30LoopEdiX"), "[c30] (a) in-place overwrite failed")
+        }
+        c30Expect(await until(10) { c30EditorText().contains("C30LoopEdiX") } && ext1.p >= 1, "C30b-external(a): in-place content change adopted <= 10 s and P=\(ext1.p) >= 1")
+        await c30Settle("ext-a")
+        let ext2 = await c30Window("C30b-external(b) atomic replace", seconds: 3) {
+            let text = (try? String(contentsOf: main, encoding: .utf8)) ?? ""
+            c30Write(text.replacingOccurrences(of: "C30LoopEdiX", with: "C30LoopEdiX C30ExtB"), to: main)
+        }
+        c30Expect(await until(10) { c30EditorText().contains("C30ExtB") } && ext2.p >= 1, "C30b-external(b): atomic replace adopted <= 10 s and P=\(ext2.p) >= 1")
+        await c30Settle("ext-b")
+        let ext3 = await c30Window("C30b-external(c) touch -m (mtime only)", seconds: 3) {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: main.path)
+        }
+        c30Expect(ext3.p >= 1, "C30b-external(c): an mtime-only change is processed (P=\(ext3.p) >= 1)")
+        let ext4 = await c30Window("C30b-external(d) chmod and back", seconds: 3) {
+            chmod(main.path, 0o600); await c30Sleep(250); chmod(main.path, originalMode)
+        }
+        c30Expect(ext4.p >= 1, "C30b-external(d): a mode change is processed (P=\(ext4.p) >= 1)")
+        let ext5 = await c30Window("C30b-external(e) access-time only + a read", seconds: 4) {
+            c30TouchAccessOnly(main)
+            _ = try? Data(contentsOf: main, options: .mappedIfSafe)
+        }
+        c30Expect(ext5.p == 0, "C30b-external(e): access-time-only events are ignored (P=\(ext5.p) == 0)", applies: ["b", "c"])
+        await c30Settle("ext-e")
+        let before = c30Stat(main)
+        let ext6 = await c30Window("C30b-external(f) same-size rewrite, original mtime restored", seconds: 3) {
+            _ = c30OverwriteInPlace(main, old: "C30ExtB", new: "C30ExtY")
+            if let before { c30SetMTime(main, before.st_mtimespec) }
+        }
+        c30Expect(await until(10) { c30EditorText().contains("C30ExtY") }, "C30b-external(f): a same-size rewrite with the mtime restored is still adopted <= 10 s (P=\(ext6.p))")
+        await c30Settle("ext-f")
+
+        let bytes = (try? Data(contentsOf: main)) ?? Data()
+        let burst = await c30Window("C30-burst", seconds: 10) {
+            for _ in 0..<5 {
+                try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: main.path)
+                await c30Sleep(40)
+            }
+            for _ in 0..<3 { try? bytes.write(to: main, options: .atomic); await c30Sleep(40) }
+        }
+        c30Expect(burst.u == 0 && burst.s == 0 && burst.q == 0, "C30-burst: attribute touches and same-bytes rewrites gave U=\(burst.u) S=\(burst.s) Q=\(burst.q), need 0/0/0", applies: ["c"])
+        await c30Settle("after-burst")
+
+        // C30-adopt: a flush requested AFTER the adoption must see the changed hash.
+        let extra = project.appendingPathComponent("c30extra.tex")
+        c30Write("C30AdoptA\\par\n", to: extra)
+        insert("\n\\input{c30extra}\n")
+        _ = await until(60) { c30PDFHas("C30AdoptA") }
+        await workspace.activateDocument(extra)
+        await workspace.activateDocument(main)
+        await c30Settle("adopt-open")
+        c30Write("C30AdoptB\\par\n", to: extra)
+        c30Expect(await until(30) { c30PDFHas("C30AdoptB") }, "C30-adopt(i): a clean OPEN non-active source changed on disk reached the PDF <= 30 s")
+        await c30Settle("adopt-i")
+        await workspace.save()
+        let mainText = (try? String(contentsOf: main, encoding: .utf8)) ?? ""
+        c30Write(mainText.replacingOccurrences(of: "\\end{document}", with: "C30AdoptC\\par\n\\end{document}"), to: main)
+        c30Expect(await until(30) { c30PDFHas("C30AdoptC") }, "C30-adopt(ii): after a skipped save the ACTIVE clean main.tex changed on disk reached the PDF <= 30 s")
+        await c30Settle("adopt-ii")
+
+        // C30-force-open-nonkey and C30-nonkey-save: an open file that is NOT a source (a .md) that TeX reads.
+        let md = project.appendingPathComponent("c30nonkey.md")
+        c30Write("C30NonKeyA\\par\n", to: md)
+        insert("\n\\input{c30nonkey.md}\n")
+        _ = await until(60) { c30PDFHas("C30NonKeyA") }
+        await workspace.activateDocument(md)
+        let opened = workspace.registeredSessions.contains { $0.path.rawValue == "c30nonkey.md" }
+        await workspace.activateDocument(main)
+        require(opened, "[c30] C30-force-open-nonkey NOT RUN: c30nonkey.md did not open as a document session (this blocks the acceptance of C30)")
+        await c30Settle("nonkey-open")
+        c30Write("C30NonKeyB\\par\n", to: md)
+        c30Expect(await until(30) { c30PDFHas("C30NonKeyB") }, "C30-force-open-nonkey: an open non-key file TeX reads, changed on disk, reached the PDF <= 30 s")
+        await c30Settle("nonkey-b")
+        let mdBytes = (try? Data(contentsOf: md)) ?? Data()
+        let nonkey = await c30Window("C30-nonkey-save", seconds: 10) {
+            try? mdBytes.write(to: md, options: .atomic)
+            await c30Sleep(300)
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: md.path)
+        }
+        c30Expect(nonkey.p <= 2, "C30-nonkey-save: P=\(nonkey.p) <= 2 (the loop is absent)", applies: ["b", "c"])
+        c30Expect(nonkey.u <= 2 && nonkey.q <= 2, "C30-nonkey-save: U=\(nonkey.u) Q=\(nonkey.q) <= 2 (each real disk event is one forced flush)", applies: ["c"])
+
+        print("[c30] SUMMARY tip=\(c30Tip) settleTimeouts=\(c30Timeouts)"); fflush(nil)
+        c30Expect(c30Timeouts == 0, "no SETTLE-TIMEOUT anywhere on a NEW tip (\(c30Timeouts))", applies: ["b", "c"])
     }
 
     /// L-C23 (rule v3, hashed before the rerun: C23-PROOF-RULE.md + v2 + v3). The embedded
@@ -636,6 +914,13 @@ enum LaunchFlag {
         require(projectNames() == before, "project tree changed by preview")
         stage("S1 ok: unsaved edit previewed, disk + final artifacts untouched")
 
+        if scenario == "c30" {
+            // S1 settled, then the C30 / C30b stages (rule C30-PROOF-RULE-v1.3); no pointer events.
+            await runC30()
+            print("CHECK_COMPLETE")
+            fflush(nil)
+            exit(0)
+        }
         // --- L-C23: the embedded status must not move the PDF view ------
         await runStatusLayoutStability()
         if scenario == "c23" {
@@ -932,6 +1217,13 @@ with tempfile.TemporaryDirectory(prefix="pitex-embedded-check-") as directory:
     patched = patched.replace(
         acknowledge, acknowledge +
         '            print("[editor-ack] revision=\\(updated.revision) hash=\\(updated.contentHash.rawValue)"); fflush(nil)\n')
+    # P of rule C30 v1.3: processDiskChange runs (an entry counter in the compiled copy; product bytes untouched).
+    pdc_entry = "    private func processDiskChange(_ url: URL) async {\n"
+    assert patched.count(pdc_entry) == 1
+    patched = patched.replace(
+        pdc_entry, pdc_entry +
+        '        checkPCount += 1\n'
+        '        print("[pdc] processDiskChange n=\\(checkPCount) \\(url.lastPathComponent)"); fflush(nil)\n')
     app_copy = root / "PitexApp.swift"
     app_copy.write_text(patched)
     # Read-only accessors exist solely in the compiled checker copy.
@@ -947,12 +1239,16 @@ with tempfile.TemporaryDirectory(prefix="pitex-embedded-check-") as directory:
     assert embedded_source.count(wire_decode) == 1
     embedded_source = embedded_source.replace(
         wire_decode, wire_decode +
+        '                    if wire.event == "published", wire.complete == false { checkIncompleteCount += 1 }\n' +
         '                    print("[wire] event=\\(wire.event) generation=\\(wire.generation ?? 0) seq=\\(wire.seq ?? 0) complete=\\(wire.complete ?? false)"); fflush(nil)\n')
     update_call = "        writer.update(generation: generation, buffers: buffers)\n"
     assert embedded_source.count(update_call) == 1
     embedded_source = embedded_source.replace(
         update_call, '        print("[queued] generation=\\(generation) overrides=\\(buffers.mapValues { $0.hash })"); fflush(nil)\n' +
+        '        checkQCount += 1\n' +
         update_call)
+    embedded_source += ("\n// Counters of the compiled checker copy (rule C30 v1.3): updates queued, processDiskChange runs, incomplete publications.\n"
+                        "nonisolated(unsafe) var checkQCount = 0\nnonisolated(unsafe) var checkPCount = 0\nnonisolated(unsafe) var checkIncompleteCount = 0\n")
     embedded_copy = root / "EmbeddedPreview.swift"
     embedded_copy.write_text(embedded_source)
     (root / "Check.swift").write_text(check)
@@ -1165,6 +1461,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-embedded-check-") as directory:
                    "--env", "PATH=/Library/TeX/texbin:/usr/bin:/bin:/usr/sbin:/sbin",
                    "--env", f"PITEX_CHECK_FIXTURE={fixture_dir}",
                    "--env", f"PITEX_CHECK_SCENARIO={scenario}",
+                   "--env", f"PITEX_C30_TIP={args.tip}",
                    "--env", f"PITEX_CHECK_EVIDENCE={run_dir}",
                    "--env", f"PITEX_CHECK_REF={ref_dir / 'fonts.pdf'}",
                    str(app)]
@@ -1218,7 +1515,7 @@ with tempfile.TemporaryDirectory(prefix="pitex-embedded-check-") as directory:
 
     try:
         scenarios = ("full", "tmp-root") if args.scenario == "all" else (args.scenario,)
-        outputs = [(scenario, run_app(fixture if scenario in ("full", "c23") else tmp_fixture, scenario))
+        outputs = [(scenario, run_app(fixture if scenario in ("full", "c23", "c30") else tmp_fixture, scenario))
                    for scenario in scenarios]
     finally:
         shutil.rmtree(tmp_fixture, ignore_errors=True)
