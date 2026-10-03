@@ -189,6 +189,15 @@ struct Preview: View {
                 Text(verbatim: syncTeXMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    // One line, always: a longer message that wrapped changed
+                    // this row's height and so the PDF view's frame. The full
+                    // text stays in the tooltip and is the explicit
+                    // accessibility label, so truncation never hides it from
+                    // VoiceOver.
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(syncTeXMessage)
+                    .accessibilityLabel(syncTeXMessage)
             }
             Spacer()
         }
