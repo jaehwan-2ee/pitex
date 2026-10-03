@@ -40,6 +40,24 @@ enum WorkspaceSyncTeXState: Equatable {
     case ambiguous(String)
 }
 
+/// What a content change, an atomic replace, a touch or a chmod moves — and what an access-time or extended-attribute update does NOT:
+/// (device, inode, size, mtime in ns, mode). A read of the watched file raises an attribute event whose tuple is unchanged.
+private struct WatchedFileState: Equatable {
+    let device: dev_t
+    let inode: ino_t
+    let size: off_t
+    let mtimeSeconds: Int
+    let mtimeNanoseconds: Int
+    let mode: mode_t
+    /// nil when the path cannot be stat'ed (deleted / unreadable): such an event is processed as before.
+    init?(path: String) {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        device = info.st_dev; inode = info.st_ino; size = info.st_size
+        mtimeSeconds = info.st_mtimespec.tv_sec; mtimeNanoseconds = info.st_mtimespec.tv_nsec; mode = info.st_mode
+    }
+}
+
 /// Bytes + identity of the last PDF a build or the embedded editing
 /// preview published. Kept separately from `buildState` so building/
 /// failure/cancel states can change around it without the preview
@@ -378,6 +396,8 @@ final class WorkspaceModel: ObservableObject {
     var capabilityLease: FileAccessLease?
     var registeredSessions: [DocumentSessionCore.DocumentSession] = []
     private var fileWatchers: [URL: DispatchSourceFileSystemObject] = [:]
+    /// The file state at the last PROCESSED event (and at watcher start) per watched URL — see `fileChangedOnDisk`.
+    private var watchedFileStates: [URL: WatchedFileState] = [:]
     private var pendingDiskChecks: [URL: Task<Void, Never>] = [:]
     /// Newest queued write per document; the next write chains onto it so
     /// a file's saves can never overlap or reorder.
@@ -1197,6 +1217,7 @@ final class WorkspaceModel: ObservableObject {
         // it must not outlive the project it belongs to.
         closeDetachedPreview()
         for url in fileWatchers.keys { stopWatcher(for: url) }
+        watchedFileStates.removeAll()
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
         // In-flight saves finish before their sessions are torn down, and a
@@ -1668,19 +1689,27 @@ final class WorkspaceModel: ObservableObject {
             eventMask: [.write, .delete, .rename, .attrib],
             queue: .main
         )
-        source.setEventHandler { [weak self] in
-            Task { @MainActor in self?.fileChangedOnDisk(url) }
+        source.setEventHandler { [weak self, weak source] in
+            let attributeOnly = source?.data == .attrib
+            Task { @MainActor in self?.fileChangedOnDisk(url, attributeOnly: attributeOnly) }
         }
         source.setCancelHandler { Darwin.close(descriptor) }
         source.resume()
         fileWatchers[url] = source
+        watchedFileStates[url] = WatchedFileState(path: url.path)
     }
 
     private func stopWatcher(for url: URL) {
         fileWatchers.removeValue(forKey: url)?.cancel()
+        watchedFileStates[url] = nil
     }
 
-    private func fileChangedOnDisk(_ url: URL) {
+    private func fileChangedOnDisk(_ url: URL, attributeOnly: Bool) {
+        // An attribute-only event (a read's access time, an extended attribute) for a file whose (device, inode, size, mtime, mode) is what it was at the
+        // last processed event is not a change. Processing it re-reads the file, and that read raises the next such event: an endless ~150 ms loop
+        // (each pass also re-requests an embedded-preview flush and refreshes git). Write/delete/rename events are never filtered; a failed stat is processed.
+        if attributeOnly, let known = watchedFileStates[url], WatchedFileState(path: url.path) == known { return }
+        watchedFileStates[url] = WatchedFileState(path: url.path)
         // Coalesce write bursts (the agent's edit tool may write several
         // times in quick succession) so the session compares against the
         // final on-disk content once, not every intermediate state.
