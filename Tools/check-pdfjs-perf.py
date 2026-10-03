@@ -73,8 +73,7 @@ parser.add_argument("repo", type=Path, nargs="?")
 parser.add_argument("--runs", type=int, default=5)
 parser.add_argument("--arms", default="candidate,control")
 parser.add_argument("--artifacts", type=Path)
-parser.add_argument("--control", type=Path, default=Path(
-    "/tmp/pitex-preview-work-20260930/docswap-app-r3/bundle/arms/production/Preview.swift"))
+parser.add_argument("--control", type=Path)
 parser.add_argument("--selfcheck", action="store_true",
                     help="aggregator fail-closed checks only; no app launch")
 parser.add_argument("--compile-only", dest="compile_only", action="store_true",
@@ -308,6 +307,8 @@ repo = args.repo.resolve()
 artifacts = (args.artifacts.resolve() if args.artifacts
              else Path(tempfile.mkdtemp(prefix="pitex-perf-evidence-")))
 artifacts.mkdir(parents=True, exist_ok=True)
+if args.control is None:
+    sys.exit("--control PATH required for a perf run")
 CONTROL_PREVIEW = args.control.resolve()
 print(f"[diag] perf evidence {artifacts}", flush=True)
 

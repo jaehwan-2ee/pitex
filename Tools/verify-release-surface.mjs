@@ -4,6 +4,8 @@ import { lstat, readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const slash = (value) => value.replaceAll(sep, '/');
@@ -70,8 +72,34 @@ async function validateBundle(bundlePath) {
 }
 export async function verifyReleaseSurface(options = {}) {
   violations.length = 0; const files = await walk(ROOT); for (const file of files) { const metadata = await stat(file.absolute); if (metadata.size > 5 * 1024 * 1024) { file.text = null; continue; } const bytes = await readFile(file.absolute); file.text = probablyText(bytes) ? bytes.toString('utf8') : null; }
-  scanForbidden(files); await validateRequired(files, { sbom: options.sbom ?? join(ROOT, 'Evidence/sbom.cdx.json') }); await validateBundle(options.bundle ?? join(ROOT, 'Artifacts/source-bundle.tar.gz'));
+  scanForbidden(files); await validateRequired(files, { sbom: options.sbom ?? join(ROOT, 'Evidence/sbom.cdx.json') }); await validateBundle(options.bundle ?? join(ROOT, 'Artifacts/source-bundle.tar.gz')); if (options.commits) await scanCommits(options.commits);
   violations.sort((a, b) => `${a.code}:${a.path}`.localeCompare(`${b.code}:${b.path}`)); return { tool: 'verify-release-surface', status: violations.length ? 'fail' : 'pass', checks: { scannedFiles: files.length, networkUsed: false }, violations: [...violations] };
 }
-async function main() { const args = process.argv.slice(2); const options = {}; for (let i = 0; i < args.length; i += 2) { if (!['--sbom', '--bundle'].includes(args[i]) || !args[i + 1]) throw new Error('usage: verify-release-surface.mjs [--sbom PATH] [--bundle PATH]'); options[args[i].slice(2)] = resolve(ROOT, args[i + 1]); } const report = await verifyReleaseSurface(options); process.stdout.write(`${JSON.stringify(report, null, 2)}\n`); if (report.status !== 'pass') process.exitCode = 1; }
+async function main() { const args = process.argv.slice(2); const options = {}; for (let i = 0; i < args.length; i += 2) { if (!['--sbom', '--bundle', '--commits'].includes(args[i]) || !args[i + 1]) throw new Error('usage: verify-release-surface.mjs [--sbom PATH] [--bundle PATH] [--commits BASE..HEAD]'); options[args[i].slice(2)] = args[i] === '--commits' ? args[i + 1] : resolve(ROOT, args[i + 1]); } const report = await verifyReleaseSurface(options); process.stdout.write(`${JSON.stringify(report, null, 2)}\n`); if (report.status !== 'pass') process.exitCode = 1; }
+// --commits base..head: every path ADDED by a commit in the range is checked
+// against the release-surface forbidden classes (per-commit history gate; the
+// tip walk cannot see files removed before the tip). Wired into CI with
+// fetch-depth 0 and to the local L1. --no-renames: a rename must not let a
+// path in under a changed name.
+const execFileAsync = promisify(execFile);
+const forbiddenPathPatterns = [
+  ['PYTHON_CACHE', /(^|\/)(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache)(\/|$)|\.py[cod]$/, 'Python cache/generated file'],
+  ['OS_JUNK', /(^|\/)\.DS_Store$|(^|\/)Thumbs\.db$/, 'OS-generated file'],
+  ['EDITOR_JUNK', /(^|\/)(\.idea|\.vscode)(\/|$)|\.(?:swp|swo)$|~$/, 'editor/IDE file'],
+  ['BUILD_OUTPUT', /(^|\/)(dist|\.build|build|DerivedData|coverage|target)(\/|$)/, 'build/test output'],
+  ['LOG_FILE', /\.log$/, 'log file'],
+  ['UNEXPECTED_BINARY', /\.(?:o|a|so|dylib|class|pyc|app|xctest|exe)$/, 'compiled binary is not a release-source input']
+];
+async function scanCommits(range) {
+  const [base, head] = range.split('..');
+  const { stdout } = await execFileAsync('git', ['log', '--no-renames', '--diff-filter=A', '--format=%H', '--name-only', `${base}..${head}`], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 });
+  let commit = '';
+  for (const raw of stdout.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^[0-9a-f]{40}$/.test(line)) { commit = line.slice(0, 12); continue; }
+    for (const [code, pattern, message] of forbiddenPathPatterns)
+      if (pattern.test(line)) fail(code, line, `${message} added in ${commit}`);
+  }
+}
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });

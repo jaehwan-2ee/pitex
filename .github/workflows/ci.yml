@@ -28,6 +28,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -37,6 +39,20 @@ jobs:
       - run: node Tools/check-markdown-preview.mjs
       - run: node Tools/generate-sbom.mjs
       - run: node Tools/verify-release-surface.mjs
+      - name: History gate (forbid junk/local-path adds)
+        # Per-commit scan of ADDED paths. PRs check base..head; pushes check
+        # before..sha (skipped when before is all zeros, e.g. a new branch).
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            RANGE=""
+          fi
+          if [ -n "$RANGE" ]; then
+            node Tools/verify-release-surface.mjs --commits "$RANGE" --sbom Evidence/sbom.cdx.json
+          fi
 
   swift:
     name: Swift packages
