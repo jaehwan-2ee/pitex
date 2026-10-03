@@ -567,7 +567,7 @@ enum LaunchFlag {
         await workspace.save()
         let mainText = (try? String(contentsOf: main, encoding: .utf8)) ?? ""
         c30Write(mainText.replacingOccurrences(of: "\\end{document}", with: "C30AdoptC\\par\n\\end{document}"), to: main)
-        c30Expect(await until(30) { c30PDFHas("C30AdoptC") }, "C30-adopt(ii): after a skipped save the ACTIVE clean main.tex changed on disk reached the PDF <= 30 s")
+        c30Expect(await until(30) { c30PDFHas("C30AdoptC") }, "C30-adopt(ii): after a save whose FLUSH is skipped (an equal key; the save itself writes the unsaved \\input{c30extra} edit) the ACTIVE clean main.tex changed on disk reached the PDF <= 30 s")
         await c30Settle("adopt-ii")
 
         // C30-force-open-nonkey and C30-nonkey-save: an open file that is NOT a source (a .md) that TeX reads.
@@ -587,6 +587,7 @@ enum LaunchFlag {
             await c30Sleep(300)
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: md.path)
         }
+        c30Expect(nonkey.p >= 1 && nonkey.q >= 1, "C30-nonkey-save: P=\(nonkey.p) Q=\(nonkey.q) >= 1 each (the atomic rewrite and the mtime touch produced a disk event and a flush; without them the upper bounds below are vacuous: NOT RUN = FAIL)", applies: ["b", "c"])
         c30Expect(nonkey.p <= 2, "C30-nonkey-save: P=\(nonkey.p) <= 2 (the loop is absent)", applies: ["b", "c"])
         c30Expect(nonkey.u <= 2 && nonkey.q <= 2, "C30-nonkey-save: U=\(nonkey.u) Q=\(nonkey.q) <= 2 (each real disk event is one forced flush)", applies: ["c"])
 
