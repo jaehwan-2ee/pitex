@@ -38,6 +38,14 @@ priority = "optional"
 maintainer = "Pitex contributors <https://github.com/jaehwan-2ee/pitex>"
 depends = "$auto, libteckit0, libharfbuzz0b, libgraphite2-3, libicu74, libfreetype6, libfontconfig1, libpng16-16t64, zlib1g"
 maintainer-scripts = "../../packaging/debian"
+# /etc/apparmor.d/pitex grants WebKitGTK's bubblewrap sandbox the user
+# namespace it needs on Ubuntu 24.04 (kernel.apparmor_restrict_unprivileged_
+# userns=1). Same form as the apparmor package's own WebKit-app profiles.
+# Default (24.04) variant only: the ubuntu2204 variant replaces `assets`
+# and AppArmor 4 / the restriction do not exist on 22.04. cargo-deb marks
+# every etc/ asset as a dpkg conffile automatically, so no conf-files line
+# is needed (a conf-files key would inherit into the 22.04 variant and
+# record a phantom conffile there — proven with cargo-deb 2.12.1).
 assets = [
     ["target/release/pitex", "usr/bin/pitex", "755"],
     [
@@ -114,6 +122,13 @@ assets = [
         "644",
     ],
 
+    # Ubuntu 24.04 restricts unprivileged user namespaces; ship an AppArmor
+    # profile so WebKitGTK's sandbox can create one (userns only, unconfined).
+    [
+        "../../packaging/apparmor/pitex",
+        "etc/apparmor.d/pitex",
+        "644",
+    ],
 ]
 
 # Ubuntu 22.04 variant: GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — disables

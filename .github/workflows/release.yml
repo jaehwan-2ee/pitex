@@ -353,9 +353,116 @@ jobs:
           name: pe-helpers
           path: pe-payload.tar
 
+
+  apparmor-userns:
+    name: AppArmor userns proof (Ubuntu 24.04 deb)
+    needs: [linux-deb, linux-deb-ubuntu2204]
+    runs-on: ubuntu-24.04
+    # Proves the deb's AppArmor profile unblocks WebKit's bubblewrap sandbox
+    # on a stock ubuntu-24.04 runner (restriction ON). Lives here (not
+    # ci.yml) because it consumes the built deb artifacts.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the deb artifacts only
+        uses: actions/download-artifact@v4
+        with:
+          pattern: deb-*
+          path: dist
+          merge-multiple: true
+      - name: Assert the runner is stock (restriction ON)
+        run: |
+          set -e
+          sysctl -n kernel.apparmor_restrict_unprivileged_userns
+          [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = "1" ] \
+            || { echo "restriction is not 1; the proof is vacuous" >&2; exit 1; }
+      - name: R2 - 24.04 deb ships the profile + conffile; 22.04 ships neither
+        run: |
+          set -e
+          D24=$(ls dist/*ubuntu24.04*.deb); D22=$(ls dist/*ubuntu22.04*.deb)
+          echo "24.04: $D24"; echo "22.04: $D22"
+          # J1: conffiles member has no ./ prefix
+          dpkg-deb -c "$D24" | grep -q 'etc/apparmor\.d/pitex' \
+            || { echo "24.04 deb lacks the profile file" >&2; exit 1; }
+          dpkg-deb --ctrl-tarfile "$D24" | tar -xO conffiles | grep -q '/etc/apparmor\.d/pitex' \
+            || { echo "24.04 profile not a conffile" >&2; exit 1; }
+          ! dpkg-deb -c "$D22" | grep -q 'apparmor' \
+            || { echo "22.04 deb must not ship the profile" >&2; exit 1; }
+          ! dpkg-deb --ctrl-tarfile "$D22" | tar -xO conffiles 2>/dev/null | grep -q 'apparmor' \
+            || { echo "22.04 deb must not declare the conffile" >&2; exit 1; }
+      - name: Upgrade path - install 2.1.6 first, then this deb (no prompt)
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y wget
+          wget -q -O /tmp/pitex-2.1.6.deb \
+            "https://github.com/jaehwan-2ee/pitex/releases/download/v2.1.6/Pitex-v2.1.6-ubuntu24.04-amd64.deb"
+          sudo apt-get install -y /tmp/pitex-2.1.6.deb
+          # The published 2.1.6 deb lacks the new preview-engine deps; install
+          # the new deb via apt so they resolve, and so a conffile prompt would
+          # block on the closed stdin. Log dpkg options so a force-conf default
+          # cannot silently mask a prompt.
+          apt-config dump | grep -i 'dpkg::options' || true
+          ls /etc/dpkg/dpkg.cfg.d/ || true
+          sudo apt-get install -y "$(readlink -f "$(ls dist/*ubuntu24.04*.deb)")" < /dev/null
+          [ -f /etc/apparmor.d/pitex ] || { echo "profile missing after upgrade" >&2; exit 1; }
+      - name: Confirm the profile loaded
+        run: |
+          set -e
+          grep -q '^pitex ' /sys/kernel/security/apparmor/profiles \
+            || { echo "profile not loaded"; cat /sys/kernel/security/apparmor/profiles >&2; exit 1; }
+      - name: Negative control - profile unloaded must abort on open
+        run: |
+          set -e
+          sudo apparmor_parser -R /etc/apparmor.d/pitex 2>/dev/null || true
+          printf '\\documentclass{article}\\begin{document}x\\end{document}\n' > /tmp/f.tex
+          set +e
+          GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- timeout 25 /usr/bin/pitex /tmp/f.tex > /tmp/neg.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/neg.log
+          if [ "$rc" = "124" ]; then
+            echo "control did NOT abort (still running) - proof is vacuous" >&2; exit 1
+          fi
+          grep -Eq 'bwrap: setting up uid map|dbus-proxy|Trace/breakpoint|SIGTRAP' /tmp/neg.log \
+            || { echo "control failed for an unexpected reason" >&2; exit 1; }
+          echo "control aborted as expected (rc=$rc)"
+      - name: Positive - profile loaded, app opens and stays alive
+        run: |
+          set -e
+          sudo apparmor_parser -r -T -W /etc/apparmor.d/pitex
+          printf '\\documentclass{article}\\begin{document}x\\end{document}\n' > /tmp/f.tex
+          set +e
+          GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- timeout 25 /usr/bin/pitex /tmp/f.tex > /tmp/pos.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/pos.log
+          if [ "$rc" != "124" ]; then
+            echo "app did not stay alive for 25s (rc=$rc)" >&2; exit 1
+          fi
+          if grep -Eq 'bwrap: setting up uid map|dbus-proxy|Trace/breakpoint|SIGTRAP' /tmp/pos.log; then
+            echo "sandbox abort signature present despite the profile" >&2; exit 1
+          fi
+          echo "positive run stayed alive, clean of the abort signature"
+      - name: Purge - file and loaded profile are gone
+        run: |
+          set -e
+          sudo apt-get purge -y pitex
+          [ ! -e /etc/apparmor.d/pitex ] || { echo "conffile left behind" >&2; exit 1; }
+          ! grep -q '^pitex ' /sys/kernel/security/apparmor/profiles \
+            || { echo "profile still loaded after purge" >&2; exit 1; }
+      - name: No-AppArmor container installs exit 0 (right deb per image)
+        run: |
+          set -e
+          # J3: each deb goes into its own Ubuntu release; 24.04 deps do not
+          # exist on 22.04, so the 24.04 deb there is meaningless.
+          docker run --rm -v "$PWD/dist":/d ubuntu:24.04 sh -e -c \
+            'apt-get update -qq >/dev/null; apt-get install -y /d/*ubuntu24.04*.deb >/dev/null; echo "24.04 ok"'
+          docker run --rm -v "$PWD/dist":/d ubuntu:22.04 sh -e -c \
+            'apt-get update -qq >/dev/null; apt-get install -y /d/*ubuntu22.04*.deb >/dev/null; echo "22.04 ok"'
+
   publish:
     name: Publish GitHub Release
-    needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204]
+    needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204, apparmor-userns]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
