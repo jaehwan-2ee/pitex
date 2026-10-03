@@ -265,6 +265,16 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: cargo test --workspace
         working-directory: Linux
+      - name: Allow unprivileged user namespaces for the WebKit sandbox
+        # WebKitGTK's bubblewrap sandbox needs unprivileged userns; the GitHub
+        # ubuntu-24.04 runner restricts them (apparmor_restrict_unprivileged_
+        # userns=1), so WebKitWebView creation aborts. Enable them for this
+        # job. The sandbox itself stays ON — no WEBKIT_DISABLE_SANDBOX and no
+        # test is skipped.
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sysctl kernel.apparmor_restrict_unprivileged_userns
       - name: Agent update through the real Settings button (Bun and npm)
         timeout-minutes: 10
         run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib agent_update_tests -- --ignored --nocapture --test-threads=1
