@@ -784,13 +784,24 @@ private struct PlacementGeometry: Equatable, Sendable {
             NotificationCenter.default.post(name: name, object: NSApp)
             NSWorkspace.shared.notificationCenter.post(name: name, object: NSApp)
         }
+        // The preview's badge is the AX help string, i.e. the app's own LOCALIZED text
+        // (equation_preview.fast_badge / equation_preview.exact_badge). This checker app bundles
+        // the production .lproj tables and runs in the same process as the code under test, so
+        // String(localized:) here resolves exactly like the product's present(label:) calls.
+        // Never compare against English text: on a Korean host the exact badge reads '정확한 TeX'.
+        let fastBadge = String(localized: "equation_preview.fast_badge")
+        let exactBadge = String(localized: "equation_preview.exact_badge")
+        require(fastBadge != "equation_preview.fast_badge" && exactBadge != "equation_preview.exact_badge"
+                && !fastBadge.isEmpty && !exactBadge.isEmpty && fastBadge != exactBadge,
+                "badge strings must resolve from the bundled tables and differ: fast='\(fastBadge)' exact='\(exactBadge)'")
+        note("badge strings under test: fast='\(fastBadge)' exact='\(exactBadge)'")
         /// A rendered fast (MathJax) body for the equation containing
         /// `needle` — the fresh target, not whatever preview lingers.
         func fastOf(_ needle: String) -> (PreviewState) -> Bool {
-            { $0.role.contains("image") && $0.source.contains(needle) && !$0.badge.lowercased().contains("exact") }
+            { $0.role.contains("image") && $0.source.contains(needle) && $0.badge == fastBadge }
         }
         func exactOf(_ needle: String) -> (PreviewState) -> Bool {
-            { $0.role.contains("image") && $0.source.contains(needle) && $0.badge.lowercased().contains("exact") }
+            { $0.role.contains("image") && $0.source.contains(needle) && $0.badge == exactBadge }
         }
         /// SettingsStore/AppearanceSettings reach the controller through
         /// objectWillChange.receive(on: main) — one FIFO main-queue hop
