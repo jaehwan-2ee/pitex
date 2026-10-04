@@ -394,6 +394,122 @@ fn adopted_disk_change_reaches_the_helper() {
     assert!(session.snapshot().text.contains("changed on disk"), "the clean session adopted the disk text");
 }
 
+/// The resolver changed the build target (here: from "none" back to main.tex through the public refresh): the helper session is retired. An EDITING
+/// preview on screen comes back without an edit; a FINAL build output on screen stays and nothing is published over it.
+fn target_change_restarts_only_an_editing_preview() {
+    let mut fx = Fixture::open("retarget", "cp {file} {outdir}/main.pdf");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+    assert!(fx.model.displaying_editing_preview(), "initial preview is shown");
+    let sent = fx.model.embedded.generation;
+
+    fx.model.automatic_build_target = None;
+    fx.model.refresh_build_target();
+    assert!(!fx.model.embedded.is_running(), "the target change retired the helper session");
+    fx.model.request_embedded_restart(&fx.store);
+    assert!(fx.model.embedded_poll_delay(false).is_some(), "the restart is pending, no edit needed");
+    fx.flush();
+    fx.published();
+    assert!(fx.model.displaying_editing_preview(), "the editing preview is back");
+    assert_eq!(fx.model.embedded.generation, sent + 1, "the restart sent one update");
+
+    fx.model.start_build(&fx.store, "en");
+    fx.build_finished();
+    assert!(fx.showing_final(), "the final PDF replaces the preview");
+    fx.model.automatic_build_target = None;
+    fx.model.refresh_build_target();
+    fx.model.request_embedded_restart(&fx.store);
+    assert!(fx.model.embedded_poll_delay(false).is_none(), "nothing is pending over a final PDF");
+    fx.quiet(Duration::from_millis(400));
+    assert!(fx.showing_final(), "the final PDF stays after the target change");
+}
+
+/// Pin and unpin switch the build context unconditionally: an editing preview restarts both times, a final PDF stays.
+fn pin_toggle_restarts_only_an_editing_preview() {
+    let mut fx = Fixture::open("pin", "cp {file} {outdir}/main.pdf");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+    assert!(fx.model.displaying_editing_preview(), "initial preview is shown");
+
+    for _ in 0..2 {
+        let sent = fx.model.embedded.generation;
+        fx.model.toggle_pinned_build_target();
+        fx.model.request_embedded_restart(&fx.store);
+        assert!(fx.model.embedded_poll_delay(false).is_some(), "the pin change leaves a restart pending");
+        fx.flush();
+        fx.published();
+        assert!(fx.model.displaying_editing_preview(), "the editing preview is back");
+        assert_eq!(fx.model.embedded.generation, sent + 1, "one update per toggle");
+    }
+
+    fx.model.start_build(&fx.store, "en");
+    fx.build_finished();
+    assert!(fx.showing_final(), "the final PDF replaces the preview");
+    fx.model.toggle_pinned_build_target();
+    fx.model.request_embedded_restart(&fx.store);
+    assert!(fx.model.embedded_poll_delay(false).is_none(), "nothing is pending over a final PDF");
+    fx.quiet(Duration::from_millis(400));
+    assert!(fx.showing_final(), "the final PDF stays after a pin change");
+}
+
+/// The finding's real path, through the resolver (two steps). main → none: with a second main in the project and an active file that neither
+/// includes, `resolve` is `Ambiguous` (`owners.is_empty() && mains.len() > 1`), so the target is none, the retained PDF is dropped and the helper
+/// stops. none → main: now NO editing preview is on screen and no helper runs, so `embedded_comes_back` is false and ONLY the carried flag can
+/// restart the preview. (A single main would not give none: the resolver falls back to it for an orphan file.)
+fn target_through_a_nil_interval_restarts_the_preview() {
+    let mut fx = Fixture::open("nilspan", "true");
+    fx.model.sync_live_settings(&fx.store);
+    fx.flush();
+    fx.published();
+    assert!(fx.model.displaying_editing_preview(), "initial preview is shown");
+    let sent = fx.model.embedded.generation;
+
+    let root = fx.model.project_url.clone().unwrap();
+    let other = root.join("other.tex");
+    let orphan = root.join("orphan.tex");
+    std::fs::write(&other, "\\documentclass{article}\n\\begin{document}\nother\n\\end{document}\n").unwrap();
+    std::fs::write(&orphan, "\\section{Orphan}\n").unwrap();
+    fx.model.project_files.push(other);
+    fx.model.project_files.push(orphan.clone());
+    let main_active = fx.model.active_document_url.clone();
+    let main_snapshot = fx
+        .model
+        .registered_sessions
+        .iter()
+        .find(|s| s.path().raw_value() == "main.tex")
+        .expect("main.tex session")
+        .snapshot();
+
+    fx.model.active_document_url = Some(orphan);
+    fx.model.document_snapshot = None;
+    fx.model.refresh_build_target();
+    assert!(
+        fx.model.build_source_url().is_none(),
+        "the resolver yields no target for an unowned file among two mains (it gave {:?}; message {:?})",
+        fx.model.build_source_url(),
+        fx.model.build_target_message
+    );
+    assert!(fx.model.retained_pdf.is_none(), "the retained PDF belonged to the old target");
+    assert!(!fx.model.embedded.is_running(), "the helper session was retired");
+    assert!(fx.model.embedded.restart_wanted, "the editing preview that was on screen is remembered");
+    fx.model.request_embedded_restart(&fx.store);
+    assert!(fx.model.embedded_poll_delay(false).is_none(), "nothing starts while there is no target");
+    assert!(fx.model.embedded.restart_wanted, "the flag waits for a target");
+
+    fx.model.active_document_url = main_active;
+    fx.model.document_snapshot = Some(main_snapshot);
+    fx.model.refresh_build_target();
+    assert!(fx.model.build_source_url().is_some(), "main.tex is the target again");
+    fx.model.request_embedded_restart(&fx.store);
+    assert!(fx.model.embedded_poll_delay(false).is_some(), "the restart is pending, no edit needed");
+    fx.flush();
+    fx.published();
+    assert!(fx.model.displaying_editing_preview(), "the editing preview is back");
+    assert_eq!(fx.model.embedded.generation, sent + 1, "the restart sent one update");
+}
+
 /// One entry point — settings and helper lookup are process-global.
 #[test]
 fn embedded_preview_final_floor() {
@@ -410,4 +526,7 @@ fn embedded_preview_final_floor() {
     save_before_publication_keeps_synctex(&data.join("gate"));
     disk_events_force_only_what_the_key_cannot_see();
     adopted_disk_change_reaches_the_helper();
+    target_change_restarts_only_an_editing_preview();
+    pin_toggle_restarts_only_an_editing_preview();
+    target_through_a_nil_interval_restarts_the_preview();
 }

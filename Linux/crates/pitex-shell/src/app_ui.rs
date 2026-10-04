@@ -1710,6 +1710,7 @@ impl AppState {
         // The open-source set changed: refresh so the helper drops the
         // override and SyncTeX can rebind (no edit-revision bump).
         self.model.request_embedded_refresh(&self.store);
+        self.model.request_embedded_restart(&self.store);
         self.arm_embedded_timer();
     }
 
@@ -1789,6 +1790,7 @@ impl AppState {
 
     pub fn start_build_action(&mut self) {
         self.model.start_build(&self.store, self.language);
+        self.restart_embedded_preview();
         self.refresh_build_ui();
     }
 
@@ -1969,6 +1971,7 @@ impl AppState {
     /// File → Pin Build Target — `togglePinnedBuildTarget()`.
     pub fn pin_target_action(&mut self) {
         self.model.toggle_pinned_build_target();
+        self.restart_embedded_preview();
         self.refresh_sidebar();
         self.refresh_pdf_ui();
     }
@@ -4013,6 +4016,7 @@ impl AppState {
                     self.refresh_after_document_change();
                     // A clean open changed the all-open-source identity.
                     self.model.request_embedded_refresh(&self.store);
+                    self.model.request_embedded_restart(&self.store);
                     self.arm_embedded_timer();
                 }
                 // `activateDocument`'s catch publishes `.failed` — the
@@ -4096,6 +4100,7 @@ impl AppState {
                 );
                 self.refresh_build_ui();
                 self.refresh_pdf_ui();
+                self.restart_embedded_preview();
                 // A completed run may leave a newer pending edit waiting
                 // for its deadline.
                 self.arm_live_timer();
@@ -4392,6 +4397,12 @@ fn embedded_timer_fire() {
 }
 
 impl AppState {
+    /// A build-target change (pin, rescan, build start/finish) may have retired the editing preview: restart it once a target exists.
+    fn restart_embedded_preview(&mut self) {
+        self.model.request_embedded_restart(&self.store);
+        self.arm_embedded_timer();
+    }
+
     /// (Re)arm the embedded-preview coalescing timer while an update is
     /// pending; an IME composition retries instead of sending partial text.
     fn arm_embedded_timer(&mut self) {
@@ -6101,6 +6112,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         rescan.connect_clicked(move |_| {
             let Ok(mut s) = state.try_borrow_mut() else { return };
             s.model.rescan_project();
+            s.restart_embedded_preview();
             s.refresh_sidebar();
             s.install_watchers();
         });
@@ -6115,6 +6127,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         pin.connect_clicked(move |_| {
             let Ok(mut s) = state.try_borrow_mut() else { return };
             s.model.toggle_pinned_build_target();
+            s.restart_embedded_preview();
             s.refresh_sidebar();
             s.refresh_pdf_ui();
         });

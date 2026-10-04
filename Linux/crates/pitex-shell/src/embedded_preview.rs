@@ -408,6 +408,8 @@ pub struct EmbeddedPreview {
     last_flush: Option<FlushKey>,
     /// A request that must send even when the key is unchanged; consumed by the next `flush`.
     pending_force: bool,
+    /// A build-target change retired a preview that should come back once the target is non-nil again (set by the model, which alone knows what is on screen); every `stop` clears it.
+    pub restart_wanted: bool,
 }
 
 impl Default for EmbeddedPreview {
@@ -426,6 +428,7 @@ impl Default for EmbeddedPreview {
             status: PreviewStatus::Off,
             last_flush: None,
             pending_force: false,
+            restart_wanted: false,
         }
     }
 }
@@ -501,6 +504,7 @@ impl EmbeddedPreview {
         self.reset_session_state();
         self.pending_since = None;
         self.status = PreviewStatus::Off;
+        self.restart_wanted = false;
     }
 
     /// App shutdown: end the helper synchronously (see `Session`).
@@ -1139,5 +1143,24 @@ mod tests {
         assert_eq!((p.seq, p.generation), (1, 3), "bound against the generation the idle reply confirmed");
         ep.bound_snapshot = Some(BufferSnapshot::new());
         assert!(ep.rebind_candidate().is_none(), "already bound");
+    }
+
+    #[test]
+    fn restart_after_a_target_change_needs_no_force_and_every_stop_forgets_it() {
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        // The model marks the retirement AFTER `reset_context`, which clears the flag with the session.
+        ep.restart_wanted = true;
+        ep.reset_context();
+        assert!(!ep.restart_wanted, "reset_context forgets a flag set before it (workspace close)");
+        ep.restart_wanted = true;
+        ep.stop();
+        assert!(!ep.restart_wanted, "a plain stop (backend off, helper retired) forgets it");
+        // The restart is an ordinary request: the stop cleared the key, so the first flush sends.
+        ep.restart_wanted = true;
+        ep.session = Some(fake_session());
+        ep.request_flush(500);
+        assert!(!ep.pending_force, "the restart is not forced");
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent, "equal key, but the stop cleared it");
     }
 }

@@ -3714,7 +3714,7 @@ impl WorkspaceModel {
         // A different build target retires pending/live work.
         self.invalidate_live();
         // The helper session is bound to one main document.
-        self.reset_embedded_context();
+        self.reset_embedded_context_for_target_change();
         // The pin badge is part of the tree.
         self.files_revision += 1;
         self.refresh_build_target();
@@ -3771,7 +3771,7 @@ impl WorkspaceModel {
             // A resolved main-document change is a context switch too,
             // not an ordinary edit that may publish intermediate progress.
             self.invalidate_live();
-            self.reset_embedded_context();
+            self.reset_embedded_context_for_target_change();
         }
         // A different build target retires the retained artifact — its
         // PDF belongs to the old main; a chapter switch under the same
@@ -3996,6 +3996,9 @@ impl WorkspaceModel {
             self.embedded.request_flush(self.live_now_ms());
         } else if !embedded && self.embedded.status != crate::embedded_preview::PreviewStatus::Off {
             self.stop_embedded();
+        }
+        if !embedded {
+            self.embedded.restart_wanted = false;
         }
         self.live.set_enabled(store.live_compile_enabled() && !embedded)
     }
@@ -4341,6 +4344,33 @@ impl WorkspaceModel {
     fn reset_embedded_context(&mut self) {
         self.drop_editing_preview_binding();
         self.embedded.reset_context();
+    }
+
+    /// Whether the preview should come back after a build-target change: an EDITING preview is on screen, or the helper runs and nothing has been retained yet. Never over a final build output: the reset drops the floors that keep a preview below the final PDF.
+    fn embedded_comes_back(&self) -> bool {
+        if self.retained_pdf.is_some() {
+            self.displaying_editing_preview()
+        } else {
+            self.embedded.is_running()
+        }
+    }
+
+    /// `reset_embedded_context` for a changed build target (resolver result or pin): remembers that the preview should return once a target exists, decided BEFORE the retained PDF is dropped. The flag survives a nil-target interval (nothing running then); `request_embedded_restart` consumes it.
+    fn reset_embedded_context_for_target_change(&mut self) {
+        let restart = self.embedded.restart_wanted || self.embedded_comes_back();
+        self.reset_embedded_context();
+        self.embedded.restart_wanted = restart;
+    }
+
+    /// After a build-target change: with a target again and the embedded preview wanted, restart the preview the change retired (unforced: the stop cleared the flush key). The caller arms the embedded timer.
+    pub fn request_embedded_restart(&mut self, store: &SettingsStore) {
+        if !self.embedded.restart_wanted || self.build_source_relative_path().is_none() {
+            return;
+        }
+        self.embedded.restart_wanted = false;
+        if self.embedded_wanted(store) {
+            self.embedded.request_flush(self.live_now_ms());
+        }
     }
 
     /// `startBuild` — the manual entry point (toolbar, ⇧↩): routed through
