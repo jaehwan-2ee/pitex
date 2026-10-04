@@ -249,7 +249,7 @@ static tbuf *load_font(void *env, const char *name, xdv_res_kind kind)
   r[15] = CMAP_LEN;                         /* len */
   unsigned char *c = d + 28;
   c[2] = 0; c[3] = 1;                       /* version 0, numTables 1 */
-  c[4] = 3; c[5] = 1;                       /* platform 3, encoding 1 */
+  c[5] = 3; c[7] = 1;                       /* platform 3, encoding 1 */
   c[6] = 0xFF; c[7] = 0xFF; c[8] = 0xFF; c[9] = 0xFC; /* off=0xFFFFFFFC */
   tbuf *t = tbuf_new((int)total);
   tbuf_append(t, d, total);
@@ -287,7 +287,7 @@ static tbuf *load_font_ok(void *env, const char *name, xdv_res_kind kind)
   r[12] = (cl >> 24) & 255; r[13] = (cl >> 16) & 255; r[14] = (cl >> 8) & 255; r[15] = cl & 255;
   unsigned char *c = d + 28;
   c[2] = 0; c[3] = 1;                 /* numTables 1 */
-  c[4] = 3; c[5] = 1;                 /* platform 3, encoding 1 */
+  c[5] = 3; c[7] = 1;                 /* platform 3, encoding 1 */
   c[8] = 0; c[9] = 0; c[10] = 0; c[11] = 12; /* subtable at c+12 */
   unsigned char *s4 = c + 12;
   s4[0] = 0; s4[1] = 4;               /* format 4 */
@@ -318,8 +318,76 @@ static void test_valid_cmap(void)
   if (warn.len) fprintf(stderr, "warn: %.*s", (int)warn.len, warn.data);
   CHECK(f != NULL && f->ok, "valid font parses");
   CHECK(f && f->num_glyphs > 0, "valid font has glyphs");
+  CHECK(f && f->to_unicode[1] == 32, "valid cmap maps space to gid 1");
   pbuf_free(&warn);
   font_cache_free(fc);
+}
+
+/* A minimal 'ssty' alternate maps gid 1 (space) to gid 2. Corrupt
+ * relative offsets must be ignored while the base cmap stays usable. */
+static tbuf *load_script_font(void *env, const char *name, xdv_res_kind kind)
+{
+  tbuf *base = load_font_ok(NULL, name, kind);
+  int variant = *(int *)env;
+  bb g = { 0 };
+  u16(&g, 1); u16(&g, 0); u16(&g, 0); u16(&g, 10); u16(&g, 24);
+  u16(&g, 1); put(&g, "ssty", 4); u16(&g, 8);
+  u16(&g, 0); u16(&g, 1); u16(&g, 0);
+  u16(&g, 1); u16(&g, 4);
+  unsigned type = variant == 4 || variant == 5 ? 1 : 3;
+  int extension = variant == 2 || variant == 6;
+  u16(&g, extension ? 7 : type); u16(&g, 0); u16(&g, 1); u16(&g, 8);
+  if (extension)
+  {
+    u16(&g, 1); u16(&g, type); u32(&g, variant == 6 ? 0xFFFFFFFC : 8);
+  }
+  u16(&g, variant == 5 ? 2 : 1);
+  u16(&g, variant == 4 ? 6 : variant == 5 ? 8 : 12);
+  u16(&g, 1);                         /* delta or substitution count */
+  if (variant == 5)
+    u16(&g, 2);                      /* explicit single substitute */
+  else if (variant != 4)
+  {
+    u16(&g, variant == 7 ? 0xFFFF : 8);
+    u16(&g, 1); u16(&g, 2);           /* alternate set */
+  }
+  u16(&g, variant == 3 ? 2 : 1); u16(&g, variant == 8 ? 0xFFFF : 1); u16(&g, 1);
+  if (variant == 3)
+  {
+    u16(&g, 1); u16(&g, 0);           /* coverage range end/index */
+  }
+  if (variant == 1)                         /* bad GSUB FeatureList offset */
+    g.d[6] = g.d[7] = 0xFF;
+  bb b = { 0 };
+  put(&b, base->data, 12);
+  b.d[5] = 2;
+  put(&b, "cmap", 4); u32(&b, 0); u32(&b, 44); u32(&b, 44);
+  put(&b, "GSUB", 4); u32(&b, 0); u32(&b, 88); u32(&b, (unsigned)g.len);
+  put(&b, base->data + 28, 44);
+  put(&b, g.d, g.len);
+  tbuf *result = tbuf_from_copy(b.d, b.len);
+  tbuf_drop(base); free(b.d); free(g.d);
+  return result;
+}
+
+static void test_script_unicode(void)
+{
+  const char *const names[] = {
+    "alternate substitution", "corrupt feature offset", "extension substitution",
+    "coverage range", "single delta substitution", "single array substitution",
+    "corrupt extension offset", "corrupt alternate offset", "corrupt coverage count"
+  };
+  for (int variant = 0; variant < 9; variant++)
+  {
+    font_cache *fc = font_cache_new((xdv_resolver){ &variant, load_script_font });
+    pbuf warn = { 0 };
+    native_face *f = font_native(fc, "script.ttf", -1, &warn);
+    int valid = variant != 1 && variant < 6;
+    CHECK(f && f->ok && f->to_unicode[1] == 32, "script font retains base cmap");
+    CHECK(f && f->to_unicode[2] == (valid ? 32 : 0), names[variant]);
+    pbuf_free(&warn);
+    font_cache_free(fc);
+  }
 }
 
 int main(void)
@@ -329,6 +397,7 @@ int main(void)
   test_pagesize_boundary();
   test_corrupt_cmap();
   test_valid_cmap();
+  test_script_unicode();
   if (failures)
     fprintf(stderr, "%d failures\n", failures);
   else

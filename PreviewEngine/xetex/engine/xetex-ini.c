@@ -2669,7 +2669,7 @@ load_fmt_file(void)
         undump_things(eqtb[EQTB_SIZE + 1], hash_high);
 
     undump_int(x);
-    if (x < HASH_BASE || x > hash_top)
+    if (x <= 0 || x > hash_top)
         goto bad_fmt;
     else
         par_loc = x;
@@ -3379,6 +3379,10 @@ initialize_more_initex_variables(void)
         sa_root[i] = TEX_NULL;
 
     INTPAR(xetex_hyphenatable_length) = 63;
+    /* Keep source characters in XDV for shaped native text, including
+     * ligatures and alternate glyphs. The preview writer uses ActualText
+     * for PDF search/copy instead of guessing from the font's cmap. */
+    INTPAR(xetex_generate_actual_text) = 1;
 }
 
 

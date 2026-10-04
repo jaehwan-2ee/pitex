@@ -917,7 +917,11 @@ static void rollback_processes(struct tex_engine *self, int reverted, int trace)
   self->aux_dirty = false;
   self->finishing = false;
 
-  while (self->process_count > 0 && get_process(self)->trace_len > trace)
+  /* A worker killed before its first trace (or at the rollback boundary)
+   * is not a resumable checkpoint. Keeping it leaves prepare_process with
+   * a dead top and no new worker, so every later update stays idle. */
+  while (self->process_count > 0 &&
+         (get_process(self)->trace_len > trace || get_process(self)->fd == -1))
     pop_process(self);
 
   int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;

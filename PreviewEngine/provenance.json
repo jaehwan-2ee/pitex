@@ -48,14 +48,14 @@
    "license_in_file": "n/a (documentation)",
    "origin": "pitex",
    "path": "PROVENANCE.md",
-   "sha256": "6b1787128c615159af94791efc8acd706cd5d47b1958e048dc22dfa19c6f738e"
+   "sha256": "d8b88185ee90c82b0b4346448df6205b52ce7f9262a569a60778b3008e04b159"
   },
   {
    "license_in_file": "MIT",
    "modified": true,
    "origin": "texpresso",
    "path": "driver/engine_tex.c",
-   "sha256": "65014172c29ab91f09ca82ea5441e99b19d1753791977fdd3ae1ba1535fc902d",
+   "sha256": "478648a8a8a2c0fae1c8fe4c10130328b6e6e35ffa274249ecb2875f66ed4c64",
    "upstream_license": "MIT",
    "upstream_path": "src/frontend/engine_tex.c",
    "upstream_sha256": "7524c865deaa521423f064be750ef6dac9214071914c6b3a8afbf77710ac5323"
@@ -74,7 +74,7 @@
    "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
    "origin": "pitex",
    "path": "driver/fonts.c",
-   "sha256": "311ffeadc9e8d7c58b5ae236556f0501076e912dbee30d8356c2e527ad35967c"
+   "sha256": "94f402155d33c6b5f1ac19de395f588c44915465dc57885e4b819e09ad3fe01a"
   },
   {
    "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
@@ -223,7 +223,7 @@
    "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
    "origin": "pitex",
    "path": "driver/xdv2pdf.c",
-   "sha256": "31a9df9e2b23a560e4b8eb32296fefdfd9f4736228446db24a4f2675353f49e4"
+   "sha256": "82d8594a15fb7ab8750f432de54801d19e9996dedc0df2dabd79dea14dbb19c5"
   },
   {
    "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
@@ -314,10 +314,22 @@
    "sha256": "bd66d54d2d7cb7948691de62acc50fe77a025f0d3231069b0807f5d4f8ccffad"
   },
   {
+   "license_in_file": "none-in-file",
+   "origin": "pitex",
+   "path": "tools/regress-live-updates.py",
+   "sha256": "7050da91b0ada3307494cc4d95b74bb3c5a239ef4b5d97e33a68d45621c94a4b"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "origin": "pitex",
+   "path": "tools/regress-tex-compat.py",
+   "sha256": "dd24039acedd4c433e58ee79e1a5f53067254528c37a30a8c96eca904bae8e92"
+  },
+  {
    "license_in_file": "PolyForm-Shield-1.0.0 (Pitex)",
    "origin": "pitex",
    "path": "tools/selftest.c",
-   "sha256": "71fd414864bfc68fff9791a5aa100a97781a53e0e21d11b27706781ec139f18e"
+   "sha256": "d93de9cb1fd95dd796176753756bbc6b286f188142e019204c70b90b13ea7140"
   },
   {
    "license_in_file": "none-in-file",
@@ -444,7 +456,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "xetex/engine/xetex-ini.c",
-   "sha256": "57adb811e1db8b054dd712a6ffa1081656ac871064e3a03b28a6883c333e42ee",
+   "sha256": "fb8ce89f05176615c7e0471dbcc97fbb6fbe0f8e0ff4a9d897e49bd02f85bc35",
    "upstream_license": "MIT (Tectonic Project)",
    "upstream_path": "src/engine/engine/xetex-ini.c",
    "upstream_sha256": "2917be42f8d0927fd1f42a669afb08a05b6ddd568e94e45ab2b5629678f853d6"
@@ -611,10 +623,10 @@
   },
   {
    "license_in_file": "MIT (Tectonic Project)",
-   "modified": false,
+   "modified": true,
    "origin": "texpresso",
    "path": "xetex/engine/xetex-xetex0.c",
-   "sha256": "3322aa862118d4432d74ef2004fb8520e344d46d731e3f75f2913cf967aacea2",
+   "sha256": "756f84251f4c01a2777fcc232a6f06a208b5bf24edb57e963a1bac31fcc23a33",
    "upstream_license": "MIT (Tectonic Project)",
    "upstream_path": "src/engine/engine/xetex-xetex0.c",
    "upstream_sha256": "3322aa862118d4432d74ef2004fb8520e344d46d731e3f75f2913cf967aacea2"
@@ -631,20 +643,20 @@
   },
   {
    "license_in_file": "none-in-file",
-   "modified": false,
+   "modified": true,
    "origin": "texpresso",
    "path": "xetex/engine/xetex_bindings.h",
-   "sha256": "da1c8e360804e4b9a7372497443baccda15448ce98db673d5816c53e2ac5a758",
+   "sha256": "afe16187679d66b1699854d65adc45f1cccdb370ef43cf705154cc0a148cf7c3",
    "upstream_license": "none-in-file",
    "upstream_path": "src/engine/engine/xetex_bindings.h",
    "upstream_sha256": "da1c8e360804e4b9a7372497443baccda15448ce98db673d5816c53e2ac5a758"
   },
   {
    "license_in_file": "none-in-file",
-   "modified": false,
+   "modified": true,
    "origin": "texpresso",
    "path": "xetex/engine/xetex_format.h",
-   "sha256": "f2b41dc1c4328eec879adae12e47ed2261f13ec7f079e292f0fe795713306b2d",
+   "sha256": "c9f7cf8d0e3386186630bd1d8c61920d35ada8b33d2123dad8bb87e697e402b4",
    "upstream_license": "none-in-file",
    "upstream_path": "src/engine/engine/xetex_format.h",
    "upstream_sha256": "f2b41dc1c4328eec879adae12e47ed2261f13ec7f079e292f0fe795713306b2d"
@@ -834,7 +846,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "xetex/main/main.c",
-   "sha256": "dea4f0cc56464bd7ad3008d3e971801f48be4de57aded382c38f4027d401465a",
+   "sha256": "5e92c652d1244cf4021d4950e70ccac8df51ed41d6abd9a9df0feae1bb74f97e",
    "upstream_license": "none-in-file",
    "upstream_path": "src/engine/main/main.c",
    "upstream_sha256": "8c9756eda6b16ea39ebb8597eb1385939e86fc1cab03c51b05ad5f5fe6e0accd"

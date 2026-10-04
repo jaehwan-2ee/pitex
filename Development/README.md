@@ -143,6 +143,17 @@ make -C PreviewEngine -j BUILD_DIR=/tmp/pitex-preview-engine
 #   TECKIT_CFLAGS=-I<prefix>/include TECKIT_LIBS=<prefix>/lib/libTECkit.so.0
 ```
 
+With TeX Live (`xelatex`/`kpsewhich`) and `pdftotext` on `PATH`, check
+microtype compatibility, continuous edits, error recovery and an interrupted
+worker before its first checkpoint. The package suite compares 27 fixtures
+with real XeLaTeX, including Unicode math scripts, shaped-text copy/search,
+Korean, tables, graphics, TikZ/PGFPlots, cross-file macros and existing BBLs:
+
+```sh
+PITEX_BIN=/tmp/pitex-preview-engine/bin python3 PreviewEngine/tools/regress-live-updates.py
+PITEX_BIN=/tmp/pitex-preview-engine/bin python3 PreviewEngine/tools/regress-tex-compat.py
+```
+
 Dependencies (all dynamically linked): freetype2, harfbuzz, graphite2,
 libpng, zlib, ICU, TECkit, and fontconfig on Linux. On macOS the Makefile
 uses Homebrew when present, or `PKG_CONFIG_PATH` for a private prefix.

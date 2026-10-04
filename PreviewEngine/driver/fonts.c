@@ -291,6 +291,108 @@ static void parse_cmap(native_face *f)
   }
 }
 
+/* Script-style alternates (OpenType 'ssty') have no cmap entries.
+ * Copy their base characters for PDF search/copy, without changing glyphs.
+ * Only single and alternate substitutions are needed by this feature. */
+static void script_substitution(native_face *f, const unsigned char *s, size_t len, unsigned type)
+{
+  if (type == 7 && len >= 8 && rd16(s) == 1)
+  {
+    unsigned off = rd32(s + 4);
+    if (off > len || len - off < 6)
+      return;
+    type = rd16(s + 2);
+    s += off;
+    len -= off;
+  }
+  if ((type != 1 && type != 3) || len < 6)
+    return;
+  unsigned format = rd16(s), off = rd16(s + 2);
+  if ((type == 1 && format != 1 && format != 2) || (type == 3 && format != 1)
+      || off > len || len - off < 4)
+    return;
+  const unsigned char *cov = s + off;
+  size_t clen = len - off;
+  unsigned cformat = rd16(cov), count = rd16(cov + 2);
+  if (cformat != 1 && cformat != 2)
+    return;
+  unsigned stride = cformat == 1 ? 2 : 6;
+  if (count > (clen - 4) / stride)
+    return;
+  for (unsigned i = 0; i < count; i++)
+  {
+    const unsigned char *r = cov + 4 + i * stride;
+    unsigned first = rd16(r), last = cformat == 1 ? first : rd16(r + 2);
+    unsigned index = cformat == 1 ? i : rd16(r + 4);
+    for (unsigned gid = first; gid <= last && gid < (unsigned)f->num_glyphs; gid++, index++)
+    {
+      uint32_t cp = f->to_unicode[gid];
+      if (!cp)
+        continue;
+      if (type == 1 && format == 1)
+        set_unicode(f, (gid + rd16(s + 4)) & 0xFFFF, cp);
+      else if (index < rd16(s + 4) && index < (len - 6) / 2)
+      {
+        unsigned value = rd16(s + 6 + index * 2);
+        if (type == 1)
+          set_unicode(f, value, cp);
+        else if (value <= len && len - value >= 2)
+        {
+          unsigned n = rd16(s + value);
+          if (n > (len - value - 2) / 2)
+            continue;
+          for (unsigned k = 0; k < n; k++)
+            set_unicode(f, rd16(s + value + 2 + k * 2), cp);
+        }
+      }
+    }
+  }
+}
+
+static void parse_script_unicode(native_face *f)
+{
+  const unsigned char *s;
+  size_t len;
+  if (!find_table(f->sfnt, f->sfnt_len, "GSUB", &s, &len) || len < 10 || rd16(s) != 1)
+    return;
+  unsigned fo = rd16(s + 6), lo = rd16(s + 8);
+  if (fo > len || len - fo < 2 || lo > len || len - lo < 2)
+    return;
+  unsigned nf = rd16(s + fo), nl = rd16(s + lo);
+  if (nf > (len - fo - 2) / 6 || nl > (len - lo - 2) / 2)
+    return;
+  for (unsigned i = 0; i < nf; i++)
+  {
+    const unsigned char *rec = s + fo + 2 + i * 6;
+    if (memcmp(rec, "ssty", 4))
+      continue;
+    size_t feat = fo + (size_t)rd16(rec + 4);
+    if (feat > len || len - feat < 4)
+      continue;
+    unsigned n = rd16(s + feat + 2);
+    if (n > (len - feat - 4) / 2)
+      continue;
+    for (unsigned j = 0; j < n; j++)
+    {
+      unsigned idx = rd16(s + feat + 4 + j * 2);
+      if (idx >= nl)
+        continue;
+      size_t lookup = lo + (size_t)rd16(s + lo + 2 + idx * 2);
+      if (lookup > len || len - lookup < 6)
+        continue;
+      unsigned type = rd16(s + lookup), ns = rd16(s + lookup + 4);
+      if (ns > (len - lookup - 6) / 2)
+        continue;
+      for (unsigned k = 0; k < ns; k++)
+      {
+        size_t sub = lookup + (size_t)rd16(s + lookup + 6 + k * 2);
+        if (sub <= len)
+          script_substitution(f, s + sub, len - sub, type);
+      }
+    }
+  }
+}
+
 static void read_psname(native_face *f, font_cache *fc)
 {
   const unsigned char *t;
@@ -418,6 +520,7 @@ native_face *font_native(font_cache *fc, const char *name, int index, pbuf *warn
     f->num_glyphs = 65535;
   f->to_unicode = xcalloc((size_t)f->num_glyphs, sizeof(uint32_t));
   parse_cmap(f);
+  parse_script_unicode(f);
   read_psname(f, fc);
   f->ok = true;
   return f;

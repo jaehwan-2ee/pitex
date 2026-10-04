@@ -16,7 +16,7 @@
  * lines, to make sure that when the engine is updated you don’t attempt to
  * reuse old files.
  */
-#define FORMAT_SERIAL 33
+#define FORMAT_SERIAL 34 /* Pitex: paragraph-token parameters. */
 
 #ifdef __cplusplus
 extern "C" {
