@@ -350,8 +350,10 @@ struct Preview: View {
 }
 
 /// The macOS PDF viewer is PDFKit's PDFView: main's wrapper plus a keep-alive
-/// of the outgoing document (`retiredDocument`). This file is a manifested
-/// source snapshot (the control arm of the D-v7 / document-swap trials,
+/// of the outgoing document (`retiredDocument`) and a swap cover that holds
+/// the outgoing pages' image over the content area while the new document
+/// draws. Apart from those two additions it is the manifested source snapshot
+/// (the control arm of the D-v7 / document-swap trials,
 /// sha256 9b0446fadb6910fa149360278c567ff989211ea187396446bf9a663d5b737c0e) minus its
 /// two per-swap NSLog lines, which logged file paths.
 private struct PDFDocumentView: NSViewRepresentable {
@@ -379,10 +381,12 @@ private struct PDFDocumentView: NSViewRepresentable {
         // clicks to PDFView's own tracking, while the monitor sees the raw
         // event first and can swallow it before selection/link behavior.
         context.coordinator.syncMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: .leftMouseDown
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .smartMagnify, .keyDown]
         ) { [weak coordinator = context.coordinator] event in
             let consumed = MainActor.assumeIsolated {
-                coordinator?.handleSyncClick(event) ?? false
+                // An interaction takes the swap cover away first, so a Cmd-click maps on the document beneath.
+                coordinator?.removeCoverOnInteraction(event)
+                return event.type == .leftMouseDown ? (coordinator?.handleSyncClick(event) ?? false) : false
             }
             return consumed ? nil : event
         }
@@ -443,13 +447,23 @@ private struct PDFDocumentView: NSViewRepresentable {
         context.coordinator.clearSyncHighlight()
         context.coordinator.renderedData = data
         context.coordinator.renderedTarget = target
+        // The swap cover: a still image of the outgoing pages over the content area, taken before the
+        // document is replaced (after the highlight is cleared, so it never shows one the swap removes).
+        context.coordinator.coverOutgoing(view, sameTarget: sameTarget)
         // PDFView renders pages asynchronously and can still be decoding
         // the outgoing document when the swap lands — its PDFPage backrefs
         // are weak, so a dropped document leaves "drawing a PDFPage when
         // its PDFDocument is nil" warnings. Keep exactly one retired
         // document alive until the next swap or dismantle.
         context.coordinator.retiredDocument = view.document
-        view.document = PDFDocument(data: data)
+        let incoming = PDFDocument(data: data)
+        if context.coordinator.hasCover {
+            // The draw watch is registered BEFORE the document goes in: PDFKit draws off the main thread and may finish a page
+            // before this turn ends, and a report for a document nobody waits for is dropped.
+            incoming?.delegate = context.coordinator.drawDelegate
+            context.coordinator.awaitDraw(incoming)
+        }
+        view.document = incoming
         guard sameTarget, let document = view.document, document.pageCount > 0 else { return }
         view.autoScales = autoScales
         if !autoScales { view.scaleFactor = scaleFactor }
@@ -469,6 +483,7 @@ private struct PDFDocumentView: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: PDFView, coordinator: Coordinator) {
         coordinator.clearSyncHighlight()
+        coordinator.removeCover()
         NotificationCenter.default.removeObserver(coordinator)
         if let monitor = coordinator.syncMonitor {
             NSEvent.removeMonitor(monitor)
@@ -571,7 +586,246 @@ private struct PDFDocumentView: NSViewRepresentable {
                 self?.clearSyncHighlight()
             }
         }
+
+        // ─── Swap cover ───────────────────────────────────────────────────────
+        // PDFView swaps the page tiles of a new document in as they finish, and for a
+        // while the content area shows nothing. The cover holds the outgoing pages'
+        // image over the content area (never over the scrollers) until PDFKit has drawn
+        // a visible page of the new document, or 1.2 s have passed, or the user interacts.
+        private var cover: SwapCoverView?
+        private var awaited: ObjectIdentifier?
+        private var drawSeen = false
+        private var coverGeneration = 0
+        private var drawGeneration = 0
+        private var frameObserver: NSObjectProtocol?
+        /// `PDFDocument.delegate` is weak: the coordinator keeps the one delegate alive.
+        let drawDelegate = SwapDrawDelegate()
+        var hasCover: Bool { cover != nil }
+
+        /// Called in the swap turn, before the document is replaced. A swap while covered keeps the cover
+        /// (the view beneath may be undrawn, so no new snapshot) unless the target changed.
+        func coverOutgoing(_ view: PDFView, sameTarget: Bool) {
+            if cover != nil {
+                if !sameTarget { removeCover() }
+                return
+            }
+            guard sameTarget, !view.isHidden, let window = view.window,
+                  let document = view.document, document.pageCount > 0 else { return }
+            let pages = view.visiblePages
+            guard !pages.isEmpty, pages.allSatisfy({ $0.rotation == 0 }) else { return }
+            let clip = Self.clipRect(of: view)
+            guard clip.width > 1, clip.height > 1 else { return }
+            let scale = window.backingScaleFactor
+            let rects = pages.map { view.convert($0.bounds(for: .cropBox), from: $0) }
+            // c31:sample
+            let sampled = Self.underPageColor(of: view, clip: clip, pageRects: rects)
+            // c31:sampled
+            guard let image = Self.renderOutgoing(view, pages: pages, rects: rects, clip: clip, underPage: sampled.0, scale: scale)
+            else { return }
+            let swapCover = SwapCoverView(frame: clip, image: image, scale: scale)
+            view.addSubview(swapCover)
+            cover = swapCover
+            // c31:install
+            coverGeneration += 1
+            let generation = coverGeneration
+            // The cap: whatever happens, the cover is gone 1.2 s after it was installed.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                MainActor.assumeIsolated {
+                    if let self, self.coverGeneration == generation { self.removeCover() }
+                }
+            }
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: view, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.removeCover() }
+            }
+        }
+
+        /// Called before the incoming document is set: the cover waits for PDFKit to draw a visible page of it. A later
+        /// swap while covered retargets the wait to the newest document; an unreadable or empty document removes the cover.
+        func awaitDraw(_ incoming: PDFDocument?) {
+            guard cover != nil else { return }
+            drawGeneration += 1
+            drawSeen = false
+            if let previous = awaited { SwapDrawRegistry.shared.forget(previous) }
+            awaited = nil
+            guard let document = incoming, document.pageCount > 0 else {
+                removeCover()
+                return
+            }
+            let identity = ObjectIdentifier(document)
+            awaited = identity
+            SwapDrawRegistry.shared.watch(identity) { [weak self] page in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.pageDrawn(document: identity, page: page) }
+                }
+            }
+        }
+
+        private func pageDrawn(document identity: ObjectIdentifier, page: ObjectIdentifier) {
+            guard cover != nil, !drawSeen, awaited == identity, let view = pdfView, let document = view.document,
+                  ObjectIdentifier(document) == identity,
+                  view.visiblePages.contains(where: { ObjectIdentifier($0) == page }) else { return }
+            drawSeen = true
+            // c31:signal
+            // A fixed margin lets the compositor present the frame the draw belongs to (a heuristic, bounded by the cap).
+            let generation = drawGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                MainActor.assumeIsolated {
+                    if let self, self.drawGeneration == generation { self.removeCover() }
+                }
+            }
+        }
+
+        func removeCover() {
+            guard let swapCover = cover else { return }
+            // c31:remove
+            swapCover.removeFromSuperview()
+            cover = nil
+            coverGeneration += 1
+            drawGeneration += 1
+            if let awaited { SwapDrawRegistry.shared.forget(awaited) }
+            awaited = nil
+            if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
+            frameObserver = nil
+        }
+
+        /// A click, scroll, magnify or (with the PDF view focused) key press inside the PDF view removes the cover.
+        /// Typing in the editor does not: typing is what causes the swaps.
+        func removeCoverOnInteraction(_ event: NSEvent) {
+            guard cover != nil, let view = pdfView, let window = view.window, event.window === window else { return }
+            if event.type == .keyDown {
+                guard let responder = window.firstResponder as? NSView,
+                      responder === view || responder.isDescendant(of: view) else { return }
+            } else {
+                guard view.bounds.contains(view.convert(event.locationInWindow, from: nil)) else { return }
+            }
+            removeCover()
+        }
+
+        /// The scroll view's content area in the PDF view's coordinates (the legacy scrollers lie outside it).
+        private static func clipRect(of view: PDFView) -> NSRect {
+            guard let clipView = view.documentView?.enclosingScrollView?.contentView, let parent = clipView.superview
+            else { return view.bounds }
+            return view.convert(clipView.frame, from: parent).intersection(view.bounds)
+        }
+
+        /// What PDFKit shows where no page is: a point on the left edge of the content area that no page covers
+        /// (top, bottom, then the gaps between pages; never the right or bottom band where an overlay scroller can
+        /// appear), read with `cacheDisplay`. With no such point the pages fill the area and the view's background
+        /// is used (it cannot be seen).
+        private static func underPageColor(of view: PDFView, clip: NSRect, pageRects: [NSRect]) -> (CGColor, NSPoint?) {
+            var background = view.backgroundColor.cgColor
+            view.effectiveAppearance.performAsCurrentDrawingAppearance { background = view.backgroundColor.cgColor }
+            let x = clip.minX + 2
+            var candidates = [NSPoint(x: x, y: clip.maxY - 2), NSPoint(x: x, y: clip.minY + 2)]
+            let rows = pageRects.map { ($0.minY, $0.maxY) }.sorted { $0.0 < $1.0 }
+            for (below, above) in zip(rows, rows.dropFirst()) where above.0 > below.1 {
+                candidates.append(NSPoint(x: x, y: (below.1 + above.0) / 2))
+            }
+            for point in candidates where clip.contains(point) && !pageRects.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(point) }) {
+                let pixel = NSRect(x: point.x, y: point.y, width: 1, height: 1)
+                guard let rep = view.bitmapImageRepForCachingDisplay(in: pixel) else { continue }
+                view.cacheDisplay(in: pixel, to: rep)
+                if let color = rep.colorAt(x: 0, y: 0)?.cgColor { return (color, point) }
+            }
+            return (background, nil)
+        }
+
+        /// The outgoing view's visible pages, drawn with `PDFPage.draw` (a `cacheDisplay` of a PDFView carries the page
+        /// background but not the page content), cropped to the content area. `CGImage.cropping` may keep the parent
+        /// bitmap alive, so the full-view bitmap (at most ~30 MB) is held until the cover is removed.
+        private static func renderOutgoing(
+            _ view: PDFView, pages: [PDFPage], rects: [NSRect], clip: NSRect, underPage: CGColor, scale: CGFloat
+        ) -> CGImage? {
+            let size = view.bounds.size
+            let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+            guard width > 0, height > 0,
+                  let rep = NSBitmapImageRep(
+                      bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                  let graphics = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+            let context = graphics.cgContext
+            context.scaleBy(x: scale, y: scale)
+            context.setFillColor(underPage)
+            context.fill(CGRect(origin: .zero, size: size))
+            for (page, rect) in zip(pages, rects) {
+                let crop = page.bounds(for: .cropBox)
+                var target = rect
+                if view.isFlipped { target.origin.y = size.height - target.maxY }   // the bitmap context is bottom-left origin
+                guard target.width > 0, target.height > 0, crop.width > 0, crop.height > 0 else { return nil }
+                context.saveGState()
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fill(target)
+                context.translateBy(x: target.minX, y: target.minY)
+                context.scaleBy(x: target.width / crop.width, y: target.height / crop.height)
+                context.translateBy(x: -crop.minX, y: -crop.minY)
+                page.draw(with: .cropBox, to: context)
+                context.restoreGState()
+            }
+            guard let full = rep.cgImage else { return nil }
+            // Image rows run top-down; the view's coordinates run bottom-up unless it is flipped.
+            let top = view.isFlipped ? clip.minY : size.height - clip.maxY
+            let pixels = CGRect(x: clip.minX * scale, y: top * scale, width: clip.width * scale, height: clip.height * scale).integral
+            return full.cropping(to: pixels)
+        }
     }
+}
+
+/// The swap cover: one still image laid over the PDF view's content area. It never takes a click and is not an
+/// accessibility element.
+private final class SwapCoverView: NSView {
+    init(frame: NSRect, image: CGImage, scale: CGFloat) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.contents = image
+        layer?.contentsGravity = .resize
+        layer?.contentsScale = scale
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+}
+
+/// Tells the swap cover when PDFKit has drawn a page of the document it waits for. `PDFPage.draw` runs off the main
+/// thread, so the page only records two object identities under a lock; the main actor does everything else.
+private final class SwapDrawRegistry: @unchecked Sendable {
+    static let shared = SwapDrawRegistry()
+    private let lock = NSLock()
+    private var sinks: [ObjectIdentifier: @Sendable (ObjectIdentifier) -> Void] = [:]
+
+    func watch(_ document: ObjectIdentifier, _ sink: @escaping @Sendable (ObjectIdentifier) -> Void) {
+        lock.lock()
+        sinks[document] = sink
+        lock.unlock()
+    }
+
+    func forget(_ document: ObjectIdentifier) {
+        lock.lock()
+        sinks[document] = nil
+        lock.unlock()
+    }
+
+    func report(document: ObjectIdentifier, page: ObjectIdentifier) {
+        lock.lock()
+        let sink = sinks[document]
+        lock.unlock()
+        sink?(page)
+    }
+}
+
+private final class SwapDrawPage: PDFPage {
+    override func draw(with box: PDFDisplayBox, to context: CGContext) {
+        super.draw(with: box, to: context)
+        if let document { SwapDrawRegistry.shared.report(document: ObjectIdentifier(document), page: ObjectIdentifier(self)) }
+    }
+}
+
+private final class SwapDrawDelegate: NSObject, PDFDocumentDelegate {
+    func classForPage() -> AnyClass { SwapDrawPage.self }
 }
 
 extension Notification.Name {
