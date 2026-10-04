@@ -24,8 +24,8 @@ installation:
    system font on page 2 emits FNTB (driver.log font-barrier restart) and
    still produces the complete 2-page PDF whose extracted text matches a
    system-xelatex reference.
-8. (B1) Type → publish → save: the next publication after the coalesced
-   save still carries the typed marker.
+8. (B1) Type → publish → save + rescan: the next publication after closing
+   the saved override still carries the typed marker.
 9. (B2, second app run) Project opened through the /tmp spelling
    (/tmp → /private/tmp on Darwin): the helper's --root argv is the
    realpath root, an unsaved edit publishes, and the save regression
@@ -769,6 +769,9 @@ enum LaunchFlag {
         let preSaveGeneration = workspace.embeddedPreview.ledger.generation
         await workspace.save()
         require(diskText("main.tex").contains(marker), "save did not write \(marker)")
+        // An unchanged save is intentionally deduplicated by EmbeddedFlushKey.
+        // Force a rescan to exercise B1's helper-side override close/idle path.
+        workspace.requestEmbeddedPreviewFlush(force: true)
         // Settled = the flush carrying the save arrived and the helper
         // answered: either the ledger's displayed generation advanced via
         // idle, or a newer publication landed.

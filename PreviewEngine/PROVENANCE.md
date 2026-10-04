@@ -54,7 +54,21 @@ temporary artifacts in a per-session directory and say so in their metadata
   watchdog/kill hooks; engine sockets marked close-on-exec; the aux-file
   convergence stash is kept across rollbacks (so an edit does not force a
   full rerun when the `.aux` output is unchanged) and on-disk `.aux` equality
-  counts as converged.
+  counts as converged. Dead workers at a rollback boundary are discarded,
+  including workers interrupted before their first trace/checkpoint.
+- **Paragraph-token compatibility** (`xetex_format.h`, `xetex-xetex0.c`,
+  `xetex-ini.c`): `\partokencontext` and `\partokenname` semantics follow
+  TeX Live's public-domain [`partoken.ch`](https://github.com/TeX-Live/texlive-source/blob/trunk/texk/web2c/partoken.ch)
+  (Petr Olsak, 2021). This lets current LaTeX and `microtype` select paragraph
+  insertion contexts without undefined-command errors. The integer slot
+  changes the Pitex format layout to serial 34; cache filenames include
+  that serial so an older format is never reused by the new engine.
+  Unicode delimiter primitives use the table-base expressions rather than
+  stale generated offsets, including `\Udelcode` and `\XeTeXdelcode`.
+- **Source text in PDFs** (`xetex-ini.c`): new formats enable the existing
+  `\XeTeXgenerateactualtext` option by default. The Pitex XDV writer preserves
+  the UTF-16 text in opcode 254 as PDF `/ActualText`, so shaped ligatures
+  retain their source characters when copied or searched.
 - **Process lifetime** (`fork.c`, `engine_tex.c`): a checkpoint parent now
   closes its copies of the new child's socket pair before blocking, so a
   checkpoint chain sees EOF and exits when the driver dies; the exec'd root
@@ -79,7 +93,7 @@ TeXpresso's `interpret_open`/`interpret_close`), `driver/xdv.c` (XDV page
 index), `driver/xdv2pdf.c` (DVI/XDV interpreter, virtual fonts, dvipdfmx-style
 specials used by `xetex.def`, `pgfsys-dvipdfmx.def` and hyperref),
 `driver/fonts.c` (OpenType/TrueType/TTC, TFM, VF, Type 1 PFB/PFA, `.enc`,
-pdfTeX font maps), `driver/images.c` (PNG, JPEG, BMP), `driver/pdfw.c` (PDF
+pdfTeX font maps, Unicode mapping for OpenType `ssty` script alternates), `driver/images.c` (PNG, JPEG, BMP), `driver/pdfw.c` (PDF
 objects, PDF page import as Form XObjects), `driver/json.c`, `driver/tbuf.c`,
 `shared/*`. They were written from the published format descriptions (DVI by
 Knuth, XeTeX XDV opcodes, VF/TFM, OpenType, Type 1, PDF 1.7, PNG, JPEG, BMP);

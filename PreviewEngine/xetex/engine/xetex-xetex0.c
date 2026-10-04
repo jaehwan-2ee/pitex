@@ -2026,6 +2026,9 @@ void print_param(int32_t n)
     case INT_PAR__tracing_stack_levels:
         print_esc_cstr("tracingstacklevels");
         break;
+    case INT_PAR__partoken_context:
+        print_esc_cstr("partokencontext");
+        break;
     case INT_PAR__xetex_linebreak_penalty:
         print_esc_cstr("XeTeXlinebreakpenalty");
         break;
@@ -2377,7 +2380,7 @@ print_cmd_chr(uint16_t cmd, int32_t chr_code)
         break;
 
     case AFTER_GROUP:
-        print_esc_cstr("aftergroup");
+        print_esc_cstr(chr_code == 1 ? "partokenname" : "aftergroup");
         break;
 
     case ASSIGN_FONT_DIMEN:
@@ -16706,6 +16709,16 @@ handle_right_brace(void)
     scaled_t d;
     int32_t f;
 
+    /* TeX Live's partoken.ch (public domain, Petr Olsak): modern LaTeX
+     * uses context 2, while microtype locally selects the classic 0. */
+    if (cur_list.mode == HMODE && INTPAR(partoken_context) > 0 &&
+        (cur_group == VBOX_GROUP || cur_group == VTOP_GROUP || cur_group == VCENTER_GROUP ||
+         (INTPAR(partoken_context) > 1 &&
+          (cur_group == INSERT_GROUP || cur_group == OUTPUT_GROUP || cur_group == NO_ALIGN_GROUP)))) {
+        head_for_vmode();
+        return;
+    }
+
     switch (cur_group) {
     case SIMPLE_GROUP:
         unsave();
@@ -17273,7 +17286,10 @@ reswitch:
 
     case VMODE + ENDV:
     case HMODE + ENDV:
-        do_endv();
+        if (cur_list.mode == HMODE && INTPAR(partoken_context) > 1)
+            head_for_vmode();
+        else
+            do_endv();
         break;
 
     case ANY_MODE(END_CS_NAME):
@@ -17470,8 +17486,16 @@ reswitch:
         break;
 
     case ANY_MODE(AFTER_GROUP):
-        get_token();
-        save_for_after(cur_tok);
+        if (cur_chr == 1) {
+            get_token();
+            if (cur_cs > 0) {
+                par_loc = cur_cs;
+                par_token = cur_tok;
+            }
+        } else {
+            get_token();
+            save_for_after(cur_tok);
+        }
         break;
 
     case ANY_MODE(IN_STREAM):

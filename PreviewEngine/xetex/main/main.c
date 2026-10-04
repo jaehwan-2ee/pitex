@@ -918,11 +918,13 @@ static void usage(char *argv0)
 
 static const char *format_path(const char *ext)
 {
-  /* TeX Live is the only distribution provider. */
+  /* Keep formats with a different engine layout out of this cache key. */
+  char prefix[64];
+  snprintf(prefix, sizeof prefix, "texlive-pitex-%d-", TECTONIC_FORMAT_VERSION);
   if (!ext || (*ext == '.' || *ext == '-'))
-    return cache_path("format", "texlive-", format_name, ext);
+    return cache_path("format", prefix, format_name, ext);
   else
-    return cache_path("format", "texlive-", format_name, "-", ext);
+    return cache_path("format", prefix, format_name, "-", ext);
 }
 
 static bool validate_format(void)

@@ -1963,12 +1963,26 @@ static void interpret(conv_ctx *c, dvi_state *st, const unsigned char *p, const 
     else if (op == XDV_GLYPHS || op == XDV_TEXT_AND_GLYPHS)
     {
       const unsigned char *q = p + 1;
+      unsigned text_len = op == XDV_TEXT_AND_GLYPHS ? be(p + 1, 2) : 0;
       if (op == XDV_TEXT_AND_GLYPHS)
-        q += 2 + 2 * be(p + 1, 2);
+        q += 2 + 2 * text_len;
       int32_t w = sbe(q, 4);
       int cnt = (int)be(q + 4, 2);
+      bool actual_text = text_len && c->render && st->font && st->font->kind == FS_NATIVE;
+      if (actual_text)
+      {
+        /* Preserve the original UTF-16 text when shaping produces
+         * ligatures or glyphs that have no Unicode cmap entry. */
+        text_end(c);
+        pbuf_puts(&cur(c)->content, "/Span<</ActualText<FEFF");
+        for (unsigned i = 0; i < 2 * text_len; i++)
+          pbuf_printf(&cur(c)->content, "%02X", p[3 + i]);
+        pbuf_puts(&cur(c)->content, ">>>BDC\n");
+      }
       if (st->font)
         draw_native_glyphs(c, st->font, st->r.h, st->r.v, q + 6, q + 6 + 8 * cnt, cnt);
+      if (actual_text)
+        emit_raw(c, "EMC", 3);
       st->r.h += w;
     }
     p += n;
