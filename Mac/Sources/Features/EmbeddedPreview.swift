@@ -396,6 +396,8 @@ final class EmbeddedPreviewState {
     /// A request that must send even when the key is unchanged (`requestEmbeddedPreviewFlush(force:)`); consumed by the next flush.
     var forceNextFlush = false
     static var sessionCount: UInt64 = 0
+    /// A build-target change retired a preview that should come back once the target is non-nil again (`retireEmbeddedPreviewForTargetChange`); every other stop clears it.
+    var restartAfterTargetChange = false
 }
 
 extension WorkspaceModel {
@@ -422,6 +424,7 @@ extension WorkspaceModel {
             return
         }
         if embeddedPreview.session != nil || embeddedPreview.timer != nil { stopEmbeddedPreview(resetContext: false) }
+        embeddedPreview.restartAfterTargetChange = false
         let remoteOnly = settings.liveCompileEnabled && settings.livePreviewBackend == "embedded"
         setEmbeddedPreviewStatus(remoteOnly ? .unsupportedRemote : .off)
     }
@@ -439,10 +442,24 @@ extension WorkspaceModel {
         }
         state.displayed = nil
         state.lastFlushKey = nil
+        state.restartAfterTargetChange = false
         state.session?.shutdown()
         state.session = nil
         if resetContext { state.ledger.resetContext() } else { state.ledger.resetSession() }
         setEmbeddedPreviewStatus(.off)
+    }
+
+    /// Whether the preview should come back after a build-target change: an EDITING preview is on screen, or a session has not published yet. Never over a final build output: the reset drops the floors that keep a preview below the final PDF.
+    var embeddedPreviewComesBack: Bool {
+        embeddedPreviewEnabled && (retainedPDF.map(\.isEmbeddedPreview) ?? (embeddedPreview.session != nil))
+    }
+
+    /// Stops the session for a build-target change (resolver result or pin) and, once a target exists, restarts it: nothing else would before the next edit. Call before `retainedPDF = nil`.
+    func retireEmbeddedPreviewForTargetChange() {
+        let restart = embeddedPreview.restartAfterTargetChange || embeddedPreviewComesBack
+        stopEmbeddedPreview(resetContext: true)
+        embeddedPreview.restartAfterTargetChange = restart && buildSourceURL() == nil
+        if restart, buildSourceURL() != nil { requestEmbeddedPreviewFlush() }
     }
 
     /// App termination: kill every helper group synchronously.

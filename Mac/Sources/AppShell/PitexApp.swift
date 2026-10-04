@@ -2394,12 +2394,15 @@ final class WorkspaceModel: ObservableObject {
     /// Toggles the build-target pin on the active document (File → Pin/Unpin).
     func togglePinnedBuildTarget() {
         guard let url = activeDocumentURL, url.pathExtension.lowercased() == "tex" else { return }
+        // An editing preview on screen comes back after the stop below; read before the refresh can clear the retained PDF.
+        let restartPreview = embeddedPreviewComesBack
         pinnedBuildTarget = pinnedBuildTarget == url ? nil : url
         refreshBuildTarget()
         // Pin/unpin switches the build context: live work for the old
         // target is dead, and its retained preview is not this target's.
         performLiveRequests(liveScheduler.invalidate())
-        stopEmbeddedPreview(resetContext: true)
+        if restartPreview { embeddedPreview.restartAfterTargetChange = true }
+        retireEmbeddedPreviewForTargetChange()
         retainedPDF = nil
         syncTeXEpoch = UUID()
         Task { await restoreBuiltPreview() }
@@ -2527,7 +2530,7 @@ final class WorkspaceModel: ObservableObject {
         // switches inside the same document keep pending edits alive.
         if buildSourceURL() != previousTarget {
             performLiveRequests(liveScheduler.invalidate())
-            stopEmbeddedPreview(resetContext: true)
+            retireEmbeddedPreviewForTargetChange()
             // A different main means the retained PDF and any SyncTeX
             // binding/refresh belong to the previous target.
             retainedPDF = nil
