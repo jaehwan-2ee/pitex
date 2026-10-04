@@ -1,0 +1,80 @@
+PreviewEngine/xetex/engine/xetex-ini.c
+  s_a7b9818dbf217b::t_cb4af0e3cc6b94 3384-3385
+  s_a7b9818dbf217b::t_1e22c64a5c6446 3382-3383
+  s_a7b9818dbf217b::t_931057d63f5f5b 2672
+PreviewEngine/PROVENANCE.md
+  s_a7b9818dbf217b::t_2efd6e1f5f505d 96
+  s_a7b9818dbf217b::t_dfd6798cee50a8 57-59,61-65
+  s_a7b9818dbf217b::t_cf1636ad035657 66-71
+  s_a7b9818dbf217b::t_624e38cd1e5bb5 60
+Development/README.md
+  s_a7b9818dbf217b::t_54b4f4c72e6e1c 146-147,151-153,155-156
+  s_a7b9818dbf217b::t_2efd6e1f5f505d 148-150,154
+PreviewEngine/xetex/engine/xetex_format.h
+  s_a7b9818dbf217b::t_dfd6798cee50a8 1
+  s_a7b9818dbf217b::t_3167f3986494de 966-967,970-971
+  s_a7b9818dbf217b::t_931057d63f5f5b 2,11,118-119,221-226,1165-1166
+PreviewEngine/xetex/main/main.c
+  s_a7b9818dbf217b::t_931057d63f5f5b 921-923,925,927
+PreviewEngine/xetex/engine/xetex_bindings.h
+  s_a7b9818dbf217b::t_931057d63f5f5b 19
+Linux/crates/pitex/Cargo.toml
+  s_a7b9818dbf217b::t_55f95ee1888624 3
+PreviewEngine/tools/regress-live-updates.py
+  s_a7b9818dbf217b::t_af1ee9e36c355f 102-103
+  s_a7b9818dbf217b::t_495304e3755335 1-101,104-165
+PreviewEngine/provenance.json
+  s_a7b9818dbf217b::t_66295e603018c9 58,316-322,626,629,646,649,656,849
+  s_a7b9818dbf217b::t_1e22c64a5c6446 459
+  s_a7b9818dbf217b::t_160bf927556bc8 51,77,226,323-327,332,659
+PreviewEngine/tools/selftest.c
+  s_a7b9818dbf217b::t_2efd6e1f5f505d 326-330,332-336,360-374,381,383-384,386,388-392,400
+  s_a7b9818dbf217b::t_49b2d48b9fd049 331,337-359,375-380,382,385,387
+  s_a7b9818dbf217b::t_315e57d456be3d 252,290,321
+.github/release-notes/v2.2.1.md
+  s_a7b9818dbf217b::t_55f95ee1888624 1-28
+Windows/crates/pitex-windows/Cargo.toml
+  s_a7b9818dbf217b::t_55f95ee1888624 3
+PreviewEngine/xetex/engine/xetex-xetex0.c
+  s_a7b9818dbf217b::t_931057d63f5f5b 2029-2031,16712-16721,17289-17292,17489-17498
+  s_a7b9818dbf217b::t_b361467a182290 2383
+PreviewEngine/driver/fonts.c
+  s_a7b9818dbf217b::t_a72c71affa6f7d 294-395,523
+Mac/Config/Info.plist
+  s_a7b9818dbf217b::t_55f95ee1888624 20,22
+PreviewEngine/driver/xdv2pdf.c
+  s_a7b9818dbf217b::t_5fc9114620c0b0 1966,1968,1971-1981,1984-1985
+README.md
+  s_a7b9818dbf217b::t_2efd6e1f5f505d 46,209,218,232,255-256,258,283,287,293,308,334-335,337,351,413,461,464,481,498,531-532
+  s_a7b9818dbf217b::t_1e22c64a5c6446 34,181,260,325,344,472,530
+  s_a7b9818dbf217b::t_55f95ee1888624 144-146,161,231
+  s_a7b9818dbf217b::t_4f90fc8f88377f 3-18,20,22-33,35-38,40-42,45,47-53,55-60,62-64,66-92,94-108,112-115,119-142,151-160,164-170,173-180,182-186,188-189,191-208,210-217,219-222,224-230,234,238-249,252,254,261-280,284-285,298-307,309,311,313-318,322-324,326-328,330-332,340-343,345-350,352-355,357-372,391,393,395,397-405,407-409,411-412,415,417-423,425-429,437-439,441-444,449-452,454,456-457,459-460,462-463,466-467,470-471,473,475,477,479,482,484-485,487-493,495,497,499-507,511-520,522-526,533-551
+  s_a7b9818dbf217b::t_7d61164df39f1a 19,21,39,43-44,54,61,65,93,143,150,163,187,190,223,233,250,253,257,282,286,296-297,310,312,329,333,336,338-339,356,424,436,448,469,494,496,508-510,521
+  s_a7b9818dbf217b::t_cadc760ff170d0 162,171-172,251,259,281,288-292,294-295
+PreviewEngine/driver/engine_tex.c
+  s_a7b9818dbf217b::t_931057d63f5f5b 920-924
+Tools/check-embedded-preview-macos.py
+  s_a7b9818dbf217b::t_c0557609b7d442 27-28,772-774
+Linux/Cargo.lock
+  s_a7b9818dbf217b::t_def02d9e061603 965
+PreviewEngine/tools/regress-tex-compat.py
+  s_a7b9818dbf217b::t_5c741b08f5b33c 1-150
+Windows/Cargo.lock
+  s_a7b9818dbf217b::t_e43d18767af523 1090
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b16962c8219e7393821282a9b3358050fbe3750c",
+  "prompts": {},
+  "sessions": {
+    "s_a7b9818dbf217b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a104c1-a111-75f1-8c83-8f062190127c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
