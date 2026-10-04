@@ -35,6 +35,7 @@
 "preview.next_page" = "Trang sau";
 "preview.zoom_in" = "Phóng to";
 "preview.zoom_out" = "Thu nhỏ";
+"preview.zoom_auto" = "Tự động thay đổi kích thước";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Hiển thị vùng chọn trong PDF";
 "preview.synctex_inverse" = "Hiển thị mã nguồn";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitex sẽ không mở tệp thực thi từ bản xem trước.";
 "preview.markdown.runtime_missing" = "Xem trước Markdown cần Microsoft Edge WebView2 Runtime. Cài đặt từ https://developer.microsoft.com/microsoft-edge/webview2/ rồi khởi động lại Pitex.";
 "preview.markdown.pdf_failed" = "Pitex không lưu được bản sao PDF.";
+"preview.embedded_label" = "Xem trước khi sửa";
+"preview.final_label" = "PDF cuối cùng";
+"preview.embedded_unavailable" = "Công cụ xem trước tích hợp không khả dụng";
+"preview.embedded_failed" = "Xem trước khi sửa thất bại";
+"preview.embedded_unsupported_remote" = "Xem trước tích hợp chỉ khả dụng cho dự án cục bộ";
+"preview.embedded_updating" = "Đang cập nhật xem trước khi sửa…";
 
 "assistant.title" = "Trợ lý";
 "assistant.sign_in" = "Đăng nhập";
@@ -123,6 +130,7 @@
 "build.issues" = "Vấn đề";
 
 "command.sync_forward" = "Hiển thị vùng chọn trong PDF";
+"command.exact_equation_preview" = "Xem trước chính xác công thức";
 
 "sidebar.outline" = "Đề cương";
 "sidebar.labels" = "Nhãn";
@@ -183,6 +191,11 @@
 "editor.toggle_assistant" = "Bật/tắt trợ lý";
 "editor.toggle_bottom" = "Bật/tắt bảng dưới";
 "editor.flip_panels" = "Đảo các bảng";
+"equation_preview.accessibility_label" = "Xem trước công thức đã kết xuất";
+"equation_preview.unavailable" = "Không có bản xem trước";
+"equation_preview.exact_badge" = "TeX chính xác";
+"equation_preview.fast_badge" = "Xem trước nhanh";
+"equation_preview.exact_unavailable" = "Bản xem trước chính xác cần lệnh biên dịch pdflatex, xelatex, lualatex hoặc latexmk.";
 "editor.reload" = "Tải lại từ đĩa";
 "editor.disk_changed" = "Đã tải lại thay đổi từ đĩa";
 "editor.disk_unchanged" = "Không có thay đổi trên đĩa";
@@ -255,10 +268,16 @@
 "settings.compile.make_default_editor" = "Dùng cho tệp .tex";
 "settings.compile.make_default_note" = "Đăng ký Pitex làm ứng dụng mặc định cho tệp .tex (nhấp đúp để mở tại đây).";
 "settings.compile.live" = "Biên dịch trực tiếp";
-"settings.compile.live_auto" = "Tự động biên dịch khi ngừng nhập";
-"settings.compile.live_auto_note" = "Biên dịch trực tiếp lưu các tệp đang sửa, rồi tự động biên dịch lại khi bạn ngừng nhập.";
-"settings.compile.live_delay" = "Độ trễ nhàn rỗi (ms)";
+"settings.compile.live_auto" = "Tự động biên dịch khi chỉnh sửa";
+"settings.compile.live_auto_note" = "Biên dịch trực tiếp lưu các tệp đang mở đã sửa và gộp thay đổi, không ngắt lần biên dịch đang chạy.";
+"settings.compile.live_auto_note_embedded" = "Chế độ xem trước chỉnh sửa tích hợp sắp chữ nội dung hiện tại mà không cần lưu tệp. Dùng Biên dịch để tạo PDF cuối cùng.";
+"settings.compile.live_delay" = "Độ trễ biên dịch (ms)";
+"settings.compile.live_delay_note" = "Tùy chọn này chỉ áp dụng khi chọn nền tảng “Xem trước tương thích trình biên dịch”.";
 "settings.compile.live_follow" = "Chuyển PDF tới con trỏ sau khi biên dịch trực tiếp";
+"settings.compile.live_backend" = "Nền tảng xem trước";
+"settings.compile.live_backend.embedded" = "Xem trước khi sửa tích hợp";
+"settings.compile.live_backend.compiler" = "Xem trước tương thích trình biên dịch";
+"settings.compile.live_backend.note" = "Công cụ tích hợp xem trước các thay đổi mà không lưu tệp nguồn. Dùng Biên dịch để tạo PDF cuối cùng bằng trình biên dịch của dự án.";
 "toolbar.live_compile" = "Biên dịch trực tiếp";
 "settings.markdown.live_preview" = "Xem trước trực tiếp";
 "settings.markdown.live_preview_note" = "Cập nhật bản xem trước khi bạn gõ. Khi tắt, bản xem trước cập nhật khi lưu.";
@@ -288,6 +307,20 @@
 "settings.synctex.inverse_highlight" = "Inverse Sync: tô sáng vị trí nguồn trong trình soạn thảo";
 "settings.synctex.forward_highlight" = "Forward Sync: tô sáng vị trí đích trong PDF";
 "settings.synctex.highlight_note" = "Hiển thị vùng tô sáng màu vàng trong chốc lát tại vị trí đích. Việc chuyển đến vị trí vẫn hoạt động khi tắt tô sáng.";
+"settings.editor.equation_preview.title" = "Xem trước công thức";
+"settings.editor.equation_preview.enabled" = "Hiện xem trước công thức";
+"settings.editor.equation_preview.while_typing" = "Xem trước khi đang gõ";
+"settings.editor.equation_preview.placement" = "Vị trí";
+"settings.editor.equation_preview.placement.above" = "Phía trên";
+"settings.editor.equation_preview.placement.below" = "Phía dưới";
+"settings.editor.equation_preview.renderer" = "Bộ kết xuất";
+"settings.editor.equation_preview.renderer.fast" = "Nhanh";
+"settings.editor.equation_preview.renderer.fast_tex" = "Nhanh + TeX dự phòng";
+"settings.editor.equation_preview.delay" = "Độ trễ";
+"settings.editor.equation_preview.delay.instant" = "Tức thì";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "Bản xem trước nhanh kết xuất bằng MathJax tích hợp mà không chạy TeX nên chỉ mang tính xấp xỉ. Bản xem trước chính xác tùy chọn dùng lệnh biên dịch TeX của dự án.";
 "settings.appearance.theme" = "Chủ đề";
 "settings.appearance.language" = "Ngôn ngữ";
 "settings.appearance.language_system" = "Hệ thống";

@@ -11,3 +11,6 @@ project-core = { path = "../project-core" }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[dev-dependencies]
+language-core = { path = "../language-core" }

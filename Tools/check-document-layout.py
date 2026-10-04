@@ -11,6 +11,7 @@ import argparse
 from pathlib import Path
 import plistlib
 import re
+MARKER = re.compile(r"/Check\.swift:\d+:\d+: warning: (?:no 'async' operations occur within 'await' expression|no calls to throwing functions occur within 'try' expression)(?: \[#UnnecessaryEffectMarker\])?$", re.M)
 import shutil
 import subprocess
 import sys
@@ -405,8 +406,15 @@ def run_check(repo, products, source_ref=None):
                    *map(str, sorted(products.glob('*.o'))), '-o', str(bundle / 'MacOS/check')]
         with (artifacts / 'compile.log').open('w') as log:
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+        _clog = (artifacts / 'compile.log').read_text()
+        print(_clog, end='')
+        _bad = MARKER.findall(_clog)
+        if _bad:
+            for line in _clog.splitlines():
+                if MARKER.search(line): print(line)
+            sys.exit(f"{mode}: FAIL harness compile defect — UnnecessaryEffectMarker "
+                     f"in generated Check.swift (discarded async query); no functional verdict")
         if result.returncode:
-            print((artifacts / 'compile.log').read_text(), end='')
             raise RuntimeError(f'{mode}: compilation failed (not a layout reproduction)')
         out_log, err_log = artifacts / 'stdout.log', artifacts / 'stderr.log'
         app = bundle.parent

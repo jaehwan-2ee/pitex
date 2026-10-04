@@ -12,6 +12,8 @@ sharing one architecture across platforms.
   Rust crates — `pitex-shell` runs on the MSYS2 GTK stack and
   `windows-platform` implements the Windows side of the `app-ports`
   contracts. Windows support is still beta-quality and may be unstable.
+  *(No prebuilt Windows download is currently published; Windows (beta)
+  support will return in a later release.)*
 
 ## Key features
 
@@ -122,23 +124,145 @@ Settings live under **Settings → Markdown** (right after the renamed
 22.04 and Windows builds don't include the preview yet — they show a
 "not available in this build" note instead.
 
+### Equation preview
+
+Point at an equation — or move the caret into one — and a rendered preview
+appears above it (Overleaf-style), without building the document.
+Hovering a different equation previews that one without moving the caret;
+moving away, leaving the editor, or pressing **Esc** hides it.
+
+- **What counts as math** — `$…$`, `$$…$$`, `\(…\)`, `\[…\]` and the
+  `math`, `displaymath`, `equation[*]`, `align[*]`, `gather[*]`,
+  `multline[*]`, `flalign[*]`, `alignat[*]`, `eqnarray[*]` environments,
+  plus `aligned`, `gathered`, `split`, `cases`, `array` and the `matrix`
+  family written on their own. Comments, escaped `\$`, `\verb`, verbatim-like
+  environments and `$…$` inside `\text{…}` are read the way TeX reads them;
+  an unfinished equation (a blank line before its closer) shows nothing.
+- **Your macros** — `\newcommand`, `\renewcommand`, `\providecommand`,
+  `\DeclareMathOperator`, `\newenvironment` and `\renewenvironment` apply in
+  document order, including definitions from `\input`/`\include`/`\subfile`/
+  `\import`ed files and project-local `\usepackage` style files (unsaved
+  edits in open tabs count). `\def`/`\let` are not collected.
+- **Fast preview** renders locally with a bundled, offline MathJax 4 (TeX
+  font) inside a sandboxed web view — no network, no TeX run. It is labeled
+  *Fast preview* and is an approximation: package-specific commands MathJax
+  does not know show *Preview unavailable*.
+- **Exact TeX preview** — *Build → Exact Equation Preview* (`⌥⌘E` /
+  `Ctrl+Alt+E`) compiles just that equation with the project's own
+  preamble, engine and shell-escape setting, in a private temporary folder
+  that is deleted afterwards; it never touches the project's PDF or aux
+  files. With *Renderer → Fast + TeX fallback* it also runs automatically
+  for equations the fast preview cannot render, once you pause (never per
+  keystroke).
+  - Supported build commands: `pdflatex`, `xelatex`, `lualatex`, and
+    `latexmk` only in its explicit PDF modes (`latexmk -pdf` /
+    `-pdfxe` / `-pdflua`) plus an unquoted `-pdflatex=<engine>` override.
+    Bare or `.latexmkrc`-driven `latexmk`, quoted/chained overrides
+    (e.g. `-pdflatex="…"`), DVI/PS output, conflicting options, and
+    custom or Tectonic commands report *Exact preview unavailable*
+    rather than guess.
+
+Settings live under **Settings → Editor → Equation Preview**: enable, preview
+while typing, above/below, renderer, and delay (Instant / 80 ms / 150 ms).
+On macOS the rendered preview updates live with the system's **Increase
+Contrast** setting, without changing the equation or taking keyboard focus.
+On Linux it needs WebKitGTK 6.0 (Ubuntu 24.04 package); the Ubuntu 22.04
+build does not include it.
+
+Fast rendering has a 5-second watchdog (10 seconds for renderer startup).
+Three failures in one enabled session stop automatic recovery; turn
+**Enable equation preview** off, then on, to try again. Successful renders,
+editing, theme changes and file switches do not replenish that budget.
+On macOS a truly hung WebKit script can retain its old view/process until
+it returns or Pitex quits; replacing the view does not guarantee immediate
+process cleanup.
+
+Exact TeX jobs time out after 20 seconds. The error display keeps a 4 KiB
+log tail, but stdout from project-enabled shell-escape children is not
+byte-capped before that timeout. The log-tail limit is not a memory cap.
+
 ### Live compile
 
-Toggle **Live Compile** in the toolbar (or **Settings → Compile → Live
-Compile**) and Pitex rebuilds automatically when you pause typing. Each
-live build saves open edited files first — there is no shadow copy —
-then a short debounce decides whether newer edits already superseded it.
+Toggle **Live Compile** in the toolbar (or **Settings → TeX Compile → Live
+Compile**) and the preview follows your edits. **Preview backend** picks
+how:
 
-- **Idle delay** is configurable from 200 ms to 10 s (default 700 ms).
+#### Embedded editing preview (default on macOS and Ubuntu 24.04)
+
+A XeTeX engine derived from [TeXpresso](https://github.com/let-def/texpresso)
+runs in a helper process and typesets exactly what the editor holds —
+unsaved changes included — without saving your files or writing anything
+into the project.
+
+- The preview header says **Editing preview** (with *Updating editing
+  preview…* while a pass runs) or **Final PDF** after a successful
+  **Build**. Editing feedback streams independently of the final compiler;
+  the helper resumes from a safe checkpoint when available. Native-font
+  safety barriers can require a fresh engine process instead.
+- Partial publications can combine fresh prefix pages with a stale tail
+  from the previous pass; they do not mean the whole document is current.
+- **Build** still creates the final PDF with the project compiler
+  (pdflatex, xelatex, lualatex, latexmk, …). The final PDF is never covered
+  by an older draft: it stays on screen until you edit again, and an edit
+  typed while the build runs keeps the newer editing preview.
+- **SyncTeX** works on an editing preview once it matches the editor text
+  (saving does not break the match). A newer source revision or stale-tail
+  pages disable mapping until a coherent publication matches the current
+  text; the status line says why.
+- Changes to files you have not opened (figures, `\input` files, `.bib`)
+  are picked up when Pitex notices them: on Linux as soon as a project
+  file changes on disk (new files after a rescan or assistant run); on
+  macOS at the next edit, save, rescan or assistant run.
+- Temporary files: preview PDFs live in a private per-session directory
+  (Linux `$XDG_RUNTIME_DIR/pitex-preview/`, macOS `$TMPDIR/pitex-preview/`)
+  that is removed when the preview stops or Pitex quits; leftovers from a
+  crash are removed on the next start. The engine's TeX file index is
+  cached in `~/.cache/pitex/preview-engine` (Linux) or
+  `~/Library/Caches/Pitex/preview-engine` (macOS). The first launch on a
+  machine generates engine formats; simultaneous first launches serialize
+  on a lock, so the first-ever preview may take a few seconds.
+- Known differences from the final build: the preview always uses XeTeX
+  (pdfTeX/LuaTeX-only documents may differ or fail — switch to the
+  compiler backend for those); fonts are embedded whole, so preview PDFs
+  are larger; PostScript specials, PDF links/annotations/outlines and
+  shell-escape (e.g. `minted`) are not previewed; vertical native-font
+  text is shown horizontally.
+- **macOS CoreText ceiling**: safe font barriers remain enabled. In one
+  warm-format-cache, 12-page VM fixture with named platform fonts first
+  used on page 12, helper update-write → publication-receipt times for two
+  unsaved page-3 edits were 379/381 ms in hybrid PDFs (11 fresh pages plus
+  one stale page, without SyncTeX). All 12 pages were fresh (coherent
+  publication) after 1177/1145 ms and aux-converged after 1923/1904 ms,
+  rounded to the nearest millisecond. Each edit required a fresh root,
+  one font-barrier restart
+  and one convergence rerun—not checkpoint-only replay. These are helper
+  receipt observations on a macOS 26.5.2 ARM64 VM, not editor/display or
+  physical-hardware guarantees. See the
+  [conditioned measurement and limits](Development/README.md#change-note-macos-coretext-late-font-ceiling).
+- Remote (SSH) projects, the Ubuntu 22.04 package and Windows use the
+  compiler backend.
+
+#### Compiler compatibility preview
+
+Rebuilds with the project compiler as you edit. The first edit opens a
+short coalescing window; the build then saves the latest open edited
+files — there is no shadow copy — and compiles them.
+
+- **Build delay** is configurable from 200 ms to 10 s (default 700 ms).
   Remote projects compile on the connected device and never go below a
   1.5 s effective delay.
+  Further typing does not restart this window; an active build or IME
+  composition still holds the build slot.
 - **Isolated output** — live builds write under `.pitex-live/` inside
   the project root, so regular build artifacts, source discovery, and
   remote sync stay untouched. A failed or superseded run keeps the last
   good PDF on screen.
-- **While you keep typing** — a running live build is cancelled and the
-  newest edit wins; a manual build you start yourself always finishes
-  first and is never interrupted by typing.
+- **While you keep typing** — a running live build finishes and may update
+  the preview with intermediate progress. New edits coalesce into one
+  follow-up build rather than repeatedly cancelling useful work. A manual
+  build takes priority and is never interrupted by typing; disabling live
+  compile or changing the build context (including the resolved main
+  document, not just an explicit pin) still retires live work.
 - **Custom commands** must keep their output isolated too: add the
   `{outdir}` placeholder (e.g. `latexmk -pdf -outdir={outdir} {file}`)
   or the live run stops with an explanatory message. The shipped
@@ -178,6 +302,7 @@ Source and PDF stay locked together:
 | Left Sidebar | `⌘T` | `Ctrl+T` |
 | Right Sidebar | `⌘⌥P` | `Ctrl+Alt+P` |
 | Bottom panel | — | `Ctrl+Shift+Y` |
+| Exact equation preview | `⌥⌘E` | `Ctrl+Alt+E` |
 
 ## Download
 
@@ -220,21 +345,15 @@ external terminal emulator, since 22.04 has no VTE-GTK4.
 > error — the install still proceeds. If it bothers you, move the file
 > to `/tmp` first.
 
-### Windows — installer (recommended)
+### Windows
 
 > **Note:** Windows support is **beta** — expect bugs and instability.
 > Please report issues on the
 > [issue tracker](../../issues).
 
-Download `Pitex-*-windows-amd64-setup.exe` and double-click it — a
-per-user NSIS installer puts Pitex in `%LOCALAPPDATA%\Programs\Pitex`
-(no admin rights needed), adds Start Menu/Desktop shortcuts, and
-registers an Add/Remove Programs entry.
-
-`Pitex-*-windows-amd64.zip` is the portable alternative (`pitex.exe` +
-GTK runtime): extract anywhere and run `pitex\bin\pitex.exe`. Like the
-22.04 build, the terminal console hands interactive commands to an
-external terminal (there is no VTE-GTK4 on Windows).
+Windows (beta) support is paused for now and will return in a later
+release — no Windows download is currently published. Building from
+source is described in [Windows/README.md](Windows/README.md).
 
 ## Prerequisites
 
@@ -245,7 +364,8 @@ in the [build instructions](Development/README.md).
 
 - A TeX distribution for real document builds — TeX Live, BasicTeX
   (macOS), or MiKTeX (Windows). The editor and PDF preview work without
-  one; builds cannot run.
+  one; builds cannot run. The embedded editing preview reads the same
+  TeX Live / MacTeX installation (XeTeX formats and fonts included).
 - **Bun or Node.js + npm** — the AI assistant downloads its `pi` agent
   runtime into the app-local support folder on first launch. Without a
   package manager the assistant stays unavailable; everything else works.
@@ -291,13 +411,12 @@ Windows.
     password prompt), falling back to `sudo apt install` in a terminal
     window. The in-app install verifies the installed package version before
     asking you to restart Pitex. Terminal installs must finish there first.
-  - *Windows*: downloads the `*-setup.exe` installer and runs it silently
-    (`/S`) after the app exits, then relaunches `pitex.exe`. A portable-zip
-    install migrates to `%LOCALAPPDATA%\Programs\Pitex` automatically;
-    zip-only releases fall back to a staged bundle swap. Both helpers wait
-    for the app process to exit and check installation errors before
-    relaunching. Existing custom installer locations are preserved; helper
-    failures open an error log instead of silently relaunching the old app.
+  - *Windows*: no Windows release is currently published, so the update
+    check reports that no suitable download is available. When one is
+    published again, it installs the `*-setup.exe` silently (`/S`) after
+    the app exits, then relaunches `pitex.exe` (a portable-zip install
+    migrates to `%LOCALAPPDATA%\Programs\Pitex`; the helpers wait for the
+    process to exit and check for install errors before relaunching).
 - **Automatically download and install updates** — when on, Pitex runs the
   same check→download→install pass on every launch. Stored as
   `pitex.pref.update.autoInstall` on all platforms.
@@ -312,8 +431,9 @@ or `sudo` for the package install.
   tests (24.04 + 22.04 compat), and the Windows workspace build under
   MSYS2 UCRT64 on every PR.
 - Cutting a release: tag `v*` and push — the release workflow builds the
-  DMG, both deb variants, and the Windows zip, and attaches them to a
-  GitHub Release.
+  DMG and both deb variants and attaches them to a GitHub Release. The
+  Windows build runs on pull requests and manual runs only, not on tag
+  pushes.
 - Report bugs or request features via Issues; changes land via PR.
 
 ## License
@@ -322,3 +442,21 @@ Pitex is source-available under the
 [PolyForm Shield License 1.0.0](LICENSE): free to use, modify, and
 share, including commercially — but you may not use it to compete with
 the project or its author.
+
+The embedded editing preview helpers (`pitex-preview`,
+`pitex-preview-xetex`) are built from [PreviewEngine/](PreviewEngine/),
+which contains code from TeXpresso (MIT), XeTeX (SIL/MIT-style) and
+Tectonic (MIT). They link dynamically to system or bundled libraries,
+including TECkit (LGPL-2.1-or-later, used unmodified and replaceable — see
+"Corresponding source" in `PreviewEngine/licenses/THIRD-PARTY.md`). Within
+the helper binaries themselves, TeXpresso's GPL'd `dpx` component
+(xdvipdfmx) and the MuPDF/SDL renderer were removed rather than imported;
+dynamically loaded system libraries keep their own licenses.
+See [PreviewEngine/PROVENANCE.md](PreviewEngine/PROVENANCE.md)
+and [PreviewEngine/licenses/](PreviewEngine/licenses/); the deb installs
+them under `/usr/share/doc/pitex/preview-engine/`, the macOS app under
+`Contents/Resources/PreviewEngine/`.
+
+The macOS PDF preview column is PDFKit's `PDFView` (a system framework); the
+app bundles no third-party PDF viewer code. The copyleft components above
+(PreviewEngine) keep their own notices and obligations.

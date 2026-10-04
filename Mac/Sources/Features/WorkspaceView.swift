@@ -402,7 +402,8 @@ struct WorkspaceView: View {
                 onBuildRequest: {
                     Task { await workspace.startBuild() }
                 },
-                scrollSync: workspace.activeDocumentIsMarkdown ? workspace.markdownScrollSync : nil
+                scrollSync: workspace.activeDocumentIsMarkdown ? workspace.markdownScrollSync : nil,
+                equationPreview: workspace.equationPreview
             )
                 .id(ObjectIdentifier(environment.editor))
                 .accessibilityIdentifier("pitex.editor")

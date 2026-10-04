@@ -102,6 +102,46 @@ final class EditorMacAdapterMutationTests: XCTestCase {
     }
 
     @MainActor
+    func testPendingInputDrainJoinsQueuedAcknowledgementButNotLaterTyping() async throws {
+        let original = paragraph + "\n\n" + following
+        let session = GatedEditorSession(text: original)
+        addTeardownBlock { await session.releaseAll() }
+        let (adapter, window) = try await mount(session)
+        defer { window.orderOut(nil) }
+        let view = adapter.textView
+        view.setSelectedRange(NSRange(location: paragraph.utf16.count, length: 0))
+        view.insertText(" first", replacementRange: view.selectedRange())
+        try await waitForSubmission(1, session)
+        view.insertText(" second", replacementRange: view.selectedRange())
+
+        var drainStarted = false
+        var consumed: DocumentSnapshot?
+        let consumer = Task { @MainActor in
+            drainStarted = true
+            await adapter.flushPendingChanges()
+            consumed = await session.snapshot()
+        }
+        try await waitUntil("consumer captured the pending input") { drainStarted }
+        try await session.releaseAcknowledgement()
+        try await waitForSubmission(2, session)
+        XCTAssertNil(consumed, "Queued input is not acknowledged yet")
+
+        view.insertText(" later", replacementRange: view.selectedRange())
+        try await session.releaseAcknowledgement()
+        try await waitForSubmission(3, session)
+        try await waitUntil("captured input drains while later acknowledgement is held") {
+            consumed != nil
+        }
+        let captured = try XCTUnwrap(consumed)
+        XCTAssertTrue(captured.text.hasPrefix(paragraph + " first second"))
+        XCTAssertGreaterThanOrEqual(captured.revision, 2)
+        await consumer.value
+        await session.releaseAll()
+        await adapter.flushPendingChanges()
+        await assertSession(session, equals: paragraph + " first second later\n\n" + following)
+    }
+
+    @MainActor
     func testSnapshotSuspendedAcrossAWholeSubmitCannotRollBackTheDocument() async throws {
         let original = paragraph + "\n\n" + following
         let expected = paragraph + "!\n\n" + following

@@ -47,6 +47,19 @@ final class SettingsStore: ObservableObject {
     @Published var liveCompileFollowCursor: Bool {
         didSet { UserDefaults.standard.set(liveCompileFollowCursor, forKey: "pitex.pref.build.liveCompileFollowCursor") }
     }
+    /// `pitex.pref.build.livePreviewBackend` — which engine produces the
+    /// live editing preview: `embedded` (previews edits without saving
+    /// source files) or `compiler` (the project toolchain compatibility
+    /// path). Missing or unknown stored values resolve to `embedded`; a
+    /// persisted `compiler` choice is kept. Manual Build still uses the
+    /// selected project compiler either way. (Same key on Linux/Windows.)
+    @Published var livePreviewBackend: String {
+        didSet {
+            let normalized = Self.livePreviewBackendValue(livePreviewBackend)
+            if normalized != livePreviewBackend { livePreviewBackend = normalized }
+            UserDefaults.standard.set(livePreviewBackend, forKey: "pitex.pref.build.livePreviewBackend")
+        }
+    }
     @Published var restoreSession: Bool {
         didSet { UserDefaults.standard.set(restoreSession, forKey: "pitex.pref.editor.restoreSession") }
     }
@@ -116,6 +129,39 @@ final class SettingsStore: ObservableObject {
     @Published var markdownFontSize: Double {
         didSet { UserDefaults.standard.set(markdownFontSize, forKey: "pitex.pref.markdown.fontSize") }
     }
+    /// `pitex.pref.equationPreview.*` — Overleaf-style equation hover/caret
+    /// preview (same key names on Linux/Windows).
+    @Published var equationPreviewEnabled: Bool {
+        didSet { UserDefaults.standard.set(equationPreviewEnabled, forKey: "pitex.pref.equationPreview.enabled") }
+    }
+    @Published var equationPreviewWhileTyping: Bool {
+        didSet { UserDefaults.standard.set(equationPreviewWhileTyping, forKey: "pitex.pref.equationPreview.whileTyping") }
+    }
+    /// `above` | `below` — unknown values resolve to `above`.
+    @Published var equationPreviewPlacement: String {
+        didSet {
+            let normalized = Self.equationPreviewPlacementValue(equationPreviewPlacement)
+            if normalized != equationPreviewPlacement { equationPreviewPlacement = normalized }
+            UserDefaults.standard.set(equationPreviewPlacement, forKey: "pitex.pref.equationPreview.placement")
+        }
+    }
+    /// `fast` | `fastWithTeXFallback` — unknown values resolve to `fast`.
+    @Published var equationPreviewRenderer: String {
+        didSet {
+            let normalized = Self.equationPreviewRendererValue(equationPreviewRenderer)
+            if normalized != equationPreviewRenderer { equationPreviewRenderer = normalized }
+            UserDefaults.standard.set(equationPreviewRenderer, forKey: "pitex.pref.equationPreview.renderer")
+        }
+    }
+    /// Debounce before the popover opens; values snap to 0/80/150 ms.
+    @Published var equationPreviewDelayMilliseconds: Int {
+        didSet {
+            let snapped = Self.equationPreviewDelayValue(equationPreviewDelayMilliseconds)
+            if snapped != equationPreviewDelayMilliseconds { equationPreviewDelayMilliseconds = snapped }
+            UserDefaults.standard.set(equationPreviewDelayMilliseconds,
+                                      forKey: "pitex.pref.equationPreview.delay")
+        }
+    }
     /// Devices for "Open via SSH" (Settings → SSH).
     @Published var sshConnections: [SSHConnection] {
         didSet {
@@ -138,6 +184,7 @@ final class SettingsStore: ObservableObject {
         liveCompileEnabled = false
         liveCompileDelayMilliseconds = 700
         liveCompileFollowCursor = false
+        livePreviewBackend = "embedded"
         restoreSession = true
         codeFolding = true
         minimap = true
@@ -158,6 +205,11 @@ final class SettingsStore: ObservableObject {
         markdownSyncScroll = true
         markdownTheme = "system"
         markdownFontSize = 16
+        equationPreviewEnabled = true
+        equationPreviewWhileTyping = true
+        equationPreviewPlacement = "above"
+        equationPreviewRenderer = "fast"
+        equationPreviewDelayMilliseconds = 80
         sshConnections = []
         lastSSHConnectionID = nil
         reload()
@@ -179,6 +231,7 @@ final class SettingsStore: ObservableObject {
         liveCompileDelayMilliseconds = min(max(liveDelay, Self.liveCompileDelayRange.lowerBound),
                                            Self.liveCompileDelayRange.upperBound)
         liveCompileFollowCursor = defaults.bool(forKey: "pitex.pref.build.liveCompileFollowCursor")
+        livePreviewBackend = Self.livePreviewBackendValue(defaults.string(forKey: "pitex.pref.build.livePreviewBackend"))
         restoreSession = defaults.object(forKey: "pitex.pref.editor.restoreSession") as? Bool ?? true
         codeFolding = defaults.object(forKey: "pitex.pref.editor.codeFolding") as? Bool ?? true
         minimap = defaults.object(forKey: "pitex.pref.editor.minimap") as? Bool ?? true
@@ -199,6 +252,11 @@ final class SettingsStore: ObservableObject {
         markdownSyncScroll = defaults.object(forKey: "pitex.pref.markdown.syncScroll") as? Bool ?? true
         markdownTheme = Self.markdownThemeValue(defaults.string(forKey: "pitex.pref.markdown.theme"))
         markdownFontSize = min(max(defaults.object(forKey: "pitex.pref.markdown.fontSize") as? Double ?? 16, 10), 28)
+        equationPreviewEnabled = defaults.object(forKey: "pitex.pref.equationPreview.enabled") as? Bool ?? true
+        equationPreviewWhileTyping = defaults.object(forKey: "pitex.pref.equationPreview.whileTyping") as? Bool ?? true
+        equationPreviewPlacement = Self.equationPreviewPlacementValue(defaults.string(forKey: "pitex.pref.equationPreview.placement"))
+        equationPreviewRenderer = Self.equationPreviewRendererValue(defaults.string(forKey: "pitex.pref.equationPreview.renderer"))
+        equationPreviewDelayMilliseconds = Self.equationPreviewDelayValue(defaults.object(forKey: "pitex.pref.equationPreview.delay") as? Int)
         sshConnections = defaults.data(forKey: "pitex.pref.ssh.connections")
             .flatMap { try? JSONDecoder().decode([SSHConnection].self, from: $0) } ?? []
         lastSSHConnectionID = defaults.string(forKey: "pitex.pref.ssh.lastConnection").flatMap(UUID.init(uuidString:))
@@ -210,6 +268,29 @@ final class SettingsStore: ObservableObject {
         case "light", "dark": stored!
         default: "system"
         }
+    }
+
+    /// Missing or unknown placement resolves to `above`.
+    static func equationPreviewPlacementValue(_ stored: String?) -> String {
+        stored == "below" ? "below" : "above"
+    }
+
+    /// Missing or unknown renderer resolves to `fast`.
+    static func equationPreviewRendererValue(_ stored: String?) -> String {
+        stored == "fastWithTeXFallback" ? "fastWithTeXFallback" : "fast"
+    }
+
+    /// Only the persisted presets 0/80/150 survive; anything else (absurd or
+    /// non-preset) falls back to 80 — mirrors the engine's allowedDelays.
+    static func equationPreviewDelayValue(_ stored: Int?) -> Int {
+        guard let stored, [0, 80, 150].contains(stored) else { return 80 }
+        return stored
+    }
+
+    /// Missing or unknown `pitex.pref.build.livePreviewBackend` resolves to
+    /// `embedded`; a persisted `compiler` choice is kept.
+    static func livePreviewBackendValue(_ stored: String?) -> String {
+        stored == "compiler" ? "compiler" : "embedded"
     }
 
     func update(_ transform: (PersistedSettings) throws -> PersistedSettings) rethrows {
@@ -421,9 +502,27 @@ struct SettingsView: View {
                         .frame(width: 90)
                         .disabled(!store.liveCompileEnabled)
                 }
+                Text("settings.compile.live_delay_note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("settings.compile.live_follow", isOn: $store.liveCompileFollowCursor)
                     .disabled(!store.liveCompileEnabled)
-                Text("settings.compile.live_auto_note")
+                LabeledContent("settings.compile.live_backend") {
+                    Picker("", selection: $store.livePreviewBackend) {
+                        Text("settings.compile.live_backend.embedded").tag("embedded")
+                        Text("settings.compile.live_backend.compiler").tag("compiler")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Text("settings.compile.live_backend.note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // The auto-save warning only applies to the compiler path;
+                // the embedded engine typesets in-memory buffers.
+                Text(store.livePreviewBackend == "embedded"
+                     ? LocalizedStringKey("settings.compile.live_auto_note_embedded")
+                     : LocalizedStringKey("settings.compile.live_auto_note"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -524,6 +623,44 @@ struct SettingsView: View {
                     in: 1...16
                 )
                 Toggle("settings.editor.wrap", isOn: wrapBinding)
+            }
+            Section("settings.editor.equation_preview.title") {
+                Toggle("settings.editor.equation_preview.enabled", isOn: $store.equationPreviewEnabled)
+                    .accessibilityIdentifier("pitex.settings.equationPreview.enabled")
+                Toggle("settings.editor.equation_preview.while_typing", isOn: $store.equationPreviewWhileTyping)
+                    .accessibilityIdentifier("pitex.settings.equationPreview.whileTyping")
+                    .disabled(!store.equationPreviewEnabled)
+                LabeledContent("settings.editor.equation_preview.placement") {
+                    Picker("", selection: $store.equationPreviewPlacement) {
+                        Text("settings.editor.equation_preview.placement.above").tag("above")
+                        Text("settings.editor.equation_preview.placement.below").tag("below")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .disabled(!store.equationPreviewEnabled)
+                LabeledContent("settings.editor.equation_preview.renderer") {
+                    Picker("", selection: $store.equationPreviewRenderer) {
+                        Text("settings.editor.equation_preview.renderer.fast").tag("fast")
+                        Text("settings.editor.equation_preview.renderer.fast_tex").tag("fastWithTeXFallback")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .disabled(!store.equationPreviewEnabled)
+                LabeledContent("settings.editor.equation_preview.delay") {
+                    Picker("", selection: $store.equationPreviewDelayMilliseconds) {
+                        Text("settings.editor.equation_preview.delay.instant").tag(0)
+                        Text("settings.editor.equation_preview.delay.80").tag(80)
+                        Text("settings.editor.equation_preview.delay.150").tag(150)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .disabled(!store.equationPreviewEnabled)
+                Text("settings.editor.equation_preview.footnote")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("SyncTeX") {
                 Toggle("settings.synctex.inverse_highlight", isOn: $store.inverseSyncHighlight)

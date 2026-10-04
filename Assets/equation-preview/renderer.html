@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Served only as pitex-equation://preview/renderer.html by the native
+     scheme handler (allowlisted asset tree, no network). Scripts come from
+     that scheme alone; MathJax needs inline <style>/style attributes. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src pitex-equation:; style-src pitex-equation: 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="renderer.css">
+<script src="renderer-config.js"></script>
+<script src="vendor/mathjax/tex-svg-nofont.js"></script>
+</head>
+<body>
+<div id="display" aria-hidden="true"></div>
+<div id="measure" aria-hidden="true"></div>
+<!-- After the elements it binds to. -->
+<script src="renderer.js"></script>
+</body>
+</html>

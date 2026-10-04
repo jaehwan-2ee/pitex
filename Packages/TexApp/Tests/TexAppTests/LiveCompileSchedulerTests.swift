@@ -39,17 +39,28 @@ final class LiveCompileSchedulerTests: XCTestCase {
         XCTAssertNil(scheduler.pendingDeadline)
     }
 
-    func testRapidEditsCoalesceToOneDeadline() {
+    func testContinuousEditsAreBoundedButNeverBypassIME() {
+        for delay in [LiveCompileScheduler.minDelayMs, LiveCompileScheduler.defaultDelayMs,
+                      LiveCompileScheduler.remoteMinDelayMs, LiveCompileScheduler.maxDelayMs] {
+            var scheduler = makeEnabled()
+            scheduler.setDelay(delay)
+            scheduler.noteEdit(nowMs: 0)
+            for now in stride(from: UInt64(100), through: delay * 2, by: 100) {
+                XCTAssertTrue(scheduler.noteEdit(nowMs: now).isEmpty)
+                XCTAssertTrue(scheduler.poll(nowMs: now, composing: true).isEmpty)
+            }
+            let token = liveStart(scheduler.poll(nowMs: delay * 2, composing: false))
+            XCTAssertEqual(scheduler.active, token)
+            XCTAssertTrue(scheduler.poll(nowMs: delay * 4, composing: false).isEmpty)
+            let (status, requests) = scheduler.completed(token: token, nowMs: delay * 4, composing: false)
+            XCTAssertEqual(status, .current(token))
+            XCTAssertTrue(requests.isEmpty)
+        }
         var scheduler = makeEnabled()
-        XCTAssertTrue(scheduler.noteEdit(nowMs: 0).isEmpty)
-        XCTAssertTrue(scheduler.noteEdit(nowMs: 300).isEmpty)
-        XCTAssertTrue(scheduler.noteEdit(nowMs: 600).isEmpty)
-        XCTAssertEqual(scheduler.pendingDeadline, 1_300)
-        XCTAssertTrue(scheduler.poll(nowMs: 1_299, composing: false).isEmpty)
-        let token = liveStart(scheduler.poll(nowMs: 1_300, composing: false))
-        XCTAssertEqual(scheduler.active, token)
-        // The started run consumed the pending edit — no second start.
-        XCTAssertTrue(scheduler.poll(nowMs: 5_000, composing: false).isEmpty)
+        scheduler.noteEdit(nowMs: .max - 100)
+        XCTAssertEqual(scheduler.pendingDeadline, .max)
+        XCTAssertTrue(scheduler.poll(nowMs: .max - 1, composing: false).isEmpty)
+        _ = liveStart(scheduler.poll(nowMs: .max, composing: false))
     }
 
     func testComposingHoldsTheDeadlineUntilLifted() {
@@ -61,13 +72,14 @@ final class LiveCompileSchedulerTests: XCTestCase {
         XCTAssertEqual(scheduler.active, token)
     }
 
-    func testEditCancelsLiveButNotManual() {
+    func testEditsKeepLiveAndManualRunsActive() {
         var scheduler = makeEnabled()
         scheduler.noteEdit(nowMs: 0)
         let live = liveStart(scheduler.poll(nowMs: 700, composing: false))
-        XCTAssertEqual(scheduler.noteEdit(nowMs: 800), [.cancel(token: live)])
-        // A second edit does not re-cancel.
+        XCTAssertTrue(scheduler.noteEdit(nowMs: 800).isEmpty)
         XCTAssertTrue(scheduler.noteEdit(nowMs: 810).isEmpty)
+        XCTAssertEqual(scheduler.active, live)
+        XCTAssertTrue(scheduler.acceptsActiveResult(live))
         // Manual active: an edit just stays pending.
         var scheduler2 = makeEnabled()
         let manual = manualStart(scheduler2.requestManual())
@@ -76,33 +88,44 @@ final class LiveCompileSchedulerTests: XCTestCase {
         XCTAssertEqual(scheduler2.pendingDeadline, 700)
     }
 
-    func testCancelledLiveRestartsWithoutASecondDelay() {
+    func testIntermediateResultPublishesThenLatestPendingRunCatchesUpWithoutOverlap() throws {
         var scheduler = makeEnabled()
         scheduler.noteEdit(nowMs: 0)
         let first = liveStart(scheduler.poll(nowMs: 700, composing: false))
-        scheduler.noteEdit(nowMs: 800) // cancels `first`, deadline 1500
-        // Cancellation still in flight — pending is kept, nothing starts.
-        XCTAssertTrue(scheduler.poll(nowMs: 1_500, composing: false).isEmpty)
-        // The old run finishes after the new deadline: dispatch immediately.
-        let (status, requests) = scheduler.completed(token: first, nowMs: 1_700, composing: false)
-        XCTAssertEqual(status, .superseded(first))
+        XCTAssertTrue(scheduler.noteEdit(nowMs: 800).isEmpty)
+        XCTAssertTrue(scheduler.noteEdit(nowMs: 900).isEmpty)
+        let deadline = try XCTUnwrap(scheduler.pendingDeadline)
+        // New edits queue one follow-up without taking the active run's slot.
+        XCTAssertTrue(scheduler.poll(nowMs: deadline, composing: false).isEmpty)
+        XCTAssertEqual(scheduler.active, first)
+        XCTAssertTrue(scheduler.acceptsActiveResult(first))
+        let (status, requests) = scheduler.completed(token: first, nowMs: deadline, composing: false)
+        XCTAssertEqual(status, .current(first))
         let second = liveStart(requests)
         XCTAssertNotEqual(first, second)
-        let (status2, _) = scheduler.completed(token: second, nowMs: 2_000, composing: false)
+        XCTAssertEqual(scheduler.active, second)
+        XCTAssertFalse(scheduler.acceptsActiveResult(first))
+        XCTAssertTrue(scheduler.acceptsActiveResult(second))
+        XCTAssertNil(scheduler.pendingDeadline)
+        XCTAssertTrue(scheduler.poll(nowMs: deadline + 100, composing: false).isEmpty)
+        let (status2, requests2) = scheduler.completed(token: second, nowMs: deadline + 200, composing: false)
         XCTAssertEqual(status2, .current(second))
+        XCTAssertTrue(requests2.isEmpty)
+        XCTAssertNil(scheduler.active)
+        XCTAssertTrue(scheduler.poll(nowMs: deadline + 1_000, composing: false).isEmpty)
     }
 
-    func testSupersededLiveNeverPublishes() {
+    func testIntermediateCompletionKeepsPendingDeadline() {
         var scheduler = makeEnabled()
         scheduler.noteEdit(nowMs: 0)
         let live = liveStart(scheduler.poll(nowMs: 700, composing: false))
-        // An edit raced the in-flight run; it succeeds anyway — the
-        // completion is superseded so the stale PDF is never published.
         scheduler.noteEdit(nowMs: 900)
         let (status, requests) = scheduler.completed(token: live, nowMs: 1_000, composing: false)
-        XCTAssertEqual(status, .superseded(live))
-        // Deadline (1600) not yet reached — poll later.
+        XCTAssertEqual(status, .current(live))
         XCTAssertTrue(requests.isEmpty)
+        XCTAssertNil(scheduler.active)
+        XCTAssertEqual(scheduler.pendingDeadline, 1_600)
+        XCTAssertTrue(scheduler.poll(nowMs: 1_599, composing: false).isEmpty)
         let next = liveStart(scheduler.poll(nowMs: 1_600, composing: false))
         let (status2, _) = scheduler.completed(token: next, nowMs: 2_000, composing: false)
         XCTAssertEqual(status2, .current(next))
@@ -167,12 +190,12 @@ final class LiveCompileSchedulerTests: XCTestCase {
         scheduler.noteEdit(nowMs: 0)
         let live = liveStart(scheduler.poll(nowMs: 700, composing: false))
         XCTAssertTrue(scheduler.acceptsActiveResult(live))
-        // Superseded by a newer edit — its late log/issue events drop.
+        // Newer edits keep this run's streamed output and intermediate result.
         scheduler.noteEdit(nowMs: 800)
-        XCTAssertFalse(scheduler.acceptsActiveResult(live))
-        // Cancel in flight; it finishes superseded, nothing due yet.
+        XCTAssertTrue(scheduler.acceptsActiveResult(live))
         let (status, requests) = scheduler.completed(token: live, nowMs: 1_000, composing: false)
-        XCTAssertEqual(status, .superseded(live))
+        XCTAssertEqual(status, .current(live))
+        XCTAssertFalse(scheduler.acceptsActiveResult(live))
         XCTAssertTrue(requests.isEmpty)
         // The next live run accepts again.
         let next = liveStart(scheduler.poll(nowMs: 1_500, composing: false))
@@ -188,6 +211,8 @@ final class LiveCompileSchedulerTests: XCTestCase {
         // Unknown/wrong-identity tokens never accept.
         let stray = LiveRunToken(id: 77, kind: .manual, generation: 0)
         XCTAssertFalse(scheduler.acceptsActiveResult(stray))
+        let wrongGeneration = LiveRunToken(id: manual.id, kind: manual.kind, generation: manual.generation + 1)
+        XCTAssertFalse(scheduler.acceptsActiveResult(wrongGeneration))
     }
 
     func testToggleOffInvalidatesAndCancelsOnlyLive() {
@@ -195,6 +220,7 @@ final class LiveCompileSchedulerTests: XCTestCase {
         scheduler.noteEdit(nowMs: 0)
         let live = liveStart(scheduler.poll(nowMs: 700, composing: false))
         XCTAssertEqual(scheduler.setEnabled(false), [.cancel(token: live)])
+        XCTAssertFalse(scheduler.acceptsActiveResult(live))
         XCTAssertNil(scheduler.pendingDeadline)
         XCTAssertTrue(scheduler.noteEdit(nowMs: 1_000).isEmpty)
         // The cancelled run lands after the toggle: older generation →
@@ -231,6 +257,21 @@ final class LiveCompileSchedulerTests: XCTestCase {
         let (status2, requests2) = scheduler.completed(token: manual, nowMs: 5_000, composing: false)
         XCTAssertEqual(status2, .current(manual))
         XCTAssertTrue(requests2.isEmpty)
+    }
+
+    func testInvalidateCancelsAndRejectsActiveLiveResult() {
+        var scheduler = makeEnabled()
+        scheduler.noteEdit(nowMs: 0)
+        let live = liveStart(scheduler.poll(nowMs: 700, composing: false))
+        scheduler.noteEdit(nowMs: 800)
+        XCTAssertEqual(scheduler.invalidate(), [.cancel(token: live)])
+        XCTAssertFalse(scheduler.acceptsActiveResult(live))
+        XCTAssertNil(scheduler.pendingDeadline)
+        XCTAssertTrue(scheduler.poll(nowMs: 2_000, composing: false).isEmpty)
+        let (status, requests) = scheduler.completed(token: live, nowMs: 2_000, composing: false)
+        XCTAssertEqual(status, .superseded(live))
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertNil(scheduler.active)
     }
 
     func testInvalidateClearsQueuedManualAndPending() {

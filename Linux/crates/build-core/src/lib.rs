@@ -22,6 +22,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+pub mod equation_exact;
+
 // ===========================================================================
 // BuildCore.swift
 // ===========================================================================
@@ -3076,30 +3078,40 @@ impl StreamingBuildExecutor {
         let EnvironmentPolicy::Inherit { overrides } = policy else {
             return policy.clone();
         };
-        let mut overrides = overrides.clone();
-        let path = overrides
-            .get("PATH")
-            .cloned()
-            .or_else(|| std::env::var("PATH").ok())
-            .unwrap_or_else(|| default_path_fallback().to_string());
-        let mut extra: Vec<String> = texlive_bin_dirs()
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        if cfg!(unix) {
-            extra.push("/usr/local/bin".to_string());
-        }
-        if extra.is_empty() {
-            overrides.insert("PATH".to_string(), path);
-        } else {
-            let separator = if cfg!(windows) { ";" } else { ":" };
-            overrides.insert(
-                "PATH".to_string(),
-                format!("{path}{}{}", separator, extra.join(separator)),
-            );
-        }
-        EnvironmentPolicy::Inherit { overrides }
+        EnvironmentPolicy::Inherit { overrides: augmented_environment(overrides) }
     }
+}
+
+/// Shared build-environment augmentation, extracted from
+/// `StreamingBuildExecutor::build_environment`: PATH gains the TeX Live bin
+/// directories (Linux counterpart of `/Library/TeX/texbin`) and
+/// `/usr/local/bin` on unix, preserving whatever PATH the caller or process
+/// supplies. Used by real builds and by the exact equation preview so both
+/// resolve the same TeX engines — never duplicate this discovery.
+pub fn augmented_environment(overrides: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut overrides = overrides.clone();
+    let path = overrides
+        .get("PATH")
+        .cloned()
+        .or_else(|| std::env::var("PATH").ok())
+        .unwrap_or_else(|| default_path_fallback().to_string());
+    let mut extra: Vec<String> = texlive_bin_dirs()
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    if cfg!(unix) {
+        extra.push("/usr/local/bin".to_string());
+    }
+    if extra.is_empty() {
+        overrides.insert("PATH".to_string(), path);
+    } else {
+        let separator = if cfg!(windows) { ";" } else { ":" };
+        overrides.insert(
+            "PATH".to_string(),
+            format!("{path}{}{}", separator, extra.join(separator)),
+        );
+    }
+    overrides
 }
 
 /// PATH used when the environment carries none at all.

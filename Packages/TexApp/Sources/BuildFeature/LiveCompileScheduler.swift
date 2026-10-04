@@ -6,8 +6,8 @@
 ///
 /// Integration contract:
 ///
-/// - `noteEdit(nowMs:)` on every real source mutation (also while IME
-///   composition is in progress — the deadline just keeps moving).
+/// - `noteEdit(nowMs:)` on every real source mutation (also during IME
+///   composition). A bounded debounce prevents endless postponement.
 /// - `poll(nowMs:composing:)` when the caller's debounce timer fires (arm it
 ///   for `pendingDeadline`) and whenever work may have been freed (it is
 ///   idempotent).
@@ -19,12 +19,11 @@
 ///   changes; `setEnabled(false)` on the toggle. Both retire only live
 ///   work — an active manual run keeps ownership.
 ///
-/// Stale-result suppression: a live completion is reported
-/// ``LiveCompletion/superseded(_:)`` when newer edits were recorded, an
-/// invalidation bumped the generation, or the run was asked to cancel —
-/// the UI clears its busy state but must not publish the artifact, log,
-/// issues or SyncTeX binding. A token that is not the active run is
-/// ``LiveCompletion/stale`` and changes nothing.
+/// Ordinary edits coalesce behind the active build; its intermediate result
+/// may publish before the pending revision catches up. A live completion is
+/// ``LiveCompletion/superseded(_:)`` only after cancellation or context invalidation:
+/// the UI clears busy state but must not publish its artifact, log, issues or
+/// SyncTeX binding. A token that is not active is ``LiveCompletion/stale``.
 public struct LiveCompileScheduler: Equatable, Sendable {
     /// Default idle debounce (matches `liveCompileDelayMilliseconds`).
     public static let defaultDelayMs: UInt64 = 700
@@ -40,18 +39,11 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     /// Bumped by `invalidate()`/toggle-off; older-generation work is dead.
     private var generation: UInt64
     private var nextId: UInt64
-    private var pending: PendingEdit?
+    /// First pending edit; every context invalidation clears it.
+    private var pending: UInt64?
     private var activeRun: ActiveRun?
     /// A manual build asked for while a live run still holds the slot.
     private var queuedManual: Bool
-
-    private struct PendingEdit: Equatable, Sendable {
-        /// Millisecond timestamp of the newest edit (deadline base, so a
-        /// later `setDelay` re-derives from the edit, not from "now").
-        var editedAtMs: UInt64
-        var deadlineMs: UInt64
-        var generation: UInt64
-    }
 
     private struct ActiveRun: Equatable, Sendable {
         var token: LiveRunToken
@@ -69,9 +61,9 @@ public struct LiveCompileScheduler: Equatable, Sendable {
         queuedManual = false
     }
 
-    /// Deadline the caller's timer should fire at, if an edit is pending.
+    /// Coalescing deadline, one delay from the first pending edit.
     public var pendingDeadline: UInt64? {
-        pending?.deadlineMs
+        pending.map { $0.saturatingAdd(delayMs) }
     }
 
     /// The run currently holding the slot.
@@ -95,10 +87,9 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     }
 
     /// May events/results stamped with `token` be applied to the UI now?
-    /// For a live run: only while it is still current — once an edit,
-    /// manual request or invalidation asked it to cancel, its streaming
-    /// log/issue/binding events are stale and must be dropped (busy state
-    /// still clears at `completed`). A manual run's results are accepted
+    /// For a live run: only while it owns the current context. Ordinary edits
+    /// queue a follow-up; a manual request or invalidation cancels the live run
+    /// and rejects its streaming events. A manual run's results are accepted
     /// while it is active even across `invalidate()`/`setEnabled(false)`
     /// generation bumps — manual work keeps ownership of its results.
     /// The caller separately guards workspace identity for asynchronous
@@ -130,9 +121,6 @@ public struct LiveCompileScheduler: Equatable, Sendable {
     /// delay fires earlier rather than sliding a new full delay.
     public mutating func setDelay(_ delayMs: UInt64) {
         self.delayMs = delayMs
-        if let editedAtMs = pending?.editedAtMs {
-            pending?.deadlineMs = editedAtMs.saturatingAdd(delayMs)
-        }
     }
 
     /// Workspace switch/close or target/command change: retire all live
@@ -145,20 +133,15 @@ public struct LiveCompileScheduler: Equatable, Sendable {
         return requests
     }
 
-    /// A real source edit: record the newest deadline and cancel a
-    /// superseded live run immediately. During a manual run the edit just
-    /// stays pending — manual builds keep priority.
+    /// A real source edit: queue the newest revision without interrupting
+    /// useful work. Both live and manual builds finish before the follow-up.
     @discardableResult
     public mutating func noteEdit(nowMs: UInt64) -> [LiveRequest] {
         guard enabled else { return [] }
-        pending = PendingEdit(
-            editedAtMs: nowMs,
-            deadlineMs: nowMs.saturatingAdd(delayMs),
-            generation: generation
-        )
-        var requests: [LiveRequest] = []
-        cancelActiveLive(&requests)
-        return requests
+        if pending == nil {
+            pending = nowMs
+        }
+        return []
     }
 
     /// The user asked for a manual build. Manual work covers the current
@@ -200,7 +183,6 @@ public struct LiveCompileScheduler: Equatable, Sendable {
             switch token.kind {
             case .live:
                 superseded = active.cancelRequested
-                    || pending != nil
                     || token.generation != generation
             case .manual:
                 // A manual result may display even with newer input
@@ -265,16 +247,15 @@ public struct LiveCompileScheduler: Equatable, Sendable {
             dispatchManual(&requests)
             return
         }
-        guard let pendingEdit = pending,
+        guard let deadline = pendingDeadline,
               enabled,
               !composing,
-              nowMs >= pendingEdit.deadlineMs,
-              pendingEdit.generation == generation
+              nowMs >= deadline
         else { return }
         pending = nil
         let token = mint(kind: .live)
         activeRun = ActiveRun(token: token, cancelRequested: false)
-        requests.append(.startLive(token: token, deadlineMs: pendingEdit.deadlineMs))
+        requests.append(.startLive(token: token, deadlineMs: deadline))
     }
 }
 
@@ -318,10 +299,9 @@ public enum LiveRequest: Equatable, Sendable {
 
 /// How `completed` classified the finishing run.
 public enum LiveCompletion: Equatable, Sendable {
-    /// The finishing run is current — publish its result.
+    /// The finishing run owns this context — publish even with edits pending.
     case current(LiveRunToken)
-    /// The run finished but was superseded (newer edits, invalidation or
-    /// a manual request): clear busy state, suppress its artifacts.
+    /// Cancelled or invalidated: clear busy state, suppress its artifacts.
     case superseded(LiveRunToken)
     /// Not the active run — an obsolete or unknown completion. Nothing
     /// changed; the newer active run keeps its slot.

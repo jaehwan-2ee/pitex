@@ -492,7 +492,59 @@ impl SyncTeXQueryParser {
     }
 }
 
+
+/// Pure transform: if `raw` is a recognisable Windows spelling, return it
+/// re-rooted to the parser's absolute POSIX form; `None` for a string that is
+/// not a Windows spelling. Always compiled so the spelling table is testable
+/// on any host; only `to_parser_path` decides whether it is APPLIED.
+///   X:\ or X:/          -> /X:/…    (drive, checked before the no-backslash
+///                                    fast path so C:/… is handled too)
+///   \\?\X:\…          -> /X:/…    (verbatim disk)
+///   \\?\UNC\s\s       -> //s/s    (verbatim UNC)
+///   \\server\share     -> //server/share
+/// Drive letter upper-cased; backslashes -> '/'. `None` => the caller keeps
+/// the raw string so the existing contains('\\') rejection still fires.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn windows_spelling_to_parser_path(raw: &str) -> Option<String> {
+    let b = raw.as_bytes();
+    // Drive-letter absolute (X:\ or X:/) — checked FIRST so a forward-slash
+    // drive path (no backslash) is still re-rooted.
+    if b.len() >= 3 && b[1] == b':' && b[0].is_ascii_alphabetic()
+        && (b[2] == b'\\' || b[2] == b'/') {
+        return Some(format!("/{}{}", (b[0] as char).to_ascii_uppercase(),
+                            &raw[1..].replace('\\', "/")));
+    }
+    if !raw.contains('\\') {
+        return None;
+    }
+    if let Some(rest) = raw.strip_prefix("\\\\?\\") {
+        let r = rest.replace('\\', "/");
+        if let Some(u) = r.strip_prefix("UNC/") { return Some(format!("//{}", u)); }
+        if r.len() >= 2 && r.as_bytes()[1] == b':' && r.as_bytes()[0].is_ascii_alphabetic() {
+            return Some(format!("/{}{}", (r.as_bytes()[0] as char).to_ascii_uppercase(), &r[1..]));
+        }
+        return Some(r);
+    }
+    if let Some(rest) = raw.strip_prefix("\\\\") {
+        return Some(format!("//{}", rest.replace('\\', "/")));
+    }
+    None
+}
+
+/// On Windows, apply the re-rooting. Everywhere else: identity — the strict
+/// POSIX rules apply byte-for-byte unchanged.
+#[cfg(windows)]
+fn to_parser_path(raw: &str) -> String {
+    windows_spelling_to_parser_path(raw).unwrap_or_else(|| raw.to_string())
+}
+#[cfg(not(windows))]
+fn to_parser_path(raw: &str) -> String {
+    raw.to_string()
+}
+
 fn canonical_root(raw: &str) -> Result<Vec<String>, SyncTeXQueryError> {
+    let raw = to_parser_path(raw);
+    let raw = raw.as_str();
     if !raw.starts_with('/') || raw.contains('\\') || raw.contains('\0') {
         return Err(SyncTeXQueryError::PathOutsideRoot { line: 0 });
     }
@@ -516,6 +568,8 @@ fn canonical_project_path(
     line: usize,
 ) -> Result<NormalizedSourcePath, SyncTeXQueryError> {
     let err = || SyncTeXQueryError::PathOutsideRoot { line };
+    let raw = to_parser_path(raw);
+    let raw = raw.as_str();
     if raw.is_empty() || raw.contains('\\') || raw.contains('\0') {
         return Err(err());
     }

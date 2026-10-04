@@ -340,6 +340,12 @@ pub enum WorkspaceMessage {
         root: String,
         files: Vec<git_core::GitCommitFile>,
     },
+    /// Output of the embedded editing-preview helper for session
+    /// `session` (stale sessions are ignored on apply).
+    EmbeddedPreview {
+        session: u64,
+        event: crate::embedded_preview::PreviewEvent,
+    },
 }
 
 /// One `refreshGit()` payload — status + branches + log collected off-thread.
@@ -578,6 +584,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::GitSuggestFinished(_) => write!(f, "GitSuggestFinished"),
             Self::GitDiffLoaded { .. } => write!(f, "GitDiffLoaded"),
             Self::GitCommitFilesLoaded { .. } => write!(f, "GitCommitFilesLoaded"),
+            Self::EmbeddedPreview { session, event } => write!(f, "EmbeddedPreview({session}, {event:?})"),
         }
     }
 }
@@ -1147,9 +1154,13 @@ pub struct WorkspaceModel {
     /// Live-compile debounce/cancellation state machine — pure; the UI
     /// drives it with a GLib timer and build completions.
     pub live: LiveCompileScheduler,
+    /// Embedded editing preview (TeXpresso-derived helper). Streams
+    /// buffer updates independently of the build slot above; its progress
+    /// is `embedded.status`, never `build_state`.
+    pub embedded: crate::embedded_preview::EmbeddedPreview,
     /// `(path, content hash)` of the committed text the last live note
     /// recorded. Save/snapshot republishes carry the same hash — only a
-    /// real text change may re-arm the debounce.
+    /// real text change may queue a live build.
     live_edit_signature: Option<(NormalizedRelativePath, DiskContentHash)>,
     /// `(resolved build source, command)` captured when the pending edit
     /// was noted — a target or command change before the timer fires
@@ -1319,6 +1330,7 @@ impl WorkspaceModel {
             active_run: None,
             orphaned_runs: Vec::new(),
             live: LiveCompileScheduler::new(),
+            embedded: crate::embedded_preview::EmbeddedPreview::default(),
             live_edit_signature: None,
             live_context_key: None,
             live_composing: Cell::new(false),
@@ -2170,6 +2182,7 @@ impl WorkspaceModel {
         // a live run is asked to cancel, and its late completion is
         // orphaned so the scheduler slot still frees.
         self.invalidate_live();
+        self.reset_embedded_context();
         let root = self.project_url.take();
         let sessions = std::mem::take(&mut self.registered_sessions);
         if let Some(root) = root {
@@ -2463,6 +2476,11 @@ impl WorkspaceModel {
             }
         }
         self.refresh_structure();
+        // Agent/remote writes and new files may be anything TeX reads; the
+        // helper rescans (no edit revision: not a user edit).
+        if self.embedded.is_running() {
+            self.embedded.request_flush_forced(self.live_now_ms());
+        }
     }
 
     // ── Sidebar structure (verbatim port) ──
@@ -3196,13 +3214,14 @@ impl WorkspaceModel {
         }
     }
 
-    /// The pdf this workspace's viewer currently publishes.
+    /// The pdf this workspace's viewer currently publishes (an editing
+    /// preview's artifact is an absolute session path).
     pub fn published_pdf_url(&self) -> Option<PathBuf> {
-        Some(
-            self.project_url
-                .as_ref()?
-                .join(self.latest_built_pdf_name.as_deref()?),
-        )
+        let root = self.project_url.as_ref()?;
+        match &self.retained_pdf {
+            Some(r) if self.displaying_editing_preview() => Some(PathBuf::from(&r.artifact)),
+            _ => Some(root.join(self.latest_built_pdf_name.as_deref()?)),
+        }
     }
 
     /// Accept a `BindingRefreshed` only while it still answers the newest
@@ -3260,21 +3279,34 @@ impl WorkspaceModel {
     }
 
     /// Record the artifact the viewer retains. `latest_built_pdf_name`
-    /// mirrors `retained.artifact` — the fetch/display/download handle.
-    fn set_retained_pdf(&mut self, artifact: String, source: String, bytes: Vec<u8>) {
+    /// mirrors `retained.artifact` for compiler output — the fetch/download
+    /// handle paired with `build_state` bytes. An editing preview leaves it
+    /// (and `build_state`) on the last compiler artifact.
+    fn set_retained_pdf(&mut self, artifact: String, source: String, bytes: impl Into<Arc<[u8]>>) {
+        let pdf: Arc<[u8]> = bytes.into();
         let hash = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            bytes.hash(&mut h);
+            pdf.hash(&mut h);
             h.finish()
         };
-        self.latest_built_pdf_name = Some(artifact.clone());
+        if !crate::embedded_preview::is_preview_artifact(&artifact) {
+            self.latest_built_pdf_name = Some(artifact.clone());
+        }
         self.retained_pdf = Some(RetainedPdf {
             artifact,
             source,
-            pdf: bytes.into(),
+            pdf,
             hash,
         });
+    }
+
+    /// The viewer shows an embedded editing preview (not compiler output).
+    pub fn displaying_editing_preview(&self) -> bool {
+        self.retained_pdf
+            .as_ref()
+            .map(|r| crate::embedded_preview::is_preview_artifact(&r.artifact))
+            .unwrap_or(false)
     }
 
     /// Relative artifact paths the preview may restore, freshest first:
@@ -3318,6 +3350,11 @@ impl WorkspaceModel {
     /// back to a synchronous read (small, user-triggered paths only).
     fn restore_built_preview_with(&mut self, prefetched: Option<Vec<u8>>) {
         if self.is_building() {
+            return;
+        }
+        // Editing previews manage their own display and SyncTeX binding
+        // (bound only to coherent publications of the current buffers).
+        if self.displaying_editing_preview() {
             return;
         }
         // A failed/canceled run may have left a different `%PDF` on disk —
@@ -3462,6 +3499,9 @@ impl WorkspaceModel {
     /// Forward sync at explicit position (1-based line, 0-based UTF-16 col).
     pub fn sync_forward_at(&mut self, line: usize, column: usize) {
         self.ensure_synctex_binding();
+        if !self.editing_preview_synctex_allowed() {
+            return;
+        }
         let (Some(binding), Some(url)) = (
             self.synctex_binding.clone(),
             self.active_document_url.clone(),
@@ -3541,6 +3581,9 @@ impl WorkspaceModel {
     /// Inverse sync: PDF click → editor position.
     pub fn sync_inverse(&mut self, page: i64, point: PDFPoint) {
         self.ensure_synctex_binding();
+        if !self.editing_preview_synctex_allowed() {
+            return;
+        }
         let Some(binding) = self.synctex_binding.clone() else { return };
         let runner = self.synctex_runner.clone();
         let root = binding.project_root.clone();
@@ -3670,6 +3713,8 @@ impl WorkspaceModel {
         };
         // A different build target retires pending/live work.
         self.invalidate_live();
+        // The helper session is bound to one main document.
+        self.reset_embedded_context_for_target_change();
         // The pin badge is part of the tree.
         self.files_revision += 1;
         self.refresh_build_target();
@@ -3722,6 +3767,12 @@ impl WorkspaceModel {
             self.files_revision += 1;
         }
         self.document_project = project;
+        if self.pinned_build_target.is_none() && self.automatic_build_target != previous_target {
+            // A resolved main-document change is a context switch too,
+            // not an ordinary edit that may publish intermediate progress.
+            self.invalidate_live();
+            self.reset_embedded_context_for_target_change();
+        }
         // A different build target retires the retained artifact — its
         // PDF belongs to the old main; a chapter switch under the same
         // main leaves `source` matching and keeps it.
@@ -3936,7 +3987,30 @@ impl WorkspaceModel {
         } else {
             delay
         });
-        self.live.set_enabled(store.live_compile_enabled())
+        // The embedded editing preview replaces compiler live builds while
+        // selected; manual/final builds keep the scheduler's manual slot.
+        let embedded = self.embedded_wanted(store);
+        if embedded && self.embedded.status == crate::embedded_preview::PreviewStatus::Off {
+            // Just enabled: start typesetting without waiting for an edit.
+            self.embedded.status = crate::embedded_preview::PreviewStatus::Updating;
+            self.embedded.request_flush(self.live_now_ms());
+        } else if !embedded && self.embedded.status != crate::embedded_preview::PreviewStatus::Off {
+            self.stop_embedded();
+        }
+        if !embedded {
+            self.embedded.restart_wanted = false;
+        }
+        self.live.set_enabled(store.live_compile_enabled() && !embedded)
+    }
+
+    /// Live compile is on, the embedded backend is selected and the
+    /// project is local (remote builds run on the device).
+    pub fn embedded_wanted(&self, store: &SettingsStore) -> bool {
+        crate::embedded_preview::SUPPORTED
+            && store.live_compile_enabled()
+            && store.live_preview_backend() == "embedded"
+            && self.remote.is_none()
+            && self.project_url.is_some()
     }
 
     /// A committed-session change arrived via `syncSnapshotFromSession`.
@@ -3971,7 +4045,11 @@ impl WorkspaceModel {
             self.build_command_text.trim().to_string(),
         ));
         let mut requests = self.sync_live_settings(store);
-        requests.extend(self.live.note_edit(self.live_now_ms()));
+        if self.embedded_wanted(store) {
+            self.embedded.note_edit(self.live_now_ms());
+        } else {
+            requests.extend(self.live.note_edit(self.live_now_ms()));
+        }
         requests
     }
 
@@ -4058,6 +4136,243 @@ impl WorkspaceModel {
         }
     }
 
+    // ── Embedded editing preview ──
+
+    /// Open TeX-like buffers of the project: (absolute path, content hash,
+    /// text, modified). Modified ones are the unsaved sources streamed to
+    /// the helper; all of them form the SyncTeX source identity.
+    fn embedded_sessions(&self) -> Vec<(PathBuf, u64, String, bool)> {
+        let Some(root) = self.project_url.as_ref() else {
+            return Vec::new();
+        };
+        self.registered_sessions
+            .iter()
+            .filter(|session| {
+                Path::new(session.path().raw_value())
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| Self::LIVE_SOURCE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+                    .unwrap_or(false)
+            })
+            .map(|session| {
+                let snap = session.snapshot();
+                (
+                    root.join(snap.path.raw_value()),
+                    snap.content_hash.raw_value,
+                    snap.text,
+                    snap.save_state != DocumentSaveState::Clean,
+                )
+            })
+            .collect()
+    }
+
+    fn embedded_identity(&self) -> crate::embedded_preview::BufferSnapshot {
+        self.embedded_sessions()
+            .into_iter()
+            .map(|(path, hash, _, _)| (path, hash))
+            .collect()
+    }
+
+    pub fn embedded_poll_delay(&self, composing: bool) -> Option<u64> {
+        self.embedded.poll_delay(self.live_now_ms(), composing)
+    }
+
+    /// Something other than a text edit may have changed what the helper
+    /// must read (a save turned buffers clean, a file changed on disk).
+    pub fn request_embedded_refresh(&mut self, store: &SettingsStore) {
+        if self.embedded_wanted(store) && self.embedded.is_running() {
+            self.embedded.request_flush(self.live_now_ms());
+        }
+    }
+
+    /// `request_embedded_refresh` for a cause the flush key cannot see: the next flush sends even with an unchanged key.
+    pub fn request_embedded_refresh_forced(&mut self, store: &SettingsStore) {
+        if self.embedded_wanted(store) && self.embedded.is_running() {
+            self.embedded.request_flush_forced(self.live_now_ms());
+        }
+    }
+
+    /// A change of `path` on disk (the watcher, `DiskChanged`), requested AFTER `process_disk_change` adopted it. An open source TeX reads from the
+    /// editor is in the flush key through its content hash, so its change shows there and the refresh is not forced; any other file TeX may read
+    /// (an unopened `\input`, a figure, an open `.md`) is not in the key: its event forces the flush.
+    pub fn request_embedded_refresh_for_disk_change(&mut self, path: &Path, store: &SettingsStore) {
+        if self.is_embedded_key_source(path) {
+            self.request_embedded_refresh(store);
+        } else {
+            self.request_embedded_refresh_forced(store);
+        }
+    }
+
+    /// An open session whose extension is one the editor feeds the helper (`LIVE_SOURCE_EXTENSIONS`): its content hash is in the flush key.
+    fn is_embedded_key_source(&self, path: &Path) -> bool {
+        let Some(root) = self.project_url.as_ref() else { return false };
+        let live_extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| Self::LIVE_SOURCE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+            .unwrap_or(false);
+        live_extension
+            && self.registered_sessions.iter().any(|s| root.join(s.path().raw_value()).as_path() == path)
+    }
+
+    /// The coalescing timer fired: stream the newest buffers now. Never
+    /// waits for the helper's current work — it rolls back and restarts.
+    pub fn flush_embedded_preview(&mut self, store: &SettingsStore) {
+        if !self.embedded_wanted(store) {
+            self.stop_embedded();
+            return;
+        }
+        let (Some(root), Some(main)) = (self.project_url.clone(), self.build_source_relative_path())
+        else {
+            self.embedded.pending_since = None;
+            self.embedded.status = crate::embedded_preview::PreviewStatus::Unavailable(
+                self.build_target_message
+                    .clone()
+                    .unwrap_or_else(|| WorkspaceBuildError::NoActiveDocument.to_string()),
+            );
+            return;
+        };
+        let Some(sink) = self.sink() else { return };
+        let sessions = self.embedded_sessions();
+        let identity = sessions.iter().map(|(p, h, _, _)| (p.clone(), *h)).collect();
+        let buffers = sessions
+            .into_iter()
+            .filter(|(_, _, _, modified)| *modified)
+            .map(|(path, hash, text, _)| (path, hash, text))
+            .collect();
+        let outcome = self.embedded.flush(crate::embedded_preview::UpdateContext {
+            root: &root,
+            main_relative: &main,
+            buffers,
+            identity,
+            sink,
+        });
+        // A skipped flush gets no `idle` reply: bind SyncTeX here, as the `idle` outcome would.
+        if outcome == crate::embedded_preview::FlushOutcome::Skipped && self.displaying_editing_preview() {
+            if let Some(publication) = self.embedded.rebind_candidate() {
+                self.bind_editing_preview(&publication);
+            }
+        }
+    }
+
+    /// Helper output. Returns true when the displayed PDF changed.
+    pub fn apply_embedded_event(
+        &mut self,
+        session: u64,
+        event: crate::embedded_preview::PreviewEvent,
+    ) -> bool {
+        use crate::embedded_preview::ApplyOutcome;
+        match self.embedded.apply(session, event) {
+            ApplyOutcome::Display(publication) => {
+                self.display_embedded_publication(publication);
+                true
+            }
+            ApplyOutcome::Rebind(publication) => {
+                if self.displaying_editing_preview() && self.embedded.bound_snapshot.is_none() {
+                    self.bind_editing_preview(&publication);
+                }
+                false
+            }
+            ApplyOutcome::Nothing => {
+                // A helper that died took its session directory with it.
+                if !self.embedded.is_running() {
+                    self.drop_editing_preview_binding();
+                }
+                false
+            }
+        }
+    }
+
+    fn display_embedded_publication(&mut self, p: crate::embedded_preview::Publication) {
+        let Some(bytes) = p.bytes.clone() else { return };
+        let source = self
+            .build_source_relative_path()
+            .unwrap_or_else(|| "main.tex".into());
+        self.set_retained_pdf(p.pdf.to_string_lossy().into_owned(), source, bytes);
+        self.bind_editing_preview(&p);
+    }
+
+    /// SyncTeX only for a coherent publication compiled from exactly the
+    /// sources the editor holds now (unsaved text included, not the disk).
+    fn bind_editing_preview(&mut self, p: &crate::embedded_preview::Publication) {
+        let snapshot = self.embedded.snapshot_for(p.generation).cloned();
+        let current = self.embedded_identity();
+        if p.synctex.is_some() && p.coherent && snapshot.as_ref() == Some(&current) {
+            self.embedded.bound_snapshot = snapshot;
+            self.refresh_synctex_binding(p.pdf.clone());
+        } else {
+            self.drop_editing_preview_binding();
+        }
+    }
+
+    fn drop_editing_preview_binding(&mut self) {
+        if !self.displaying_editing_preview() {
+            return;
+        }
+        self.embedded.bound_snapshot = None;
+        self.synctex_binding = None;
+        self.binding_refresh_seq
+            .set(self.binding_refresh_seq.get().wrapping_add(1));
+        self.synctex_state = WorkspaceSyncTeXState::Unavailable(
+            "SyncTeX becomes available when the editing preview catches up with your edits."
+                .into(),
+        );
+    }
+
+    /// Forward/inverse sync on an editing preview only while the editor
+    /// still holds the exact sources that preview was compiled from.
+    fn editing_preview_synctex_allowed(&mut self) -> bool {
+        if !self.displaying_editing_preview() {
+            return true;
+        }
+        let current = self.embedded_identity();
+        let allowed = self.synctex_binding.is_some()
+            && self.embedded.bound_snapshot.as_ref() == Some(&current);
+        if !allowed {
+            self.drop_editing_preview_binding();
+        }
+        allowed
+    }
+
+    /// Stop the helper session (keeps the preview bytes on screen).
+    pub fn stop_embedded(&mut self) {
+        self.drop_editing_preview_binding();
+        self.embedded.stop();
+    }
+
+    /// Workspace/target change: stop and forget final-build floors.
+    fn reset_embedded_context(&mut self) {
+        self.drop_editing_preview_binding();
+        self.embedded.reset_context();
+    }
+
+    /// Whether the preview should come back after a build-target change: an EDITING preview is on screen, or the helper runs and nothing has been retained yet. Never over a final build output: the reset drops the floors that keep a preview below the final PDF.
+    fn embedded_comes_back(&self) -> bool {
+        if self.retained_pdf.is_some() {
+            self.displaying_editing_preview()
+        } else {
+            self.embedded.is_running()
+        }
+    }
+
+    /// `reset_embedded_context` for a changed build target (resolver result or pin): remembers that the preview should return once a target exists, decided BEFORE the retained PDF is dropped. The flag survives a nil-target interval (nothing running then); `request_embedded_restart` consumes it.
+    fn reset_embedded_context_for_target_change(&mut self) {
+        let restart = self.embedded.restart_wanted || self.embedded_comes_back();
+        self.reset_embedded_context();
+        self.embedded.restart_wanted = restart;
+    }
+
+    /// After a build-target change: with a target again and the embedded preview wanted, restart the preview the change retired (unforced: the stop cleared the flush key). The caller arms the embedded timer.
+    pub fn request_embedded_restart(&mut self, store: &SettingsStore) {
+        if !self.embedded.restart_wanted || self.build_source_relative_path().is_none() {
+            return;
+        }
+        self.embedded.restart_wanted = false;
+        if self.embedded_wanted(store) {
+            self.embedded.request_flush(self.live_now_ms());
+        }
+    }
+
     /// `startBuild` — the manual entry point (toolbar, ⇧↩): routed through
     /// the scheduler so a manual run queues behind a cancelling live run
     /// and never overlaps it.
@@ -4090,6 +4405,11 @@ impl WorkspaceModel {
         }
         if !matches!(self.phase, WorkspacePhase::Ready) {
             bail!();
+        }
+        // A manual build is the final output: previews of edits it already
+        // contains (even ones still being coalesced) must not replace it.
+        if token.kind == LiveRunKind::Manual {
+            self.embedded.note_final_build_started();
         }
         // Root discovery must see edits to inactive main/preamble files too.
         if let Some(problem) = self.persist_dirty_sessions() {
@@ -4404,10 +4724,10 @@ impl WorkspaceModel {
     }
 
     /// Terminal mapping + `switchToPDFOnBuild` / `jumpToCursorAfterBuild`
-    /// follow-ups. The scheduler is fed first — a superseded or orphaned
-    /// run still releases the slot and may dispatch queued work — while a
-    /// stale or superseded result never publishes. Returns `Some(pdf_path)`
-    /// when the UI should also load the built PDF (absolute path).
+    /// follow-ups. The scheduler releases the slot first; an uncancelled
+    /// same-generation result may publish even with newer edits pending.
+    /// Retired runs only release busy state. Returns `Some(pdf_path)` when
+    /// the UI should also load the built PDF (absolute path).
     pub fn apply_build_finished(
         &mut self,
         build: BuildID,
@@ -4439,13 +4759,11 @@ impl WorkspaceModel {
         } else {
             None
         };
-        let superseded = matches!(completion, Some(LiveCompletion::Superseded(_)));
-        let published = if current {
-            self.publish_build_outcome(&run, outcome, output_pdf, superseded, store)
+        let published = if current && matches!(completion, Some(LiveCompletion::Current(_))) {
+            self.publish_build_outcome(&run, outcome, output_pdf, store)
         } else {
-            // Invalidated run draining late: the busy flag still belongs
-            // to it — release only that so follow-up builds are not stuck
-            // on `is_building`. Nothing from the old context publishes.
+            // Retired or unrecognized scheduler token: release busy state
+            // without publishing an artifact, error, or SyncTeX binding.
             if self.is_building() {
                 self.restore_retained_state();
             }
@@ -4455,24 +4773,15 @@ impl WorkspaceModel {
         published
     }
 
-    /// Applies the finished run's outcome to build state/UI-visible fields.
-    /// A superseded run — newer edits arrived — is short-circuited before
-    /// any issues/log/state mutation: its artifact, errors and binding
-    /// must never reach the UI; the last good PDF stays.
+    /// Applies an accepted run's outcome to build state/UI-visible fields.
+    /// Newer edits may still be queued; their run starts after publication.
     fn publish_build_outcome(
         &mut self,
         run: &ActiveRun,
         outcome: Result<BuildOutcome, String>,
         output_pdf: &str,
-        superseded: bool,
         store: &SettingsStore,
     ) -> Option<PathBuf> {
-        if superseded {
-            // Superseded by newer input — nothing publishes, not even its
-            // issues; the retained last-good PDF stays on screen.
-            self.build_state = WorkspaceBuildState::Failed("Build superseded.".into());
-            return None;
-        }
         // Live runs never steal the panel or jump on the manual-build
         // settings — cursor following is opt-in via its own preference.
         let (switch_to_pdf, jump_to_cursor) = if run.live.is_some() {
@@ -4510,6 +4819,13 @@ impl WorkspaceModel {
                             // the project file set didn't change.
                             if run.live.is_none() {
                                 self.rescan_project();
+                            }
+                            // A preview of an edit made after this build
+                            // started keeps drafting on screen.
+                            if run.live.is_none() {
+                                if let Some(p) = self.embedded.note_final_build_published() {
+                                    self.display_embedded_publication(p);
+                                }
                             }
                             if switch_to_pdf {
                                 self.inspector_visible = true;

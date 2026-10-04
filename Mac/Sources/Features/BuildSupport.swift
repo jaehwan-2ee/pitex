@@ -68,7 +68,8 @@ actor StreamingBuildExecutor: BuildProcessExecuting {
 
     /// Finder does not load shell profiles. Include the standard macOS TeX
     /// locations for both the engine and subprocesses such as xdvipdfmx/bibtex.
-    private static func buildEnvironment(_ policy: EnvironmentPolicy) async -> EnvironmentPolicy {
+    /// The exact equation preview reuses it so both find the same engine.
+    static func buildEnvironment(_ policy: EnvironmentPolicy) async -> EnvironmentPolicy {
         guard case var .inherit(overrides) = policy else { return policy }
         let path = overrides["PATH"] ?? ProcessInfo.processInfo.environment["PATH"]
             ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -432,6 +433,10 @@ extension WorkspaceModel {
     /// goes through the live-compile scheduler — manual work never
     /// overlaps a live run, it queues behind its cancellation instead.
     func startBuild() async {
+        let context = projectGeneration
+        let editor = environment?.editor
+        await editor?.flushPendingChanges()
+        guard projectGeneration == context, environment?.editor === editor else { return }
         performLiveRequests(liveScheduler.requestManual())
     }
 
@@ -493,6 +498,7 @@ extension WorkspaceModel {
               Self.liveCompileExtensions.contains(
                   (snapshot.path.rawValue as NSString).pathExtension.lowercased()
               ) else { return }
+        noteEmbeddedPreviewEdit()
         performLiveRequests(liveScheduler.noteEdit(nowMs: Self.nowMs()))
     }
 
@@ -506,12 +512,14 @@ extension WorkspaceModel {
         liveScheduler.setDelay(remote != nil
             ? max(configured, LiveCompileScheduler.remoteMinDelayMs)
             : configured)
-        performLiveRequests(liveScheduler.setEnabled(settings.liveCompileEnabled))
+        // The embedded editing preview replaces the compiler live path for
+        // local projects; manual builds keep using requestManual().
+        performLiveRequests(liveScheduler.setEnabled(settings.liveCompileEnabled && !embeddedPreviewEnabled))
+        syncEmbeddedPreview()
     }
 
-    /// Re-arms the debounce Task at the scheduler's pending deadline — the
-    /// caller-owned timer the contract requires. The deadline is always
-    /// re-read, so a newer edit slides the wait without extra bookkeeping.
+    /// Re-arms the coalescing Task at the scheduler's pending deadline.
+    /// Re-read for settings changes; further edits keep the existing window.
     /// While a run holds the slot its completion dispatches a due pending
     /// edit itself — arming here would only refire empty polls at 0 ms.
     func armLiveCompileTimer() {
@@ -559,7 +567,7 @@ extension WorkspaceModel {
     /// `completed(token)` — the contract's once-per-started-run call: it
     /// frees the slot, classifies the run and dispatches whatever queued
     /// behind it (queued manual first, then a live edit whose deadline
-    /// already elapsed — no second debounce after a cancellation).
+    /// already elapsed — no second debounce after completion).
     private func finishScheduledRun(_ token: LiveRunToken) {
         let composing = environment?.editor.hasMarkedText ?? false
         let (status, requests) = liveScheduler.completed(
@@ -582,7 +590,8 @@ extension WorkspaceModel {
 
     /// The run still owns this workspace's slot and context: same mounted
     /// project (a close/reopen reusing the path fails it), same root, and
-    /// the scheduler still accepts its results.
+    /// the scheduler still accepts its results. Ordinary edits queue a
+    /// follow-up without retiring this run's output.
     private func runStillCurrent(_ token: LiveRunToken, context: UUID, root: URL) -> Bool {
         projectGeneration == context
             && projectURL == root
@@ -594,7 +603,7 @@ extension WorkspaceModel {
     /// saved first so the compiler sees what the editor shows.
     private func runBuild(token: LiveRunToken) async {
         // The scheduler may have superseded this start before the Task ran
-        // (newer edit, manual request, invalidation): complete immediately
+        // (manual request, toggle-off, invalidation): complete immediately
         // so queued work dispatches; a token that is not ours is left alone.
         guard liveScheduler.acceptsActiveResult(token) else {
             if liveScheduler.active == token { finishScheduledRun(token) }
@@ -617,13 +626,19 @@ extension WorkspaceModel {
         pendingLogText = ""
         pendingBuildIssues = []
         buildIssues = []
-        invalidateSyncTeXForBuild()
+        // An editing preview's binding lives in its own session directory,
+        // which this build never writes — it stays usable meanwhile.
+        if retainedPDF?.isEmbeddedPreview != true { invalidateSyncTeXForBuild() }
         guard let buildID = try? BuildID(rawValue: "build-\(UUID().uuidString.lowercased())") else {
             buildState = .failed("The build could not be started.")
             finishScheduledRun(token)
             return
         }
         activeBuildID = buildID
+        // Every edit noted so far — queued ones included — is part of what
+        // a manual build compiles: previews without a newer edit never
+        // replace its PDF.
+        if !live { noteEmbeddedFinalBuildStarted() }
         // Root discovery must see edits to inactive main/preamble files too.
         if let problem = await persistDirtySessions() {
             if runStillCurrent(token, context: context, root: root) {
@@ -868,26 +883,30 @@ extension WorkspaceModel {
                 await self?.handleBuildEvent(event, token: token, buildID: buildID)
             }
             flushBuildLog(for: token)
-            // Publish only while the scheduler still accepts this run's
-            // results and the workspace is unchanged — a superseded live
-            // run clears its busy state but never lands its artifacts.
+            // An accepted run may publish an intermediate PDF with newer
+            // edits pending. Cancelled/retired runs never land artifacts;
+            // the queued run starts only after this one finishes publishing.
             switch outcome.lifecycle {
             case .succeeded:
                 guard runStillCurrent(token, context: context, root: root) else { break }
                 let pdfData = await orchestrator.successfulPDF() ?? Data()
-                // The await may have raced a newer edit — verify again
-                // before this run's PDF is allowed to publish.
+                // The await may have raced cancellation or a context change —
+                // verify ownership again before publishing this run's PDF.
                 guard runStillCurrent(token, context: context, root: root) else { break }
                 buildState = .succeeded(pdf: pdfData, log: buildLogText)
                 latestBuiltPDFName = outputPDF
                 // Bytes + artifact + source identity survive the next
                 // build's status churn — this is what the preview retains.
-                retainedPDF = RetainedPDF(
-                    data: pdfData, artifactPath: outputPDF,
-                    sourceTarget: relativeSource
-                )
-                let pdfURL = root.appendingPathComponent(outputPDF).standardizedFileURL
-                await refreshSyncTeXBinding(pdfURL: pdfURL, sourceRelativePath: relativeSource)
+                // An editing preview already showing an edit made after
+                // this manual build started stays on screen instead.
+                if live || !keepEmbeddedPreviewOverFinalBuild() {
+                    retainedPDF = RetainedPDF(
+                        data: pdfData, artifactPath: outputPDF,
+                        sourceTarget: relativeSource
+                    )
+                    let pdfURL = root.appendingPathComponent(outputPDF).standardizedFileURL
+                    await refreshSyncTeXBinding(pdfURL: pdfURL, sourceRelativePath: relativeSource)
+                }
                 guard runStillCurrent(token, context: context, root: root) else { break }
                 // Live outputs hide under .pitex-live — rescanning the
                 // whole project on every debounced success is wasted work.

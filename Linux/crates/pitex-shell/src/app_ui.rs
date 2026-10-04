@@ -230,6 +230,10 @@ pub struct AppState {
     /// never touches the chat transcript. Rebound per session in
     /// `attach_session`, shut down with the workspace.
     pub completion: Rc<GhostCompletionCoordinator>,
+    /// Equation hover/caret preview — one MathJax web view per window,
+    /// rebound per session in `attach_session`.
+    #[cfg(all(feature = "equation-preview", unix))]
+    pub equation_preview: Rc<crate::equation_preview::EquationPreviewHost>,
     /// The fold chip layer currently overlaid on the editor scroller —
     /// tracked so `rebind_editor_widget` can remove the previous one.
     pub fold_chip: RefCell<Option<gtk4::DrawingArea>>,
@@ -351,6 +355,8 @@ impl AppState {
             search: None,
             fold: None,
             completion: GhostCompletionCoordinator::new(),
+            #[cfg(all(feature = "equation-preview", unix))]
+            equation_preview: crate::equation_preview::EquationPreviewHost::new(),
             fold_chip: RefCell::new(None),
             rendered_agent_revision: Cell::new(0),
             transcript_rendered_at: Cell::new(std::time::Instant::now()),
@@ -418,6 +424,15 @@ impl AppState {
                             .map(|st| st.completion_context())
                     })
                     .unwrap_or_default()
+            })
+        }));
+        // Included definitions come from open buffers before disk.
+        #[cfg(all(feature = "equation-preview", unix))]
+        state.equation_preview.set_open_text_provider(Box::new(|path| {
+            STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .and_then(|state| state.try_borrow().ok().and_then(|st| st.open_document_text(path)))
             })
         }));
         state
@@ -593,11 +608,13 @@ impl AppState {
 
     /// Name of the rendered PDF — the basename; the artifact's full
     /// project-relative path stays in `latest_built_pdf_name` for fetch
-    /// and download.
+    /// and download (an editing preview shows its own session file name).
     pub fn pdf_display_name(&self) -> String {
-        self.model
-            .latest_built_pdf_name
-            .as_deref()
+        let shown = match &self.model.retained_pdf {
+            Some(r) if self.model.displaying_editing_preview() => Some(r.artifact.as_str()),
+            _ => self.model.latest_built_pdf_name.as_deref(),
+        };
+        shown
             .and_then(|n| std::path::Path::new(n).file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "document.pdf".into())
@@ -623,6 +640,8 @@ impl AppState {
 
     pub fn persist_commands(&mut self) {
         self.model.persist_commands(&mut self.store);
+        // The exact equation preview follows the build command's engine.
+        self.sync_equation_preview();
     }
 
     pub fn sync_build_entries(&self) {
@@ -692,6 +711,7 @@ impl AppState {
         // Unset role colors default to the effective mode's palette, so the
         // scheme must be in place before `stored_hex` reads below.
         self.appearance.resolved_dark.set(manager.is_dark());
+        self.sync_equation_preview();
         // Generate a GtkSourceView style scheme from the palette — the
         // native mechanism for editor/gutter/line-number colors.
         let prefs = self.store.prefs();
@@ -818,7 +838,53 @@ impl AppState {
         // The ghost label tracks the editor font so suggestion text and
         // document text share family and size.
         self.completion.refresh_font(&self.editor_font_desc());
+        self.sync_equation_preview();
     }
+
+    /// Unsaved text of an open document — the equation preview reads
+    /// included definitions from buffers before disk.
+    pub fn open_document_text(&self, path: &std::path::Path) -> Option<String> {
+        let root = self.model.project_url.as_ref()?;
+        let relative = WorkspaceModel::relative_path(path, root).ok()?;
+        self.model
+            .registered_sessions
+            .iter()
+            .find(|session| session.path() == &relative)
+            .map(|session| session.snapshot().text)
+    }
+
+    /// Push settings, theme, font, build command and main file to the
+    /// equation preview — each part is a no-op when unchanged.
+    #[cfg(all(feature = "equation-preview", unix))]
+    pub fn sync_equation_preview(&self) {
+        use editor_feature::equation_preview::{EquationPreviewAppearance, EquationPreviewScheme, EquationPreviewSettings};
+        let settings = EquationPreviewSettings::from_persisted(
+            self.store.equation_preview_enabled(),
+            self.store.equation_preview_while_typing(),
+            self.store.equation_preview_placement(),
+            self.store.equation_preview_renderer(),
+            self.store.equation_preview_delay_milliseconds(),
+        );
+        let manager = adw::StyleManager::default();
+        let scheme = match (manager.is_high_contrast(), manager.is_dark()) {
+            (true, true) => EquationPreviewScheme::HighContrastDark,
+            (true, false) => EquationPreviewScheme::HighContrastLight,
+            (false, true) => EquationPreviewScheme::Dark,
+            (false, false) => EquationPreviewScheme::Light,
+        };
+        // Math reads best a little larger than body text.
+        let appearance = EquationPreviewAppearance { scheme, font_size: self.appearance.font_size.max(1.0) + 3.0 };
+        self.equation_preview.set_language(self.language);
+        self.equation_preview.sync(
+            settings,
+            appearance,
+            &self.model.build_command_text,
+            self.model.build_source_url(),
+        );
+    }
+
+    #[cfg(not(all(feature = "equation-preview", unix)))]
+    pub fn sync_equation_preview(&self) {}
 
     /// `rehighlight()` — re-tokenize and push decorations + structure.
     pub fn rehighlight(&self) {
@@ -917,12 +983,13 @@ impl AppState {
         if let Some(session) = self.active_session.clone() {
             self.model.document_snapshot = Some(session.snapshot());
         }
-        // Live compile — real text changes re-arm the debounce; saves and
+        // Live compile — real text changes queue a build; saves and
         // snapshot republishes carry the same content hash and skip it.
         let requests = self.model.note_source_edit(&self.store);
         self.model
             .dispatch_live_requests(requests, &self.store, self.language);
         self.arm_live_timer();
+        self.arm_embedded_timer();
         // Structure parse is debounced — it re-parses the whole document
         // and ran on every keystroke.
         self.schedule_structure_refresh();
@@ -965,6 +1032,8 @@ impl AppState {
         self.model
             .dispatch_live_requests(requests, &self.store, self.language);
         self.arm_live_timer();
+        self.arm_embedded_timer();
+        self.refresh_preview_label();
         self.refresh_build_ui();
     }
 
@@ -1062,11 +1131,18 @@ impl AppState {
             self.completion
                 .attach(adapter.view(), adapter.buffer(), &ghost_label);
         }
+        #[cfg(all(feature = "equation-preview", unix))]
+        {
+            self.equation_preview.set_project_root(self.model.project_url.clone());
+            self.equation_preview.set_document(self.model.active_document_url.clone());
+            self.equation_preview.attach(adapter.view(), adapter.buffer());
+        }
         self.rebind_editor_widget();
         self.apply_editor_preferences();
         self.apply_theme();
         self.rehighlight();
         self.install_editor_controllers();
+        self.sync_equation_preview();
     }
 
     /// Swap the editor child inside the scroller and (re)wire the minimap.
@@ -1232,6 +1308,8 @@ impl AppState {
 
     /// After any text-affecting change: footer, save button, structure lists.
     pub fn refresh_after_document_change(&mut self) {
+        // The resolved main document may have changed with the edit.
+        self.sync_equation_preview();
         self.refresh_footer();
         self.refresh_tabs();
         self.refresh_sidebar();
@@ -1424,6 +1502,8 @@ impl AppState {
         // `completion?.shutdown()` — the dedicated subprocess dies with the
         // workspace and `attach` respawns it on the next document.
         self.completion.shutdown();
+        #[cfg(all(feature = "equation-preview", unix))]
+        self.equation_preview.shutdown();
         if let Some(agent) = self.agent.as_mut() {
             agent.shutdown();
         }
@@ -1627,6 +1707,11 @@ impl AppState {
     pub fn close_document(&mut self, url: PathBuf) {
         self.model.close_document(&url);
         self.refresh_after_document_change();
+        // The open-source set changed: refresh so the helper drops the
+        // override and SyncTeX can rebind (no edit-revision bump).
+        self.model.request_embedded_refresh(&self.store);
+        self.model.request_embedded_restart(&self.store);
+        self.arm_embedded_timer();
     }
 
     pub fn reload_active(&mut self) {
@@ -1705,6 +1790,7 @@ impl AppState {
 
     pub fn start_build_action(&mut self) {
         self.model.start_build(&self.store, self.language);
+        self.restart_embedded_preview();
         self.refresh_build_ui();
     }
 
@@ -1885,6 +1971,7 @@ impl AppState {
     /// File → Pin Build Target — `togglePinnedBuildTarget()`.
     pub fn pin_target_action(&mut self) {
         self.model.toggle_pinned_build_target();
+        self.restart_embedded_preview();
         self.refresh_sidebar();
         self.refresh_pdf_ui();
     }
@@ -3322,7 +3409,7 @@ impl AppState {
                         nav.set_visible(true);
                     }
                     if let Some(name) = ui.pdf_name_label.borrow().as_ref() {
-                        name.set_text(&self.pdf_display_name());
+                        name.set_text(&self.preview_header_text());
                     }
                 });
                 self.render_pdf_page();
@@ -3812,6 +3899,12 @@ impl AppState {
                                             }
                                         }
                                         st.refresh_after_document_change();
+                                        // TeX may have read it (an unopened
+                                        // \input, a figure, a .bib): the
+                                        // helper rescans what it read.
+                                        let st = &mut *st;
+                                        st.model.request_embedded_refresh_for_disk_change(&p, &st.store);
+                                        st.arm_embedded_timer();
                                     }
                                 });
                             },
@@ -3921,6 +4014,10 @@ impl AppState {
                     self.model.apply_activate(activated);
                     self.attach_session(session);
                     self.refresh_after_document_change();
+                    // A clean open changed the all-open-source identity.
+                    self.model.request_embedded_refresh(&self.store);
+                    self.model.request_embedded_restart(&self.store);
+                    self.arm_embedded_timer();
                 }
                 // `activateDocument`'s catch publishes `.failed` — the
                 // workspace never went through a loading phase first.
@@ -4003,6 +4100,7 @@ impl AppState {
                 );
                 self.refresh_build_ui();
                 self.refresh_pdf_ui();
+                self.restart_embedded_preview();
                 // A completed run may leave a newer pending edit waiting
                 // for its deadline.
                 self.arm_live_timer();
@@ -4055,11 +4153,17 @@ impl AppState {
                 // External edits also move git status — refresh keeps the
                 // panel live like VSCode's filesystem watcher.
                 self.refresh_git();
+                // TeX may have read the changed file.
+                self.model.request_embedded_refresh_for_disk_change(&path, &self.store);
+                self.arm_embedded_timer();
             }
             WorkspaceMessage::SaveFinished { path, result } => {
                 self.model.apply_save_finished(&path, result);
                 self.refresh_after_document_change();
                 self.refresh_git();
+                // Saved buffers stop overriding the helper's disk view.
+                self.model.request_embedded_refresh(&self.store);
+                self.arm_embedded_timer();
             }
             WorkspaceMessage::AgentActivityFinished => {
                 let confirm = self.store.confirm_overwrite();
@@ -4068,6 +4172,7 @@ impl AppState {
                     editor.refresh_from_session();
                 }
                 self.refresh_after_document_change();
+                self.arm_embedded_timer();
                 // `agentActivityDidFinish` — agent edits upload too.
                 {
                     self.model.push_remote();
@@ -4088,6 +4193,7 @@ impl AppState {
                         editor.refresh_from_session();
                     }
                     self.refresh_after_document_change();
+                    self.arm_embedded_timer();
                 }
                 self.refresh_remote_status();
             }
@@ -4103,6 +4209,7 @@ impl AppState {
                         editor.refresh_from_session();
                     }
                     self.refresh_after_document_change();
+                    self.arm_embedded_timer();
                 }
                 self.refresh_remote_status();
             }
@@ -4201,6 +4308,13 @@ impl AppState {
                 }
                 self.refresh_git_panel();
             }
+            WorkspaceMessage::EmbeddedPreview { session, event } => {
+                if self.model.apply_embedded_event(session, event) {
+                    self.refresh_pdf_ui();
+                }
+                self.refresh_preview_label();
+                self.refresh_synctex_status();
+            }
         }
         self.drain_side_effects();
     }
@@ -4217,6 +4331,9 @@ thread_local! {
     /// The pending live-compile debounce source — re-armed on every real
     /// edit and after each fire/completion until no work is pending.
     static LIVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// The pending embedded-preview coalescing source (independent of the
+    /// build slot: updates stream while the helper is still working).
+    static EMBEDDED_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
     /// Resolved UI language for `a11y` — readable without borrowing state.
     static LANG: Cell<&'static str> = const { Cell::new("en") };
     /// Pending post-edit re-highlight / structure-refresh sources.
@@ -4260,6 +4377,133 @@ impl AppState {
             .dispatch_live_requests(requests, &self.store, self.language);
         self.refresh_build_ui();
         self.arm_live_timer();
+    }
+}
+
+/// One firing of the embedded-preview coalescing timer: streams the newest
+/// buffers to the helper. A borrowed state re-queues shortly.
+fn embedded_timer_fire() {
+    EMBEDDED_SOURCE.with(|s| s.borrow_mut().take());
+    let borrowed = STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else { return false };
+        let Ok(mut st) = state.try_borrow_mut() else { return true };
+        st.embedded_timer_attempt();
+        false
+    });
+    if borrowed {
+        glib::timeout_add_local_once(Duration::from_millis(50), embedded_timer_fire);
+    }
+}
+
+impl AppState {
+    /// A build-target change (pin, rescan, build start/finish) may have retired the editing preview: restart it once a target exists.
+    fn restart_embedded_preview(&mut self) {
+        self.model.request_embedded_restart(&self.store);
+        self.arm_embedded_timer();
+    }
+
+    /// (Re)arm the embedded-preview coalescing timer while an update is
+    /// pending; an IME composition retries instead of sending partial text.
+    fn arm_embedded_timer(&mut self) {
+        EMBEDDED_SOURCE.with(|s| {
+            if let Some(id) = s.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let Some(delay) = self.model.embedded_poll_delay(composing) else {
+            return;
+        };
+        let id = glib::timeout_add_local_once(Duration::from_millis(delay.max(1)), embedded_timer_fire);
+        EMBEDDED_SOURCE.with(|s| *s.borrow_mut() = Some(id));
+    }
+
+    fn embedded_timer_attempt(&mut self) {
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        if composing {
+            self.arm_embedded_timer();
+            return;
+        }
+        self.model.flush_embedded_preview(&self.store);
+        self.refresh_preview_label();
+        self.arm_embedded_timer();
+    }
+
+    /// PDF header: which kind of artifact is on screen. Editing previews
+    /// are never presented as compiler output.
+    pub fn preview_header_text(&self) -> String {
+        use crate::embedded_preview::PreviewStatus;
+        let name = self.pdf_display_name();
+        if self.model.displaying_editing_preview() {
+            let mut text = format!("{} · {name}", tr(self.language, "preview.embedded_label"));
+            match &self.model.embedded.status {
+                PreviewStatus::Updating => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_updating"));
+                }
+                PreviewStatus::Failed(_) | PreviewStatus::Errors(_) => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_failed"));
+                }
+                PreviewStatus::Unavailable(_) => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_unavailable"));
+                }
+                PreviewStatus::Current | PreviewStatus::Off => {}
+            }
+            return text;
+        }
+        let live_artifact = self
+            .model
+            .latest_built_pdf_name
+            .as_deref()
+            .map(|n| n.starts_with(".pitex-live/"))
+            .unwrap_or(false);
+        if live_artifact {
+            name
+        } else {
+            format!("{} · {name}", tr(self.language, "preview.final_label"))
+        }
+    }
+
+    /// Tooltip detail for the header: first TeX error or failure reason.
+    fn preview_header_detail(&self) -> Option<String> {
+        use crate::embedded_preview::PreviewStatus;
+        if crate::embedded_preview::SUPPORTED
+            && self.model.remote.is_some()
+            && self.store.live_compile_enabled()
+            && self.store.live_preview_backend() == "embedded"
+        {
+            return Some(tr(self.language, "preview.embedded_unsupported_remote"));
+        }
+        match &self.model.embedded.status {
+            PreviewStatus::Errors(m) | PreviewStatus::Failed(m) | PreviewStatus::Unavailable(m)
+                if !m.is_empty() =>
+            {
+                Some(m.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn refresh_preview_label(&self) {
+        let text = self.preview_header_text();
+        let detail = self.preview_header_detail();
+        UI.with(|ui| {
+            if let Some(name) = ui.pdf_name_label.borrow().as_ref() {
+                name.set_text(&text);
+                name.set_tooltip_text(detail.as_deref());
+            }
+        });
     }
 }
 
@@ -4907,6 +5151,13 @@ pub fn run(app_version: &str) -> i32 {
                     st.model.wait_for_pending_writes();
                     // `flushRemote` on terminate — the last upload, bounded.
                     st.model.flush_remote(std::time::Duration::from_secs(10));
+                    // Quit skips `close_workspace`: drop the exact-preview temp tree too.
+                    #[cfg(all(feature = "equation-preview", unix))]
+                    st.equation_preview.shutdown();
+                    // The editing-preview helper group and its temporary
+                    // directory go with the app.
+                    st.model.embedded.terminate_now();
+
                 }
             }
         });
@@ -5137,6 +5388,11 @@ fn build_chrome(
         Some(&tr(lang, "command.sync_forward")),
         Some("win.syncforward"),
     );
+    #[cfg(all(feature = "equation-preview", unix))]
+    build_section.append(
+        Some(&tr(lang, "command.exact_equation_preview")),
+        Some("win.exactequation"),
+    );
     primary.append_section(Some(&tr(lang, "command.build_menu")), &build_section);
     let view_section = gio::Menu::new();
     view_section.append(
@@ -5277,6 +5533,9 @@ fn build_chrome(
     app.set_accels_for_action("win.cancelbuild", &["<Control>period"]);
     app.set_accels_for_action("win.runcustom", &["<Control><Alt>b"]);
     app.set_accels_for_action("win.syncforward", &["<Control><Shift>j"]);
+    // ⌘⌥E on macOS: exact TeX render of the equation at the caret/pointer.
+    #[cfg(all(feature = "equation-preview", unix))]
+    app.set_accels_for_action("win.exactequation", &["<Control><Alt>e"]);
     app.set_accels_for_action("win.sidebar", &["<Control>t"]);
     app.set_accels_for_action("win.inspector", &["<Control><Alt>p"]);
     app.set_accels_for_action("win.bottompanel", &["<Control><Shift>y"]);
@@ -5387,6 +5646,19 @@ fn build_chrome(
         sync_action.connect_activate(move |_, _| state.borrow_mut().sync_forward_action());
     }
     window.add_action(&sync_action);
+    #[cfg(all(feature = "equation-preview", unix))]
+    {
+        let exact_action = gio::SimpleAction::new("exactequation", None);
+        let state = state.clone();
+        exact_action.connect_activate(move |_, _| {
+            // Clone out first: the request may re-enter state through GTK.
+            let host = state.try_borrow().ok().map(|s| s.equation_preview.clone());
+            if let Some(host) = host {
+                host.request_exact();
+            }
+        });
+        window.add_action(&exact_action);
+    }
     // Open Recent — the menu item carries the recents index as an int target.
     // `win.openrecent(5)` parses `5` via g_variant_parse → int64 ("x").
     let openrecent_action = gio::SimpleAction::new(
@@ -5840,6 +6112,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         rescan.connect_clicked(move |_| {
             let Ok(mut s) = state.try_borrow_mut() else { return };
             s.model.rescan_project();
+            s.restart_embedded_preview();
             s.refresh_sidebar();
             s.install_watchers();
         });
@@ -5854,6 +6127,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
         pin.connect_clicked(move |_| {
             let Ok(mut s) = state.try_borrow_mut() else { return };
             s.model.toggle_pinned_build_target();
+            s.restart_embedded_preview();
             s.refresh_sidebar();
             s.refresh_pdf_ui();
         });

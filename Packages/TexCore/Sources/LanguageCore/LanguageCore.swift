@@ -21,7 +21,7 @@ public struct SourceRange: Hashable, Codable, Sendable {
 
     public var endUTF8Offset: Int { utf8Offset + utf8Length }
 
-    fileprivate static func lexerRange(offset: Int, length: Int) -> Self {
+    static func lexerRange(offset: Int, length: Int) -> Self {
         Self(validatedUTF8Offset: offset, utf8Length: length)
     }
 }

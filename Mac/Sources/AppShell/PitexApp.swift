@@ -40,18 +40,53 @@ enum WorkspaceSyncTeXState: Equatable {
     case ambiguous(String)
 }
 
-/// Bytes + identity of the last PDF a build published. Kept separately
-/// from `buildState` so building/failure/cancel states can change around
-/// it without the preview unmounting.
+/// What a content change, an atomic replace, a touch or a chmod moves — and what an access-time or extended-attribute update does NOT:
+/// (device, inode, size, mtime in ns, mode). A read of the watched file raises an attribute event whose tuple is unchanged.
+private struct WatchedFileState: Equatable {
+    let device: dev_t
+    let inode: ino_t
+    let size: off_t
+    let mtimeSeconds: Int
+    let mtimeNanoseconds: Int
+    let mode: mode_t
+    /// nil when the path cannot be stat'ed (deleted / unreadable): such an event is processed as before.
+    init?(path: String) {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        device = info.st_dev; inode = info.st_ino; size = info.st_size
+        mtimeSeconds = info.st_mtimespec.tv_sec; mtimeNanoseconds = info.st_mtimespec.tv_nsec; mode = info.st_mode
+    }
+}
+
+/// Bytes + identity of the last PDF a build or the embedded editing
+/// preview published. Kept separately from `buildState` so building/
+/// failure/cancel states can change around it without the preview
+/// unmounting.
 struct RetainedPDF: Equatable {
     /// PDF bytes as published — the preview renders these, not whatever
     /// a later failed build may have left on disk.
     var data: Data
-    /// Project-relative artifact path (may live under `.pitex-live`).
+    /// Project-relative build output (may live under `.pitex-live`), or
+    /// the absolute path of an editing-preview artifact in its session
+    /// directory — resolve it with `fileURL(projectRoot:)`.
     var artifactPath: String
     /// Project-relative main source the build resolved — the identity
     /// that decides whether a target switch invalidates this output.
     var sourceTarget: String
+    /// An embedded-engine editing preview, never final compiler output.
+    var isEmbeddedPreview = false
+
+    /// Manual Build output: neither an editing preview nor a live
+    /// compiler build under `.pitex-live`.
+    var isFinalOutput: Bool {
+        !isEmbeddedPreview && !artifactPath.hasPrefix(BuildTarget.liveDirectoryName + "/")
+    }
+
+    func fileURL(projectRoot: URL) -> URL {
+        artifactPath.hasPrefix("/")
+            ? URL(fileURLWithPath: artifactPath)
+            : projectRoot.appendingPathComponent(artifactPath)
+    }
 }
 
 /// Bottom console tabs: Assistant | Git Integration | Issues | Terminal |
@@ -253,6 +288,11 @@ final class WorkspaceModel: ObservableObject {
     var activeRunToken: LiveRunToken?
     /// Debounce Task armed at `liveScheduler.pendingDeadline`.
     var liveCompileTask: Task<Void, Never>?
+    /// Embedded editing-preview session (`EmbeddedPreview.swift`): streams
+    /// buffer updates independently of the build slot; its progress is
+    /// `embeddedPreviewStatus`, never `buildState`.
+    let embeddedPreview = EmbeddedPreviewState()
+    @Published var embeddedPreviewStatus: EmbeddedPreviewStatus = .off
     /// Settings/import → scheduler sync (enable flag and delay changes).
     private var liveSettingsObserver: AnyCancellable?
     let syncTeXRunner = SyncTeXRunner()
@@ -262,6 +302,9 @@ final class WorkspaceModel: ObservableObject {
     /// subprocess that never touches the chat transcript. Created per
     /// project like `agent` and shut down in `close()`.
     private(set) var completion: GhostCompletionCoordinator?
+    /// Overleaf-style equation hover/caret preview — created with the
+    /// project like `completion`, rebound per editor, shut down in `close()`.
+    private(set) var equationPreview: EquationPreviewController?
     private(set) var syncTeXBinding: SyncTeXBinding?
     /// Epoch for SyncTeX work: bumped at every build start and at every
     /// workspace/target switch so an in-flight refresh or query belonging
@@ -308,6 +351,8 @@ final class WorkspaceModel: ObservableObject {
             // A different command means different flags/outputs — live
             // work compiled under the old one is dead.
             performLiveRequests(liveScheduler.invalidate())
+            // The exact equation preview follows the project's engine.
+            equationPreview?.setBuildCommand(buildCommandText)
         }
     }
     /// Free-form terminal command run with ⌃⌘B, remembered per project.
@@ -351,6 +396,8 @@ final class WorkspaceModel: ObservableObject {
     var capabilityLease: FileAccessLease?
     var registeredSessions: [DocumentSessionCore.DocumentSession] = []
     private var fileWatchers: [URL: DispatchSourceFileSystemObject] = [:]
+    /// The file state at the last PROCESSED event (and at watcher start) per watched URL — see `fileChangedOnDisk`.
+    private var watchedFileStates: [URL: WatchedFileState] = [:]
     private var pendingDiskChecks: [URL: Task<Void, Never>] = [:]
     /// Newest queued write per document; the next write chains onto it so
     /// a file's saves can never overlap or reorder.
@@ -774,11 +821,19 @@ final class WorkspaceModel: ObservableObject {
             }
             completion.attach(to: appEnvironment.editor)
             self.completion = completion
+            let equationPreview = EquationPreviewController()
+            equationPreview.workspace = EquationPreviewController.Workspace(
+                openText: { [weak self] url in await self?.openDocumentText(url) },
+                projectRoot: root
+            )
+            self.equationPreview = equationPreview
 
             environment = appEnvironment
             activeDocumentURL = initialURL
             openDocuments = [initialURL]
             documentSnapshot = snapshot
+            equationPreview.setDocument(initialURL)
+            equationPreview.setBuildCommand(buildCommandText)
             refreshBuildTarget()
             buildState = .unavailable("No build has run yet for this project.")
             syncTeXState = .unavailable(
@@ -844,8 +899,14 @@ final class WorkspaceModel: ObservableObject {
                 diskBaselineHash: .hashing(text)
             )
             guard documentLoadGeneration == generation, projectURL == root else { return }
-            if !registeredSessions.contains(where: { $0 === session }) {
+            let newlyRegistered = !registeredSessions.contains(where: { $0 === session })
+            if newlyRegistered {
                 registeredSessions.append(session)
+                // A clean open changes the all-open-source identity the
+                // SyncTeX check binds against: flush so a valid `idle`
+                // reply can rebind it. No edit revision bump — an open is
+                // not an edit and must never lift the final-build floor.
+                requestEmbeddedPreviewFlush()
             }
             let port = NativeDocumentSessionPort(session: session) { [weak self] snapshot in
                 guard let self, activeDocumentURL == url else { return }
@@ -868,6 +929,7 @@ final class WorkspaceModel: ObservableObject {
             documentSnapshot = snapshot
             refreshBuildTarget()
             completion?.attach(to: appEnvironment.editor)
+            equationPreview?.setDocument(url)
             highlighter.attach(to: appEnvironment.editor, fileExtension: url.pathExtension)
             attachCompletion(to: appEnvironment.editor)
             startWatcher(for: url)
@@ -979,6 +1041,8 @@ final class WorkspaceModel: ObservableObject {
                     snapshot = await session.snapshot()
                 }
                 self?.schedulePush()
+                // The helper falls back to disk for saved buffers.
+                self?.requestEmbeddedPreviewFlush()
                 return SessionWriteResult(kind: .saved, snapshot: snapshot)
             case let .staleBaseline(conflict):
                 self?.lastOwnWrite[url] = previousOwnWrite
@@ -1033,6 +1097,8 @@ final class WorkspaceModel: ObservableObject {
         switch result.kind {
         case .saved:
             refreshGit()
+            // The saved file may feed the math context (\input/\usepackage).
+            equationPreview?.refreshExternalFiles()
         case .saveConflict:
             syncTeXState = .stale("The source changed on disk; SyncTeX locations may be stale.")
         case .skipped:
@@ -1118,6 +1184,8 @@ final class WorkspaceModel: ObservableObject {
             _ = try? await registry.close(projectRoot: root, session: session)
         }
         openDocuments.removeAll { $0 == url }
+        // Its unsaved override (if any) ends; TeX reads the disk again.
+        requestEmbeddedPreviewFlush()
         editorViewStates.removeValue(forKey: url.standardizedFileURL)
         paneLayout.remove(url)
         if activeDocumentURL == url {
@@ -1144,10 +1212,12 @@ final class WorkspaceModel: ObservableObject {
         liveCompileTask?.cancel()
         liveCompileTask = nil
         performLiveRequests(liveScheduler.invalidate())
+        stopEmbeddedPreview(resetContext: true)
         // The popped-out preview renders this workspace's retained PDF —
         // it must not outlive the project it belongs to.
         closeDetachedPreview()
         for url in fileWatchers.keys { stopWatcher(for: url) }
+        watchedFileStates.removeAll()
         for task in pendingDiskChecks.values { task.cancel() }
         pendingDiskChecks.removeAll()
         // In-flight saves finish before their sessions are torn down, and a
@@ -1158,6 +1228,8 @@ final class WorkspaceModel: ObservableObject {
         agent?.shutdown()
         agent?.stopConfigWatcher()
         completion?.shutdown()
+        equationPreview?.shutdown()
+        equationPreview = nil
         highlighter.detach()
         let brokerToClose = capabilityBroker
         let leaseToClose = capabilityLease
@@ -1381,6 +1453,9 @@ final class WorkspaceModel: ObservableObject {
     private func restoreBuiltPreview() async {
         guard !isBuilding, let root = projectURL, let source = buildSourceURL(),
               let relative = try? Self.relativePath(for: source, root: root).rawValue else { return }
+        // An editing preview is session-owned (its artifacts may already be
+        // released) — it is never re-read as a project build output.
+        if let retained = retainedPDF, retained.isEmbeddedPreview, retained.sourceTarget == relative { return }
         // The retained artifact wins for its own target — a live build's
         // PDF hides under .pitex-live and must not fall back to the manual
         // sibling beside the source.
@@ -1426,12 +1501,16 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func invalidateSyncTeXForBuild() {
-        // Bumping the epoch retires any in-flight refresh or query along
-        // with the published binding — a late result from the build that
-        // just superseded this state attaches to nothing.
+        invalidateSyncTeX(reason: "SyncTeX will be refreshed after the build completes.")
+    }
+
+    /// Bumping the epoch retires any in-flight refresh or query along with
+    /// the published binding — a late result from the build or preview
+    /// that just superseded this state attaches to nothing.
+    func invalidateSyncTeX(reason: String) {
         syncTeXEpoch = UUID()
         syncTeXBinding = nil
-        syncTeXState = .unavailable("SyncTeX will be refreshed after the build completes.")
+        syncTeXState = .unavailable(reason)
     }
 
     /// Forward sync: editor selection → PDF highlight.
@@ -1453,6 +1532,10 @@ final class WorkspaceModel: ObservableObject {
     /// Cmd-click gesture (the reference editor's Ctrl-click equivalent).
     func syncForward(line: Int, column: Int) async {
         await ensureSyncTeXBinding()
+        if let refusal = await embeddedPreviewSyncTeXRefusal() {
+            syncTeXState = .stale(refusal)
+            return
+        }
         guard let binding = syncTeXBinding,
               let url = activeDocumentURL else {
             syncTeXState = .unavailable("SyncTeX requires a completed build.")
@@ -1513,6 +1596,10 @@ final class WorkspaceModel: ObservableObject {
     /// Inverse sync: PDF click → editor position.
     func syncInverse(page: Int, point: SyncTeXCore.PDFPoint) async {
         await ensureSyncTeXBinding()
+        if let refusal = await embeddedPreviewSyncTeXRefusal() {
+            syncTeXState = .stale(refusal)
+            return
+        }
         guard let binding = syncTeXBinding, let root = projectURL else {
             NSLog("[SyncTeX] inverse dropped: no binding/root")
             return
@@ -1602,19 +1689,27 @@ final class WorkspaceModel: ObservableObject {
             eventMask: [.write, .delete, .rename, .attrib],
             queue: .main
         )
-        source.setEventHandler { [weak self] in
-            Task { @MainActor in self?.fileChangedOnDisk(url) }
+        source.setEventHandler { [weak self, weak source] in
+            let attributeOnly = source?.data == .attrib
+            Task { @MainActor in self?.fileChangedOnDisk(url, attributeOnly: attributeOnly) }
         }
         source.setCancelHandler { Darwin.close(descriptor) }
         source.resume()
         fileWatchers[url] = source
+        watchedFileStates[url] = WatchedFileState(path: url.path)
     }
 
     private func stopWatcher(for url: URL) {
         fileWatchers.removeValue(forKey: url)?.cancel()
+        watchedFileStates[url] = nil
     }
 
-    private func fileChangedOnDisk(_ url: URL) {
+    private func fileChangedOnDisk(_ url: URL, attributeOnly: Bool) {
+        // An attribute-only event (a read's access time, an extended attribute) for a file whose (device, inode, size, mtime, mode) is what it was at the
+        // last processed event is not a change. Processing it re-reads the file, and that read raises the next such event: an endless ~150 ms loop
+        // (each pass also re-requests an embedded-preview flush and refreshes git). Write/delete/rename events are never filtered; a failed stat is processed.
+        if attributeOnly, let known = watchedFileStates[url], WatchedFileState(path: url.path) == known { return }
+        watchedFileStates[url] = WatchedFileState(path: url.path)
         // Coalesce write bursts (the agent's edit tool may write several
         // times in quick succession) so the session compares against the
         // final on-disk content once, not every intermediate state.
@@ -1642,6 +1737,12 @@ final class WorkspaceModel: ObservableObject {
                   guard let path = try? Self.relativePath(for: url, root: root) else { return false }
                   return session.path == path
               }) else { return }
+        // Any observed change of an open file (edit, replace, delete): the
+        // helper re-stats what TeX read from disk on every update. A source
+        // (`liveCompileExtensions`) is in the flush key through its content
+        // hash, so its change shows there; any other open file TeX may read
+        // (a .md) is not, so its event forces the flush.
+        requestEmbeddedPreviewFlush(force: !Self.liveCompileExtensions.contains(url.pathExtension.lowercased()))
         // Hoisted: a trailing closure can't sit inside a guard condition.
         let disk = try? await Task.detached(priority: .userInitiated) {
             let text = try Self.readExactUTF8(url)
@@ -1683,6 +1784,10 @@ final class WorkspaceModel: ObservableObject {
         ), snapshot.path == documentSnapshot?.path {
             documentSnapshot = updated
         }
+        // The flush requested at entry may have run before the adoption above
+        // changed this session's hash (a non-active source raises no edit): ask
+        // again so a changed hash reaches the helper. Unchanged — it is skipped.
+        requestEmbeddedPreviewFlush()
         // A watched non-active file's labels/citations changed on disk too —
         // the mtime key in the structure caches picks it up on this pass.
         scheduleStructureRefresh()
@@ -1749,6 +1854,10 @@ final class WorkspaceModel: ObservableObject {
                 projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
             }
         }
+        // The agent's tools (or a remote pull) may have rewritten project
+        // files no editor has open — inputs the preview engine reads from
+        // disk.
+        requestEmbeddedPreviewFlush(force: true)
     }
 
     // MARK: - Sidebar structure
@@ -2173,6 +2282,8 @@ final class WorkspaceModel: ObservableObject {
             projectFiles = discovered
             refreshBuildTarget()
             refreshStructure()
+            // Explicit rescan: re-stat unopened inputs too.
+            requestEmbeddedPreviewFlush(force: true)
         }
     }
 
@@ -2283,11 +2394,15 @@ final class WorkspaceModel: ObservableObject {
     /// Toggles the build-target pin on the active document (File → Pin/Unpin).
     func togglePinnedBuildTarget() {
         guard let url = activeDocumentURL, url.pathExtension.lowercased() == "tex" else { return }
+        // An editing preview on screen comes back after the stop below; read before the refresh can clear the retained PDF.
+        let restartPreview = embeddedPreviewComesBack
         pinnedBuildTarget = pinnedBuildTarget == url ? nil : url
         refreshBuildTarget()
         // Pin/unpin switches the build context: live work for the old
         // target is dead, and its retained preview is not this target's.
         performLiveRequests(liveScheduler.invalidate())
+        if restartPreview { embeddedPreview.restartAfterTargetChange = true }
+        retireEmbeddedPreviewForTargetChange()
         retainedPDF = nil
         syncTeXEpoch = UUID()
         Task { await restoreBuiltPreview() }
@@ -2415,12 +2530,23 @@ final class WorkspaceModel: ObservableObject {
         // switches inside the same document keep pending edits alive.
         if buildSourceURL() != previousTarget {
             performLiveRequests(liveScheduler.invalidate())
+            retireEmbeddedPreviewForTargetChange()
             // A different main means the retained PDF and any SyncTeX
             // binding/refresh belong to the previous target.
             retainedPDF = nil
             syncTeXBinding = nil
             syncTeXEpoch = UUID()
         }
+        // Equation-preview context and exact preamble start at the main file.
+        equationPreview?.setRootFile(buildSourceURL())
+    }
+
+    /// Unsaved text of an open document — the equation preview reads
+    /// included definitions from buffers before disk.
+    func openDocumentText(_ url: URL) async -> String? {
+        guard let root = projectURL, let relative = try? Self.relativePath(for: url, root: root),
+              let session = registeredSessions.first(where: { $0.path == relative }) else { return nil }
+        return await session.snapshot().text
     }
 
     func buildSourceRelativePath() -> String? {
@@ -2658,6 +2784,12 @@ private struct WorkspaceCommandContent: Commands {
             Button("command.sync_forward") { Task { await workspace.syncForward() } }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
                 .disabled(workspace.syncTeXBinding == nil)
+            Divider()
+            // Compiles only the equation at the caret/pointer, with the
+            // project's engine — the fast preview never runs TeX.
+            Button("command.exact_equation_preview") { workspace.equationPreview?.requestExact() }
+                .keyboardShortcut("e", modifiers: [.command, .option])
+                .disabled(workspace.equationPreview == nil)
         }
         CommandMenu("command.view") {
             Button("command.toggle_inspector") { workspace.toggleInspectorPane() }
@@ -2755,6 +2887,11 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Preview helpers die with their process groups now — a Task may
+        // never run once termination proceeds.
+        MainActor.assumeIsolated {
+            for workspace in WorkspaceWindows.live { workspace.terminateEmbeddedPreviewNow() }
+        }
         Task { @MainActor in
             for workspace in WorkspaceWindows.live { await workspace.close() }
         }

@@ -8,6 +8,7 @@ from pathlib import Path
 import gzip
 import posixpath
 import re
+MARKER = re.compile(r"/Check\.swift:\d+:\d+: warning: (?:no 'async' operations occur within 'await' expression|no calls to throwing functions occur within 'try' expression)(?: \[#UnnecessaryEffectMarker\])?$", re.M)
 import subprocess
 import sys
 import tempfile
@@ -254,6 +255,16 @@ final class GhostCompletionCoordinator {
     func accept() -> Bool { false }
     func dismiss() {}
 }
+
+/// Stand-in for EquationPreview.swift's controller — the excerpted
+/// EditorContainerView only calls attach/detach and compares identity
+/// (`!==`), so a class with those two members is enough; the real file is
+/// not compiled (it pulls SettingsStore and StreamingBuildExecutor).
+@MainActor
+final class EquationPreviewController {
+    func attach(textView: NSTextView, scrollView: NSScrollView) {}
+    func detach(from textView: NSTextView) {}
+}
 '''
     (root / "Check.swift").write_text(
         "import AppKit\nimport EditorMacAdapter\nimport LanguageCore\nimport PDFKit\n"
@@ -270,10 +281,19 @@ final class GhostCompletionCoordinator {
     sources = ["SyncTeXSupport.swift", "EditorFolding.swift",
                "AppearanceTheme.swift", "SyntaxHighlighting.swift"]
     executable = root / "check"
-    subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
+    _cc = subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6",
                     "-target", "arm64-apple-macos15.0", "-module-cache-path", str(root / "cache"),
                     "-I", str(products), str(root / "Check.swift"),
                     *[str(features / name) for name in sources],
                     *[str(products / (name + ".o")) for name in modules],
-                    "-o", str(executable)], check=True)
+                    "-o", str(executable)], check=False, capture_output=True, text=True)
+    print(_cc.stdout + _cc.stderr, end="")
+    if _cc.returncode != 0:
+        sys.exit(f"FAIL: swiftc rc={_cc.returncode} — no functional verdict")
+    _bad = MARKER.findall(_cc.stderr + _cc.stdout)
+    if _bad:
+        for line in _cc.stderr.splitlines() + _cc.stdout.splitlines():
+            if MARKER.search(line): print(line)
+        sys.exit("FAIL: harness compile defect — UnnecessaryEffectMarker in "
+                 "generated Check.swift (discarded async query); no functional verdict")
     subprocess.run([str(executable), str(root)], check=True)

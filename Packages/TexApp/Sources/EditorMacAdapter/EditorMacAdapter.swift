@@ -211,6 +211,9 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     private var desiredText: String
     private var isApplyingSessionSnapshot = false
     private var isSubmitting = false
+    private var submissionTask: Task<Void, Never>?
+    private var inputVersion: UInt64 = 0
+    private var acknowledgedInputVersion: UInt64 = 0
     nonisolated(unsafe) private var undoObservers: [NSObjectProtocol] = []
 
     private init(session: any DocumentSessionPort, snapshot: DocumentSnapshot) {
@@ -260,6 +263,15 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     public static func make(session: any DocumentSessionPort) async throws -> EditorMacAdapter {
         let snapshot = await session.snapshot()
         return EditorMacAdapter(session: session, snapshot: snapshot)
+    }
+
+    /// Joins only the native input pending at entry, including its coalesced
+    /// successor. Later typing cannot extend the captured watermark.
+    public func flushPendingChanges() async {
+        let requestedVersion = inputVersion
+        while acknowledgedInputVersion < requestedVersion, let pending = submissionTask {
+            await pending.value
+        }
     }
 
     private var needsRefresh = false
@@ -389,6 +401,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         var text = textView.string
         text.makeContiguousUTF8()
         desiredText = text
+        inputVersion += 1
         scrollLineStarts = nil
         sessionTextView.findController?.contentDidChange()
         onTextDidChange?()
@@ -466,6 +479,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         guard !isSubmitting, desiredText != committed.text else { return }
         isSubmitting = true
         let submittedText = desiredText
+        let submittedVersion = inputVersion
         // shouldChangeTextIn is a proposal, not a record of the final
         // storage edit. AppKit may coalesce edits, replace multiple ranges,
         // or restore a provisional completion before didChangeText. Replay
@@ -479,7 +493,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         )
         let session = self.session
 
-        Task { @MainActor [weak self, session] in
+        submissionTask = Task { @MainActor [weak self, session] in
             guard let self else { return }
             // commitSave/recordExternalChange/resolveConflict advance the
             // revision without touching text — app-side code calls them
@@ -516,6 +530,8 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
                 }
                 break
             }
+            acknowledgedInputVersion = submittedVersion
+            submissionTask = nil
             isSubmitting = false
             submitPendingChangeIfNeeded()
             if needsRefresh, !isSubmitting {

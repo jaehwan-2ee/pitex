@@ -48,3 +48,7 @@ id_rsa*
 # Generated gate/evidence output
 Evidence/
 Artifacts/
+
+# Python caches
+__pycache__/
+*.py[cod]

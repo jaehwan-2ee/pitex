@@ -176,7 +176,7 @@ impl SettingsStore {
         self.prefs.set("pitex.pref.build.jumpToCursorAfterBuild", v);
     }
     /// `pitex.pref.build.liveCompileEnabled` — rebuild on source edits
-    /// after an idle delay, default off. Live builds auto-save open edited
+    /// after a coalescing delay, default off. Live builds auto-save open edited
     /// files first and write to the hidden `.pitex-live` output directory.
     pub fn live_compile_enabled(&self) -> bool {
         self.prefs.bool("pitex.pref.build.liveCompileEnabled").unwrap_or(false)
@@ -184,8 +184,8 @@ impl SettingsStore {
     pub fn set_live_compile_enabled(&mut self, v: bool) {
         self.prefs.set("pitex.pref.build.liveCompileEnabled", v);
     }
-    /// `pitex.pref.build.liveCompileDelayMilliseconds` — idle debounce
-    /// before a live build starts, clamped to 200…10_000, default 700.
+    /// `pitex.pref.build.liveCompileDelayMilliseconds` — coalescing window
+    /// from the first pending edit, clamped to 200…10_000, default 700.
     /// Remote workspaces use a larger floor at schedule time.
     pub fn live_compile_delay_milliseconds(&self) -> i64 {
         self.prefs
@@ -205,6 +205,24 @@ impl SettingsStore {
     }
     pub fn set_live_compile_follow_cursor(&mut self, v: bool) {
         self.prefs.set("pitex.pref.build.liveCompileFollowCursor", v);
+    }
+    /// `pitex.pref.build.livePreviewBackend` — which engine produces the
+    /// live editing preview: `"embedded"` (previews edits without saving
+    /// source files) or `"compiler"` (project toolchain compatibility
+    /// path). Missing or unknown stored values resolve to `"embedded"`;
+    /// a persisted `"compiler"` choice is kept. Manual Build still uses
+    /// the selected project compiler either way.
+    pub fn live_preview_backend(&self) -> &'static str {
+        match self.prefs.string("pitex.pref.build.livePreviewBackend").as_deref() {
+            Some("compiler") => "compiler",
+            _ => "embedded",
+        }
+    }
+    /// Stores only `"embedded"`/`"compiler"`; anything else persists as
+    /// `"embedded"`.
+    pub fn set_live_preview_backend(&mut self, v: &str) {
+        let v = if v == "compiler" { "compiler" } else { "embedded" };
+        self.prefs.set("pitex.pref.build.livePreviewBackend", v);
     }
     /// `pitex.pref.update.autoInstall` — on launch, check GitHub Releases
     /// and install a newer package without asking.
@@ -354,6 +372,57 @@ impl SettingsStore {
     }
     pub fn set_markdown_font_size(&mut self, v: f64) {
         self.prefs.set("pitex.pref.markdown.fontSize", v);
+    }
+
+    /// `pitex.pref.equationPreview.enabled` — equation hover/caret preview,
+    /// default on (same keys/defaults as the macOS SettingsStore).
+    pub fn equation_preview_enabled(&self) -> bool {
+        self.prefs.bool("pitex.pref.equationPreview.enabled").unwrap_or(true)
+    }
+    pub fn set_equation_preview_enabled(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.equationPreview.enabled", v);
+    }
+    /// `pitex.pref.equationPreview.whileTyping` — update while typing,
+    /// default on.
+    pub fn equation_preview_while_typing(&self) -> bool {
+        self.prefs.bool("pitex.pref.equationPreview.whileTyping").unwrap_or(true)
+    }
+    pub fn set_equation_preview_while_typing(&mut self, v: bool) {
+        self.prefs.set("pitex.pref.equationPreview.whileTyping", v);
+    }
+    /// `pitex.pref.equationPreview.placement` — "above" | "below"; missing
+    /// or unknown values resolve to "above" so picker tags never desync.
+    pub fn equation_preview_placement(&self) -> &'static str {
+        match self.prefs.string("pitex.pref.equationPreview.placement").as_deref() {
+            Some("below") => "below",
+            _ => "above",
+        }
+    }
+    pub fn set_equation_preview_placement(&mut self, v: &str) {
+        self.prefs.set("pitex.pref.equationPreview.placement", v);
+    }
+    /// `pitex.pref.equationPreview.renderer` — "fast" | "fastWithTeXFallback";
+    /// missing or unknown values resolve to "fast".
+    pub fn equation_preview_renderer(&self) -> &'static str {
+        match self.prefs.string("pitex.pref.equationPreview.renderer").as_deref() {
+            Some("fastWithTeXFallback") => "fastWithTeXFallback",
+            _ => "fast",
+        }
+    }
+    pub fn set_equation_preview_renderer(&mut self, v: &str) {
+        self.prefs.set("pitex.pref.equationPreview.renderer", v);
+    }
+    /// `pitex.pref.equationPreview.delay` — debounce ms; only the persisted
+    /// presets 0/80/150 survive, anything else (absurd, negative, non-preset)
+    /// falls back to the 80 default — mirrors the engine's ALLOWED_DELAYS.
+    pub fn equation_preview_delay_milliseconds(&self) -> i64 {
+        match self.prefs.int("pitex.pref.equationPreview.delay") {
+            Some(v @ (0 | 80 | 150)) => v,
+            _ => 80,
+        }
+    }
+    pub fn set_equation_preview_delay_milliseconds(&mut self, v: i64) {
+        self.prefs.set("pitex.pref.equationPreview.delay", v);
     }
 
     pub fn update_settings(&mut self, next: PersistedSettings) {

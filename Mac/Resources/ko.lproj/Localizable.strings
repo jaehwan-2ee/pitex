@@ -35,6 +35,7 @@
 "preview.next_page" = "다음 페이지";
 "preview.zoom_in" = "확대";
 "preview.zoom_out" = "축소";
+"preview.zoom_auto" = "자동 크기 조절";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "PDF에서 선택 항목 보기";
 "preview.synctex_inverse" = "소스 보기";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitex는 미리보기에서 실행 파일을 열지 않습니다.";
 "preview.markdown.runtime_missing" = "Markdown 미리보기에는 Microsoft Edge WebView2 Runtime이 필요합니다. https://developer.microsoft.com/microsoft-edge/webview2/ 에서 설치한 후 Pitex를 다시 시작하세요.";
 "preview.markdown.pdf_failed" = "PDF 사본을 저장하지 못했습니다.";
+"preview.embedded_label" = "편집 미리보기";
+"preview.final_label" = "최종 PDF";
+"preview.embedded_unavailable" = "내장 미리보기 엔진을 사용할 수 없습니다";
+"preview.embedded_failed" = "편집 미리보기에 실패했습니다";
+"preview.embedded_unsupported_remote" = "내장 미리보기는 로컬 프로젝트에서만 사용할 수 있습니다";
+"preview.embedded_updating" = "편집 미리보기 업데이트 중…";
 
 "assistant.title" = "어시스턴트";
 "assistant.sign_in" = "로그인";
@@ -123,6 +130,7 @@
 "build.issues" = "문제";
 
 "command.sync_forward" = "PDF에서 선택 영역 보기";
+"command.exact_equation_preview" = "정확한 수식 미리보기";
 
 "sidebar.outline" = "개요";
 "sidebar.labels" = "레이블";
@@ -183,6 +191,11 @@
 "editor.toggle_assistant" = "어시스턴트 토글";
 "editor.toggle_bottom" = "하단 패널 토글";
 "editor.flip_panels" = "패널 위치 바꾸기";
+"equation_preview.accessibility_label" = "렌더링된 수식 미리보기";
+"equation_preview.unavailable" = "미리보기를 사용할 수 없음";
+"equation_preview.exact_badge" = "정확한 TeX";
+"equation_preview.fast_badge" = "빠른 미리보기";
+"equation_preview.exact_unavailable" = "정확한 미리보기에는 pdflatex, xelatex, lualatex 또는 latexmk 빌드 명령이 필요합니다.";
 "editor.reload" = "디스크에서 다시 읽기";
 "editor.disk_changed" = "디스크의 변경 사항을 다시 읽었습니다";
 "editor.disk_unchanged" = "디스크에 변경 사항이 없습니다";
@@ -255,10 +268,16 @@
 "settings.compile.make_default_editor" = ".tex 파일에 사용";
 "settings.compile.make_default_note" = "Pitex를 기본 .tex 편집기로 등록합니다 (더블 클릭으로 열기).";
 "settings.compile.live" = "실시간 컴파일";
-"settings.compile.live_auto" = "입력이 멈추면 자동으로 빌드";
-"settings.compile.live_auto_note" = "실시간 컴파일은 편집 중인 파일을 저장한 뒤 입력이 멈추면 자동으로 다시 빌드합니다.";
-"settings.compile.live_delay" = "유휴 지연 (ms)";
+"settings.compile.live_auto" = "편집 중 자동으로 빌드";
+"settings.compile.live_auto_note" = "실시간 컴파일은 열려 있는 수정된 파일을 저장하고 변경 사항을 모아 빌드합니다. 진행 중인 빌드는 중단하지 않습니다.";
+"settings.compile.live_auto_note_embedded" = "내장 미리보기는 파일을 저장하지 않고 현재 내용을 조판합니다. 빌드로 최종 PDF를 만드세요.";
+"settings.compile.live_delay" = "빌드 대기 시간 (ms)";
+"settings.compile.live_delay_note" = "이 옵션은 “컴파일러 호환 미리보기” 백엔드를 선택한 경우에만 적용됩니다.";
 "settings.compile.live_follow" = "실시간 빌드 후 PDF를 커서 위치로 이동";
+"settings.compile.live_backend" = "미리보기 백엔드";
+"settings.compile.live_backend.embedded" = "내장 편집 미리보기";
+"settings.compile.live_backend.compiler" = "컴파일러 호환 미리보기";
+"settings.compile.live_backend.note" = "내장 엔진은 소스 파일을 저장하지 않고 편집 내용을 미리 봅니다. 빌드를 사용해 프로젝트 컴파일러로 최종 PDF를 만드세요.";
 "toolbar.live_compile" = "실시간 컴파일";
 "settings.markdown.live_preview" = "실시간 미리보기";
 "settings.markdown.live_preview_note" = "입력하는 동안 미리보기를 업데이트합니다. 끄면 저장할 때 미리보기가 업데이트됩니다.";
@@ -288,6 +307,20 @@
 "settings.synctex.inverse_highlight" = "Inverse Sync: 편집기의 소스 위치 강조";
 "settings.synctex.forward_highlight" = "Forward Sync: PDF의 도착 위치 강조";
 "settings.synctex.highlight_note" = "도착 위치를 노란색으로 잠깐 표시합니다. 하이라이트를 꺼도 위치 이동은 작동합니다.";
+"settings.editor.equation_preview.title" = "수식 미리보기";
+"settings.editor.equation_preview.enabled" = "수식 미리보기 표시";
+"settings.editor.equation_preview.while_typing" = "입력하는 동안 미리보기";
+"settings.editor.equation_preview.placement" = "위치";
+"settings.editor.equation_preview.placement.above" = "위";
+"settings.editor.equation_preview.placement.below" = "아래";
+"settings.editor.equation_preview.renderer" = "렌더러";
+"settings.editor.equation_preview.renderer.fast" = "빠름";
+"settings.editor.equation_preview.renderer.fast_tex" = "빠름 + TeX 폴백";
+"settings.editor.equation_preview.delay" = "지연";
+"settings.editor.equation_preview.delay.instant" = "즉시";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "빠른 미리보기는 내장 MathJax로 TeX을 실행하지 않고 렌더링하므로 근사치입니다. 선택적 정확한 미리보기는 프로젝트의 TeX 빌드 명령을 사용합니다.";
 "settings.appearance.theme" = "테마";
 
 "settings.appearance.language" = "언어";

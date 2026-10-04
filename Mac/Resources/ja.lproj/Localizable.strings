@@ -35,6 +35,7 @@
 "preview.next_page" = "次のページ";
 "preview.zoom_in" = "拡大";
 "preview.zoom_out" = "縮小";
+"preview.zoom_auto" = "自動サイズ調整";
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "選択範囲をPDFで表示";
 "preview.synctex_inverse" = "ソースを表示";
@@ -46,6 +47,12 @@
 "preview.markdown.blocked_link" = "Pitexはプレビューから実行ファイルを開きません。";
 "preview.markdown.runtime_missing" = "Markdownプレビューには Microsoft Edge WebView2 Runtime が必要です。https://developer.microsoft.com/microsoft-edge/webview2/ からインストールして、Pitex を再起動してください。";
 "preview.markdown.pdf_failed" = "PDFのコピーを保存できませんでした。";
+"preview.embedded_label" = "編集プレビュー";
+"preview.final_label" = "最終 PDF";
+"preview.embedded_unavailable" = "埋め込みプレビューエンジンを利用できません";
+"preview.embedded_failed" = "編集プレビューに失敗しました";
+"preview.embedded_unsupported_remote" = "埋め込みプレビューはローカルプロジェクトでのみ利用できます";
+"preview.embedded_updating" = "編集プレビューを更新しています…";
 
 "assistant.title" = "アシスタント";
 "assistant.sign_in" = "サインイン";
@@ -123,6 +130,7 @@
 "build.issues" = "問題";
 
 "command.sync_forward" = "PDFで選択範囲を表示";
+"command.exact_equation_preview" = "数式の正確なプレビュー";
 
 "sidebar.outline" = "アウトライン";
 "sidebar.labels" = "ラベル";
@@ -183,6 +191,11 @@
 "editor.toggle_assistant" = "アシスタントを切り替え";
 "editor.toggle_bottom" = "下部パネルを切り替え";
 "editor.flip_panels" = "パネルを反転";
+"equation_preview.accessibility_label" = "レンダリングされた数式プレビュー";
+"equation_preview.unavailable" = "プレビューを表示できません";
+"equation_preview.exact_badge" = "TeX 正確";
+"equation_preview.fast_badge" = "高速プレビュー";
+"equation_preview.exact_unavailable" = "正確なプレビューには pdflatex、xelatex、lualatex、latexmk のいずれかのビルドコマンドが必要です。";
 "editor.reload" = "ディスクから再読み込み";
 "editor.disk_changed" = "ディスクの変更を再読み込みしました";
 "editor.disk_unchanged" = "ディスクに変更はありません";
@@ -255,10 +268,16 @@
 "settings.compile.make_default_editor" = ".tex ファイルに使用";
 "settings.compile.make_default_note" = "Pitex を既定の .tex エディタとして登録します（ダブルクリックで開く）。";
 "settings.compile.live" = "ライブコンパイル";
-"settings.compile.live_auto" = "入力が止まったら自動でビルド";
-"settings.compile.live_auto_note" = "ライブコンパイルは編集中のファイルを保存し、入力が止まると自動で再ビルドします。";
-"settings.compile.live_delay" = "アイドル遅延（ms）";
+"settings.compile.live_auto" = "編集中に自動でビルド";
+"settings.compile.live_auto_note" = "ライブコンパイルは開いている変更済みファイルを保存し、実行中のビルドを中断せずに変更をまとめてビルドします。";
+"settings.compile.live_auto_note_embedded" = "埋め込みプレビューは保存せずに現在の内容を組版します。最終 PDF は「ビルド」で作成します。";
+"settings.compile.live_delay" = "ビルド待機時間（ms）";
+"settings.compile.live_delay_note" = "このオプションは、「コンパイラ互換プレビュー」バックエンドを選択した場合にのみ適用されます。";
 "settings.compile.live_follow" = "ライブビルド後にカーソル位置へ PDF を移動";
+"settings.compile.live_backend" = "プレビューバックエンド";
+"settings.compile.live_backend.embedded" = "埋め込み編集プレビュー";
+"settings.compile.live_backend.compiler" = "コンパイラ互換プレビュー";
+"settings.compile.live_backend.note" = "埋め込みエンジンはソースファイルを保存せずに編集をプレビューします。最終 PDF は「ビルド」でプロジェクトのコンパイラを使って作成します。";
 "toolbar.live_compile" = "ライブコンパイル";
 "settings.markdown.live_preview" = "ライブプレビュー";
 "settings.markdown.live_preview_note" = "入力中にプレビューを更新します。オフの場合は保存時に更新されます。";
@@ -288,6 +307,20 @@
 "settings.synctex.inverse_highlight" = "Inverse Sync: エディタのソース位置を強調表示";
 "settings.synctex.forward_highlight" = "Forward Sync: PDF の移動先を強調表示";
 "settings.synctex.highlight_note" = "移動先を黄色で一時的に表示します。強調表示をオフにしても位置への移動は動作します。";
+"settings.editor.equation_preview.title" = "数式プレビュー";
+"settings.editor.equation_preview.enabled" = "数式プレビューを表示";
+"settings.editor.equation_preview.while_typing" = "入力中にプレビュー";
+"settings.editor.equation_preview.placement" = "表示位置";
+"settings.editor.equation_preview.placement.above" = "上";
+"settings.editor.equation_preview.placement.below" = "下";
+"settings.editor.equation_preview.renderer" = "レンダラー";
+"settings.editor.equation_preview.renderer.fast" = "高速";
+"settings.editor.equation_preview.renderer.fast_tex" = "高速 + TeX フォールバック";
+"settings.editor.equation_preview.delay" = "遅延";
+"settings.editor.equation_preview.delay.instant" = "即時";
+"settings.editor.equation_preview.delay.80" = "80 ms";
+"settings.editor.equation_preview.delay.150" = "150 ms";
+"settings.editor.equation_preview.footnote" = "高速プレビューは組み込みの MathJax で TeX を実行せずに描画するため近似です。任意の正確なプレビューはプロジェクトの TeX ビルドコマンドを使用します。";
 "settings.appearance.theme" = "テーマ";
 
 "settings.appearance.language" = "言語";

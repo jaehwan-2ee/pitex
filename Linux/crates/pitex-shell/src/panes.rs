@@ -1735,7 +1735,15 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     let live_group = adw::PreferencesGroup::new();
     live_group.set_title(&tr(lang, "settings.compile.live"));
     let (live_auto_row, live_auto) = compat::switch_row(&tr(lang, "settings.compile.live_auto"));
-    live_auto_row.set_subtitle(&tr(lang, "settings.compile.live_auto_note"));
+    // The auto-save warning only applies to the compiler path; the embedded
+    // engine typesets in-memory buffers, so pick the note by backend and
+    // keep it updated from the backend row's callback below.
+    let live_auto_note_embedded = tr(lang, "settings.compile.live_auto_note_embedded");
+    let live_auto_note_compiler = tr(lang, "settings.compile.live_auto_note");
+    live_auto_row.set_subtitle(match state.borrow().store.live_preview_backend() {
+        "embedded" => &live_auto_note_embedded,
+        _ => &live_auto_note_compiler,
+    });
     live_auto.set_active(state.borrow().store.live_compile_enabled());
     {
         let state = state.clone();
@@ -1772,6 +1780,47 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         });
     }
     live_group.add(&live_follow_row);
+    // Backend picker — `pitex.pref.build.livePreviewBackend`: embedded
+    // editing preview vs compiler compatibility path. Manual Build still
+    // uses the project compiler; this row only picks the preview source.
+    let live_backend = adw::ComboRow::new();
+    live_backend.set_title(&tr(lang, "settings.compile.live_backend"));
+    live_backend.set_subtitle(&tr(lang, "settings.compile.live_backend.note"));
+    let backend_items = [
+        tr(lang, "settings.compile.live_backend.embedded"),
+        tr(lang, "settings.compile.live_backend.compiler"),
+    ];
+    let backend_strs: Vec<&str> = backend_items.iter().map(String::as_str).collect();
+    live_backend.set_model(Some(&gtk4::StringList::new(&backend_strs)));
+    live_backend.set_selected(match state.borrow().store.live_preview_backend() {
+        "compiler" => 1,
+        _ => 0,
+    });
+    {
+        let state = state.clone();
+        let live_auto_row = live_auto_row.clone();
+        live_backend.connect_selected_notify(move |r| {
+            let v = ["embedded", "compiler"]
+                .get(r.selected() as usize)
+                .copied()
+                .unwrap_or("embedded");
+            live_auto_row.set_subtitle(if v == "embedded" {
+                &live_auto_note_embedded
+            } else {
+                &live_auto_note_compiler
+            });
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_live_preview_backend(v);
+                // Retires the other backend's session/runs immediately.
+                s.apply_live_settings();
+            }
+        });
+    }
+    // Builds without the helper (Ubuntu 22.04, Windows) keep the compiler
+    // live path unchanged and offer no embedded choice.
+    if crate::embedded_preview::SUPPORTED {
+        live_group.add(&live_backend);
+    }
     compile.add(&live_group);
 
     let shell_group = adw::PreferencesGroup::new();
@@ -2093,6 +2142,134 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         });
     }
     synctex_group.add(&forward_highlight_row);
+    // `Section("settings.editor.equation_preview.title")` — the same five
+    // rows and order as the macOS editorTab; store getters normalize, so
+    // selected indices always match the persisted tags.
+    let eq_group = adw::PreferencesGroup::new();
+    eq_group.set_title(&tr(lang, "settings.editor.equation_preview.title"));
+    let (eq_enabled_row, eq_enabled) =
+        compat::switch_row(&tr(lang, "settings.editor.equation_preview.enabled"));
+    eq_enabled.set_active(state.borrow().store.equation_preview_enabled());
+    eq_group.add(&eq_enabled_row);
+    a11y(&eq_enabled, "pitex.settings.equationPreview.enabled", "settings.editor.equation_preview.enabled");
+    let (eq_typing_row, eq_typing) =
+        compat::switch_row(&tr(lang, "settings.editor.equation_preview.while_typing"));
+    eq_typing.set_active(state.borrow().store.equation_preview_while_typing());
+    eq_typing_row.set_sensitive(eq_enabled.is_active());
+    eq_group.add(&eq_typing_row);
+    a11y(&eq_typing, "pitex.settings.equationPreview.whileTyping", "settings.editor.equation_preview.while_typing");
+    let eq_placement = adw::ComboRow::new();
+    eq_placement.set_title(&tr(lang, "settings.editor.equation_preview.placement"));
+    let eq_placement_items = [
+        tr(lang, "settings.editor.equation_preview.placement.above"),
+        tr(lang, "settings.editor.equation_preview.placement.below"),
+    ];
+    let eq_placement_strs: Vec<&str> = eq_placement_items.iter().map(String::as_str).collect();
+    eq_placement.set_model(Some(&gtk4::StringList::new(&eq_placement_strs)));
+    eq_placement.set_selected(if state.borrow().store.equation_preview_placement() == "below" {
+        1
+    } else {
+        0
+    });
+    eq_placement.set_sensitive(eq_enabled.is_active());
+    eq_group.add(&eq_placement);
+    let eq_renderer = adw::ComboRow::new();
+    eq_renderer.set_title(&tr(lang, "settings.editor.equation_preview.renderer"));
+    let eq_renderer_items = [
+        tr(lang, "settings.editor.equation_preview.renderer.fast"),
+        tr(lang, "settings.editor.equation_preview.renderer.fast_tex"),
+    ];
+    let eq_renderer_strs: Vec<&str> = eq_renderer_items.iter().map(String::as_str).collect();
+    eq_renderer.set_model(Some(&gtk4::StringList::new(&eq_renderer_strs)));
+    eq_renderer.set_selected(if state.borrow().store.equation_preview_renderer() == "fastWithTeXFallback" {
+        1
+    } else {
+        0
+    });
+    eq_renderer.set_sensitive(eq_enabled.is_active());
+    eq_group.add(&eq_renderer);
+    let eq_delay = adw::ComboRow::new();
+    eq_delay.set_title(&tr(lang, "settings.editor.equation_preview.delay"));
+    let eq_delay_items = [
+        tr(lang, "settings.editor.equation_preview.delay.instant"),
+        tr(lang, "settings.editor.equation_preview.delay.80"),
+        tr(lang, "settings.editor.equation_preview.delay.150"),
+    ];
+    let eq_delay_strs: Vec<&str> = eq_delay_items.iter().map(String::as_str).collect();
+    eq_delay.set_model(Some(&gtk4::StringList::new(&eq_delay_strs)));
+    eq_delay.set_selected(match state.borrow().store.equation_preview_delay_milliseconds() {
+        0 => 0,
+        150 => 2,
+        _ => 1,
+    });
+    eq_delay.set_sensitive(eq_enabled.is_active());
+    eq_group.add(&eq_delay);
+    let eq_footnote = adw::ActionRow::new();
+    eq_footnote.set_subtitle(&tr(lang, "settings.editor.equation_preview.footnote"));
+    eq_footnote.set_sensitive(false);
+    eq_group.add(&eq_footnote);
+    editor.add(&eq_group);
+    {
+        let state = state.clone();
+        let eq_typing_row = eq_typing_row.clone();
+        let eq_placement = eq_placement.clone();
+        let eq_renderer = eq_renderer.clone();
+        let eq_delay = eq_delay.clone();
+        eq_enabled.connect_active_notify(move |r| {
+            let on = r.is_active();
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_equation_preview_enabled(on);
+                s.sync_equation_preview();
+            }
+            eq_typing_row.set_sensitive(on);
+            eq_placement.set_sensitive(on);
+            eq_renderer.set_sensitive(on);
+            eq_delay.set_sensitive(on);
+        });
+    }
+    {
+        let state = state.clone();
+        eq_typing.connect_active_notify(move |r| {
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_equation_preview_while_typing(r.is_active());
+                s.sync_equation_preview();
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        eq_placement.connect_selected_notify(move |r| {
+            let v = if r.selected() == 1 { "below" } else { "above" };
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_equation_preview_placement(v);
+                s.sync_equation_preview();
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        eq_renderer.connect_selected_notify(move |r| {
+            let v = if r.selected() == 1 { "fastWithTeXFallback" } else { "fast" };
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_equation_preview_renderer(v);
+                s.sync_equation_preview();
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        eq_delay.connect_selected_notify(move |r| {
+            let v = match r.selected() {
+                0 => 0,
+                2 => 150,
+                _ => 80,
+            };
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s.store.set_equation_preview_delay_milliseconds(v);
+                s.sync_equation_preview();
+            }
+        });
+    }
     // `Text("settings.synctex.highlight_note").font(.caption)` — a subtitle
     // row carries the same secondary-text styling.
     let note = adw::ActionRow::new();

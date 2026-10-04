@@ -1,6 +1,7 @@
 //! Rust port of `Packages/TexApp/Sources/EditorFeature`.
 
 pub mod fold;
+pub mod equation_preview;
 
 use ai_core::{EditProposalState, NativeUndoTransactionDescriptor, RevisionBoundEditApplication};
 use app_ports::{DocumentMutation, DocumentTextRange};

@@ -10,6 +10,8 @@ including the detached preview window lifecycle.
 from pathlib import Path
 import json
 import plistlib
+import re
+MARKER = re.compile(r"/Check\.swift:\d+:\d+: warning: (?:no 'async' operations occur within 'await' expression|no calls to throwing functions occur within 'try' expression)(?: \[#UnnecessaryEffectMarker\])?$", re.M)
 import shutil
 import subprocess
 import sys
@@ -490,10 +492,19 @@ with tempfile.TemporaryDirectory(prefix="pitex-navigation-", dir="/tmp") as dire
     stripped = root / "PitexApp.swift"
     stripped.write_text(app_main.read_text().replace("@main\nstruct PitexApp", "struct PitexApp"))
     executable = bundle / "MacOS/check"
-    subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-target", "arm64-apple-macos15.0",
+    _cc = subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-target", "arm64-apple-macos15.0",
                     "-I", str(products), str(source), str(stripped),
                     *[str(p) for p in (repo / "Mac/Sources").rglob("*.swift") if p != app_main],
-                    *[str(p) for p in products.glob("*.o")], "-o", str(executable)], check=True)
+                    *[str(p) for p in products.glob("*.o")], "-o", str(executable)], check=False, capture_output=True, text=True)
+    print(_cc.stdout + _cc.stderr, end="")
+    if _cc.returncode != 0:
+        sys.exit(f"FAIL: swiftc rc={_cc.returncode} — no functional verdict")
+    _bad = MARKER.findall(_cc.stderr + _cc.stdout)
+    if _bad:
+        for line in _cc.stderr.splitlines() + _cc.stdout.splitlines():
+            if MARKER.search(line): print(line)
+        sys.exit("FAIL: harness compile defect — UnnecessaryEffectMarker in "
+                 "generated Check.swift (discarded async query); no functional verdict")
     if len(sys.argv) > 2:
         # Caller-supplied fixture: a built project + source:line targets.
         fixture_args = sys.argv[2:]

@@ -10,6 +10,10 @@ pub mod agent;
 pub mod app_ui;
 pub mod compat;
 pub mod completion;
+#[cfg(all(feature = "equation-preview", unix))]
+pub mod equation_preview;
+pub mod embedded_preview;
+
 pub mod fold;
 pub mod ghost_completion;
 pub mod git;

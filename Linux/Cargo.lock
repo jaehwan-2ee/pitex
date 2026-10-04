@@ -95,6 +95,7 @@ dependencies = [
 name = "build-core"
 version = "0.0.0"
 dependencies = [
+ "language-core",
  "libc",
  "project-core",
  "serde",
@@ -961,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "pitex"
-version = "2.1.6"
+version = "2.2.0"
 dependencies = [
  "pitex-shell",
 ]
