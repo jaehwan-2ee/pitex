@@ -66,13 +66,13 @@ final class SyntaxHighlighter {
     private var pendingTask: Task<Void, Never>?
     private var dialect: TeXDialect = .latex
     /// Markdown is rendered by the preview, not the LaTeX lexer — `.md` /
-    /// `.markdown` documents keep plain body color in the editor.
-    private var enabled = true
+    /// `.markdown` documents skip tokenizing and are painted in body color.
+    private var lexes = true
 
     func attach(to adapter: EditorMacAdapter, fileExtension: String) {
         self.adapter = adapter
         let ext = fileExtension.lowercased()
-        enabled = ext != "md" && ext != "markdown"
+        lexes = ext != "md" && ext != "markdown"
         dialect = ext == "bib" ? .bibtex : .latex
         adapter.onTextDidChange = { [weak self] in
             self?.scheduleHighlight()
@@ -96,12 +96,14 @@ final class SyntaxHighlighter {
     }
 
     func highlightNow() {
-        guard enabled, let textView = adapter?.textView, let storage = textView.textStorage else { return }
+        guard let textView = adapter?.textView, let storage = textView.textStorage else { return }
         // NSTextView bridges an NSString: UTF-8 offsets otherwise walk from
         // the beginning for every token, making even small documents quadratic.
         var text = textView.string
         text.makeContiguousUTF8()
-        let tokens = EditorAnalysis.shared(for: storage).tokens(for: dialect)
+        // Loaded text keeps NSTextView's default color until painted, so a
+        // document without tokens still takes the body color everywhere.
+        let tokens = lexes ? EditorAnalysis.shared(for: storage).tokens(for: dialect) : []
         let fullRange = NSRange(location: 0, length: (text as NSString).length)
 
         // Lexer ranges are ordered. Advance one scalar cursor for their
