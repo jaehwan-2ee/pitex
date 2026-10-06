@@ -35,8 +35,13 @@ if [[ "$cmd" == *"actions/workflows/ci.yml/runs"* && "$cmd" == *"commit_sha="* ]
 fi
 
 if [[ "$cmd" == *"git/ref/tags/nightly"* ]]; then
-  echo "${PITEX_TAG_SHA:-OLD_SHA}"
-  exit 0
+  if [ "${PITEX_TAG_SHA:-}" = "$PITEX_TEST_SHA" ]; then
+    echo "$PITEX_TEST_SHA"
+    exit 0
+  else
+    echo '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/reference/git#get-a-reference","status":"404"}'
+    exit 1
+  fi
 fi
 
 if [[ "$cmd" == *"actions/workflows/ci.yml/runs"* && "$cmd" == *"head_sha="* ]]; then
