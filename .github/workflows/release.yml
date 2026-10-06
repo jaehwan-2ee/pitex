@@ -101,6 +101,7 @@ jobs:
           cp -R pe-payload/Contents/Helpers/.   "$APP/Contents/Helpers/"
           cp -R pe-payload/Contents/Resources/. "$APP/Contents/Resources/"
       - name: Audit bundled preview engine
+        timeout-minutes: 10
         run: |
           APP="build/Build/Products/Release/$PITEX_DISPLAY_NAME.app"
           bash PreviewEngine/tools/audit-linkage.sh \

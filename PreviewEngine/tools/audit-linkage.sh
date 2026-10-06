@@ -61,7 +61,7 @@ for exe in pitex-preview pitex-preview-xetex; do
         queue=${queue#$'\n'}
         [ -n "$cur" ] || continue
         if printf '%s\n' "$seen" | grep -Fxq -- "$cur"; then continue; fi
-        seen="${seen:+$nl}${cur}"
+        seen="${seen}${seen:+$nl}${cur}"
         otool -L "$cur" | tail -n +2 | awk '{print $1}' | while read -r lib; do
           printf '  %-60s <- %s\n' "$lib" "$(basename "$cur")"
         done

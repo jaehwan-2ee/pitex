@@ -38,6 +38,7 @@ jobs:
       - run: node Tools/check-linkage-audit.mjs
       - run: node Tools/generate-sbom.mjs
       - run: node Tools/verify-release-surface.mjs
+      - run: bash Tools/check-audit-linkage-paths.sh
       - name: History gate (forbid junk/local-path adds)
         # Per-commit scan of ADDED paths. PRs check base..head; pushes check
         # before..sha (skipped when before is all zeros, e.g. a new branch).
@@ -638,6 +639,7 @@ jobs:
           --require-native --evidence "$RUNNER_TEMP/pitex-semantic-evidence.jsonl"
           --check PreviewEngine/compatibility/pdftex-vocabulary-report.json
       - name: Audit helper linkage
+        timeout-minutes: 10
         run: bash PreviewEngine/tools/audit-linkage.sh "$RUNNER_TEMP/pitex-preview-engine/bin"
       - name: Bundle source-record check
         run: bash Tools/check-bundle-source-record.sh
@@ -692,4 +694,5 @@ jobs:
           PITEX_LAYOUT_CASE=vertical cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-discovery
       - name: Audit helper linkage
+        timeout-minutes: 10
         run: bash PreviewEngine/tools/audit-linkage.sh "$RUNNER_TEMP/pitex-preview-engine/bin"
