@@ -3,8 +3,6 @@ name: Nightly
 on:
   schedule:
     - cron: '0 18 * * *'
-  push:
-    branches: [fix/nightly-call-permissions]
   workflow_dispatch:
     inputs:
       force:
@@ -55,8 +53,8 @@ jobs:
           fi
 
           # Require the CI workflow to have completed successfully for this commit.
-          CI_RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?commit_sha=${SHA}&per_page=1" \
-            --jq '.workflow_runs[0] | select(.status == "completed" and .conclusion == "success") | .id')
+          CI_RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+            | jq -r --arg sha "$SHA" '.workflow_runs[0] | select(.status == "completed" and .conclusion == "success" and .head_sha == $sha) | .id')
           if [ -z "$CI_RUN" ]; then
             echo "::warning::No successful CI run for ${SHA}; skipping nightly."
             exit 0
