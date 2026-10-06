@@ -1,0 +1,23 @@
+.github/workflows/ci.yml
+  s_7e7df26ae0a94f::t_a41f0f0c9632c7 44
+.github/workflows/nightly.yml
+  s_7e7df26ae0a94f::t_1e5d4f58e6c19c 56-57
+Tools/check-nightly-gate.sh
+  s_7e7df26ae0a94f::t_e55a3c38eea00e 1-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "12e7215809421a5604d8102555018c43018b617b",
+  "prompts": {},
+  "sessions": {
+    "s_7e7df26ae0a94f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7e7df26ae0a94f",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
