@@ -96,11 +96,20 @@ if [[ "$cmd" == *"git/ref/tags/nightly"* ]]; then
   fi
 fi
 
-if [[ "$cmd" == *"git/refs/tags/nightly"* ]]; then
+if [[ "$cmd" == *"git/refs/tags/nightly"* && "$cmd" == *"-X PATCH"* ]]; then
+  # PATCH must use typed boolean -F, never raw string -f force=...
+  if [[ "$cmd" == *"-f force="* ]]; then
+    echo "ERROR: PATCH force must use -F, not -f" >&2
+    exit 1
+  fi
+  if [[ "$cmd" != *"-F force=true"* ]]; then
+    echo "ERROR: PATCH missing -F force=true" >&2
+    exit 1
+  fi
   exit 0
 fi
 
-if [[ "$cmd" == *"git/refs"* ]]; then
+if [[ "$cmd" == *"git/refs"* && "$cmd" == *"-X POST"* ]]; then
   exit 0
 fi
 
@@ -218,8 +227,13 @@ check_common() {
   # tag moved via the git/refs API (POST for new, PATCH for existing)
   if [ "$PITEX_NIGHTLY_TEST_MODE" = "existing" ]; then
     assert_contains "$PITEX_GH_LOG" "git/refs/tags/nightly" "tag PATCH"
+    assert_contains "$PITEX_GH_LOG" "-F force=true" "PATCH uses typed -F force=true"
   else
     assert_contains "$PITEX_GH_LOG" "git/refs" "tag POST"
+  fi
+  if grep -qF -- "-f force=true" "$PITEX_GH_LOG"; then
+    echo "FAIL: found raw string -f force=true in gh log" >&2
+    exit 1
   fi
 
   # uploads happen before any delete-asset
