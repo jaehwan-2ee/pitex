@@ -18,7 +18,7 @@ impl Preferences {
     pub fn standard() -> Self {
         let dir = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("pitex");
+            .join(crate::identity::current().xdg_dir_name);
         let path = dir.join("preferences.json");
         let values = std::fs::read(&path)
             .ok()

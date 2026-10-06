@@ -16,7 +16,21 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${MINGW_PREFIX:-/ucrt64}"
-DIST="$HERE/dist/pitex"
+
+PITEX_CHANNEL="${PITEX_CHANNEL:-stable}"
+if [ "$PITEX_CHANNEL" = "nightly" ]; then
+    PITEX_BUNDLE="pitex-nightly"
+    PITEX_NAME="Pitex Nightly"
+    PITEX_BINARY="pitex-nightly.exe"
+    PITEX_ICON="dev.pitex.app.nightly"
+else
+    PITEX_BUNDLE="pitex"
+    PITEX_NAME="Pitex"
+    PITEX_BINARY="pitex.exe"
+    PITEX_ICON="dev.pitex.app"
+fi
+
+DIST="$HERE/dist/$PITEX_BUNDLE"
 BIN="$DIST/bin"
 
 echo "==> cargo build --release"
@@ -28,7 +42,7 @@ CARGO_TARGET_DIR="$HERE/target/preview-engine" cargo build --release --locked \
 
 rm -rf "$DIST"
 mkdir -p "$BIN" "$DIST/etc/fonts" "$DIST/share/icons" "$DIST/lib"
-cp "$HERE/target/release/pitex.exe" "$BIN/"
+cp "$HERE/target/release/pitex.exe" "$BIN/$PITEX_BINARY"
 cp "$HERE/target/preview-engine/release/pitex-preview.exe" "$BIN/"
 # WebView2Loader.dll — the Evergreen runtime stays external; the app loads
 # the stub loader dynamically (LoadLibraryW) so its absence only degrades
@@ -55,8 +69,8 @@ cp "$LOADER" "$BIN/"
 
 echo "==> collecting runtime DLLs"
 echo "==> runtime resources"
-mkdir -p "$DIST/share/pitex"
-cp -r "$HERE/../Mac/Resources/PitexAgent" "$DIST/share/pitex/"
+mkdir -p "$DIST/share/$PITEX_BUNDLE"
+cp -r "$HERE/../Mac/Resources/PitexAgent" "$DIST/share/$PITEX_BUNDLE/"
 # Dynamically loaded modules that ldd cannot see.
 for module_dir in \
     "lib/gdk-pixbuf-2.0/2.10.0/loaders" \
@@ -113,7 +127,7 @@ if [ -d "$PREFIX/share/glib-2.0/schemas" ]; then
 fi
 
 # Bundle notices for the renderer embedded in pitex.exe and the helper.
-NOTICES="$DIST/share/doc/pitex"
+NOTICES="$DIST/share/doc/$PITEX_BUNDLE"
 mkdir -p "$NOTICES/equation-preview/mathjax" "$NOTICES/equation-preview/mathjax-tex-font"
 cp "$HERE/../LICENSE" "$NOTICES/LICENSE"
 cp "$HERE/../PreviewEngine/Windows/README.md" "$NOTICES/editing-preview.md"
@@ -138,7 +152,7 @@ rm -rf "$DIST/share/icons/Adwaita/cursors" "$DIST/share/icons/Adwaita/96x96" \
        "$DIST/share/icons/Adwaita/256x256" "$DIST/share/icons/Adwaita/512x512" 2>/dev/null || true
 
 mkdir -p "$DIST/share/icons/hicolor/512x512/apps"
-cp "$HERE/../Linux/packaging/dev.pitex.app.png" "$DIST/share/icons/hicolor/512x512/apps/"
+cp "$HERE/../Linux/packaging/dev.pitex.app.png" "$DIST/share/icons/hicolor/512x512/apps/$PITEX_ICON.png"
 
 # Minimal fontconfig — stock MSYS2 fonts.conf names /ucrt64 paths that do not
 # exist outside MSYS2; main() sets FONTCONFIG_FILE to this file.
@@ -150,6 +164,14 @@ cat > "$DIST/etc/fonts/fonts.conf" <<'EOF'
   <dir>~/AppData/Local/Microsoft/Windows/Fonts</dir>
   <cachedir>~/.cache/fontconfig</cachedir>
 </fontconfig>
+EOF
+
+cat > "$HERE/dist/channel-vars.sh" <<EOF
+PITEX_BUNDLE='$PITEX_BUNDLE'
+PITEX_NAME='$PITEX_NAME'
+PITEX_REGKEY='$PITEX_NAME'
+PITEX_BINARY='$PITEX_BINARY'
+PITEX_ICON='$PITEX_ICON'
 EOF
 
 echo "==> bundle ready: $DIST"

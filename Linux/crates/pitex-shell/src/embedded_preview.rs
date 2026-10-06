@@ -306,7 +306,7 @@ pub fn helper_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     let helper = if cfg!(windows) { "pitex-preview.exe" } else { "pitex-preview" };
-    [dir.join(helper), dir.join("../lib/pitex").join(helper)]
+    [dir.join(helper), dir.join(format!("../lib/{}", crate::identity::current().linux_share_dir_name)).join(helper)]
         .into_iter()
         .map(|c| c.canonicalize().unwrap_or(c))
         .find(|c| is_executable(c))
@@ -328,14 +328,15 @@ fn is_executable(path: &Path) -> bool {
 
 /// Owned root of all session directories (per user, mode 0700).
 pub fn session_root() -> PathBuf {
+    let prefix = format!("{}-preview", crate::identity::current().temp_prefix);
     if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
-        return PathBuf::from(runtime).join("pitex-preview");
+        return PathBuf::from(runtime).join(&prefix);
     }
     #[cfg(unix)]
     let uid = unsafe { libc::getuid() };
     #[cfg(not(unix))]
     let uid = 0;
-    std::env::temp_dir().join(format!("pitex-preview-{uid}"))
+    std::env::temp_dir().join(format!("{prefix}-{uid}"))
 }
 
 /// True for an artifact path inside the embedded preview's session root.
@@ -667,7 +668,8 @@ impl EmbeddedPreview {
             let (id, dir) = create_session_dir(&root).map_err(|e| e.to_string())?;
             let cache = dirs::cache_dir()
                 .unwrap_or_else(std::env::temp_dir)
-                .join("pitex/preview-engine");
+                .join(crate::identity::current().xdg_dir_name)
+                .join("preview-engine");
             let _ = std::fs::create_dir_all(&cache);
             // Same TeX search path as final builds (TeX Live user installs
             // are not always on the desktop session's PATH).

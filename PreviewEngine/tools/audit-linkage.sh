@@ -54,21 +54,26 @@ for exe in pitex-preview pitex-preview-xetex; do
     Darwin)
       seen=""
       queue="$path"
+      nl=$'\n'
       while [ -n "$queue" ]; do
-        cur=${queue%% *}; queue=${queue#"$cur"}; queue=${queue# }
-        case " $seen " in *" $cur "*) continue ;; esac
-        seen="$seen $cur"
+        cur=${queue%%$'\n'*}
+        queue=${queue#"$cur"}
+        queue=${queue#$'\n'}
+        [ -n "$cur" ] || continue
+        if printf '%s\n' "$seen" | grep -Fxq -- "$cur"; then continue; fi
+        seen="${seen}${seen:+$nl}${cur}"
         otool -L "$cur" | tail -n +2 | awk '{print $1}' | while read -r lib; do
           printf '  %-60s <- %s\n' "$lib" "$(basename "$cur")"
         done
-        for lib in $(otool -L "$cur" | tail -n +2 | awk '{print $1}'); do
+        while IFS= read -r lib; do
+          [ -n "$lib" ] || continue
           case "$lib" in
             /usr/lib/*|/System/*) ;;
-            @loader_path/*) queue="$queue $(dirname "$cur")/${lib#@loader_path/}" ;;
-            @executable_path/*) queue="$queue $BIN/${lib#@executable_path/}" ;;
-            /*) queue="$queue $lib" ;;
+            @loader_path/*) queue="$queue${queue:+$nl}$(dirname "$cur")/${lib#@loader_path/}" ;;
+            @executable_path/*) queue="$queue${queue:+$nl}$BIN/${lib#@executable_path/}" ;;
+            /*) queue="$queue${queue:+$nl}$lib" ;;
           esac
-        done
+        done < <(otool -L "$cur" | tail -n +2 | awk '{print $1}')
       done
       if grep -Eiq "$FORBIDDEN_LIB" <<< "$seen"; then fail "$exe links a forbidden library"; fi
       defined=$(nm -gU "$path" 2>/dev/null || true)

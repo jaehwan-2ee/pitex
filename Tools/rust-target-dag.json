@@ -136,7 +136,8 @@
   "remote-core": {
    "dependencies": [
     "build-core",
-    "tex-domain"
+    "tex-domain",
+    "app-ports"
    ]
   },
   "gtk-editor-adapter": {

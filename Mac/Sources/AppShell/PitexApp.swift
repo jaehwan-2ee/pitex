@@ -13,7 +13,6 @@ import LanguageCore
 import MacPlatform
 import ProjectCore
 import ProjectFeature
-import RemoteCore
 import SyncTeXCore
 import SwiftUI
 import TexDomain
@@ -202,7 +201,7 @@ final class WorkspaceModel: ObservableObject {
     @Published internal(set) var phase: WorkspacePhase = .noProject
     @Published private(set) var projectURL: URL? {
         didSet {
-            window?.title = projectURL?.lastPathComponent ?? "Pitex"
+            window?.title = projectURL?.lastPathComponent ?? AppIdentity.current.appName
             rebuildProjectTree()
         }
     }
@@ -454,7 +453,7 @@ final class WorkspaceModel: ObservableObject {
                 syncWindowCloseDelegate()
                 Task { @MainActor [weak self] in self?.objectWillChange.send() }
             }
-            window?.title = projectURL?.lastPathComponent ?? "Pitex"
+            window?.title = projectURL?.lastPathComponent ?? AppIdentity.current.appName
             window?.subtitle = remote?.statusText ?? ""
             // Startup always presents Open; native restoration must not
             // recreate a workspace from a previously closed window.
@@ -3008,7 +3007,7 @@ struct PitexApp: App {
         // adapter.textView (an NSTextView can only live in one scroll view).
         // Opens route through WorkspaceWindows: a file outside every open
         // project gets a new window, like VS Code.
-        WindowGroup("Pitex", id: "workspace", for: WindowOpenRequest.self) { $request in
+        WindowGroup("\(AppIdentity.current.appName)", id: "workspace", for: WindowOpenRequest.self) { $request in
             WorkspaceWindow(initialURL: request?.url)
         }
         // Value-based WindowGroups otherwise persist their open request

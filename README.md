@@ -116,6 +116,18 @@ For a portable installation, extract the ZIP and run `pitex\bin\pitex.exe`.
 
 [Full installation instructions](Docs/installation/README.md#download-and-installation)
 
+## Nightly builds
+
+Pitex Nightly is a side-by-side prerelease channel built from `main`.
+It uses its own settings, caches, and update feed, and does not share state with stable Pitex.
+
+- **macOS:** `brew install --cask pitex@nightly`, or download the `Pitex-Nightly-<version>-macos-arm64.dmg`.
+- **Linux:** install `Pitex-Nightly-<version>-ubuntu24.04-amd64.deb` or the Ubuntu 22.04 package alongside stable.
+- **Windows:** run `Pitex-Nightly-<version>-windows-amd64-setup.exe`, or extract the ZIP and run `pitex-nightly\bin\pitex-nightly.exe`.
+
+Nightly updates use the rolling `nightly` prerelease and install `pitex-nightly`, `Pitex Nightly.app`, or `Pitex Nightly` in their own directories.
+See the [installation guide](Docs/installation/README.md#nightly-builds) for details and warnings.
+
 ## Runtime requirements
 
 Install a TeX distribution for document builds and the editing preview.

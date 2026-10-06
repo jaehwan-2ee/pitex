@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod identity;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlatformPortError {
     Unavailable { feature: String, platform: String },

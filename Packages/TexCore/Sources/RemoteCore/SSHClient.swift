@@ -1,4 +1,5 @@
 import Foundation
+import TexDomain
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -135,7 +136,7 @@ public struct SSHClient: Sendable {
     /// `/`, the 40-hex `%C` and ssh's 17-character temporary suffix, and
     /// macOS caps it at 104 bytes.
     public static var defaultControlDirectory: URL? {
-        URL(fileURLWithPath: "/tmp/pitex-ssh-\(getuid())", isDirectory: true)
+        URL(fileURLWithPath: "/tmp/\(AppIdentity.current.tempPrefix)-ssh-\(getuid())", isDirectory: true)
     }
 
     /// `directory` when multiplexing through it is safe: short enough for

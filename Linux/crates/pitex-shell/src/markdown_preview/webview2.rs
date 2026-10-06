@@ -294,9 +294,9 @@ impl EngineInner {
         // (S_FALSE), and an MTA (RPC_E_CHANGED_MODE) just makes the
         // environment call fail into the same inert path.
         let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-        // Evergreen runtime only; per-user data under %LOCALAPPDATA%\pitex.
+        // Evergreen runtime only; per-user data under %LOCALAPPDATA%\<channel>.
         let user_data = dirs::data_local_dir().map(|dir| {
-            let dir = dir.join("pitex").join("WebView2");
+            let dir = dir.join(crate::identity::current().xdg_dir_name).join("WebView2");
             let _ = std::fs::create_dir_all(&dir);
             HSTRING::from(dir.as_os_str())
         });
@@ -496,7 +496,7 @@ impl EngineInner {
         let Some(dir) = dirs::data_local_dir() else {
             return;
         };
-        let page = dir.join("pitex").join("markdown-preview.html");
+        let page = dir.join(crate::identity::current().xdg_dir_name).join("markdown-preview.html");
         if std::fs::write(&page, PREVIEW_HTML).is_err() {
             return;
         }

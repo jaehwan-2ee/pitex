@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::SystemTime;
 
+use app_ports::identity;
 use build_core::{
     BuildID, BuildLogChannel, BuildProcessCommand, BuildProcessExecutorError,
     BuildProcessExecuting, BuildProcessOutput, BuildProcessRequest, BuildProcessResult,
@@ -725,18 +726,19 @@ impl SshClient {
         }
     }
 
-    /// `$XDG_RUNTIME_DIR/pitex-ssh`, or `/tmp/pitex-ssh-<uid>` when it is
+    /// `$XDG_RUNTIME_DIR/<temp-prefix>-ssh`, or `/tmp/<temp-prefix>-ssh-<uid>` when it is
     /// unset (`TMPDIR`/`std::env::temp_dir` can be long, and a socket path
     /// is the directory + `/` + the 40-hex `%C` + ssh's 17-character
     /// temporary suffix under a 104-byte cap).
     #[cfg(unix)]
     pub fn default_control_directory() -> Option<PathBuf> {
+        let prefix = identity::current().temp_prefix;
         if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
             if !runtime.is_empty() {
-                return Some(PathBuf::from(runtime).join("pitex-ssh"));
+                return Some(PathBuf::from(runtime).join(format!("{prefix}-ssh")));
             }
         }
-        Some(PathBuf::from(format!("/tmp/pitex-ssh-{}", unsafe {
+        Some(PathBuf::from(format!("/tmp/{prefix}-ssh-{}", unsafe {
             libc::getuid()
         })))
     }
@@ -1174,8 +1176,8 @@ impl RemoteMirror {
         self.work_dir().join("staging")
     }
 
-    /// `~/.local/share/pitex/Remote` on Unix; on Windows
-    /// `%LOCALAPPDATA%\pitex\Remote` — mirrors stay machine-local, never
+    /// `~/.local/share/<xdg-dir>/Remote` on Unix; on Windows
+    /// `%LOCALAPPDATA%\<xdg-dir>\Remote` — mirrors stay machine-local, never
     /// roaming.
     pub fn default_store() -> PathBuf {
         #[cfg(windows)]
@@ -1183,7 +1185,7 @@ impl RemoteMirror {
             .unwrap_or_else(|| home_dir().join("AppData").join("Local"));
         #[cfg(not(windows))]
         let base = dirs::data_dir().unwrap_or_else(|| home_dir().join(".local/share"));
-        base.join("pitex").join("Remote")
+        base.join(identity::current().xdg_dir_name).join("Remote")
     }
 
     /// The mirror for `project`, created (with its metadata) on first use.

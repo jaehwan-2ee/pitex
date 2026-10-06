@@ -1,4 +1,5 @@
 import Foundation
+import TexDomain
 
 #if canImport(Darwin)
 import Darwin
@@ -162,18 +163,19 @@ public struct ExactEquationRenderer: Sendable {
         self.timeout = timeout
     }
 
-    /// `$XDG_RUNTIME_DIR/pitex-equation` when the runtime dir is valid and
-    /// owned by us, else `$TMPDIR/pitex-equation-<uid>` — then `<workspace>`.
+    /// `$XDG_RUNTIME_DIR/<temp-prefix>-equation` when the runtime dir is valid and
+    /// owned by us, else `$TMPDIR/<temp-prefix>-equation-<uid>` — then `<workspace>`.
     /// The result is only a *candidate*: `render` re-validates the base
     /// before every use (no writes under attacker-owned paths).
     public static func workspaceRoot(token: String) -> URL {
         // XDG itself must pass the bar — the child doesn't exist yet, so
         // checking the child would always fail.
+        let prefix = AppIdentity.current.tempPrefix
         let xdg = ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
-        let parent = (xdg.flatMap { isSafePrivateDirectory($0) ? $0.appendingPathComponent("pitex-equation", isDirectory: true) : nil })
+        let parent = (xdg.flatMap { isSafePrivateDirectory($0) ? $0.appendingPathComponent("\(prefix)-equation", isDirectory: true) : nil })
             ?? FileManager.default.temporaryDirectory
-                .appendingPathComponent("pitex-equation-\(getuid())", isDirectory: true)
+                .appendingPathComponent("\(prefix)-equation-\(getuid())", isDirectory: true)
         return parent.appendingPathComponent(token, isDirectory: true)
     }
 

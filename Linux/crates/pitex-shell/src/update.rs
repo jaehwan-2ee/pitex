@@ -10,8 +10,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const RELEASE_API: &str =
-    "https://api.github.com/repos/jaehwan-2ee/pitex/releases/latest";
 const USER_AGENT: &str = "pitex-update";
 
 /// One release entry reduced to what the updater needs.
@@ -75,37 +73,69 @@ fn latest_release() -> Result<UpdateInfo, String> {
             "Accept: application/vnd.github+json",
             "-H",
             &format!("User-Agent: {USER_AGENT}"),
-            RELEASE_API,
+            crate::identity::current().release_api,
         ],
         20,
     )?;
     let json: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| format!("Bad release response: {e}"))?;
-    let tag = json
-        .get("tag_name")
-        .and_then(|t| t.as_str())
-        .ok_or_else(|| "The latest release has no tag.".to_string())?;
+    let assets = json
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| "The release response has no assets.".to_string())?;
+    let tag = if crate::identity::current().is_nightly {
+        // The nightly release carries a manifest with the real version string.
+        let manifest_url = assets
+            .iter()
+            .find_map(|asset| {
+                let name = asset.get("name")?.as_str()?;
+                if name != "nightly.json" {
+                    return None;
+                }
+                asset.get("browser_download_url")?.as_str().map(String::from)
+            })
+            .ok_or_else(|| "No nightly manifest in the release.".to_string())?;
+        let manifest = curl(
+            &[
+                "-fsSL",
+                "-H",
+                "Accept: application/json",
+                "-H",
+                &format!("User-Agent: {USER_AGENT}"),
+                &manifest_url,
+            ],
+            20,
+        )?;
+        let manifest_json: serde_json::Value =
+            serde_json::from_slice(&manifest).map_err(|e| format!("Bad nightly manifest: {e}"))?;
+        manifest_json
+            .get("version")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "The nightly manifest has no version.".to_string())?
+            .to_string()
+    } else {
+        json.get("tag_name")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| "The latest release has no tag.".to_string())?
+            .to_string()
+    };
     // Preferred asset first — e.g. Windows favors the setup.exe installer
     // and only falls back to the portable zip if a release lacks one.
     let asset = asset_suffixes()
         .iter()
         .find_map(|suffix| {
-            json.get("assets")
-                .and_then(|a| a.as_array())
-                .into_iter()
-                .flatten()
-                .find_map(|asset| {
-                    let name = asset.get("name")?.as_str()?;
-                    if !name.ends_with(suffix) {
-                        return None;
-                    }
-                    let url = asset.get("browser_download_url")?.as_str()?;
-                    Some((name.to_string(), url.to_string()))
-                })
+            assets.iter().find_map(|asset| {
+                let name = asset.get("name")?.as_str()?;
+                if !name.ends_with(suffix) {
+                    return None;
+                }
+                let url = asset.get("browser_download_url")?.as_str()?;
+                Some((name.to_string(), url.to_string()))
+            })
         })
         .ok_or_else(|| format!("No suitable asset in release {tag}."))?;
     Ok(UpdateInfo {
-        tag: tag.to_string(),
+        tag,
         asset_name: asset.0,
         asset_url: asset.1,
     })
@@ -194,7 +224,7 @@ pub fn download(info: &UpdateInfo) -> Result<PathBuf, String> {
 
 fn download_directory() -> Result<PathBuf, String> {
     dirs::cache_dir()
-        .map(|d| d.join("dev.pitex.app").join("updates"))
+        .map(|d| d.join(crate::identity::current().cache_dir_name).join("updates"))
         .ok_or_else(|| "Could not resolve the cache directory.".to_string())
 }
 
@@ -214,9 +244,9 @@ fn install_impl(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, 
     // performed unsandboxed as root" — and fail outright on some setups.
     // Stage the package in /tmp, world-readable, before elevating.
     // TMPDIR can also be inside a private home; /tmp is accessible to `_apt`.
-    let staging = Path::new("/tmp").join(format!("pitex-update-{}", crate::model::uuid_v4()));
+    let staging = Path::new("/tmp").join(format!("{}-update-{}", crate::identity::current().temp_prefix, crate::model::uuid_v4()));
     std::fs::create_dir(&staging).map_err(|e| e.to_string())?;
-    let staged = staging.join("pitex.deb");
+    let staged = staging.join(format!("{}.deb", crate::identity::current().linux_package_name));
     use std::os::unix::fs::PermissionsExt;
     // Keep the directory private until the complete package is readable.
     if let Err(error) = std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700))
@@ -234,7 +264,7 @@ fn install_impl(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, 
     match elevated {
         Ok(status) if status.success() => {
             let installed = Command::new("dpkg-query")
-                .args(["-W", "-f=${Status} ${Version}", "pitex"])
+                .args(["-W", "-f=${Status} ${Version}", crate::identity::current().linux_package_name])
                 .output();
             let _ = std::fs::remove_dir_all(&staging);
             let installed = installed.map_err(|e| e.to_string())?;
@@ -284,14 +314,18 @@ fn install_setup(setup: &Path) -> Result<InstallOutcome, String> {
     let install_root = exe.parent().and_then(|bin| bin.parent())
         .filter(|root| root.join("uninstall.exe").is_file())
         .map(Path::to_path_buf)
-        .or_else(|| dirs::data_local_dir().map(|d| d.join("Programs").join("Pitex")))
+        .or_else(|| {
+            dirs::data_local_dir()
+                .map(|d| d.join("Programs").join(crate::identity::current().windows_install_dir_name))
+        })
         .ok_or_else(|| "Could not resolve the install directory.".to_string())?;
     let action = format!(
         "$installer = Start-Process -FilePath {} -ArgumentList {} -Wait -PassThru\nif ($installer.ExitCode -ne 0) {{ throw \"Installer failed: $($installer.ExitCode)\" }}",
         powershell_quote(&setup.to_string_lossy()),
         powershell_quote(&format!("/S /D={}", install_root.display()))
     );
-    launch_windows_update(staging, &install_root.join("bin/pitex.exe"), &action)
+    let exe = install_root.join("bin").join(crate::identity::current().windows_exe_name);
+    launch_windows_update(staging, &exe, &action)
 }
 
 /// Portable zip: a running exe cannot overwrite itself, so a helper script
@@ -331,7 +365,7 @@ fn install_zip(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, S
         .map(|s| s.success())
         .unwrap_or(false)
         || expand.status().map(|s| s.success()).unwrap_or(false);
-    if !extracted || !staging.join("pitex").is_dir() {
+    if !extracted || !staging.join(crate::identity::current().windows_zip_root).is_dir() {
         return Err(format!("Could not extract {}", info.asset_name));
     }
     // The bundle layout is <root>/bin/pitex.exe — the install root is the
@@ -354,10 +388,11 @@ fn install_zip(downloaded: &Path, info: &UpdateInfo) -> Result<InstallOutcome, S
         })?;
     let action = format!(
         "& robocopy {} {} /E /IS /IT /NFL /NDL /NJH /NJS /NP /R:10 /W:1\nif ($LASTEXITCODE -ge 8) {{ throw \"Bundle copy failed: $LASTEXITCODE\" }}",
-        powershell_quote(&staging.join("pitex").to_string_lossy()),
+        powershell_quote(&staging.join(crate::identity::current().windows_zip_root).to_string_lossy()),
         powershell_quote(&install_root.to_string_lossy())
     );
-    launch_windows_update(&staging, &install_root.join("bin/pitex.exe"), &action)
+    let exe = install_root.join("bin").join(crate::identity::current().windows_exe_name);
+    launch_windows_update(&staging, &exe, &action)
 }
 
 #[cfg(any(windows, test))]
@@ -385,7 +420,7 @@ Remove-Item -LiteralPath $PSCommandPath
 #[cfg(windows)]
 fn launch_windows_update(staging: &Path, executable: &Path, action: &str) -> Result<InstallOutcome, String> {
     use std::os::windows::process::CommandExt;
-    let script_path = staging.join(format!("pitex-update-{}.ps1", crate::model::uuid_v4()));
+    let script_path = staging.join(format!("{}-update-{}.ps1", crate::identity::current().temp_prefix, crate::model::uuid_v4()));
     let script = windows_update_script(std::process::id(), executable, action);
     // Windows PowerShell 5.1 needs the BOM for non-ASCII installation paths.
     std::fs::write(&script_path, format!("\u{feff}{script}")).map_err(|e| e.to_string())?;
@@ -467,6 +502,36 @@ mod tests {
     }
 
     #[test]
+    fn nightly_versions_order_by_timestamp() {
+        assert!(version_newer(
+            "1.0.1-nightly.202610071800",
+            "1.0.1-nightly.202610061800"
+        ));
+        assert!(version_newer(
+            "1.0.2-nightly.000000000000",
+            "1.0.1-nightly.999999999999"
+        ));
+        assert!(!version_newer(
+            "1.0.1-nightly.202610061800",
+            "1.0.1-nightly.202610071800"
+        ));
+    }
+
+    #[test]
+    fn dpkg_nightly_version_is_not_older_than_tag() {
+        // cargo-deb turns the tag "-nightly" into a Debian "~nightly" and
+        // appends a package revision; the updater must not treat that as old.
+        assert!(!version_newer(
+            "1.0.1~nightly.202610061800-1",
+            "1.0.1-nightly.202610061800"
+        ));
+        assert!(!version_newer(
+            "1.0.1-nightly.202610061800",
+            "1.0.1~nightly.202610061800-1"
+        ));
+    }
+
+    #[test]
     fn windows_script_quotes_paths_and_waits_before_installing() {
         let script = windows_update_script(123, Path::new("C:\\User's 한글\\bin\\pitex.exe"), "INSTALL_HERE");
         assert!(script.contains("'C:\\User''s 한글\\bin\\pitex.exe'"));
@@ -510,7 +575,8 @@ mod tests {
         let _cleanup = Cleanup(root.clone(), old_path, old_tmpdir);
         let pkexec = root.join("pkexec");
         let observed = root.join("staged-path");
-        std::fs::write(&pkexec, format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'apt install -y' ] && [ -r \"$4\" ] || exit 1\ncase \"$4\" in /tmp/pitex-update-*/pitex.deb) ;; *) exit 1;; esac\n[ \"$(/usr/bin/stat -c %a \"${{4%/*}}\")\" = 755 ] || exit 1\n[ \"$(/usr/bin/stat -c %a \"$4\")\" = 644 ] || exit 1\nprintf '%s' \"$4\" > {}\n", shell_quote(&observed.to_string_lossy()))).unwrap();
+        let id = crate::identity::current();
+        std::fs::write(&pkexec, format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'apt install -y' ] && [ -r \"$4\" ] || exit 1\ncase \"$4\" in /tmp/{}-update-*/{}.deb) ;; *) exit 1;; esac\n[ \"$(/usr/bin/stat -c %a \"${{4%/*}}\")\" = 755 ] || exit 1\n[ \"$(/usr/bin/stat -c %a \"$4\")\" = 644 ] || exit 1\nprintf '%s' \"$4\" > {}\n", id.temp_prefix, id.linux_package_name, shell_quote(&observed.to_string_lossy()))).unwrap();
         std::fs::set_permissions(&pkexec, std::fs::Permissions::from_mode(0o755)).unwrap();
         let query = root.join("dpkg-query");
         let package = root.join("update.deb");
@@ -566,5 +632,12 @@ mod tests {
             } else { assert!(root.join("update.ps1.log").is_file()); }
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn nightly_version_is_newer_than_its_base_release() {
+        assert!(version_newer("1.0.1-nightly.202610061800", "1.0.0"));
+        assert!(version_newer("1.0.1-nightly.202610061800", "1.0.1"));
+        assert!(!version_newer("1.0.0-nightly.202610061800", "1.0.1"));
     }
 }

@@ -22,6 +22,7 @@ use app_ports::{
     FileAccessLease, FileCapability, FileCapabilityAccess, LogLevel, LogRecord, PDFCoordinateSpace,
     PDFPoint, PlatformPortError, ProcessRequest, ProcessResult,
 };
+use app_ports::identity;
 
 // ─── File capability broker ────────────────────────────────────────────────
 
@@ -441,8 +442,8 @@ impl WindowsDefaultEditorRegistration {
         let exe = std::env::current_exe().map_err(|_| PlatformPortError::InvalidCapability)?;
         let command = format!("\"{}\" \"%1\"", exe.to_string_lossy());
         for extension in extensions {
-            let progid = format!("Pitex{extension}");
-            // HKCU\Software\Classes\.tex -> Pitex.tex
+            let progid = format!("{}{extension}", identity::current().windows_progid_prefix);
+            // HKCU\Software\Classes\.tex -> Pitex.tex (or PitexNightly.tex)
             Self::reg_add(&format!("HKCU\\Software\\Classes\\{extension}"), &progid)?;
             // OpenWithProgids keeps Pitex listed as a candidate in Settings
             // and Open With even while a UserChoice pins another app.
@@ -453,7 +454,7 @@ impl WindowsDefaultEditorRegistration {
             // ProgID friendly name + open command.
             Self::reg_add(
                 &format!("HKCU\\Software\\Classes\\{progid}"),
-                &format!("Pitex {extension} Document"),
+                &format!("{} {extension} Document", identity::current().display_name),
             )?;
             Self::reg_add(
                 &format!("HKCU\\Software\\Classes\\{progid}\\DefaultIcon"),
@@ -489,7 +490,7 @@ impl WindowsDefaultEditorRegistration {
     }
 
     fn user_choice_is_other(output: &str, extension: &str) -> bool {
-        let expected = format!("Pitex{extension}");
+        let expected = format!("{}{extension}", identity::current().windows_progid_prefix);
         output
             .lines()
             .find_map(|line| {
@@ -544,6 +545,7 @@ impl WindowsDefaultEditorRegistration {
 mod windows_platform_tests {
     use super::*;
     use app_ports::FileCapabilityBroker;
+    use app_ports::identity;
 
     #[test]
     fn shell_targets_preserve_unicode_and_metacharacters_without_command_parsing() {
@@ -568,9 +570,10 @@ mod windows_platform_tests {
 
     #[test]
     fn user_choice_requires_the_exact_case_insensitive_progid() {
+        let prefix = identity::current().windows_progid_prefix;
         for extension in [".tex", ".bib", ".md", ".markdown"] {
             assert!(!WindowsDefaultEditorRegistration::user_choice_is_other(
-                &format!("HKCU\\FileExts\\{extension}\\UserChoice\r\n    ProgId    REG_SZ    PITEX{extension}\r\n"), extension,
+                &format!("HKCU\\FileExts\\{extension}\\UserChoice\r\n    ProgId    REG_SZ    {prefix}{extension}\r\n"), extension,
             ));
             for other in ["Other.Editor", "PitexOld.Editor"] {
                 assert!(WindowsDefaultEditorRegistration::user_choice_is_other(

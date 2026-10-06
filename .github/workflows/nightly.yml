@@ -1,0 +1,206 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force a nightly even if the current nightly already points at HEAD'
+        type: boolean
+        required: false
+        default: false
+      publish:
+        description: 'Publish the nightly release (false = build and test only)'
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    name: Gate and compute nightly version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      sha: ${{ steps.compute.outputs.sha }}
+      previous_sha: ${{ steps.compute.outputs.previous_sha }}
+      publish: ${{ github.event.inputs.publish || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute nightly version and verify CI
+        id: compute
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+          # Skip if the current nightly tag already points at this commit and force is not set.
+          PREV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
+          echo "previous_sha=${PREV_SHA:-}" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.force }}" != "true" ] && [ "$PREV_SHA" = "$SHA" ]; then
+            echo "::warning::Current nightly already at ${SHA}; skipping."
+            exit 0
+          fi
+
+          # Require the CI workflow to have completed successfully for this commit.
+          CI_RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?commit_sha=${SHA}&per_page=1" \
+            --jq '.workflow_runs[0] | select(.status == "completed" and .conclusion == "success") | .id')
+          if [ -z "$CI_RUN" ]; then
+            echo "::warning::No successful CI run for ${SHA}; skipping nightly."
+            exit 0
+          fi
+
+          BASE=$(grep -m1 '^version = ' Linux/crates/pitex/Cargo.toml | tr -cd '0-9.')
+          MAJOR=$(printf '%s' "$BASE" | cut -d. -f1)
+          MINOR=$(printf '%s' "$BASE" | cut -d. -f2)
+          PATCH=$(printf '%s' "$BASE" | cut -d. -f3)
+          UTC=$(date -u +%Y%m%d%H%M)
+          VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-nightly.${UTC}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Nightly version: $VERSION"
+
+  build:
+    name: Build nightly artifacts
+    needs: gate
+    if: ${{ needs.gate.outputs.version != '' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      channel: nightly
+      version: ${{ needs.gate.outputs.version }}
+
+  publish:
+    name: Publish nightly prerelease
+    needs: [gate, build]
+    runs-on: ubuntu-24.04
+    if: ${{ needs.gate.outputs.publish != 'false' && needs.gate.outputs.version != '' }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      VERSION: ${{ needs.gate.outputs.version }}
+      SHA: ${{ needs.gate.outputs.sha }}
+      PREV_SHA: ${{ needs.gate.outputs.previous_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: dmg,            path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: deb-ubuntu2404, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: deb-ubuntu2204, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows-zip,    path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows-setup,  path: dist }
+      - name: Add installer script and checksums
+        run: |
+          set -euo pipefail
+          cp Tools/install-deb.sh dist/install-pitex-deb.sh
+          cd dist
+          sha256sum Pitex-Nightly-* install-pitex-deb.sh > SHA256SUMS
+      - name: Write nightly manifest and notes
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg version "$VERSION" \
+            --arg commit "$SHA" \
+            --arg published_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, commit: $commit, published_at: $published_at}' \
+            > dist/nightly.json
+          cat > dist/nightly-notes.md <<EOF
+          Pitex Nightly ${VERSION}
+
+          Commit: ${SHA}
+          EOF
+          if [ -n "$PREV_SHA" ]; then
+            echo "Compare to previous nightly: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_SHA}...${SHA}" \
+              >> dist/nightly-notes.md
+          fi
+      - name: Move the nightly tag via API
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/nightly" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
+              -X PATCH -f sha="$SHA" -f force=true
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -X POST -f ref="refs/tags/nightly" -f sha="$SHA"
+          fi
+      - name: Create or update the nightly prerelease
+        run: |
+          set -euo pipefail
+          if ! gh release view nightly >/dev/null 2>&1; then
+            gh release create nightly \
+              --prerelease \
+              --target "$SHA" \
+              --title "Pitex Nightly ${VERSION}" \
+              --notes-file dist/nightly-notes.md
+          else
+            gh release edit nightly \
+              --prerelease \
+              --title "Pitex Nightly ${VERSION}" \
+              --notes-file dist/nightly-notes.md
+          fi
+          # Upload first so the release is never empty, then remove stale assets.
+          gh release upload nightly dist/* --clobber
+          NEW_NAMES=$(ls dist | sort)
+          for asset in $(gh release view nightly --json assets -q '.assets[].name' | sort); do
+            if ! grep -qx "$asset" <<<"$NEW_NAMES"; then
+              gh release delete-asset nightly "$asset" -y
+            fi
+          done
+      - name: Update Homebrew nightly cask
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          DMG="dist/Pitex-Nightly-${VERSION}-macos-arm64.dmg"
+          [ -f "$DMG" ] || { echo "DMG artifact missing; cannot update cask" >&2; exit 1; }
+          SHA256=$(sha256sum "$DMG" | cut -d' ' -f1)
+          CASK_PATH="Casks/pitex@nightly.rb"
+          CASK_SHA=$(gh api "repos/jaehwan-2ee/homebrew-tap/contents/${CASK_PATH}" -q .sha 2>/dev/null || true)
+          if [ -n "$CASK_SHA" ]; then
+            gh api "repos/jaehwan-2ee/homebrew-tap/contents/${CASK_PATH}" -q .content > cask.b64
+            base64 -d cask.b64 > pitex-nightly.rb
+          else
+            cat > pitex-nightly.rb <<'EOF'
+          cask "pitex@nightly" do
+            version "VERSION_PLACEHOLDER"
+            sha256 "SHA256_PLACEHOLDER"
+            url "https://github.com/jaehwan-2ee/pitex/releases/download/nightly/Pitex-Nightly-#{version}-macos-arm64.dmg"
+            name "Pitex Nightly"
+            desc "Native LaTeX environment"
+            homepage "https://github.com/jaehwan-2ee/pitex"
+            depends_on arch: :arm64
+            depends_on macos: :sequoia
+            app "Pitex Nightly.app"
+            zap trash: [
+              "~/Library/Application Support/Pitex Nightly",
+              "~/Library/Caches/Pitex Nightly",
+              "~/Library/Caches/app.pitex.desktop.nightly",
+              "~/Library/Preferences/app.pitex.desktop.nightly.plist",
+            ]
+          end
+          EOF
+          fi
+          sed -i \
+            -e "s/^  version .*/  version \"${VERSION}\"/" \
+            -e "s/^  sha256 .*/  sha256 \"${SHA256}\"/" \
+            pitex-nightly.rb
+          gh api "repos/jaehwan-2ee/homebrew-tap/contents/${CASK_PATH}" \
+            -X PUT \
+            -f message="pitex-nightly ${VERSION}" \
+            -f content="$(base64 -w0 pitex-nightly.rb)" \
+            ${CASK_SHA:+-f sha="$CASK_SHA"}

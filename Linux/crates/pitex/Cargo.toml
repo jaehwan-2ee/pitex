@@ -212,3 +212,153 @@ assets = [
         "644",
     ],
 ]
+
+# Nightly variants use the same GTK/feature matrix as their stable
+# counterparts, but install side-by-side as `pitex-nightly` with distinct
+# application IDs, file paths, and an AppArmor profile for the modern-gtk
+# build. The supervisor must set PITEX_CHANNEL=nightly and PITEX_VERSION when
+# calling `cargo deb`.
+[package.metadata.deb.variants.nightly]
+name = "pitex-nightly"
+depends = "$auto, libteckit0, libharfbuzz0b, libgraphite2-3, libicu74, libfreetype6, libfontconfig1, libpng16-16t64, zlib1g"
+maintainer-scripts = "../../packaging/debian-nightly"
+assets = [
+    ["../../../Mac/Resources/PitexAgent/**/*", "usr/share/pitex-nightly/PitexAgent/", "644"],
+    ["target/release/pitex", "usr/bin/pitex-nightly", "755"],
+    [
+        "../../packaging/dev.pitex.app.nightly.desktop",
+        "usr/share/applications/dev.pitex.app.nightly.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/dev.pitex.app.png",
+        "usr/share/pixmaps/dev.pitex.app.nightly.png",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/LICENSE",
+        "usr/share/doc/pitex-nightly/equation-preview/mathjax/LICENSE",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/OFL-1.1.txt",
+        "usr/share/doc/pitex-nightly/equation-preview/mathjax-tex-font/OFL-1.1.txt",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/package.json",
+        "usr/share/doc/pitex-nightly/equation-preview/mathjax-tex-font/package.json",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/VERSIONS",
+        "usr/share/doc/pitex-nightly/equation-preview/VERSIONS",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/manifest.json",
+        "usr/share/doc/pitex-nightly/equation-preview/manifest.json",
+        "644",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview",
+        "usr/lib/pitex-nightly/pitex-preview",
+        "755",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview-xetex",
+        "usr/lib/pitex-nightly/pitex-preview-xetex",
+        "755",
+    ],
+    [
+        "../../../PreviewEngine/licenses/*",
+        "usr/share/doc/pitex-nightly/preview-engine/",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/PROVENANCE.md",
+        "usr/share/doc/pitex-nightly/preview-engine/PROVENANCE.md",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/provenance.json",
+        "usr/share/doc/pitex-nightly/preview-engine/provenance.json",
+        "644",
+    ],
+    [
+        "../../packaging/apparmor/pitex-nightly",
+        "etc/apparmor.d/pitex-nightly",
+        "644",
+    ],
+]
+
+[package.metadata.deb.variants.ubuntu2204-nightly]
+name = "pitex-nightly"
+default-features = false
+features = ["markdown-preview", "equation-preview", "embedded-preview"]
+depends = "$auto, libteckit0, libharfbuzz0b, libgraphite2-3, libicu70, libfreetype6, libfontconfig1, libpng16-16, zlib1g"
+maintainer-scripts = "../../packaging/debian-nightly"
+assets = [
+    ["../../../Mac/Resources/PitexAgent/**/*", "usr/share/pitex-nightly/PitexAgent/", "644"],
+    ["target/release/pitex", "usr/bin/pitex-nightly", "755"],
+    [
+        "../../packaging/dev.pitex.app.nightly.desktop",
+        "usr/share/applications/dev.pitex.app.nightly.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/dev.pitex.app.png",
+        "usr/share/pixmaps/dev.pitex.app.nightly.png",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/LICENSE",
+        "usr/share/doc/pitex-nightly/equation-preview/mathjax/LICENSE",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/OFL-1.1.txt",
+        "usr/share/doc/pitex-nightly/equation-preview/mathjax-tex-font/OFL-1.1.txt",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/package.json",
+        "usr/share/doc/pitex-nightly/equation-preview/mathjax-tex-font/package.json",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/VERSIONS",
+        "usr/share/doc/pitex-nightly/equation-preview/VERSIONS",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/manifest.json",
+        "usr/share/doc/pitex-nightly/equation-preview/manifest.json",
+        "644",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview",
+        "usr/lib/pitex-nightly/pitex-preview",
+        "755",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview-xetex",
+        "usr/lib/pitex-nightly/pitex-preview-xetex",
+        "755",
+    ],
+    [
+        "../../../PreviewEngine/licenses/*",
+        "usr/share/doc/pitex-nightly/preview-engine/",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/PROVENANCE.md",
+        "usr/share/doc/pitex-nightly/preview-engine/PROVENANCE.md",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/provenance.json",
+        "usr/share/doc/pitex-nightly/preview-engine/provenance.json",
+        "644",
+    ],
+]

@@ -233,6 +233,8 @@ pub struct ExactEquationRenderer {
     pub main_directory: PathBuf,
     /// Host additions (PATH to the TeX distribution).
     pub environment: HashMap<String, String>,
+    /// Directory namespace prefix (e.g. `pitex` or `pitex-nightly`).
+    pub temp_prefix: String,
     /// Opaque per-workspace token keeping concurrent windows apart.
     pub workspace_token: String,
     pub timeout: Duration,
@@ -245,22 +247,24 @@ impl ExactEquationRenderer {
         profile: ExactEquationProfile,
         main_directory: PathBuf,
         environment: HashMap<String, String>,
+        temp_prefix: impl Into<String>,
         workspace_token: String,
     ) -> Self {
         Self {
             profile,
             main_directory,
             environment,
+            temp_prefix: temp_prefix.into(),
             workspace_token,
             timeout: Duration::from_secs(20),
         }
     }
 
-    /// `$XDG_RUNTIME_DIR/pitex-equation` when the runtime dir is valid and
-    /// owned by us, else `$TMPDIR/pitex-equation-<uid>` — then `<workspace>`.
+    /// `$XDG_RUNTIME_DIR/<temp-prefix>-equation` when the runtime dir is valid and
+    /// owned by us, else `$TMPDIR/<temp-prefix>-equation-<uid>` — then `<workspace>`.
     /// The result is only a *candidate*: [`render`] re-validates the base
     /// before every use (no writes under attacker-owned paths).
-    pub fn workspace_root(token: &str) -> PathBuf {
+    pub fn workspace_root(prefix: &str, token: &str) -> PathBuf {
         #[cfg(unix)]
         let uid = unsafe { libc::getuid() };
         // XDG_RUNTIME_DIR is per-user, private, and (usually) tmpfs — prefer
@@ -269,13 +273,13 @@ impl ExactEquationRenderer {
         let parent = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .filter(|dir| Self::is_safe_runtime_dir(dir))
-            .map(|dir| dir.join("pitex-equation"))
-            .unwrap_or_else(|| std::env::temp_dir().join(format!("pitex-equation-{uid}")));
+            .map(|dir| dir.join(format!("{prefix}-equation")))
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("{prefix}-equation-{uid}")));
         // %LOCALAPPDATA% is private to the user; a shared temp directory
         // with a synthetic uid=0 would mix every Windows user's jobs.
         #[cfg(windows)]
         let parent = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir).join("pitex").join("equation-preview");
+            .unwrap_or_else(std::env::temp_dir).join(prefix).join("equation-preview");
         parent.join(token)
     }
 
@@ -311,7 +315,7 @@ impl ExactEquationRenderer {
         document: &str,
         cancel: Option<&CancellationToken>,
     ) -> Result<Vec<u8>, ExactEquationRenderError> {
-        let base = Self::workspace_root(&self.workspace_token);
+        let base = Self::workspace_root(&self.temp_prefix, &self.workspace_token);
         // The base's parent (pitex-equation / pitex-equation-<uid>) is
         // validated BEFORE the base is created under it — otherwise a
         // foreign-owned lax dir would already receive our writes.
@@ -410,10 +414,10 @@ impl ExactEquationRenderer {
     }
 
     /// Removes this workspace's leftovers (a crashed or killed app).
-    pub fn remove_workspace_artifacts(token: &str) {
+    pub fn remove_workspace_artifacts(prefix: &str, token: &str) {
         // Never recursively delete inside a foreign-owned/symlinked root:
         // re-validate the parent chain before touching it.
-        let root = Self::workspace_root(token);
+        let root = Self::workspace_root(prefix, token);
         if root.parent().map_or(false, |p| Self::is_safe_private_dir(p))
             && Self::is_safe_private_dir(&root)
         {

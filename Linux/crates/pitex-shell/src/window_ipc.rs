@@ -46,7 +46,7 @@ fn show_in_window(file: &Path) -> bool {
 
 #[cfg(unix)]
 fn socket_dir() -> PathBuf {
-    gtk4::glib::user_runtime_dir().join("pitex")
+    gtk4::glib::user_runtime_dir().join(crate::identity::current().xdg_dir_name)
 }
 
 #[cfg(unix)]
@@ -145,7 +145,7 @@ fn offer(mut stream: UnixStream, file: &Path) -> std::io::Result<bool> {
 fn window_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("pitex")
+        .join(crate::identity::current().xdg_dir_name)
         .join("windows")
 }
 

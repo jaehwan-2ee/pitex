@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import TexDomain
 
 /// Filesystem locations for the embedded Pitex Agent. Installing Pitex
 /// provides a private pi home under Application Support — independent of any
@@ -14,7 +15,7 @@ enum PiPaths {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
         }
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Pitex", isDirectory: true)
+            .appendingPathComponent(AppIdentity.current.appFolderName, isDirectory: true)
             .appendingPathComponent("pi", isDirectory: true)
     }
 

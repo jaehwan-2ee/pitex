@@ -124,3 +124,49 @@ All platforms store this preference as `pitex.pref.update.autoInstall`.
 Updates need network access to `api.github.com` and the release CDN.
 They also need `curl`, which macOS, Ubuntu, and Windows 10 or later include.
 Linux package installation needs polkit or `sudo`.
+
+## Nightly builds
+
+Pitex Nightly is a side-by-side prerelease channel built from `main`.
+It has its own settings, caches, and update feed.
+It does not replace or share state with stable Pitex.
+
+### macOS
+
+Install with Homebrew:
+
+```sh
+brew tap jaehwan-2ee/tap
+brew install --cask pitex@nightly
+```
+
+`brew upgrade --cask pitex@nightly` updates it.
+
+For a DMG installation, download `Pitex-Nightly-<version>-macos-arm64.dmg`,
+open it, and drag `Pitex Nightly.app` to `/Applications`.
+
+### Linux
+
+Download `install-pitex-deb.sh` and the nightly package for your Ubuntu version:
+
+```sh
+sh ./install-pitex-deb.sh ./Pitex-Nightly-<version>-ubuntu24.04-amd64.deb   # Ubuntu 24.04+
+sh ./install-pitex-deb.sh ./Pitex-Nightly-<version>-ubuntu22.04-amd64.deb   # Ubuntu 22.04
+```
+
+This installs `pitex-nightly` side by side with `pitex`.
+
+### Windows
+
+Download `Pitex-Nightly-<version>-windows-amd64-setup.exe` for the per-user installer.
+It installs into `%LOCALAPPDATA%\Programs\Pitex Nightly` as `pitex-nightly.exe`.
+
+For a portable installation, extract `Pitex-Nightly-<version>-windows-amd64.zip`
+and run `pitex-nightly\bin\pitex-nightly.exe`.
+
+### Nightly updates
+
+Pitex Nightly checks the rolling `nightly` prerelease.
+It updates using the same platform-specific steps as stable, but with the
+nightly asset names and the `nightly` GitHub release tag.
+Nightly releases are prerelease software and may contain unfinished features or bugs.

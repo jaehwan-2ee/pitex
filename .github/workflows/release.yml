@@ -5,9 +5,38 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Build channel'
+        required: false
+        default: 'stable'
+      version:
+        description: 'Override version (required for nightly)'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      channel:
+        description: 'Build channel'
+        type: string
+        required: false
+        default: 'stable'
+      version:
+        description: 'Override version (required for nightly)'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
+
+env:
+  PITEX_CHANNEL: ${{ inputs.channel || 'stable' }}
+  PITEX_VERSION: ${{ inputs.version }}
+  PITEX_DISPLAY_NAME: ${{ inputs.channel == 'nightly' && 'Pitex Nightly' || 'Pitex' }}
+  PITEX_BUNDLE_ID: ${{ inputs.channel == 'nightly' && 'app.pitex.desktop.nightly' || 'app.pitex.desktop' }}
+  PITEX_UTI_PREFIX: ${{ inputs.channel == 'nightly' && 'app.pitex.nightly' || 'app.pitex' }}
+  PITEX_ASSET_PREFIX: ${{ inputs.channel == 'nightly' && 'Pitex-Nightly' || 'Pitex' }}
 
 jobs:
   deb-installer:
@@ -21,7 +50,8 @@ jobs:
       - name: Install from a private download folder in a disposable container
         run: |
           docker run --rm --network none \
-            -e PITEX_APT_ISOLATED_TEST=1 -v "$PWD:/src:ro" \
+            -e PITEX_APT_ISOLATED_TEST=1 \
+            -v "$PWD:/src:ro" \
             ubuntu:${{ matrix.ubuntu }} \
             sh /src/Tools/check-deb-install.sh /src/Tools/install-deb.sh
 
@@ -44,12 +74,20 @@ jobs:
           tar -xf pe-payload.tar -C pe-payload
       - name: Build release app
         run: |
+          set -euo pipefail
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            python3 Tools/patch-nightly-info-plist.py "$PITEX_VERSION"
+          fi
           xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
             -configuration Release -derivedDataPath build \
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            mv "build/Build/Products/Release/Pitex.app" \
+              "build/Build/Products/Release/$PITEX_DISPLAY_NAME.app"
+          fi
       - name: Verify bundled agent skills in the macOS app
-        run: node Tools/check-bundled-skills.mjs --package-root build/Build/Products/Release/Pitex.app/Contents/Resources/PitexAgent
+        run: node Tools/check-bundled-skills.mjs --package-root "build/Build/Products/Release/$PITEX_DISPLAY_NAME.app/Contents/Resources/PitexAgent"
       # Helpers land in Contents/Helpers/PreviewEngine (code only) — the
       # client's first probe path; notices/provenance go to
       # Contents/Resources/PreviewEngine. The payload was built by the
@@ -57,14 +95,15 @@ jobs:
       - name: Install bundled preview engine into app
         run: |
           set -euo pipefail
-          APP="$GITHUB_WORKSPACE/build/Build/Products/Release/Pitex.app"
+          APP="$GITHUB_WORKSPACE/build/Build/Products/Release/$PITEX_DISPLAY_NAME.app"
           [ -d "$APP" ] || { echo "release app not found: $APP" >&2; exit 1; }
           # pe-payload/ artifact carries Contents/Helpers + Contents/Resources.
           cp -R pe-payload/Contents/Helpers/.   "$APP/Contents/Helpers/"
           cp -R pe-payload/Contents/Resources/. "$APP/Contents/Resources/"
       - name: Audit bundled preview engine
+        timeout-minutes: 10
         run: |
-          APP="build/Build/Products/Release/Pitex.app"
+          APP="build/Build/Products/Release/$PITEX_DISPLAY_NAME.app"
           bash PreviewEngine/tools/audit-linkage.sh \
             "$APP/Contents/Helpers/PreviewEngine" \
             "$APP/Contents/Resources/PreviewEngine"
@@ -118,14 +157,20 @@ jobs:
           done
       - name: Ad-hoc sign and create DMG
         run: |
-          APP="build/Build/Products/Release/Pitex.app"
+          set -euo pipefail
+          APP="build/Build/Products/Release/$PITEX_DISPLAY_NAME.app"
           # Hard fail on signing problems — no `|| true`: the bundled helpers
           # must seal cleanly on the runner (notices live under
           # Contents/Resources, never Contents/Helpers).
           codesign --deep --force --sign - "$APP"
           codesign --verify --deep --strict "$APP"
-          hdiutil create -volname Pitex -srcfolder "$APP" -ov -format UDZO \
-            "Pitex-${NAME}-macos-arm64.dmg"
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            DMG_NAME="${PITEX_ASSET_PREFIX}-${PITEX_VERSION}-macos-arm64.dmg"
+          else
+            DMG_NAME="${PITEX_ASSET_PREFIX}-${NAME}-macos-arm64.dmg"
+          fi
+          hdiutil create -volname "$PITEX_DISPLAY_NAME" -srcfolder "$APP" -ov -format UDZO \
+            "$DMG_NAME"
       - uses: actions/upload-artifact@v4
         with:
           name: dmg
@@ -164,12 +209,34 @@ jobs:
           make -C PreviewEngine BUILD_DIR="$PWD/Linux/target/preview-engine"
           strip --strip-unneeded Linux/target/preview-engine/bin/pitex-preview*
       - name: Build deb (modern-gtk variant)
-        run: cargo deb --package pitex
+        env:
+          PITEX_CHANNEL: ${{ env.PITEX_CHANNEL }}
+          PITEX_VERSION: ${{ env.PITEX_VERSION }}
+        run: |
+          set -euo pipefail
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            VARIANT="--variant nightly"
+          else
+            VARIANT=""
+          fi
+          if [ -n "$PITEX_VERSION" ]; then
+            # Debian version syntax cannot use '-' in the upstream segment.
+            DEB_VERSION="$(printf '%s' "$PITEX_VERSION" | sed 's/-/~/')"
+            cargo deb --package pitex $VARIANT --deb-version "$DEB_VERSION"
+          else
+            cargo deb --package pitex $VARIANT
+          fi
         working-directory: Linux
       - name: Rename artifact
         run: |
-          mv Linux/target/debian/pitex_*.deb \
-            "Pitex-${NAME}-ubuntu24.04-amd64.deb"
+          set -euo pipefail
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            mv Linux/target/debian/pitex-nightly_*.deb \
+              "${PITEX_ASSET_PREFIX}-${PITEX_VERSION}-ubuntu24.04-amd64.deb"
+          else
+            mv Linux/target/debian/pitex_*.deb \
+              "${PITEX_ASSET_PREFIX}-${NAME}-ubuntu24.04-amd64.deb"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: deb-ubuntu2404
@@ -205,12 +272,32 @@ jobs:
           make -C PreviewEngine BUILD_DIR="$PWD/Linux/target/preview-engine"
           strip --strip-unneeded Linux/target/preview-engine/bin/pitex-preview*
       - name: Build deb (compat variant)
-        run: cargo deb --package pitex --variant ubuntu2204
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            VARIANT="--variant ubuntu2204-nightly"
+          else
+            VARIANT="--variant ubuntu2204"
+          fi
+          if [ -n "$PITEX_VERSION" ]; then
+            DEB_VERSION="$(printf '%s' "$PITEX_VERSION" | sed 's/-/~/')"
+            cargo deb --package pitex $VARIANT --deb-version "$DEB_VERSION"
+          else
+            cargo deb --package pitex $VARIANT
+          fi
         working-directory: Linux
       - name: Rename artifact
+        shell: bash
         run: |
-          mv Linux/target/debian/pitex_*.deb \
-            "Pitex-${NAME}-ubuntu22.04-amd64.deb"
+          set -euo pipefail
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            mv Linux/target/debian/pitex-nightly_*.deb \
+              "${PITEX_ASSET_PREFIX}-${PITEX_VERSION}-ubuntu22.04-amd64.deb"
+          else
+            mv Linux/target/debian/pitex_*.deb \
+              "${PITEX_ASSET_PREFIX}-${NAME}-ubuntu22.04-amd64.deb"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: deb-ubuntu2204
@@ -289,29 +376,40 @@ jobs:
         run: |
           cargo test --locked --manifest-path PreviewEngine/Windows/Cargo.toml --test protocol real_tex -- --ignored --nocapture
       - name: Build and bundle
-        run: bash Windows/build.sh
+        run: |
+          set -euo pipefail
+          PITEX_CHANNEL="$PITEX_CHANNEL" PITEX_VERSION="$PITEX_VERSION" bash Windows/build.sh
+          . Windows/dist/channel-vars.sh
+          echo "PITEX_BUNDLE=$PITEX_BUNDLE" >> "$GITHUB_ENV"
+          echo "PITEX_NAME=$PITEX_NAME" >> "$GITHUB_ENV"
+          echo "PITEX_REGKEY=$PITEX_REGKEY" >> "$GITHUB_ENV"
+          echo "PITEX_BINARY=$PITEX_BINARY" >> "$GITHUB_ENV"
       - name: Verify bundled agent skills in the Windows payload
         shell: pwsh
-        run: node Tools/check-bundled-skills.mjs --package-root Windows/dist/pitex/share/pitex/PitexAgent
+        run: |
+          $bundle = $env:PITEX_BUNDLE
+          node Tools/check-bundled-skills.mjs --package-root "Windows\dist\$bundle\share\$bundle\PitexAgent"
       - name: Portable bundle starts outside MSYS2
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $app = Join-Path $env:GITHUB_WORKSPACE 'Windows\dist\pitex\bin\pitex.exe'
-          $helper = Join-Path $env:GITHUB_WORKSPACE 'Windows\dist\pitex\bin\pitex-preview.exe'
+          $bundle = $env:PITEX_BUNDLE
+          $binary = $env:PITEX_BINARY
+          $app = Join-Path $env:GITHUB_WORKSPACE "Windows\dist\$bundle\bin\$binary"
+          $helper = Join-Path $env:GITHUB_WORKSPACE "Windows\dist\$bundle\bin\pitex-preview.exe"
           if (-not (Test-Path $helper)) { throw 'Editing-preview helper missing from bundle' }
           # A portable install must work without the runner's UCRT64 DLLs.
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           Remove-Item Env:GSETTINGS_SCHEMA_DIR -ErrorAction SilentlyContinue
           Remove-Item Env:FONTCONFIG_FILE -ErrorAction SilentlyContinue
-          $icon = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'Windows\dist\pitex\share\icons\Adwaita') -Recurse -Filter '*.svg' | Select-Object -First 1
+          $icon = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE "Windows\dist\$bundle\share\icons\Adwaita") -Recurse -Filter '*.svg' | Select-Object -First 1
           if (-not $icon) { throw 'No bundled SVG icon to validate' }
           $env:PITEX_RUNTIME_SMOKE_ICON = $icon.FullName
           $decoder = Start-Process -FilePath $app -WorkingDirectory $env:RUNNER_TEMP -PassThru -Wait
           Remove-Item Env:PITEX_RUNTIME_SMOKE_ICON
           if ($decoder.ExitCode -ne 0) { throw "Bundled SVG decoder failed: $($decoder.ExitCode)" }
-          $project = Join-Path $env:RUNNER_TEMP 'pitex-portable-preview-project'
-          $output = Join-Path $env:RUNNER_TEMP 'pitex-portable-preview-output'
+          $project = Join-Path $env:RUNNER_TEMP "$bundle-portable-preview-project"
+          $output = Join-Path $env:RUNNER_TEMP "$bundle-portable-preview-output"
           New-Item -ItemType Directory -Force -Path $project | Out-Null
           Set-Content -Path (Join-Path $project 'main.tex') -Value '\documentclass{article}\begin{document}test\end{document}'
           $info = [System.Diagnostics.ProcessStartInfo]::new($helper)
@@ -345,8 +443,14 @@ jobs:
           }
       - name: Create zip
         run: |
+          set -euo pipefail
           cd Windows/dist
-          zip -qr "${GITHUB_WORKSPACE}/Pitex-${NAME}-windows-amd64.zip" pitex
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            ZIP_NAME="${GITHUB_WORKSPACE}/${PITEX_ASSET_PREFIX}-${PITEX_VERSION}-windows-amd64.zip"
+          else
+            ZIP_NAME="${GITHUB_WORKSPACE}/${PITEX_ASSET_PREFIX}-${NAME}-windows-amd64.zip"
+          fi
+          zip -qr "$ZIP_NAME" "$PITEX_BUNDLE"
       - name: Ensure NSIS
         shell: pwsh
         run: |
@@ -355,7 +459,10 @@ jobs:
           }
       - name: Compute NSIS version
         run: |
-          if [ "${{ github.ref_type }}" = tag ]; then
+          set -euo pipefail
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            echo "NSIS_VERSION=$PITEX_VERSION" >> "$GITHUB_ENV"
+          elif [ "${{ github.ref_type }}" = tag ]; then
             echo "NSIS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
             # N3: no macOS Info.plist key exists here — emit an explicit
@@ -367,26 +474,39 @@ jobs:
       # updater drives it with /S.
       - name: Build installer
         run: |
+          set -euo pipefail
           cd Windows
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            SETUP_NAME="${PITEX_ASSET_PREFIX}-${PITEX_VERSION}-windows-amd64-setup.exe"
+          else
+            SETUP_NAME="${PITEX_ASSET_PREFIX}-${NAME}-windows-amd64-setup.exe"
+          fi
+          echo "SETUP_NAME=$SETUP_NAME" >> "$GITHUB_ENV"
           '/c/Program Files (x86)/NSIS/makensis.exe' -V2 \
             -DVERSION="${NSIS_VERSION}" \
-            -DOUTFILE="Pitex-${NAME}-windows-amd64-setup.exe" pitex.nsi
+            -DNAME="${PITEX_NAME}" \
+            -DREGKEY="${PITEX_REGKEY}" \
+            -DBINARY="${PITEX_BINARY}" \
+            -DZIPROOT="${PITEX_BUNDLE}" \
+            -DOUTFILE="$SETUP_NAME" pitex.nsi
       - name: Silent installer and installed app acceptance
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $setup = Join-Path $env:GITHUB_WORKSPACE "Windows\Pitex-$env:NAME-windows-amd64-setup.exe"
-          $installed = Join-Path $env:RUNNER_TEMP 'Pitex installed smoke'
+          $setup = Join-Path $env:GITHUB_WORKSPACE "Windows\$env:SETUP_NAME"
+          $display = $env:PITEX_NAME
+          $binary = $env:PITEX_BINARY
+          $installed = Join-Path $env:RUNNER_TEMP "$display installed smoke"
           $installer = Start-Process -FilePath $setup -ArgumentList "/S /D=$installed" -PassThru -Wait
           if ($installer.ExitCode -ne 0) { throw "Silent installer failed: $($installer.ExitCode)" }
-          foreach ($file in @('bin\pitex.exe', 'bin\pitex-preview.exe', 'bin\WebView2Loader.dll', 'lib\gdk-pixbuf-2.0\2.10.0\loaders.cache', 'share\glib-2.0\schemas\gschemas.compiled', 'uninstall.exe')) {
+          foreach ($file in @("bin\$binary", 'bin\pitex-preview.exe', 'bin\WebView2Loader.dll', 'lib\gdk-pixbuf-2.0\2.10.0\loaders.cache', 'share\glib-2.0\schemas\gschemas.compiled', 'uninstall.exe')) {
             if (-not (Test-Path (Join-Path $installed $file))) { throw "Missing installed file: $file" }
           }
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           Remove-Item Env:GSETTINGS_SCHEMA_DIR -ErrorAction SilentlyContinue
           Remove-Item Env:FONTCONFIG_FILE -ErrorAction SilentlyContinue
-          $log = Join-Path $env:RUNNER_TEMP 'pitex-installed-startup.log'
-          $process = Start-Process -FilePath (Join-Path $installed 'bin\pitex.exe') -WorkingDirectory $env:RUNNER_TEMP -PassThru -RedirectStandardError $log
+          $log = Join-Path $env:RUNNER_TEMP "$env:PITEX_BUNDLE-installed-startup.log"
+          $process = Start-Process -FilePath (Join-Path $installed "bin\$binary") -WorkingDirectory $env:RUNNER_TEMP -PassThru -RedirectStandardError $log
           try {
             Start-Sleep -Seconds 8
             if ($process.HasExited) {
@@ -510,6 +630,12 @@ jobs:
     name: AppArmor userns proof (Ubuntu 24.04 deb)
     needs: [linux-deb, linux-deb-ubuntu2204]
     runs-on: ubuntu-24.04
+    env:
+      PITEX_CHANNEL: ${{ inputs.channel || 'stable' }}
+      PITEX_PACKAGE: ${{ inputs.channel == 'nightly' && 'pitex-nightly' || 'pitex' }}
+      PITEX_PROFILE: ${{ inputs.channel == 'nightly' && 'pitex-nightly' || 'pitex' }}
+      PITEX_BINARY: ${{ inputs.channel == 'nightly' && 'pitex-nightly' || 'pitex' }}
+      PITEX_UPGRADE_PATTERN: ${{ inputs.channel == 'nightly' && 'Pitex-Nightly-*-ubuntu24.04-amd64.deb' || '*-ubuntu24.04-amd64.deb' }}
     # Proves the deb's AppArmor profile unblocks WebKit's bubblewrap sandbox
     # on a stock ubuntu-24.04 runner (restriction ON). Lives here (not
     # ci.yml) because it consumes the built deb artifacts.
@@ -532,7 +658,7 @@ jobs:
           for package in dist/*ubuntu*.deb; do
             payload=$(mktemp -d)
             dpkg-deb -x "$package" "$payload"
-            node Tools/check-bundled-skills.mjs --package-root "$payload/usr/share/pitex/PitexAgent"
+            node Tools/check-bundled-skills.mjs --package-root "$payload/usr/share/$PITEX_PACKAGE/PitexAgent"
             rm -rf "$payload"
           done
       - name: R2 - 24.04 deb ships the profile + conffile; 22.04 ships neither
@@ -540,12 +666,12 @@ jobs:
           set -e
           D24=$(ls dist/*ubuntu24.04*.deb); D22=$(ls dist/*ubuntu22.04*.deb)
           echo "24.04: $D24"; echo "22.04: $D22"
-          dpkg-deb -c "$D24" | grep -q 'etc/apparmor\.d/pitex' \
+          dpkg-deb -c "$D24" | grep -q "etc/apparmor\.d/$PITEX_PROFILE" \
             || { echo "24.04 deb lacks the profile file" >&2; exit 1; }
           # dpkg-deb -I prints the conffiles member regardless of how the
           # builder names it in control.tar (CI cargo-deb uses ./conffiles,
           # local cargo-deb uses conffiles); tar -xO is not portable here.
-          dpkg-deb -I "$D24" conffiles | grep -qx '/etc/apparmor.d/pitex' \
+          dpkg-deb -I "$D24" conffiles | grep -qx "/etc/apparmor.d/$PITEX_PROFILE" \
             || { echo "24.04 profile not a conffile" >&2; exit 1; }
           ! dpkg-deb -c "$D22" | grep -q 'apparmor' \
             || { echo "22.04 deb must not ship the profile" >&2; exit 1; }
@@ -561,8 +687,13 @@ jobs:
           sudo apt-get update -qq
           # The repository's first release has no earlier deb; it still
           # installs this deb so the profile checks below run.
-          if gh release download --repo "$GITHUB_REPOSITORY" \
-              --pattern '*-ubuntu24.04-amd64.deb' --dir /tmp/pitex-previous; then
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            UPGRADE_TAG="nightly"
+          else
+            UPGRADE_TAG=""
+          fi
+          if gh release download ${UPGRADE_TAG:+$UPGRADE_TAG} --repo "$GITHUB_REPOSITORY" \
+              --pattern "$PITEX_UPGRADE_PATTERN" --dir /tmp/pitex-previous; then
             sudo apt-get install -y /tmp/pitex-previous/*.deb
           else
             echo "::notice::No earlier release; installing this deb without an upgrade."
@@ -574,24 +705,24 @@ jobs:
           apt-config dump | grep -i 'dpkg::options' || true
           ls /etc/dpkg/dpkg.cfg.d/ || true
           sudo apt-get install -y "$(readlink -f "$(ls dist/*ubuntu24.04*.deb)")" < /dev/null
-          [ -f /etc/apparmor.d/pitex ] || { echo "profile missing after upgrade" >&2; exit 1; }
+          [ -f "/etc/apparmor.d/$PITEX_PROFILE" ] || { echo "profile missing after upgrade" >&2; exit 1; }
       - name: Confirm the profile loaded
         run: |
           set -e
           PROFILES=$(sudo cat /sys/kernel/security/apparmor/profiles) \
             || { echo "cannot read apparmor profiles" >&2; exit 1; }
-          printf '%s\n' "$PROFILES" | grep -q '^pitex ' \
+          printf '%s\n' "$PROFILES" | grep -q "^$PITEX_PROFILE " \
             || { echo "profile not loaded"; printf '%s\n' "$PROFILES" >&2; exit 1; }
       - name: Negative control - profile unloaded must abort on open
         run: |
           set -e
-          sudo apparmor_parser -R /etc/apparmor.d/pitex 2>/dev/null || true
+          sudo apparmor_parser -R "/etc/apparmor.d/$PITEX_PROFILE" 2>/dev/null || true
           for t in xvfb-run dbus-run-session timeout; do
             command -v "$t" >/dev/null || { echo "missing $t on the runner" >&2; exit 1; }
           done
           printf '\\documentclass{article}\\begin{document}x\\end{document}\n' > /tmp/f.tex
           set +e
-          GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- timeout 25 /usr/bin/pitex /tmp/f.tex > /tmp/neg.log 2>&1
+          GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- timeout 25 "/usr/bin/$PITEX_BINARY" /tmp/f.tex > /tmp/neg.log 2>&1
           rc=$?
           set -e
           cat /tmp/neg.log
@@ -604,10 +735,10 @@ jobs:
       - name: Positive - profile loaded, app opens and stays alive
         run: |
           set -e
-          sudo apparmor_parser -r -T -W /etc/apparmor.d/pitex
+          sudo apparmor_parser -r -T -W "/etc/apparmor.d/$PITEX_PROFILE"
           printf '\\documentclass{article}\\begin{document}x\\end{document}\n' > /tmp/f.tex
           set +e
-          GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- timeout 25 /usr/bin/pitex /tmp/f.tex > /tmp/pos.log 2>&1
+          GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- timeout 25 "/usr/bin/$PITEX_BINARY" /tmp/f.tex > /tmp/pos.log 2>&1
           rc=$?
           set -e
           cat /tmp/pos.log
@@ -621,11 +752,11 @@ jobs:
       - name: Purge - file and loaded profile are gone
         run: |
           set -e
-          sudo apt-get purge -y pitex
-          [ ! -e /etc/apparmor.d/pitex ] || { echo "conffile left behind" >&2; exit 1; }
+          sudo apt-get purge -y "$PITEX_PACKAGE"
+          [ ! -e "/etc/apparmor.d/$PITEX_PROFILE" ] || { echo "conffile left behind" >&2; exit 1; }
           PROFILES=$(sudo cat /sys/kernel/security/apparmor/profiles) \
             || { echo "cannot read apparmor profiles" >&2; exit 1; }
-          ! printf '%s\n' "$PROFILES" | grep -q '^pitex ' \
+          ! printf '%s\n' "$PROFILES" | grep -q "^$PITEX_PROFILE " \
             || { echo "profile still loaded after purge" >&2; exit 1; }
       - name: No-AppArmor container installs exit 0 (right deb per image)
         run: |

@@ -35,7 +35,7 @@ pub mod pi_paths {
         }
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("pitex")
+            .join(crate::identity::current().xdg_dir_name)
             .join("pi")
     }
     pub fn auth_file() -> PathBuf {
@@ -132,8 +132,8 @@ fn bundled_executable() -> Option<PathBuf> {
     let dir = exe.parent()?;
     for candidate in [
         dir.join("pi-runtime/bin/pi"),
-        dir.join("../share/pitex/pi-runtime/bin/pi"),
-        dir.join("../lib/pitex/pi-runtime/bin/pi"),
+        dir.join(format!("../share/{}/pi-runtime/bin/pi", crate::identity::current().linux_share_dir_name)),
+        dir.join(format!("../lib/{}/pi-runtime/bin/pi", crate::identity::current().linux_share_dir_name)),
     ] {
         let candidate = candidate.canonicalize().unwrap_or(candidate);
         if is_executable(&candidate) {
@@ -149,8 +149,8 @@ fn bundled_executable() -> Option<PathBuf> {
     const ENTRY: &str = "pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
     for candidate in [
         dir.join(ENTRY),
-        dir.join(format!("../share/pitex/{ENTRY}")),
-        dir.join(format!("../lib/pitex/{ENTRY}")),
+        dir.join(format!("../share/{}/{ENTRY}", crate::identity::current().linux_share_dir_name)),
+        dir.join(format!("../lib/{}/{ENTRY}", crate::identity::current().linux_share_dir_name)),
     ] {
         let candidate = candidate.canonicalize().unwrap_or(candidate);
         if is_executable(&candidate) {
@@ -2859,8 +2859,8 @@ pub mod pi_installer {
     fn bundled_skills_directory() -> Option<PathBuf> {
         if let Ok(exe) = std::env::current_exe() {
             for rel in [
-                "../share/pitex/PitexAgent/skills",
-                "../../share/pitex/PitexAgent/skills",
+                format!("../share/{}/PitexAgent/skills", crate::identity::current().linux_share_dir_name),
+                format!("../../share/{}/PitexAgent/skills", crate::identity::current().linux_share_dir_name),
             ] {
                 let candidate = exe.parent()?.join(rel);
                 if candidate.is_dir() {

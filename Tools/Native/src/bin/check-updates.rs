@@ -83,6 +83,10 @@ fn check() -> Result<(), Box<dyn Error>> {
     if cfg!(target_os = "macos") && !args.iter().any(|arg| arg == "--rust-only") {
         let source = root.join("Check.swift");
         fs::write(&source, SWIFT_CHECK)?;
+        let update_support = root.join("UpdateSupport.swift");
+        let update_src = fs::read_to_string(repo.join("Mac/Sources/Features/UpdateSupport.swift"))?
+            .replace("import TexDomain\n", "");
+        fs::write(&update_support, update_src)?;
         let executable = root.join("check");
         run_checked(
             Command::new("xcrun")
@@ -95,7 +99,8 @@ fn check() -> Result<(), Box<dyn Error>> {
                 ])
                 .arg(root.join("swift-cache"))
                 .arg(&source)
-                .arg(repo.join("Mac/Sources/Features/UpdateSupport.swift"))
+                .arg(&update_support)
+                .arg(repo.join("Packages/TexCore/Sources/TexDomain/AppIdentity.swift"))
                 .arg("-o")
                 .arg(&executable),
             None,
@@ -119,7 +124,7 @@ dirs = "5"
         )?;
         fs::create_dir(root.join("src"))?;
         let source = format!(
-            "{}{}{}",
+            "{}{}{}{}{}",
             r#"#![allow(dead_code)]
 #[cfg(test)]
 static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -134,6 +139,16 @@ mod model {
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 }
+#[path = "#,
+            python_json(
+                &repo
+                    .join("Linux/crates/app-ports/src/identity.rs")
+                    .to_string_lossy()
+                    .into_owned()
+                    .into()
+            ),
+            r#"]
+mod identity;
 #[path = "#,
             python_json(
                 &repo
