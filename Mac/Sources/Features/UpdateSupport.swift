@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import RemoteCore
+import TexDomain
 
 /// Self-update — checks GitHub Releases, downloads the macOS DMG, replaces
 /// the installed app, and relaunches. Mirrors the Rust `update` module used

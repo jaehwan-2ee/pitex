@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import RemoteCore
+import TexDomain
 
 /// Filesystem locations for the embedded Pitex Agent. Installing Pitex
 /// provides a private pi home under Application Support — independent of any

@@ -575,7 +575,8 @@ mod tests {
         let _cleanup = Cleanup(root.clone(), old_path, old_tmpdir);
         let pkexec = root.join("pkexec");
         let observed = root.join("staged-path");
-        std::fs::write(&pkexec, format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'apt install -y' ] && [ -r \"$4\" ] || exit 1\ncase \"$4\" in /tmp/pitex-update-*/pitex.deb) ;; *) exit 1;; esac\n[ \"$(/usr/bin/stat -c %a \"${{4%/*}}\")\" = 755 ] || exit 1\n[ \"$(/usr/bin/stat -c %a \"$4\")\" = 644 ] || exit 1\nprintf '%s' \"$4\" > {}\n", shell_quote(&observed.to_string_lossy()))).unwrap();
+        let id = crate::identity::current();
+        std::fs::write(&pkexec, format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'apt install -y' ] && [ -r \"$4\" ] || exit 1\ncase \"$4\" in /tmp/{}-update-*/{}.deb) ;; *) exit 1;; esac\n[ \"$(/usr/bin/stat -c %a \"${{4%/*}}\")\" = 755 ] || exit 1\n[ \"$(/usr/bin/stat -c %a \"$4\")\" = 644 ] || exit 1\nprintf '%s' \"$4\" > {}\n", id.temp_prefix, id.linux_package_name, shell_quote(&observed.to_string_lossy()))).unwrap();
         std::fs::set_permissions(&pkexec, std::fs::Permissions::from_mode(0o755)).unwrap();
         let query = root.join("dpkg-query");
         let package = root.join("update.deb");

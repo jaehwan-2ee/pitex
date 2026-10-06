@@ -13,7 +13,6 @@ import LanguageCore
 import MacPlatform
 import ProjectCore
 import ProjectFeature
-import RemoteCore
 import SyncTeXCore
 import SwiftUI
 import TexDomain

@@ -119,8 +119,13 @@ mod tests {
     }
 
     #[test]
-    fn current_is_stable_when_env_unset() {
-        assert!(!current().is_nightly);
-        assert_eq!(current().display_name, "Pitex");
+    fn current_matches_compile_time_channel() {
+        if option_env!("PITEX_CHANNEL") == Some("nightly") {
+            assert!(current().is_nightly);
+            assert_eq!(current().display_name, "Pitex Nightly");
+        } else {
+            assert!(!current().is_nightly);
+            assert_eq!(current().display_name, "Pitex");
+        }
     }
 }

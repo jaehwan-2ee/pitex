@@ -545,6 +545,7 @@ impl WindowsDefaultEditorRegistration {
 mod windows_platform_tests {
     use super::*;
     use app_ports::FileCapabilityBroker;
+    use app_ports::identity;
 
     #[test]
     fn shell_targets_preserve_unicode_and_metacharacters_without_command_parsing() {
@@ -569,9 +570,10 @@ mod windows_platform_tests {
 
     #[test]
     fn user_choice_requires_the_exact_case_insensitive_progid() {
+        let prefix = identity::current().windows_progid_prefix;
         for extension in [".tex", ".bib", ".md", ".markdown"] {
             assert!(!WindowsDefaultEditorRegistration::user_choice_is_other(
-                &format!("HKCU\\FileExts\\{extension}\\UserChoice\r\n    ProgId    REG_SZ    PITEX{extension}\r\n"), extension,
+                &format!("HKCU\\FileExts\\{extension}\\UserChoice\r\n    ProgId    REG_SZ    {prefix}{extension}\r\n"), extension,
             ));
             for other in ["Other.Editor", "PitexOld.Editor"] {
                 assert!(WindowsDefaultEditorRegistration::user_choice_is_other(

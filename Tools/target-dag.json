@@ -72,7 +72,8 @@
   "RemoteCore": {
    "package": "Packages/TexCore",
    "dependencies": [
-    "BuildCore"
+    "BuildCore",
+    "TexDomain"
    ]
   },
   "ParityKit": {

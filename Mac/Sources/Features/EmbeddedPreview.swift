@@ -2,7 +2,7 @@ import BuildFeature
 import Darwin
 import DocumentSessionCore
 import Foundation
-import RemoteCore
+import TexDomain
 
 // Embedded editing preview — the macOS client of the `pitex-preview` helper
 // (TeXpresso-derived checkpointing XeTeX engine + Pitex XDV→PDF writer; see

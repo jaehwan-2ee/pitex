@@ -5,7 +5,6 @@ import Foundation
 import LanguageCore
 import ProjectCore
 import ProjectFeature
-import RemoteCore
 import SettingsFeature
 import TexDomain
 

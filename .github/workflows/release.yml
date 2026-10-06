@@ -274,6 +274,7 @@ jobs:
           make -C PreviewEngine BUILD_DIR="$PWD/Linux/target/preview-engine"
           strip --strip-unneeded Linux/target/preview-engine/bin/pitex-preview*
       - name: Build deb (compat variant)
+        shell: bash
         run: |
           set -euo pipefail
           if [ "$PITEX_CHANNEL" = "nightly" ]; then
@@ -289,6 +290,7 @@ jobs:
           fi
         working-directory: Linux
       - name: Rename artifact
+        shell: bash
         run: |
           set -euo pipefail
           if [ "$PITEX_CHANNEL" = "nightly" ]; then
