@@ -77,17 +77,14 @@ jobs:
           set -euo pipefail
           if [ "$PITEX_CHANNEL" = "nightly" ]; then
             python3 Tools/patch-nightly-info-plist.py "$PITEX_VERSION"
-            xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
-              -configuration Release -derivedDataPath build \
-              -skipPackagePluginValidation -skipMacroValidation \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
-              PRODUCT_NAME="Pitex Nightly" \
-              PRODUCT_BUNDLE_IDENTIFIER="app.pitex.desktop.nightly"
-          else
-            xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
-              -configuration Release -derivedDataPath build \
-              -skipPackagePluginValidation -skipMacroValidation \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+          fi
+          xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
+            -configuration Release -derivedDataPath build \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+          if [ "$PITEX_CHANNEL" = "nightly" ]; then
+            mv "build/Build/Products/Release/Pitex.app" \
+              "build/Build/Products/Release/$PITEX_DISPLAY_NAME.app"
           fi
       - name: Verify bundled agent skills in the macOS app
         run: node Tools/check-bundled-skills.mjs --package-root "build/Build/Products/Release/$PITEX_DISPLAY_NAME.app/Contents/Resources/PitexAgent"
