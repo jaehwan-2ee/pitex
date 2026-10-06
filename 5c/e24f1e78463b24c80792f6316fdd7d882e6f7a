@@ -1,0 +1,21 @@
+.github/workflows/nightly.yml
+  s_565ea452961ba9::t_4021ec02bfe081 150
+Tools/check-nightly-publish.sh
+  s_565ea452961ba9::t_c8daf6fe147fd7 99-108,112,230,234-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ce24f1e78463b24c80792f6316fdd7d882e6f7a",
+  "prompts": {},
+  "sessions": {
+    "s_565ea452961ba9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_565ea452961ba9",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
