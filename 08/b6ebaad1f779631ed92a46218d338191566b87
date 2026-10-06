@@ -1,0 +1,37 @@
+.github/workflows/release.yml
+  s_412f5d2e8d1e8f::t_bf6cd1aa0b9c9a 277,293
+Linux/crates/app-ports/src/identity.rs
+  s_412f5d2e8d1e8f::t_38e1164dc1260d 122-129
+Linux/crates/pitex-shell/src/update.rs
+  s_412f5d2e8d1e8f::t_4eb25ae4493d69 578-579
+Mac/Sources/Features/EmbeddedPreview.swift
+  s_412f5d2e8d1e8f::t_4ddf43017bbe42 5
+Mac/Sources/Features/PiAuthStore.swift
+  s_412f5d2e8d1e8f::t_8a5d509968b8ff 3
+Mac/Sources/Features/UpdateSupport.swift
+  s_412f5d2e8d1e8f::t_331ee5b372105d 3
+Tools/Native/src/bin/check-updates.rs
+  s_412f5d2e8d1e8f::t_8de397b20c8aa1 86-89,102-103,127,142-151
+Tools/rust-target-dag.json
+  s_412f5d2e8d1e8f::t_534610c18f7dea 139-140
+Tools/target-dag.json
+  s_412f5d2e8d1e8f::t_206cafceba13df 75-76
+Windows/crates/windows-platform/src/lib.rs
+  s_412f5d2e8d1e8f::t_a2f919f34378b8 548,573,576
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08b6ebaad1f779631ed92a46218d338191566b87",
+  "prompts": {},
+  "sessions": {
+    "s_412f5d2e8d1e8f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_412f5d2e8d1e8f",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
