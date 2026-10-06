@@ -1,0 +1,25 @@
+.github/workflows/ci.yml
+  s_1bb04105c6ad3c::t_f2cc14f3a264bb 42-43
+.github/workflows/nightly.yml
+  s_1bb04105c6ad3c::t_ea447f031e6352 95,122,124-125,178
+Tools/check-nightly-publish.sh
+  s_1bb04105c6ad3c::t_df87314c12febc 1-209
+Tools/verify-workflow-yaml.rb
+  s_1bb04105c6ad3c::t_18617e7805684a 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2664b4ab4283541bdd86c9b9a750a63f2d5337a0",
+  "prompts": {},
+  "sessions": {
+    "s_1bb04105c6ad3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_1bb04105c6ad3c",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
