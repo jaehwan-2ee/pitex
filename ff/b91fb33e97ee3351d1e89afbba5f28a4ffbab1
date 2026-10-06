@@ -1,0 +1,121 @@
+Docs/installation/README.md
+  s_f4a0596f3fc0bb::t_a3d6b37df33996 127-172
+Linux/crates/pitex-shell/src/agent.rs
+  s_4f67648951bdf1::t_5f9071158c2833 38,135-136,152-153,2862-2863
+README.md
+  s_f4a0596f3fc0bb::t_4711fd89d71833 119-130
+.github/workflows/nightly.yml
+  s_f4a0596f3fc0bb::t_fae10336bf6bdc 1-206
+.github/workflows/release.yml
+  s_f4a0596f3fc0bb::t_f6721a2ae71b17 8-28,33-40,53-54,77-91,93,101,108,162-163,169-175,214-230,234-241,277-289,293-300,379-386,389-391,396-399,405,411-412,446,448-453,462-465,477,479-484,487-491,496-499,502,508-509,633-638,661,669,674,690-696,708,714,719,725,738,741,755-756,759
+Linux/Cargo.lock
+  s_f4a0596f3fc0bb::t_f57eb64a9c2661 1131
+Linux/crates/app-ports/src/identity.rs
+  s_f4a0596f3fc0bb::t_0e4f3d209d3b2e 1-126
+Linux/crates/app-ports/src/lib.rs
+  s_f4a0596f3fc0bb::t_295489dc3fc65b 10-11
+Linux/crates/build-core/src/equation_exact.rs
+  s_f4a0596f3fc0bb::t_bfefadcb0acb4c 236-237,250,257,263-264,267,276-277,282,318,417,420
+Linux/crates/build-core/tests/equation_exact.rs
+  s_f4a0596f3fc0bb::t_03764360e13bfa 118,124,178-179,209,241,267
+Linux/crates/linux-platform/src/lib.rs
+  s_f4a0596f3fc0bb::t_c978aba9454a7b 358-360,382,415-416,418-419,421,437
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_f4a0596f3fc0bb::t_8abf170bfde391 43-45,389,792-793,2514,5315,5475
+Linux/crates/pitex-shell/src/embedded_preview.rs
+  s_f4a0596f3fc0bb::t_69db21e58d3fe2 309,331,333,339,671-672
+Linux/crates/pitex-shell/src/equation_preview.rs
+  s_f4a0596f3fc0bb::t_d7a472fdfae51c 509-512,519-522,967-973,1630-1633
+Linux/crates/pitex-shell/src/equation_preview/webview2.rs
+  s_f4a0596f3fc0bb::t_92d65c9ea6e376 294
+Linux/crates/pitex-shell/src/lib.rs
+  s_f4a0596f3fc0bb::t_0dc6f172ceb80b 13
+Linux/crates/pitex-shell/src/markdown_preview/webview2.rs
+  s_f4a0596f3fc0bb::t_f00c73b061d41e 297,299,499
+Linux/crates/pitex-shell/src/settings.rs
+  s_f4a0596f3fc0bb::t_72626075676a9b 21
+Linux/crates/pitex-shell/src/update.rs
+  s_f4a0596f3fc0bb::t_c593eead3c6a9d 76,82-121,127-134,138,227,247,249,267,317-320,327-328,368,391,394-395,423,504-533,635-641
+Linux/crates/pitex-shell/src/window_ipc.rs
+  s_f4a0596f3fc0bb::t_b1b58de33fbfa4 49,148
+Linux/crates/pitex/Cargo.toml
+  s_f4a0596f3fc0bb::t_b2ee45b0c452f2 215-364
+Linux/crates/pitex/src/main.rs
+  s_f4a0596f3fc0bb::t_fc2ace16c713b8 7-9
+Linux/crates/remote-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_5d72b2db7b37ab 11
+Linux/crates/remote-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_ef0548a0771d1c 16,729,735,738,741,1179-1180,1188
+Linux/packaging/apparmor/pitex-nightly
+  s_f4a0596f3fc0bb::t_b3501d41317459 1-12
+Linux/packaging/debian-nightly/postinst
+  s_f4a0596f3fc0bb::t_2a704cbf074815 1-23
+Linux/packaging/debian-nightly/postrm
+  s_f4a0596f3fc0bb::t_487d87e6ab8125 1-24
+Linux/packaging/dev.pitex.app.nightly.desktop
+  s_f4a0596f3fc0bb::t_5a99cec990ad48 1-10
+Mac/Config/Info.plist
+  s_f4a0596f3fc0bb::t_d8b3b2424cd9c1 20,22
+Mac/Sources/AppShell/PitexApp.swift
+  s_f4a0596f3fc0bb::t_232d2265b390da 205,457,3011
+Mac/Sources/Features/BuildSupport.swift
+  s_f4a0596f3fc0bb::t_b957fd0f330eed 8,105
+Mac/Sources/Features/EmbeddedPreview.swift
+  s_f4a0596f3fc0bb::t_071f39f8661a03 5,125,650-651,855
+Mac/Sources/Features/PiAuthStore.swift
+  s_f4a0596f3fc0bb::t_6525c4304f53b5 3,18
+Mac/Sources/Features/UpdateSupport.swift
+  s_f4a0596f3fc0bb::t_8dab20b7d9af3d 3,34-37,98,112-122,133-154,217-219,226,233,264,274,277,295
+Packages/TexCore/Package.swift
+  s_f4a0596f3fc0bb::t_5a11d9287bda50 43
+Packages/TexCore/Sources/BuildCore/EquationExactRenderer.swift
+  s_f4a0596f3fc0bb::t_797195311f006d 2,166-167,173,176,178
+Packages/TexCore/Sources/RemoteCore/RemoteSync.swift
+  s_f4a0596f3fc0bb::t_7e70d3eba9bac0 2,49,53
+Packages/TexCore/Sources/RemoteCore/SSHClient.swift
+  s_f4a0596f3fc0bb::t_9574169e674c24 2,139
+Packages/TexCore/Sources/TexDomain/AppIdentity.swift
+  s_f4a0596f3fc0bb::t_13686ed21ab6af 1-59
+Packages/TexCore/Tests/TexCoreTests/AppIdentityTests.swift
+  s_f4a0596f3fc0bb::t_bc40b64d10c5bc 1-29
+Tools/check-deb-install.sh
+  s_f4a0596f3fc0bb::t_f39035cca6e8bd 9-24,30-42,44,46-47,51,61-79,81-83,87,92-95,97-115
+Tools/install-deb.sh
+  s_f4a0596f3fc0bb::t_c537a45cc4c3c7 14-22,24,28-29,33,35
+Tools/patch-nightly-info-plist.py
+  s_f4a0596f3fc0bb::t_5cab6393be1409 1-92
+Windows/Cargo.lock
+  s_f4a0596f3fc0bb::t_ee6c398be50695 1224
+Windows/build.sh
+  s_f4a0596f3fc0bb::t_86f429acbc7319 19-33,45,72-73,130,155,169-176
+Windows/crates/pitex-windows/src/main.rs
+  s_f4a0596f3fc0bb::t_1eed23dddf8323 17-19
+Windows/crates/windows-platform/src/lib.rs
+  s_f4a0596f3fc0bb::t_31cfe013371794 25,445-446,457,493
+Windows/pitex.nsi
+  s_f4a0596f3fc0bb::t_3a911eccb6496b 3-6,8,24-35,37,40-41,47-48,62,68-75,77,79,81,83-85,87,91,96,99-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ffb91fb33e97ee3351d1e89afbba5f28a4ffbab1",
+  "prompts": {},
+  "sessions": {
+    "s_4f67648951bdf1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a105fc-1f78-7493-a6cd-400a1cce3d23",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    },
+    "s_f4a0596f3fc0bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2d87f6d-c72a-4c4b-b71d-5ff86518371b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
