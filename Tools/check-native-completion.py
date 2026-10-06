@@ -57,34 +57,80 @@ import SwiftUI
     }
 }
 
+/// A fixed delay, or a minimum delay followed by a bounded wait for a
+/// positive condition (a provider result for the current context).
+struct StepDelay: ExpressibleByFloatLiteral {
+    let min: TimeInterval
+    let timeout: TimeInterval
+    let condition: (@MainActor () -> Bool)?
+    let label: String
+    let diagnostic: (@MainActor () -> String)?
+    init(floatLiteral value: Double) {
+        self.min = value
+        self.timeout = 0
+        self.condition = nil
+        self.label = ""
+        self.diagnostic = nil
+    }
+    init(gated min: TimeInterval, timeout: TimeInterval, condition: @escaping @MainActor () -> Bool,
+         label: String, diagnostic: @escaping @MainActor () -> String = { "" }) {
+        self.min = min
+        self.timeout = timeout
+        self.condition = condition
+        self.label = label
+        self.diagnostic = diagnostic
+    }
+}
+
 /// Runs the stage list as chained one-shot timers. Each step's timer fires
 /// in .common and .eventTracking modes; on fire the NEXT step is armed
 /// before the current action runs, so if an action enters a nested
 /// event-tracking loop the following steps still deliver on time.
 @MainActor final class CompletionDriver {
-    var steps: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
+    var steps: [(delay: StepDelay, action: @MainActor () -> Void)] = []
     private var cursor = 0
     var done = false
-    func scheduleNext() {
-        guard cursor < steps.count else { return }
-        let index = cursor
-        cursor += 1
-        let timer = Timer(timeInterval: steps[index].delay, repeats: false) { _ in
-            MainActor.assumeIsolated {
-                self.scheduleNext()
-                self.steps[index].action()
-            }
+    private func arm(_ delay: TimeInterval, _ body: @escaping @MainActor () -> Void) {
+        let timer = Timer(timeInterval: delay, repeats: false) { _ in
+            MainActor.assumeIsolated { body() }
         }
         RunLoop.main.add(timer, forMode: .common)
         RunLoop.main.add(timer, forMode: .eventTracking)
     }
+    func scheduleNext() {
+        guard cursor < steps.count else { return }
+        let index = cursor
+        cursor += 1
+        let step = steps[index]
+        if step.delay.condition != nil {
+            let deadline = ContinuousClock.now + .seconds(step.delay.min + step.delay.timeout)
+            arm(step.delay.min) { self.pollGate(index: index, deadline: deadline) }
+        } else {
+            arm(step.delay.min) {
+                self.scheduleNext()
+                self.steps[index].action()
+            }
+        }
+    }
+    private func pollGate(index: Int, deadline: ContinuousClock.Instant) {
+        let step = steps[index].delay
+        if step.condition?() ?? true {
+            self.scheduleNext()
+            self.steps[index].action()
+            return
+        }
+        guard ContinuousClock.now < deadline else {
+            print("[gate timeout] \(step.label) \(step.diagnostic?() ?? "")")
+            fflush(nil)
+            self.scheduleNext()
+            self.steps[index].action()
+            return
+        }
+        arm(0.05) { self.pollGate(index: index, deadline: deadline) }
+    }
     /// Arms an ad-hoc step outside the linear chain (bounded retries).
     func scheduleAfter(_ delay: TimeInterval, _ action: @escaping @MainActor () -> Void) {
-        let timer = Timer(timeInterval: delay, repeats: false) { _ in
-            MainActor.assumeIsolated { action() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        RunLoop.main.add(timer, forMode: .eventTracking)
+        arm(delay, action)
     }
 }
 
@@ -159,12 +205,16 @@ import SwiftUI
         // activateDocument) without replacing it: nil = no context, [] =
         // in-context but no matches, [x…] = offered candidates.
         var sourceQueries = 0
+        var lastQueryText = ""
+        var lastQueryCaret = 0
         var lastCandidates: [String]? = nil
         let innerSource = editor.completionSource
         require(innerSource != nil, "activateDocument must attach the real completion provider")
         editor.completionSource = { text, caret in
             sourceQueries += 1
             let result = innerSource?(text, caret)
+            lastQueryText = text
+            lastQueryCaret = caret
             lastCandidates = result?.candidates
             return result
         }
@@ -322,6 +372,26 @@ import SwiftUI
             require(CompleteRecorder.activeCalls == 0 && !popupVisible(),
                     "\(label): popup must be closed, depth=\(CompleteRecorder.activeCalls)")
         }
+        /// Gate condition: a provider query has landed for the current editor
+        /// context and, when requested, a visible popup is tracking.
+        func gate(_ suffix: String, requireVisible: Bool = false) -> Bool {
+            guard textView.string.hasSuffix(suffix) else { return false }
+            guard lastQueryText == textView.string && lastQueryCaret == textView.selectedRange().location else { return false }
+            if requireVisible {
+                return CompleteRecorder.activeCalls == 1 && popupVisible()
+            }
+            return true
+        }
+        func gateInfo() -> String {
+            "lastQueryText=\(lastQueryText.debugDescription) lastQueryCaret=\(lastQueryCaret) "
+                + "textTail=\(String(textView.string.suffix(24)).debugDescription) currentCaret=\(textView.selectedRange().location) "
+                + "calls=\(CompleteRecorder.calls) activeCalls=\(CompleteRecorder.activeCalls)"
+        }
+        func gated(_ min: TimeInterval, _ suffix: String, visible: Bool = false,
+                   _ action: @escaping @MainActor () -> Void) -> (delay: StepDelay, action: @MainActor () -> Void) {
+            (StepDelay(gated: min, timeout: 10, condition: { gate(suffix, requireVisible: visible) },
+                       label: suffix, diagnostic: gateInfo), action)
+        }
 
         func tail() -> String { String(textView.string.suffix(24)) }
         func literal(_ expected: String, _ label: String) {
@@ -426,7 +496,7 @@ import SwiftUI
                     heartbeat += 1
                 }
             }),
-            (0.9, {
+            gated(0.9, "\\in", visible: true) {
                 require(lastCandidates?.contains("\\include") == true
                         && lastCandidates?.contains("\\input") == true,
                         "\\in must offer include+input, got \(String(describing: lastCandidates))")
@@ -436,14 +506,14 @@ import SwiftUI
                 require(workspace.documentSnapshot?.text == textView.string,
                         "prefix edit must reach documentSnapshot within 1s of automatic popup visibility")
                 stage("\\in stayed literal with multiple candidates")
-            }),
+            },
             // C: backspace to '\', then 'x' — a zero-match prefix opens no
             // popup and never sees dictionary words.
             (0.05, { key(backspace.code, chars: backspace.chars)
                      key(backspace.code, chars: backspace.chars) }),
             (0.4, { literal("\\", "after backspacing 'in'") }),
             (0.05, { callsBeforeUnknown = CompleteRecorder.calls; type("x") }),
-            (0.4, {
+            gated(0.4, "\\x") {
                 literal("\\x", "unknown prefix")
                 require(lastCandidates == [],
                         "\\x is a valid context with zero matches — must not see English words, "
@@ -451,7 +521,7 @@ import SwiftUI
                 require(CompleteRecorder.calls == callsBeforeUnknown,
                         "zero candidates must not open the popup")
                 stage("\\x unknown prefix: no popup, no dictionary words")
-            }),
+            },
             (0.05, { key(96, chars: "\u{F708}", mods: [.function]) }),
             (0.7, {
                 literal("\\x", "manual F5 unknown prefix")
@@ -461,13 +531,13 @@ import SwiftUI
             }),
             // D: single-candidate prefix also stays literal.
             (0.05, { key(backspace.code, chars: backspace.chars); type("doc") }),
-            (0.4, {
+            gated(0.4, "\\doc", visible: true) {
                 require(lastCandidates == ["\\documentclass"],
                         "\\doc must offer only \\documentclass, got \(String(describing: lastCandidates))")
                 literal("\\doc", "single-candidate prefix")
                 requirePopup("singleton documentclass")
                 stage("\\doc single candidate stayed literal")
-            }),
+            },
             // E: Down selects the candidate, Escape restores the original
             // prefix+caret; then wait past the debounce — no reinsertion.
             (0.05, {
@@ -508,27 +578,27 @@ import SwiftUI
             // candidates; a custom key is retained; unique key accepted.
             (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
             (0.1, { type("\\ref{se") }),
-            (0.4, {
+            gated(0.4, "\\ref{se") {
                 require(lastCandidates?.contains("sec:intro") == true
                         && lastCandidates?.contains("sec:end") == true,
                         "\\ref{se must offer both labels, got \(String(describing: lastCandidates))")
                 literal("\\ref{se", "ref prefix")
-            }),
+            },
             (0.05, { key(backspace.code, chars: backspace.chars); type("zz") }),
-            (0.4, {
+            gated(0.4, "\\ref{szz") {
                 literal("\\ref{szz", "custom ref key")
                 require(lastCandidates == [],
                         "zero-match ref key must not see dictionary words, "
                         + "got \(String(describing: lastCandidates))")
-            }),
+            },
             (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
             (0.1, { type("\\ref{sec:i") }),
-            (0.4, {
+            gated(0.4, "\\ref{sec:i", visible: true) {
                 require(lastCandidates == ["sec:intro"],
                         "\\ref{sec:i must offer only sec:intro, got \(String(describing: lastCandidates))")
                 literal("\\ref{sec:i", "unique ref prefix")
                 requirePopup("automatic unique ref")
-            }),
+            },
             (0.2, { key(down.code, chars: down.chars) }),
             (0.1, { key(ret.code, chars: ret.chars) }),
             (0.4, {
@@ -541,7 +611,7 @@ import SwiftUI
             // from the unselected Return which must insert a newline.
             (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
             (0.1, { type("\\ref{sec:end") }),
-            (0.4, {
+            gated(0.4, "\\ref{sec:end", visible: true) {
                 require(lastCandidates == ["sec:end", "sec:endmore"],
                         "exact-match fixture must retain both candidates, got \(String(describing: lastCandidates))")
                 literal("\\ref{sec:end", "exact ref prefix")
@@ -550,7 +620,7 @@ import SwiftUI
                 exactMatchSelection = textView.selectedRange()
                 finalInsertionsBeforeExactMatch = CompleteRecorder.finalInsertions
                 key(down.code, chars: down.chars)
-            }),
+            },
             (0.1, { key(ret.code, chars: ret.chars) }),
             (0.1, {
                 require(CompleteRecorder.finalInsertions == finalInsertionsBeforeExactMatch + 1,
@@ -573,18 +643,18 @@ import SwiftUI
             // backspace + a custom key is retained, no word leak.
             (0.05, { key(escape.code, chars: escape.chars); type("\n") }),
             (0.1, { type("\\cite{kn") }),
-            (0.4, {
+            gated(0.4, "\\cite{kn") {
                 require(lastCandidates == ["knuth84"],
                         "\\cite{kn must offer knuth84, got \(String(describing: lastCandidates))")
                 literal("\\cite{kn", "cite prefix")
-            }),
+            },
             (0.05, { key(backspace.code, chars: backspace.chars); type("zz") }),
-            (0.4, {
+            gated(0.4, "\\cite{kzz") {
                 literal("\\cite{kzz", "custom cite key")
                 require(lastCandidates == [],
                         "zero-match cite key must not see dictionary words, "
                         + "got \(String(describing: lastCandidates))")
-            }),
+            },
             // Unicode before the cite — a surrogate pair shifts UTF-16
             // offsets; only the current key token may be replaced. The
             // queued Escape/newline must be delivered before the emoji's
@@ -594,22 +664,22 @@ import SwiftUI
                 textView.insertText("😀", replacementRange: NSRange(location: NSNotFound, length: 0))
                 type("\\cite{kn")
             }),
-            (0.4, {
+            gated(0.4, "😀\\cite{kn", visible: true) {
                 require(lastCandidates == ["knuth84"],
                         "\\cite{kn must offer knuth84, got \(String(describing: lastCandidates))")
                 literal("😀\\cite{kn", "cite after Unicode")
                 requirePopup("automatic cite after Unicode")
-            }),
+            },
             (0.2, { key(down.code, chars: down.chars) }),
             (0.1, { key(ret.code, chars: ret.chars) }),
             (0.4, { literal("😀\\cite{knuth84", "cite accept after Unicode") }),
             (0.05, { type(",l") }),
-            (0.4, {
+            gated(0.4, "😀\\cite{knuth84,l", visible: true) {
                 require(lastCandidates == ["lamport94"],
                         "second cite key must offer lamport94, got \(String(describing: lastCandidates))")
                 literal("😀\\cite{knuth84,l", "multi-cite prefix")
                 requirePopup("automatic second cite token")
-            }),
+            },
             (0.2, { key(down.code, chars: down.chars) }),
             (0.1, { key(ret.code, chars: ret.chars) }),
             (0.4, {
