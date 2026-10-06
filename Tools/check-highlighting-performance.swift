@@ -312,6 +312,24 @@ enum AppearanceColorRole { case bodyText, commands, comments, braces, environmen
             old.attach(to: before, fileExtension: ext); new.attach(to: after, fileExtension: ext)
             checkColors()
         }
+        // Markdown is not tokenized, but text loaded with another color must
+        // still take the body color, including LaTeX-looking spans and edits.
+        let markdown = "# Title \\section{x} $math$ % not a comment\n\nBody 한글 👩🏽‍💻.\n"
+        after.textView.string = markdown
+        after.textView.textStorage!.addAttribute(.foregroundColor, value: NSColor.white,
+            range: NSRange(location: 0, length: after.textView.textStorage!.length))
+        new.attach(to: after, fileExtension: "md")
+        func requireBodyColor(_ label: String) {
+            let storage = after.textView.textStorage!
+            let body = AppearanceSettings.shared.color(for: .bodyText)
+            storage.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+                precondition(value as? NSColor == body, "\(label): Markdown text at \(range) is not body-colored")
+            }
+        }
+        requireBodyColor("loaded")
+        after.textView.textStorage!.replaceCharacters(in: NSRange(location: 2, length: 0), with: "\\cmd ")
+        new.highlightNow()
+        requireBodyColor("edited")
         // Seeded random edits: identical inserts/deletes/replaces on both
         // views, rehighlighting after each batch, attribute state compared
         // over the whole document every round.
