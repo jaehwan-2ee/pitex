@@ -559,13 +559,14 @@ jobs:
         run: |
           set -e
           sudo apt-get update -qq
-          # The repository's first release has no earlier deb to upgrade from.
-          if ! gh release download --repo "$GITHUB_REPOSITORY" \
+          # The repository's first release has no earlier deb; it still
+          # installs this deb so the profile checks below run.
+          if gh release download --repo "$GITHUB_REPOSITORY" \
               --pattern '*-ubuntu24.04-amd64.deb' --dir /tmp/pitex-previous; then
-            echo "::notice::No earlier release; upgrade path skipped."
-            exit 0
+            sudo apt-get install -y /tmp/pitex-previous/*.deb
+          else
+            echo "::notice::No earlier release; installing this deb without an upgrade."
           fi
-          sudo apt-get install -y /tmp/pitex-previous/*.deb
           # An earlier deb can lack newer dependencies; install the new deb via
           # apt so they resolve, and so a conffile prompt would block on the
           # closed stdin. Log dpkg options so a force-conf default cannot
