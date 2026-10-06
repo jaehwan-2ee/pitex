@@ -3,6 +3,8 @@ name: Nightly
 on:
   schedule:
     - cron: '0 18 * * *'
+  push:
+    branches: [fix/nightly-call-permissions]
   workflow_dispatch:
     inputs:
       force:
