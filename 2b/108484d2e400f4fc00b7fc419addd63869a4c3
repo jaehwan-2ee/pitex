@@ -1,0 +1,21 @@
+.github/workflows/release.yml
+  s_17cc9b1bb4459c::t_67d0bf1a6f431f 80-87
+Tools/patch-nightly-info-plist.py
+  s_17cc9b1bb4459c::t_0b81ae2aac36e7 2,4,40,51-62,75-77,82-90,94,104-107,116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b108484d2e400f4fc00b7fc419addd63869a4c3",
+  "prompts": {},
+  "sessions": {
+    "s_17cc9b1bb4459c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_17cc9b1bb4459c",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
