@@ -45,16 +45,26 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
           # Skip if the current nightly tag already points at this commit and force is not set.
-          PREV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
-          echo "previous_sha=${PREV_SHA:-}" >> "$GITHUB_OUTPUT"
+          if PREV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null); then
+            if ! [[ "$PREV_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              PREV_SHA=""
+            fi
+          else
+            PREV_SHA=""
+          fi
+          echo "previous_sha=${PREV_SHA}" >> "$GITHUB_OUTPUT"
           if [ "${{ inputs.force }}" != "true" ] && [ "$PREV_SHA" = "$SHA" ]; then
             echo "::warning::Current nightly already at ${SHA}; skipping."
             exit 0
           fi
 
           # Require the CI workflow to have completed successfully for this commit.
-          CI_RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
-            | jq -r --arg sha "$SHA" '.workflow_runs[0] | select(.status == "completed" and .conclusion == "success" and .head_sha == $sha) | .id')
+          if CI_RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+            | jq -r --arg sha "$SHA" '.workflow_runs[0] | select(.status == "completed" and .conclusion == "success" and .head_sha == $sha) | .id'); then
+            :
+          else
+            CI_RUN=""
+          fi
           if [ -z "$CI_RUN" ]; then
             echo "::warning::No successful CI run for ${SHA}; skipping nightly."
             exit 0
@@ -122,14 +132,15 @@ jobs:
             --arg published_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{version: $version, commit: $commit, published_at: $published_at}' \
             > dist/nightly.json
-          cat > dist/nightly-notes.md <<EOF
+          NOTES_FILE="${RUNNER_TEMP}/nightly-notes.md"
+          cat > "$NOTES_FILE" <<EOF
           Pitex Nightly ${VERSION}
 
           Commit: ${SHA}
           EOF
           if [ -n "$PREV_SHA" ]; then
             echo "Compare to previous nightly: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_SHA}...${SHA}" \
-              >> dist/nightly-notes.md
+              >> "$NOTES_FILE"
           fi
       - name: Move the nightly tag via API
         run: |
@@ -144,26 +155,29 @@ jobs:
       - name: Create or update the nightly prerelease
         run: |
           set -euo pipefail
+          NOTES_FILE="${RUNNER_TEMP}/nightly-notes.md"
           if ! gh release view nightly >/dev/null 2>&1; then
             gh release create nightly \
               --prerelease \
               --target "$SHA" \
               --title "Pitex Nightly ${VERSION}" \
-              --notes-file dist/nightly-notes.md
+              --notes-file "$NOTES_FILE"
           else
             gh release edit nightly \
               --prerelease \
               --title "Pitex Nightly ${VERSION}" \
-              --notes-file dist/nightly-notes.md
+              --notes-file "$NOTES_FILE"
           fi
           # Upload first so the release is never empty, then remove stale assets.
           gh release upload nightly dist/* --clobber
           NEW_NAMES=$(ls dist | sort)
-          for asset in $(gh release view nightly --json assets -q '.assets[].name' | sort); do
-            if ! grep -qx "$asset" <<<"$NEW_NAMES"; then
-              gh release delete-asset nightly "$asset" -y
-            fi
-          done
+          if assets=$(gh release view nightly --json assets -q '.assets[].name' 2>/dev/null); then
+            for asset in $(printf '%s' "$assets" | sort); do
+              if ! grep -qx "$asset" <<<"$NEW_NAMES"; then
+                gh release delete-asset nightly "$asset" -y
+              fi
+            done
+          fi
       - name: Update Homebrew nightly cask
         if: env.HOMEBREW_TAP_TOKEN != ''
         env:
@@ -174,7 +188,13 @@ jobs:
           [ -f "$DMG" ] || { echo "DMG artifact missing; cannot update cask" >&2; exit 1; }
           SHA256=$(sha256sum "$DMG" | cut -d' ' -f1)
           CASK_PATH="Casks/pitex@nightly.rb"
-          CASK_SHA=$(gh api "repos/jaehwan-2ee/homebrew-tap/contents/${CASK_PATH}" -q .sha 2>/dev/null || true)
+          if CASK_SHA=$(gh api "repos/jaehwan-2ee/homebrew-tap/contents/${CASK_PATH}" -q .sha 2>/dev/null); then
+            if ! [[ "$CASK_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              CASK_SHA=""
+            fi
+          else
+            CASK_SHA=""
+          fi
           if [ -n "$CASK_SHA" ]; then
             gh api "repos/jaehwan-2ee/homebrew-tap/contents/${CASK_PATH}" -q .content > cask.b64
             base64 -d cask.b64 > pitex-nightly.rb
