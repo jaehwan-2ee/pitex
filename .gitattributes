@@ -1,0 +1,5 @@
+PreviewEngine/licenses/Rust-standard-library-COPYRIGHT.html -whitespace
+
+# Bundled skill provenance hashes the upstream bytes. Keep identical LF
+# payloads on Windows as well as macOS/Linux, including Python helpers.
+Mac/Resources/PitexAgent/** text eol=lf

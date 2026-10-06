@@ -1,0 +1,26 @@
+{
+  "components": [
+    {
+      "name": "@earendil-works/pi-coding-agent",
+      "version": "1.0.2",
+      "type": "application",
+      "repository": "https://github.com/earendil-works/pi",
+      "revision": "v1.0.2",
+      "copyright": "Copyright (c) 2025 Mario Zechner",
+      "license": "MIT",
+      "licenseFile": "licenses/pi-MIT.txt",
+      "licenseSha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+    },
+    {
+      "name": "humanizer",
+      "version": "3.0.0",
+      "type": "data",
+      "repository": "https://github.com/blader/humanizer",
+      "revision": "9862685f575c65a8247f90369951df1b3416e3d6",
+      "copyright": "Copyright (c) 2025 Siqi Chen",
+      "license": "MIT",
+      "licenseFile": "skills/humanizer/LICENSE.md",
+      "licenseSha256": "4ac4810254ab36d45419141aeb8e69bf50652cfafe5b2dab947d06d44e5cbf96"
+    }
+  ]
+}

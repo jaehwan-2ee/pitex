@@ -1,0 +1,9 @@
+[package]
+name = "parity-kit"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tex-domain = { path = "../tex-domain" }

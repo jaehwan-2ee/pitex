@@ -1,0 +1,2326 @@
+{
+  "schema_version": 2,
+  "purpose": "Public names from the current manual formal syntax, plus runtime legacy commands. Registration and availability do not imply semantic equivalence. Evidence links name regression cases whose passing results preview-audit-pdftex-vocabulary verifies; they are reviewed claims, not proofs of full semantic parity.",
+  "manual": {
+    "title": "pdfTeX user manual",
+    "url": "https://mirrors.ibiblio.org/CTAN/systems/doc/pdftex/manual/pdftex-a.pdf",
+    "version": "1.40.29",
+    "date": "2026-02-16"
+  },
+  "initial_reference": {
+    "program": "pdftex --ini -etex",
+    "version": "pdfTeX 1.40.25 (TeX Live 2023/Debian)",
+    "verified_primitive_count": 161
+  },
+  "excluded_extraction_artifacts": [
+    "pdfamma",
+    "pdfobjcompress",
+    "pdftexprimitive",
+    "pdftstartthread"
+  ],
+  "commands": [
+    {
+      "name": "efcode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "expanded",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "expansion-and-input",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "ifincsname",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "expansion-and-input",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "ifpdfabsdim",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "absolute-conditionals",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "ifpdfabsnum",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "absolute-conditionals",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "ifpdfprimitive",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "primitive-access",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "ignoreprimitiveerror",
+      "initial_stock_available": false,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "ignore",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "input",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "expansion-and-input",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "knaccode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "knbccode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "knbscode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "leftmarginkern",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "letterspacefont",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "letterspace",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "native-letterspace",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "lpcode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-layout",
+          "case": "metric-cache",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "partokencontext",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "paragraph-tokens",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "partokenname",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "paragraph-tokens",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfadjustinterwordglue",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfadjustspacing",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfannot",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "links",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfappendkern",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfcatalog",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfcolorstack",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "color-stack",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "color-stacks",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfcolorstackinit",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "color-stack",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "color-stacks",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfcompresslevel",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfcopyfont",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-copy",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfcreationdate",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "dates",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfdecimaldigits",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "precision",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfdest",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-0",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-2",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "links",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfdestmargin",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-0",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-2",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfdraftmode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "draft",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-mode",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfeachlinedepth",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfeachlineheight",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfelapsedtime",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfendlink",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfendthread",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "active-thread",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfescapehex",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfescapename",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfescapestring",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffakespace",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "fake-space",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "space-font",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffiledump",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffilemoddate",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdffilesize",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffirstlineheight",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdffontattr",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-default",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffontexpand",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffontname",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-default",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffontobjnum",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "unused-font",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdffontsize",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-copy",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfforcepagebox",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfgamma",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "gamma",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfgentounicode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "glyph-unicode",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "unicode",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfglyphtounicode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "glyph-unicode",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "unicode",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfhorigin",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "origin",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "page-parameters",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfignoreddimen",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-mode",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfimageapplygamma",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "gamma",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfimagegamma",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "gamma",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfimagehicolor",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "highcolor",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfimageresolution",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "resolution",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfincludechars",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "unused-font",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfinclusioncopyfonts",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "font-copy",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "font-local",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfinclusionerrorlevel",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "version-0-0",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "version-1-0",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfinfo",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "explicit-date",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfinfoomitdate",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "omit-date",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfinsertht",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "insert-height",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfinterwordspaceoff",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "fake-space",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfinterwordspaceon",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "fake-space",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdflastannot",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdflastlinedepth",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflastlink",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdflastmatch",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "negative-query",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflastobj",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "object-references",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdflastxform",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "forms",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflastximage",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflastximagecolordepth",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflastximagepages",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflastxpos",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "positions",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflastypos",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "positions",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdflinkmargin",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfliteral",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "literal",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfmajorversion",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfmapfile",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "font-map-file",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfmapline",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "font-map-line",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "duplicate-map-0",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfmatch",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfmdfivesum",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfminorversion",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfmovechars",
+      "initial_stock_available": true,
+      "identity": false
+    },
+    {
+      "name": "pdfnames",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfnobuiltintounicode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "disable-unicode",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "bitmap-no-unicode",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfnoligatures",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "ligatures",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfnormaldeviate",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfobj",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "object-references",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfobjcompresslevel",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "level0",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "level3",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "version14",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfomitcharset",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "charset-omit",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "bitmap-omit-charset",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfomitinfodict",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "omit-info",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfomitprocset",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "resource-policy",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfoptionalwaysusepdfpagebox",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfoptionpdfinclusionerrorlevel",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "version--1-1",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfoptionpdfminorversion",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfoutline",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "outline",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "outline",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfoutput",
+      "initial_stock_available": true,
+      "identity": false
+    },
+    {
+      "name": "pdfpageattr",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "page-parameters",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfpagebox",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfpageheight",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfpageref",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfpageresources",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "page-parameters",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfpagesattr",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfpagewidth",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfpkmode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-dpi300-mode",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfpkresolution",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-dpi300-mode",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "prebuilt-dpi600",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfprependkern",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfprimitive",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "primitive-access",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfprotrudechars",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfpxdimen",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfrandomseed",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfrefobj",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "object-references",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfrefxform",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "forms",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfrefximage",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfresettimer",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfrestore",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "matrix",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfretval",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfrunninglinkoff",
+      "initial_stock_available": true,
+      "identity": false
+    },
+    {
+      "name": "pdfrunninglinkon",
+      "initial_stock_available": true,
+      "identity": false
+    },
+    {
+      "name": "pdfsave",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "matrix",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfsavepos",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "positions",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfsetmatrix",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "matrix",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfsetrandomseed",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfshellescape",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfspacefont",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "space-font",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfstartlink",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfstartthread",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "active-thread",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfstrcmp",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppressptexinfo",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "ptex-mask",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "ptex-import-15",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppresswarningdupdest",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "duplicate-dest-1",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppresswarningdupmap",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "duplicate-map-1",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppresswarningpagegroup",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "page-group-1",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdftexbanner",
+      "initial_stock_available": true,
+      "identity": true
+    },
+    {
+      "name": "pdftexrevision",
+      "initial_stock_available": true,
+      "identity": true
+    },
+    {
+      "name": "pdftexversion",
+      "initial_stock_available": true,
+      "identity": true
+    },
+    {
+      "name": "pdfthread",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "threads",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfthreadmargin",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "threads",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdftracingfonts",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdftrailer",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdftrailerid",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfunescapehex",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfuniformdeviate",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfuniqueresname",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "partial"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "resource-policy",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfuseptexunderscore",
+      "initial_stock_available": false,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "ptex-underscore",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "pdfvorigin",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "origin",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfxform",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "forms",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfxformname",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfximage",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "pdfximagebbox",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "quitvmode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "quitvmode",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "rightmarginkern",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "rpcode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-layout",
+          "case": "metric-cache",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "shbscode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "showstream",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-core-controls",
+          "case": "show-stream",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "special",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdf-features",
+          "case": "annotation",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "stbscode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial"
+        }
+      ]
+    },
+    {
+      "name": "tagcode",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-core-controls",
+          "case": "font-tags",
+          "claim": "tested"
+        }
+      ]
+    },
+    {
+      "name": "tracinglostchars",
+      "initial_stock_available": true,
+      "identity": false
+    },
+    {
+      "name": "tracingstacklevels",
+      "initial_stock_available": true,
+      "identity": false
+    },
+    {
+      "name": "vadjust",
+      "initial_stock_available": true,
+      "identity": false,
+      "evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "paragraph-tokens",
+          "claim": "tested"
+        }
+      ]
+    }
+  ]
+}

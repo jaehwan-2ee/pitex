@@ -1,0 +1,78 @@
+[package]
+name = "pitex-shell"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+flate2.workspace = true
+dirs.workspace = true
+regex.workspace = true
+tex-domain = { path = "../tex-domain" }
+project-core = { path = "../project-core" }
+document-session-core = { path = "../document-session-core" }
+language-core = { path = "../language-core" }
+build-core = { path = "../build-core" }
+git-core = { path = "../git-core" }
+synctex-core = { path = "../synctex-core" }
+app-ports = { path = "../app-ports" }
+project-feature = { path = "../project-feature" }
+editor-feature = { path = "../editor-feature" }
+build-feature = { path = "../build-feature" }
+pdf-feature = { path = "../pdf-feature" }
+settings-feature = { path = "../settings-feature" }
+gtk-editor-adapter = { path = "../gtk-editor-adapter" }
+terminal-core = { path = "../terminal-core" }
+# pangocairo draws Pango layouts onto the terminal DrawingArea's cairo
+# surface — only used by the non-VTE embedded terminal.
+pangocairo = "0.19"
+remote-core = { path = "../remote-core" }
+gtk4.workspace = true
+libadwaita.workspace = true
+sourceview5.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+linux-platform = { path = "../linux-platform" }
+vte4 = { workspace = true, optional = true }
+webkit6 = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-platform = { path = "../../../Windows/crates/windows-platform" }
+# The Markdown preview host on Windows: `webview2-com` wraps the Edge
+# WebView2 COM API (there is no WebKitGTK port), and `windows` is pinned
+# to the same 0.62 train webview2-com-sys generates its bindings against.
+# The parent HWND comes from two self-declared gdk_win32_surface_* entries
+# — gdk4-win32's StaticType impls reference symbols current GTK4 dropped.
+webview2-com = { version = "0.39", optional = true }
+windows = { version = "0.62", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+# API level: GTK 4.10 / libadwaita 1.4+. Ubuntu 22.04 ships GTK 4.6 /
+# libadwaita 1.1 — building with --no-default-features produces that
+# compatibility variant. Ubuntu 24.04+ and Windows keep the modern API level.
+# The `vte` feature (embedded VTE terminal) exists only on Unix — Windows
+# builds use `modern-gtk` without it and take the external-terminal fallback,
+# like the Ubuntu 22.04 build. `markdown-preview` covers both engines —
+# WebKitGTK 6.0 on Unix (the ubuntu2204 deb variant turns it on
+# explicitly), WebView2 on Windows — and each `dep:` activates only on
+# its own target. `embedded-preview` enables the embedded editing-preview
+# backend (the `pitex-preview` helper ships in both Ubuntu packages);
+# builds without it use the project compiler for live builds.
+[features]
+default = ["modern-gtk", "vte", "markdown-preview", "equation-preview", "embedded-preview"]
+modern-gtk = ["gtk4/v4_10", "libadwaita/v1_4"]
+vte = ["dep:vte4"]
+markdown-preview = ["dep:webkit6", "dep:webview2-com", "dep:windows"]
+# Equation hover/caret preview: WebKitGTK on Unix, WebView2 on Windows.
+# The host supports GTK 4.6; assets are embedded by build.rs.
+equation-preview = ["dep:webkit6", "dep:webview2-com", "dep:windows"]
+embedded-preview = ["dep:windows"]

@@ -1,0 +1,169 @@
+#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const slash = (value) => value.replaceAll(sep, '/');
+const digest = (value) => createHash('sha256').update(value).digest('hex');
+const stable = (value) => JSON.stringify(value, (key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item, 2) + '\n';
+
+async function optionalText(path) { try { return await readFile(path, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
+async function swiftComponents() {
+  const output = [];
+  for (const packageDir of ['Packages/TexCore', 'Packages/TexApp']) {
+    const path = join(ROOT, packageDir, 'Package.swift'); const text = await readFile(path, 'utf8');
+    const packageName = text.match(/let\s+package\s*=\s*Package\s*\(\s*name:\s*"([^"]+)"/)?.[1] ?? packageDir.split('/').at(-1);
+    output.push({ type: 'application', name: packageName, version: 'source', properties: [{ name: 'pitex:manifest', value: `${packageDir}/Package.swift` }, { name: 'pitex:sha256', value: digest(text) }] });
+    for (const match of text.matchAll(/\.(?:target|testTarget|executableTarget)\s*\(\s*name:\s*"([^"]+)"/g)) output.push({ type: 'library', name: match[1], version: 'source', group: packageName, properties: [{ name: 'pitex:swift-target', value: match[0].split('(')[0].slice(1) }] });
+    for (const match of text.matchAll(/\.package\s*\(\s*url:\s*"([^"]+)"\s*,\s*(?:from|exact):\s*"([^"]+)"/g)) output.push({ type: 'library', name: match[1].split('/').at(-1).replace(/\.git$/, ''), version: match[2], externalReferences: [{ type: 'vcs', url: match[1] }] });
+  }
+  const resolvedPath = join(ROOT, 'Mac/Pitex.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved');
+  const resolved = await optionalText(resolvedPath);
+  if (resolved) for (const pin of JSON.parse(resolved).pins ?? []) output.push({ type: 'library', name: pin.identity, version: pin.state?.version ?? pin.state?.revision ?? 'unresolved', externalReferences: pin.location ? [{ type: 'vcs', url: pin.location }] : undefined, properties: [{ name: 'pitex:swift-resolved', value: slash(relative(ROOT, resolvedPath)) }] });
+  return output;
+}
+// Vendored runtime assets pinned by Assets/*/vendor/manifest.json (produced
+// by the matching Tools/fetch-*-assets script) — read the manifest, never a
+// second hand-maintained inventory that could drift from it.
+async function vendorComponents() {
+  const output = [];
+  const assetsDir = join(ROOT, 'Assets');
+  for (const asset of (await readdir(assetsDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!asset.isDirectory()) continue;
+    const manifestPath = join(assetsDir, asset.name, 'vendor', 'manifest.json');
+    const text = await optionalText(manifestPath);
+    if (text === null) continue;
+    const manifest = JSON.parse(text);
+    const fileCount = Object.keys(manifest.files ?? {}).length;
+    for (const pkg of manifest.packages ?? []) {
+      const component = {
+        type: 'library',
+        name: pkg.name,
+        version: pkg.version,
+        group: `${asset.name}/vendor`,
+        licenses: [pkg.license.includes(' ') ? { expression: pkg.license } : { license: { id: pkg.license } }],
+        externalReferences: [
+          { type: 'distribution', url: pkg.url, hashes: [{ alg: 'SHA-512', content: Buffer.from(pkg.integrity.replace(/^sha512-/, ''), 'base64').toString('hex') }] },
+          { type: 'website', url: pkg.home },
+        ],
+        properties: [
+          { name: 'pitex:manifest', value: slash(relative(ROOT, manifestPath)) },
+          { name: 'pitex:vendored-files', value: `${fileCount}` },
+          { name: 'pitex:integrity', value: pkg.integrity },
+        ],
+      };
+      output.push(component);
+    }
+  }
+  return output;
+}
+function toolVersion(command, args = ['--version']) {
+  const result = spawnSync(command, args, { cwd: ROOT, shell: false, encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024, env: { PATH: process.env.PATH ?? '', LANG: 'C', LC_ALL: 'C', NO_COLOR: '1' } });
+  if (result.error?.code === 'ENOENT') return 'unavailable';
+  if (result.error || result.status !== 0) return `error:${result.status ?? result.error?.code ?? 'unknown'}`;
+  let version = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/)[0].slice(0, 256) || 'unknown';
+  version = version.replaceAll(ROOT, '$ROOT');
+  if (process.env.HOME) version = version.replaceAll(process.env.HOME, '$HOME');
+  return version;
+}
+async function xcodeComponent() {
+  const paths = ['Mac/Config/Base.xcconfig', 'Mac/Pitex.xcodeproj/project.pbxproj']; const properties = [];
+  for (const path of paths) { const text = await readFile(join(ROOT, path), 'utf8'); properties.push({ name: `pitex:sha256:${path}`, value: digest(text) }); }
+  const config = await readFile(join(ROOT, paths[0]), 'utf8');
+  for (const key of ['MACOSX_DEPLOYMENT_TARGET', 'SDKROOT', 'SUPPORTED_PLATFORMS', 'SWIFT_VERSION']) { const value = config.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm'))?.[1]?.trim(); if (value) properties.push({ name: `xcode:${key}`, value }); }
+  return { type: 'application', name: 'Pitex-Xcode-source-config', version: 'source', properties: properties.sort((a, b) => a.name.localeCompare(b.name)) };
+}
+// Embedded preview helpers: the TeXpresso source they derive from and the
+// shared libraries they load, as recorded in PreviewEngine/provenance.json.
+async function previewEngineComponents() {
+  const path = join(ROOT, 'PreviewEngine/provenance.json');
+  const text = await optionalText(path);
+  if (!text) return [];
+  const manifest = JSON.parse(text);
+  const files = manifest.files ?? [];
+  const imported = files.filter((file) => file.origin === 'texpresso');
+  const output = [{
+    type: 'library', name: 'texpresso', group: 'pitex-preview', version: manifest.upstream.commit,
+    externalReferences: [{ type: 'vcs', url: manifest.upstream.url }],
+    properties: [
+      { name: 'pitex:imported-files', value: String(imported.length) },
+      { name: 'pitex:modified-files', value: String(imported.filter((file) => file.modified).length) },
+      { name: 'pitex:provenance', value: 'PreviewEngine/provenance.json' },
+      { name: 'pitex:sha256', value: digest(text) },
+    ],
+  }];
+  for (const dependency of manifest.runtime_dependencies ?? []) output.push({
+    type: 'library', name: dependency.library, group: 'pitex-preview', version: 'system',
+    licenses: dependency.license ? [{ expression: dependency.license }] : undefined,
+    properties: [
+      { name: 'pitex:linkage', value: dependency.linkage },
+      { name: 'pitex:used-by', value: dependency.used_by },
+      ...(dependency.license_notes ? [{ name: 'pitex:license-notes', value: dependency.license_notes }] : []),
+      ...(dependency.source_availability ? [{ name: 'pitex:source-availability', value: dependency.source_availability }] : []),
+    ],
+  });
+  return output;
+}
+// Standalone Rust workspaces have locks outside the application workspaces.
+// Record pinned registry packages without resolving or downloading them.
+async function standaloneRustComponents(manifest, group) {
+  const text = await optionalText(join(ROOT, manifest));
+  if (!text) return [];
+  const output = [];
+  for (const entry of text.split('[[package]]').slice(1)) {
+    const name = entry.match(/^name = "([^"]+)"$/m)?.[1];
+    const version = entry.match(/^version = "([^"]+)"$/m)?.[1];
+    const checksum = entry.match(/^checksum = "([a-f0-9]{64})"$/m)?.[1];
+    if (!name || !version || !checksum) continue;
+    output.push({
+      type: 'library', name, version, group,
+      purl: `pkg:cargo/${name}@${version}`,
+      hashes: [{ alg: 'SHA-256', content: checksum }],
+      externalReferences: [{ type: 'distribution', url: `https://crates.io/api/v1/crates/${name}/${version}/download` }],
+      properties: [{ name: 'pitex:manifest', value: manifest }],
+    });
+  }
+  return output;
+}
+export async function generateSbom() {
+  const noticesText = await optionalText(join(ROOT, 'Mac/Resources/PitexAgent/NOTICE-PROVENANCE.json'));
+  const noticeComponents = noticesText === null ? [] : JSON.parse(noticesText).components.map(component => ({
+    type: component.type, name: component.name, version: component.version, group: 'PitexAgent',
+    scope: component.type === 'application' ? 'optional' : 'required',
+    licenses: [{ license: { id: component.license } }],
+    externalReferences: [{ type: 'vcs', url: `${component.repository}/tree/${component.revision}` }],
+    properties: [{ name: 'pitex:license-file', value: component.licenseFile },
+      { name: 'pitex:license-sha256', value: component.licenseSha256 },
+      { name: 'pitex:copyright', value: component.copyright }],
+  }));
+  const skillsText = await optionalText(join(ROOT, 'Mac/Resources/PitexAgent/SKILL-PROVENANCE.json'));
+  const skillComponents = skillsText === null ? [] : (() => {
+    const manifest = JSON.parse(skillsText);
+    return Object.entries(manifest.skills).map(([name, skill]) => ({
+      type: 'data', name, version: skill.version, group: 'PitexAgent/skills',
+      licenses: [{ license: { id: manifest.license } }],
+      externalReferences: [{ type: 'vcs', url: `${manifest.repository}/tree/${manifest.commit}/skills/${name}` }],
+      properties: [{ name: 'pitex:upstream-commit', value: manifest.commit },
+        { name: 'pitex:adapted-files', value: skill.adaptedFiles.join(', ') }],
+    }));
+  })();
+  const components = [...await swiftComponents(), await xcodeComponent(), ...await vendorComponents(), ...await previewEngineComponents(),
+    ...skillComponents, ...noticeComponents,
+    ...await standaloneRustComponents('PreviewEngine/Cargo.lock', 'pitex-preview-rust'),
+    ...await standaloneRustComponents('PreviewEngine/Windows/Cargo.lock', 'pitex-preview-windows'),
+    ...await standaloneRustComponents('Tools/Native/Cargo.lock', 'pitex-development-tools')];
+  for (const command of ['latexmk', 'pdflatex', 'xelatex', 'lualatex', 'synctex']) components.push({ type: 'application', name: command, version: toolVersion(command) });
+  components.sort((a, b) => `${a.type}:${a.group ?? ''}:${a.name}:${a.version}`.localeCompare(`${b.type}:${b.group ?? ''}:${b.name}:${b.version}`));
+  return { bomFormat: 'CycloneDX', specVersion: '1.6', version: 1, metadata: { component: { type: 'application', name: 'Pitex-source', version: 'provisional-g005' }, properties: [{ name: 'pitex:deterministic', value: 'true' }, { name: 'pitex:source-root', value: '.' }] }, components };
+}
+async function main() {
+  const args = process.argv.slice(2); let output = join(ROOT, 'Evidence/sbom.cdx.json');
+  if (args.length) { if (args.length !== 2 || args[0] !== '--output') throw new Error('usage: generate-sbom.mjs [--output PATH]'); output = resolve(ROOT, args[1]); }
+  if (relative(ROOT, output).startsWith(`..${sep}`) || relative(ROOT, output) === '..') throw new Error('output must be inside repository root');
+  await mkdir(dirname(output), { recursive: true }); await writeFile(output, stable(await generateSbom()), { mode: 0o644 });
+  process.stdout.write(`${slash(relative(ROOT, output))}\n`);
+}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });

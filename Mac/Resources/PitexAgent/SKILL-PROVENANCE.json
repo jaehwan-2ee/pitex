@@ -1,0 +1,76 @@
+{
+  "commit": "154988403bb5a18e9d3c0ce4e6d5e2e4b184a298",
+  "license": "MIT",
+  "repository": "https://github.com/K-Dense-AI/scientific-agent-skills",
+  "skills": {
+    "citation-management": {
+      "adaptedFiles": [
+        "SKILL.md"
+      ],
+      "upstreamFiles": {
+        "SKILL.md": "dc79fe1e8438dcf598040615d5323360c6a7ed0b868fc3ffc82512c871a1e3ff",
+        "assets/bibtex_template.bib": "08e21647fa68cad1aa1658264798c7d24775ba89bfbd2723ea6bfe4b562e2be1",
+        "assets/citation_checklist.md": "ce7317f2983f8b7fd02949aad726ebd6188319c7e57c929fffe689d5ae18ce36",
+        "references/api_contracts.md": "3e82a14f77133a215831d2627b65c93199589782f6907fc42af3c75f2ab3c5a8",
+        "references/best_practices.md": "df90d19c8f639590a6a430a889160b478dce61f4a5c0a5a36df5ab1be749b6b1",
+        "references/bibtex_formatting.md": "6337a8d2b87de96bf0f72c076feb0fc5d61ed9c342d9c8f19b3633efbfec6fed",
+        "references/citation_validation.md": "f235f82e02db282f0abdd23fd8d2973d870d427d355979e869f736259ba95774",
+        "references/core_workflow.md": "19e8b52c43f5822163c79904236016616dc4515d21a01d29073d968c9251af8d",
+        "references/example_workflows.md": "01c0a15e08e8115e10a07623f63565d119812fd2bb68c669eac413db2f9cd482",
+        "references/google_scholar_search.md": "5b705ec8d6276ef83b819b737ed10bd991815ccb413de27e046b7bfdf4da8399",
+        "references/metadata_extraction.md": "68c27886aff0d4efbf3a6f7e0a318dedd706d4cfd0f55dd859466de36ed78d46",
+        "references/pubmed_search.md": "fab82cda700a0dfc6dccc9465c9cc60b9df68cb58d0bec9abe7b2d8748a49cd1",
+        "references/script_reference.md": "bd23683cb3a7edb932fc5a13bb9215969a834a778a8765eea82553bf1b8b3417",
+        "references/search_strategies.md": "776c0dd1cbaf0432004ae80273640ff324b570401c569413c674829436385c85",
+        "scripts/_common.py": "87540160163671b972c2fccb4d0a42db3cca2603c664d26d5da3ca5dbc7dfdd2",
+        "scripts/doi_to_bibtex.py": "1b7d1ab2e8bf9bcf5a7d49bf45496e0f8b7d8e0d0cda8efd8fce4e527082dc4b",
+        "scripts/extract_metadata.py": "bebc7835b5e659cdeee0087980e881635894330bac5eda4ce01f490fd41df781",
+        "scripts/format_bibtex.py": "cc74fdc4d5819df8db3999e59f96469cebfb353ecf406a49a5a0fc60896707cb",
+        "scripts/search_google_scholar.py": "05cfd67aea6475029d017f1b4ff68e7ba727e1fa9b52f1e614c80287940b4985",
+        "scripts/search_openalex.py": "538b2f086625fd1e9a2cb2fe8bd46ee852d888f17d2d1e889b8f50592594f693",
+        "scripts/search_pubmed.py": "4543b74bf773747bae47a2bbb18acf2a4a050071119d88d1711db6049d157116",
+        "scripts/validate_citations.py": "a08e8e0774287e9aca2bd87c3a66cd3dfc751018eafb6cdee37987e3f416d2b5"
+      },
+      "version": "2.3"
+    },
+    "scientific-writing": {
+      "adaptedFiles": [
+        "SKILL.md"
+      ],
+      "upstreamFiles": {
+        "SKILL.md": "511a2096bebecd8cf0f8212b9d262d37154ae1ba566eb385d93ac968682edbd1",
+        "assets/REPORT_FORMATTING_GUIDE.md": "2bb69499426ed6727c1701bae752c2e902151cbf69963f8bcf25b9e54cc20724",
+        "assets/authorship_template.json": "04a590ac47ed61dcc7cd88a26d51243cf178fe6ada99d4000ca225e1b5f6f20a",
+        "assets/claim_evidence_template.csv": "cfb7a9f44cd1e5ef47ccdb3e32ac0a25b72d30e51343faace9bf07c00e3a0659",
+        "assets/consistency_manifest_template.json": "2ea6f468ab6fab45c4db3616fbaddcc2ae706b3a26d6745b4cf74ddb53266872",
+        "assets/manuscript_manifest_template.json": "914052ff25b44072a07dce2ae8171524b717894ad7d2103054356115b9dd6c22",
+        "assets/manuscript_scaffold.md": "55305ba311ff4e2459a31a99b3f1b9da44d79499332399a9216b5f92cb412ab2",
+        "assets/reporting_coverage_template.json": "886ca599622c1dfaedde7649ec47e973b4fbe6081cac6a6afaf24ace899d46a9",
+        "assets/reporting_guidelines.json": "215f8c55bd40bda0569f2e81556030ff575319e25276b1e1ae70e2cc7475ddcd",
+        "assets/source_manifest_template.json": "fc6f65a8571b717691ac717f325825a608190f271e8b79650b711cc95f5b0a36",
+        "references/authorship_ai_confidentiality.md": "0200e3ad8eafaedec26bce2b9895cda81c6c9325790507509134373a0ca41fe2",
+        "references/citation_styles.md": "338c08d8fba6fbf7437aad4dd99db5bccf3f597fa6650c562fae0c7ca422e572",
+        "references/cli_reference.md": "05b15a587277e37dbc6161532dce58c8ccf647e22f21861ebcbac22954453e75",
+        "references/evidence_workflow.md": "346c867d71e8cf1db6e3684a64714925a3966fcaeb1db853d7ddb07c6a6f607b",
+        "references/figures_tables.md": "212d10f3e7a01325d2518c4aab54a4fc04a67e4aa94e959cead199c425a0f4d6",
+        "references/imrad_structure.md": "8a1201f8e58a045736a5bc65a47f239c894be6946716e969c0b77aa90a7e8e39",
+        "references/journal_policies.md": "aefbd73c5a8a23be076b210a910f026ece748a73b4593cb99e885879bd61d2c2",
+        "references/professional_report_formatting.md": "c269fd256bda6a9389bfd5ffefa8eff8876b96d92f8391e8a01fa80910bb35d3",
+        "references/reporting_guidelines.md": "4a74d4613742bb26fe3d74596998b9e75ea8a2694a012222b6d9636e121a1f0d",
+        "references/research_integrity_open_science.md": "f8f91010537acf4b78616d7410d23b85030f94d66e9d36db03d6e632ffb56100",
+        "references/source_ledger.md": "1692a3bea432dfde6eb1e7ca7054d0dd8652b1bef6b97322ea3c30f0ff68d5b3",
+        "references/writing_principles.md": "58d4b32f63446c0b082f163314fdcf0d41a50568ad392d34ba992e24fadae764",
+        "scripts/_common.py": "8cc192d82d219d1ec9720f8a8ab0c440fb35f2562fdeaeb7432a38d18e5e7b42",
+        "scripts/audit_claims.py": "6074f51663e6863cf28168824a3f440b5acce9734c3c3f72590ba89c88a23c06",
+        "scripts/check_consistency.py": "5bd1f0dcbcccdac31e422b5a7b220d1ab1272a7eed906a62c0a5f2518e495d87",
+        "scripts/check_references.py": "a262d6e935e69ec1c1f25a36b8a12b6905b3f3dee0a11d94557d3f69857c5f07",
+        "scripts/lint_manuscript.py": "08ff45315c4dadd1c91104e3639b6bec7a6086c000830dc9d0b2b965895b3398",
+        "scripts/scaffold_manuscript.py": "69e9a82c7d0608646872c0f4ad08b538f0c67175b48601d9d52ea527334ce4ae",
+        "scripts/select_reporting_guidelines.py": "d130036ab1df6486cb54431a168207af03a52c626459ba7471041b0ee5aab567",
+        "scripts/validate_authorship.py": "31572a61ff61fe58f0b3f4c5b0e0e44bd9de5b865772f563dd5413876c186788",
+        "scripts/validate_manifest.py": "6f87919db5aa5fb5ba929b6566c892a0d6881a9e46d8a9646186c6cac01e13d2"
+      },
+      "version": "2.3"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+.gjc/
+**/.build/
+**/.swiftpm/
+Linux/target/
+Tools/Native/target/
+Windows/target/
+Windows/dist/
+DerivedData/
+*.xcuserstate
+*.xcuserdata/
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Internal docs (local, not shared)
+Docs/
+
+# Agent tool configuration (local, not shared)
+paseo.json
+.paseo/
+.claude/
+.claude.json
+.devin/
+.agents/
+.cursor/
+.codegraph/
+.codex/
+.aider*
+.continue/
+.windsurf/
+CLAUDE.md
+AGENTS.md
+
+# Local toolchain / IDE state
+.vscode/
+.idea/
+*.local.json
+
+# Secrets and credentials — never commit
+*.pem
+*.key
+*.p12
+*.keystore
+*.mobileprovision
+id_rsa*
+*.netrc
+
+# Generated gate/evidence output
+Evidence/
+Artifacts/
+
+# Python caches
+__pycache__/
+*.py[cod]

@@ -1,0 +1,214 @@
+[package]
+name = "pitex"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pitex — native LaTeX environment for Linux"
+homepage = "https://github.com/jaehwan-2ee/pitex"
+authors = ["Pitex contributors <https://github.com/jaehwan-2ee/pitex>"]
+
+[[bin]]
+name = "pitex"
+path = "src/main.rs"
+
+[dependencies]
+pitex-shell = { path = "../pitex-shell", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gio = "0.19"
+glib = "0.19"
+libc.workspace = true
+
+[features]
+default = ["modern-gtk", "vte", "markdown-preview", "equation-preview", "embedded-preview"]
+modern-gtk = ["pitex-shell/modern-gtk"]
+vte = ["pitex-shell/vte"]
+markdown-preview = ["pitex-shell/markdown-preview"]
+equation-preview = ["pitex-shell/equation-preview"]
+# Both Ubuntu packages ship the pitex-preview helpers.
+embedded-preview = ["pitex-shell/embedded-preview"]
+
+
+# Debian package — `cargo deb -p pitex` builds the Ubuntu 24.04+ variant
+# (GTK 4.10+/libadwaita 1.4+/VTE embedded terminal). `$auto` resolves the
+# shared-library Depends from the built binary via dpkg-shlibdeps.
+# Non-target asset source paths resolve relative to this crate's directory,
+# so packaging files climb to Linux/packaging/.
+[package.metadata.deb]
+name = "pitex"
+section = "editors"
+priority = "optional"
+maintainer = "Pitex contributors <https://github.com/jaehwan-2ee/pitex>"
+depends = "$auto, libteckit0, libharfbuzz0b, libgraphite2-3, libicu74, libfreetype6, libfontconfig1, libpng16-16t64, zlib1g"
+maintainer-scripts = "../../packaging/debian"
+# /etc/apparmor.d/pitex grants WebKitGTK's bubblewrap sandbox the user
+# namespace it needs on Ubuntu 24.04 (kernel.apparmor_restrict_unprivileged_
+# userns=1). Same form as the apparmor package's own WebKit-app profiles.
+# Default (24.04) variant only: the ubuntu2204 variant replaces `assets`
+# and AppArmor 4 / the restriction do not exist on 22.04. cargo-deb marks
+# every etc/ asset as a dpkg conffile automatically, so no conf-files line
+# is needed (a conf-files key would inherit into the 22.04 variant and
+# record a phantom conffile there — proven with cargo-deb 2.12.1).
+assets = [
+    ["../../../Mac/Resources/PitexAgent/**/*", "usr/share/pitex/PitexAgent/", "644"],
+    ["target/release/pitex", "usr/bin/pitex", "755"],
+    [
+        "../../packaging/dev.pitex.app.desktop",
+        "usr/share/applications/dev.pitex.app.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/dev.pitex.app.png",
+        "usr/share/pixmaps/dev.pitex.app.png",
+        "644",
+    ],
+    # The equation preview embeds MathJax (Apache-2.0) and the mathjax-tex
+    # font (SIL OFL 1.1) in the binary; their notices and provenance ship here.
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/LICENSE",
+        "usr/share/doc/pitex/equation-preview/mathjax/LICENSE",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/OFL-1.1.txt",
+        "usr/share/doc/pitex/equation-preview/mathjax-tex-font/OFL-1.1.txt",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/package.json",
+        "usr/share/doc/pitex/equation-preview/mathjax-tex-font/package.json",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/VERSIONS",
+        "usr/share/doc/pitex/equation-preview/VERSIONS",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/manifest.json",
+        "usr/share/doc/pitex/equation-preview/manifest.json",
+        "644",
+    ],
+    # Embedded preview helpers built by the release job (`make -C
+    # PreviewEngine BUILD_DIR=Linux/target/preview-engine`). The client probes
+    # <exe dir>/../lib/pitex/pitex-preview — i.e. /usr/lib/pitex/.
+    # cargo-deb resolves `target/release/`-prefixed paths in the real target
+    # dir, but every other `target/` path relative to THIS manifest dir —
+    # hence ../../target/ here (points at the workspace target dir).
+    [
+        "../../target/preview-engine/bin/pitex-preview",
+        "usr/lib/pitex/pitex-preview",
+        "755",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview-xetex",
+        "usr/lib/pitex/pitex-preview-xetex",
+        "755",
+    ],
+    # Per-library license texts + provenance manifest. The `/*` glob is
+    # required: a bare directory source is filtered out by cargo-deb's
+    # glob resolver and fails with AssetFileNotFound.
+    [
+        "../../../PreviewEngine/licenses/*",
+        "usr/share/doc/pitex/preview-engine/",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/PROVENANCE.md",
+        "usr/share/doc/pitex/preview-engine/PROVENANCE.md",
+        "644",
+    ],
+    # Same provenance manifest the macOS audit consumes — keeps deb and
+    # macOS technical audit evidence identical.
+    [
+        "../../../PreviewEngine/provenance.json",
+        "usr/share/doc/pitex/preview-engine/provenance.json",
+        "644",
+    ],
+
+    # Ubuntu 24.04 restricts unprivileged user namespaces; ship an AppArmor
+    # profile so WebKitGTK's sandbox can create one (userns only, unconfined).
+    [
+        "../../packaging/apparmor/pitex",
+        "etc/apparmor.d/pitex",
+        "644",
+    ],
+]
+
+# Ubuntu 22.04 variant: GTK 4.6 / libadwaita 1.1 / no VTE-GTK4 — disables
+# `modern-gtk` so the compat code paths compile instead. Same package name:
+# it's an alternative build of the same app, not a separate package.
+# `markdown-preview` stays on: Jammy's updates ship libwebkitgtk-6.0-dev.
+# Equation and embedded previews use the same implementations on both
+# releases. Helper dependencies use Jammy's ICU and libpng package names.
+
+[package.metadata.deb.variants.ubuntu2204]
+name = "pitex"
+default-features = false
+features = ["markdown-preview", "equation-preview", "embedded-preview"]
+depends = "$auto, libteckit0, libharfbuzz0b, libgraphite2-3, libicu70, libfreetype6, libfontconfig1, libpng16-16, zlib1g"
+assets = [
+    ["../../../Mac/Resources/PitexAgent/**/*", "usr/share/pitex/PitexAgent/", "644"],
+    ["target/release/pitex", "usr/bin/pitex", "755"],
+    [
+        "../../packaging/dev.pitex.app.desktop",
+        "usr/share/applications/dev.pitex.app.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/dev.pitex.app.png",
+        "usr/share/pixmaps/dev.pitex.app.png",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/LICENSE",
+        "usr/share/doc/pitex/equation-preview/mathjax/LICENSE",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/OFL-1.1.txt",
+        "usr/share/doc/pitex/equation-preview/mathjax-tex-font/OFL-1.1.txt",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/mathjax/mathjax-tex-font/package.json",
+        "usr/share/doc/pitex/equation-preview/mathjax-tex-font/package.json",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/VERSIONS",
+        "usr/share/doc/pitex/equation-preview/VERSIONS",
+        "644",
+    ],
+    [
+        "../../../Assets/equation-preview/vendor/manifest.json",
+        "usr/share/doc/pitex/equation-preview/manifest.json",
+        "644",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview",
+        "usr/lib/pitex/pitex-preview",
+        "755",
+    ],
+    [
+        "../../target/preview-engine/bin/pitex-preview-xetex",
+        "usr/lib/pitex/pitex-preview-xetex",
+        "755",
+    ],
+    [
+        "../../../PreviewEngine/licenses/*",
+        "usr/share/doc/pitex/preview-engine/",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/PROVENANCE.md",
+        "usr/share/doc/pitex/preview-engine/PROVENANCE.md",
+        "644",
+    ],
+    [
+        "../../../PreviewEngine/provenance.json",
+        "usr/share/doc/pitex/preview-engine/provenance.json",
+        "644",
+    ],
+]

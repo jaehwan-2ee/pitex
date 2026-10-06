@@ -1,0 +1,610 @@
+{
+  "source_commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
+  "translator": "C2Rust 0.22.1",
+  "source_sha256": {
+    "tools/selftest.c": "d93de9cb1fd95dd796176753756bbc6b286f188142e019204c70b90b13ea7140",
+    "driver/tbuf.c": "f0e93864c2704615f92a02344527f682904c7afebdac5742247d13032d913b23",
+    "driver/sprotocol.c": "159ea6616d3f6d10e68ac67f990ab8b411f1b10f6f51749ed7bfee657c02b29d",
+    "driver/xdv.c": "dcef536147aed64ba735923de909a94b6ca868c506408bcf62e90ef6ef532988",
+    "driver/json.c": "92f5f4418dfbc8e65ab4df4b373ca06b384b0ea80ada9ff0f36ea65235b6814d",
+    "driver/images.c": "dac30848c0be31dea815e9e55aae09712a84edbc8e5d2bb893bac597f4a6cc04",
+    "driver/state.c": "d387f78b9e51b89fe68e4a39bb84d14c5239b42875b344266ac760349c6f0efc",
+    "driver/xdv2pdf.c": "82d8594a15fb7ab8750f432de54801d19e9996dedc0df2dabd79dea14dbb19c5",
+    "driver/fs.c": "33c0df43b422893240adcb705937ed10552c7c8c772ceed1052262d622e7fd87",
+    "driver/main.c": "e48a502f874985e3768fe47b563093c3648e2e4e9ea7d579eaf23f112ef97083",
+    "driver/fonts.c": "94f402155d33c6b5f1ac19de395f588c44915465dc57885e4b819e09ad3fe01a",
+    "driver/pdfw.c": "cbf96f90d49c29f792bf30739955d37f20308e57bf44d5d32d2e5b387160ae54",
+    "driver/myabort.c": "0e50ddfd9cb96269c73a96ed6fa589e4d219ff4f661844dad67f7e2c4ad6d8ea",
+    "driver/engine_tex.c": "478648a8a8a2c0fae1c8fe4c10130328b6e6e35ffa274249ecb2875f66ed4c64",
+    "shared/pitex_buf.c": "c7142ee239eca5765b3d70a49ef55c10617ba982437b7a8ed849a5aee2dd4ef3",
+    "shared/pdfread.c": "0d3330e31f8c9c32624421bd7abc1b3079e6d74a8c72eaa79873b45fddc24fb6",
+    "shared/imginfo.c": "02a6e9dc3b606e1ca7d1800ba47cbc4046b605004d3cf5337e0b8f44f3a97737",
+    "xetex/common/utils.c": "21176b545da72eda9c7bcaab9bcd8e372a049d77943c1990333448df8af07ee4",
+    "xetex/common/texlive_provider.c": "ae03c5637568d6b7518b4cb6e913de0c29ee7f5954c124f51824e83097e90f08",
+    "xetex/main/fork.c": "91ba78ac139415b48972487a67e2224b1991b93170adaf25e2ce4cfea852279a",
+    "xetex/main/texpresso_protocol.c": "d0c99b9324d74d6054f440727d604d74e005ad373dde9478ee9556433a88c6c7",
+    "xetex/main/main.c": "5e92c652d1244cf4021d4950e70ccac8df51ed41d6abd9a9df0feae1bb74f97e",
+    "xetex/main/zlib_md5.c": "9a9d79ee28c17c3b0adace9ced1e0f438c7040bf7f1e8df388f709bc096aa0a7",
+    "xetex/main/formats.c": "222239fa1daa469616b1b50e7e0bd02c7d163d77d6face55b1696fe2d0c9f3cd",
+    "xetex/engine/xetex-engine-interface.c": "48341feb85b19766e1729c5c3d5dea320bc1261b5b238d4949abab0f37feac77",
+    "xetex/engine/xetex-synctex.c": "7d238107caa028853bc9be5d2ad7d5e6aa53e21fd8cb18d154c56ea5588edc16",
+    "xetex/engine/xetex-pic.c": "d71da8ae9402f0cb4afc5d25b5caf1aec1f4194008f1c07adc8e3795057fdee3",
+    "xetex/engine/xetex-errors.c": "2e83608d129e4e6a8af36ecf15dd0e97c81f877d6017de25b0e079bcdcb5939b",
+    "xetex/engine/xetex-shipout.c": "e25b6c1f7e2d8748ecb47833721e12df968082a09f21fb35683e6a212ad25bd4",
+    "xetex/engine/xetex-macos.c": "7c2eb4b68bd757f420978143eb412b36448055c50a653729534c7ef25ea231a7",
+    "xetex/engine/xetex-ini.c": "fb8ce89f05176615c7e0471dbcc97fbb6fbe0f8e0ff4a9d897e49bd02f85bc35",
+    "xetex/engine/xetex-output.c": "98b9eafdc3fb4f81accd90796a24147429f5cbedbf2ceda3b2038ba9d19a7db9",
+    "xetex/engine/xetex-xetex0.c": "756f84251f4c01a2777fcc232a6f06a208b5bf24edb57e963a1bac31fcc23a33",
+    "xetex/engine/xetex-scaledmath.c": "1e48375298840c99c4184ebba8c1308e87264ca9cc709d547b1dedc398d708fe",
+    "xetex/engine/xetex-ext.c": "fe980109bc8c2378da0177d307c0966e4259c09d6060b6253e7127b0a450d05f",
+    "xetex/engine/xetex-stringpool.c": "455ab139b760bbc798cf2f3a52132be875e11a0d49c12781a96b566db99ff7c9",
+    "xetex/engine/xetex-linebreak.c": "75e84a6a7381ecb8a70252a5670dbe089d43f8c920896278023e22746bf00729",
+    "xetex/engine/xetex-io.c": "88eecdb0f5301b651591ffde19e3bf0fb0b6ada6068290f1ba68fb8076c45188",
+    "xetex/engine/xetex-texmfmp.c": "4148f4face816d238bf24dc07ad4e62a44048259cd943268f15fe3a53d94dc95",
+    "xetex/engine/xetex-math.c": "f85d2a83b123ab48e2d1cd1e9ce0b55eda2c887ea2a6c2413bf17c76f6ffff9d",
+    "xetex/engine/xetex-pagebuilder.c": "ba4b6bfe5d0011f8ab2799da11672c498bc9991125a1abf6e4dd08fbc35d6c92"
+  },
+  "files": [
+    {
+      "path": "src/macos/tools/selftest.rs",
+      "source": "tools/selftest.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/xdv.rs",
+      "source": "driver/xdv.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/tbuf.rs",
+      "source": "driver/tbuf.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/engine_tex.rs",
+      "source": "driver/engine_tex.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/json.rs",
+      "source": "driver/json.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/state.rs",
+      "source": "driver/state.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/fonts.rs",
+      "source": "driver/fonts.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/main.rs",
+      "source": "driver/main.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/images.rs",
+      "source": "driver/images.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/fs.rs",
+      "source": "driver/fs.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/pdfw.rs",
+      "source": "driver/pdfw.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/xdv2pdf.rs",
+      "source": "driver/xdv2pdf.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/sprotocol.rs",
+      "source": "driver/sprotocol.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/driver/myabort.rs",
+      "source": "driver/myabort.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/shared/imginfo.rs",
+      "source": "shared/imginfo.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/shared/pitex_buf.rs",
+      "source": "shared/pitex_buf.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/shared/pdfread.rs",
+      "source": "shared/pdfread.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/common/texlive_provider.rs",
+      "source": "xetex/common/texlive_provider.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/common/utils.rs",
+      "source": "xetex/common/utils.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/main/zlib_md5.rs",
+      "source": "xetex/main/zlib_md5.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/main/fork.rs",
+      "source": "xetex/main/fork.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/main/texpresso_protocol.rs",
+      "source": "xetex/main/texpresso_protocol.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/main/main.rs",
+      "source": "xetex/main/main.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/main/formats.rs",
+      "source": "xetex/main/formats.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_pagebuilder.rs",
+      "source": "xetex/engine/xetex-pagebuilder.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_macos.rs",
+      "source": "xetex/engine/xetex-macos.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_math.rs",
+      "source": "xetex/engine/xetex-math.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_shipout.rs",
+      "source": "xetex/engine/xetex-shipout.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_engine_interface.rs",
+      "source": "xetex/engine/xetex-engine-interface.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_texmfmp.rs",
+      "source": "xetex/engine/xetex-texmfmp.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_io.rs",
+      "source": "xetex/engine/xetex-io.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_linebreak.rs",
+      "source": "xetex/engine/xetex-linebreak.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_stringpool.rs",
+      "source": "xetex/engine/xetex-stringpool.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_xetex0.rs",
+      "source": "xetex/engine/xetex-xetex0.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_pic.rs",
+      "source": "xetex/engine/xetex-pic.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_synctex.rs",
+      "source": "xetex/engine/xetex-synctex.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_ext.rs",
+      "source": "xetex/engine/xetex-ext.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_errors.rs",
+      "source": "xetex/engine/xetex-errors.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_scaledmath.rs",
+      "source": "xetex/engine/xetex-scaledmath.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_ini.rs",
+      "source": "xetex/engine/xetex-ini.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/macos/xetex/engine/xetex_output.rs",
+      "source": "xetex/engine/xetex-output.c",
+      "platform": "macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "path": "src/linux/tools/selftest.rs",
+      "source": "tools/selftest.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/xdv.rs",
+      "source": "driver/xdv.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/tbuf.rs",
+      "source": "driver/tbuf.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/engine_tex.rs",
+      "source": "driver/engine_tex.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/json.rs",
+      "source": "driver/json.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/state.rs",
+      "source": "driver/state.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/fonts.rs",
+      "source": "driver/fonts.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/main.rs",
+      "source": "driver/main.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/images.rs",
+      "source": "driver/images.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/fs.rs",
+      "source": "driver/fs.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/pdfw.rs",
+      "source": "driver/pdfw.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/xdv2pdf.rs",
+      "source": "driver/xdv2pdf.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/sprotocol.rs",
+      "source": "driver/sprotocol.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/driver/myabort.rs",
+      "source": "driver/myabort.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/shared/imginfo.rs",
+      "source": "shared/imginfo.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/shared/pitex_buf.rs",
+      "source": "shared/pitex_buf.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/shared/pdfread.rs",
+      "source": "shared/pdfread.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/common/texlive_provider.rs",
+      "source": "xetex/common/texlive_provider.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/common/utils.rs",
+      "source": "xetex/common/utils.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/main/zlib_md5.rs",
+      "source": "xetex/main/zlib_md5.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/main/fork.rs",
+      "source": "xetex/main/fork.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/main/texpresso_protocol.rs",
+      "source": "xetex/main/texpresso_protocol.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/main/main.rs",
+      "source": "xetex/main/main.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/main/formats.rs",
+      "source": "xetex/main/formats.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_pagebuilder.rs",
+      "source": "xetex/engine/xetex-pagebuilder.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_macos.rs",
+      "source": "xetex/engine/xetex-macos.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_math.rs",
+      "source": "xetex/engine/xetex-math.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_shipout.rs",
+      "source": "xetex/engine/xetex-shipout.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_engine_interface.rs",
+      "source": "xetex/engine/xetex-engine-interface.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_texmfmp.rs",
+      "source": "xetex/engine/xetex-texmfmp.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_io.rs",
+      "source": "xetex/engine/xetex-io.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_linebreak.rs",
+      "source": "xetex/engine/xetex-linebreak.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_stringpool.rs",
+      "source": "xetex/engine/xetex-stringpool.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_xetex0.rs",
+      "source": "xetex/engine/xetex-xetex0.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_pic.rs",
+      "source": "xetex/engine/xetex-pic.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_synctex.rs",
+      "source": "xetex/engine/xetex-synctex.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_ext.rs",
+      "source": "xetex/engine/xetex-ext.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_errors.rs",
+      "source": "xetex/engine/xetex-errors.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_scaledmath.rs",
+      "source": "xetex/engine/xetex-scaledmath.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_ini.rs",
+      "source": "xetex/engine/xetex-ini.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "path": "src/linux/xetex/engine/xetex_output.rs",
+      "source": "xetex/engine/xetex-output.c",
+      "platform": "linux",
+      "target": "x86_64-unknown-linux-gnu"
+    }
+  ],
+  "targets": {
+    "macos": "aarch64-apple-darwin",
+    "linux": "x86_64-unknown-linux-gnu"
+  },
+  "manual_migrations": [
+    {
+      "path": "src/shared/opentype_math.rs",
+      "source": "xetex/engine/xetex-XeTeXOTMath.cpp",
+      "source_sha256": "a58bf996f4f23b14d2d52dd1e735d9c0785dab782aef59d6f7bd335c32cdf915",
+      "source_commit": "c8e7ecc7b2541ffc56eccf1508b5e0c18022405c",
+      "translator": "Manual C++ to Rust translation, 2026-10-05",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "license_notice": "Complete original SIL International, Jonathan Kew, and Khaled Hosny MIT notice retained in src/shared/opentype_math.rs"
+    },
+    {
+      "path": "src/shared/font_layout.rs",
+      "source": "xetex/layout/xetex-XeTeXLayoutInterface.cpp",
+      "source_sha256": "0887e7bf3ce77c9aee272976f5c7d98ae87309f2e1d6332b9efdad32ad575239",
+      "source_commit": "c8e7ecc7b2541ffc56eccf1508b5e0c18022405c",
+      "source_state": "Working tree source including the original Pitex native-ligature override hook",
+      "translator": "Manual C++ to Rust translation, 2026-10-05",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "license_notice": "Complete original SIL International, Jonathan Kew, and Khaled Hosny MIT notice retained in src/shared/font_layout.rs; original Pitex hook remains identified in its function comment",
+      "native_boundary": "Opaque FontInst and FontMgr class construction and method access retained in xetex/layout/xetex-XeTeXLayoutInterface.cpp"
+    },
+    {
+      "path": "src/shared/font_freetype.rs",
+      "source": "xetex/layout/xetex-XeTeXFontInst.cpp",
+      "source_sha256": "d6487df22bb4e62e3cbe97e004c539e6abad09f00eb3f320bfbfccdca0d8a315",
+      "source_commit": "c8e7ecc7b2541ffc56eccf1508b5e0c18022405c",
+      "translator": "Manual C++ to Rust translation, 2026-10-05",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "license_notice": "Complete original SIL International and Jonathan Kew MIT notice retained in src/shared/font_freetype.rs",
+      "native_boundary": "Opaque class lifetime and FreeType SDK record field reads remain in xetex/layout/xetex-XeTeXFontInst.cpp"
+    },
+    {
+      "path": "src/shared/fontconfig_names.rs",
+      "source": "xetex/layout/xetex-XeTeXFontMgr_FC.cpp",
+      "source_sha256": "bffffa93891c0f81fe5760de09e4a8fb224dddba42bf84137ef276108bc94cd9",
+      "source_commit": "c8e7ecc7b2541ffc56eccf1508b5e0c18022405c",
+      "translator": "Manual C++ to Rust translation, 2026-10-05",
+      "targets": [
+        "x86_64-unknown-linux-gnu"
+      ],
+      "license_notice": "Complete original SIL International and Jonathan Kew MIT notice retained in src/shared/fontconfig_names.rs",
+      "native_boundary": "Opaque FontMgr map operations and NameCollection std::list materialization retained through callbacks in xetex/layout/xetex-XeTeXFontMgr_FC.cpp; one FreeType SFNT flag accessor and native Fontconfig/optional ICU lifecycle remain"
+    },
+    {
+      "path": "src/shared/font_macos.rs",
+      "source": "xetex/layout/xetex-XeTeXFontInst_Mac.cpp",
+      "source_sha256": "4e3e0e5b52d70c075769922c8480e449daaf039a56534d67c6128cd1094a7e81",
+      "source_commit": "c8e7ecc7b2541ffc56eccf1508b5e0c18022405c",
+      "translator": "Manual C++ to Rust translation, 2026-10-05",
+      "targets": [
+        "aarch64-apple-darwin"
+      ],
+      "license_notice": "Complete original SIL International, Jonathan Kew, Jiang Jiang, and Khaled Hosny MIT notice retained in src/shared/font_macos.rs",
+      "native_boundary": "Only the opaque CoreText-backed FontInst subclass constructor/destructor and initialization delegate remain in xetex/layout/xetex-XeTeXFontInst_Mac.cpp"
+    }
+  ]
+}

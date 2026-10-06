@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+# Refresh the desktop database and icon cache so Pitex shows up in the
+# applications menu right after `apt install ./Pitex-*.deb`. Without this,
+# the entry can stay invisible until the next login on Ubuntu 22.04.
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+
+# Load/reload the AppArmor profile for the deb's WebKit sandbox (Ubuntu
+# 24.04 restricts unprivileged user namespaces). Runs on configure only;
+# only when the profile file is installed AND AppArmor is usable; never
+# fatal to the install.
+if [ "$1" = "configure" ] && [ -f /etc/apparmor.d/pitex ] \
+    && command -v apparmor_parser >/dev/null 2>&1 \
+    && { command -v aa-enabled >/dev/null 2>&1 && aa-enabled --quiet 2>/dev/null \
+         || [ -d /sys/kernel/security/apparmor ]; }; then
+    apparmor_parser -r -T -W /etc/apparmor.d/pitex 2>/dev/null || true
+fi
+
+#DEBHELPER#
+
+exit 0

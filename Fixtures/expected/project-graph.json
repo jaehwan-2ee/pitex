@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "root": "main.tex",
+  "nodes": [
+    "main.tex",
+    "sections/details.tex",
+    "sections/intro.tex"
+  ],
+  "edges": [
+    { "from": "main.tex", "to": "sections/intro.tex" },
+    { "from": "main.tex", "to": "sections/details.tex" }
+  ],
+  "missing": [],
+  "cycles": []
+}

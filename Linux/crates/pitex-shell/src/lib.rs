@@ -1,0 +1,45 @@
+//! Pitex — native Linux/Windows port of the macOS LaTeX environment
+//! (Ubuntu 24.04 full build; 22.04 via `--no-default-features` and Windows
+//! via `modern-gtk` without `vte`, see `compat`).
+//!
+//! GUI entry point: `pitex_shell::run()`. The workspace model, SyncTeX
+//! runner, agent coordinator, settings store, PDF renderer and localization
+//! tables are platform-neutral; `app_ui` binds them to GTK4/libadwaita.
+
+pub mod agent;
+pub mod app_ui;
+pub mod compat;
+pub mod completion;
+#[cfg(feature = "equation-preview")]
+pub mod equation_preview;
+pub mod embedded_preview;
+
+pub mod fold;
+pub mod ghost_completion;
+pub mod git;
+pub mod git_diff;
+mod git_list;
+pub mod l10n;
+pub mod markdown_preview;
+pub mod model;
+pub mod panes;
+pub mod pdf;
+pub mod remote;
+mod search;
+mod ssh_ui;
+pub mod settings;
+pub mod synctex;
+#[cfg(not(feature = "vte"))]
+pub mod terminal;
+pub mod update;
+mod window_ipc;
+
+// Unit tests that mutate/read the process PATH must not overlap.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Launch the native application (GTK4 main loop). `app_version` is the
+/// semantic version the updater compares against release tags.
+pub fn run(app_version: &str) -> i32 {
+    app_ui::run(app_version)
+}

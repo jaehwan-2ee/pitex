@@ -1,0 +1,5089 @@
+{
+  "schema_version": 2,
+  "scope": "Command registration, runtime availability and linked differential regression evidence. Full pdfTeX semantic parity is not established.",
+  "manual": {
+    "title": "pdfTeX user manual",
+    "url": "https://mirrors.ibiblio.org/CTAN/systems/doc/pdftex/manual/pdftex-a.pdf",
+    "version": "1.40.29",
+    "date": "2026-02-16"
+  },
+  "reference": {
+    "mode": "pdftex --ini -etex",
+    "version_output": "pdfTeX 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian)",
+    "identity": "This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debi",
+    "available": 161
+  },
+  "native": {
+    "identity": "XeTeX 0.999994",
+    "binaries": {
+      "helper_sha256": "a3b20a3b18d6f94749809ded080a45ce75e47f23ffea417fb8ed2410adcfb2ec",
+      "engine_sha256": "ef532182e08ef3ca05850c7089776a4f6c866572544dc659192471e64ed8338f"
+    },
+    "available": 160
+  },
+  "source_registry": {
+    "header_sha256": "deb275ef11a92ebf67b1be4a81823b0ac09c81f169b50fd1272966bfebf362fa",
+    "extension_sources": [
+      {
+        "path": "src/shared/backend_definitions.rs",
+        "sha256": "346e30ea49f3723c636965bcdb4ef5691243cdc103e13f5f70c6758f03fb1e80",
+        "initializer_reference_present": true
+      },
+      {
+        "path": "src/shared/font_definitions.rs",
+        "sha256": "a7a5729920e788db8baaa2ec8874ae6fb96c21875d1f15a6b0d5857a83508eed",
+        "initializer_reference_present": true
+      },
+      {
+        "path": "src/shared/pdf_definitions.rs",
+        "sha256": "cca0fcc6ae69cd6e106ab1837571060eead028ea78403d56801ea1bdc38eeb20",
+        "initializer_reference_present": true
+      },
+      {
+        "path": "src/shared/string_definitions.rs",
+        "sha256": "d0ac5590e75095731683f2c319b34caf46b4ad5d383bfcde1e55c15c194374a5",
+        "initializer_reference_present": true
+      }
+    ],
+    "unique_declared_names": 647
+  },
+  "remaining_stock_names": [],
+  "remaining_valid_catalog_names": [],
+  "intentionally_unspoofed_identity_names": [
+    "pdftexbanner",
+    "pdftexrevision",
+    "pdftexversion"
+  ],
+  "manual_names_unavailable_in_this_stock_version": [
+    "ignoreprimitiveerror",
+    "pdfuseptexunderscore"
+  ],
+  "semantic_evidence": {
+    "verified": true,
+    "tested": 105,
+    "partial": 49,
+    "not_evaluated": 9,
+    "rule": "tested: a linked regression case passed against these helpers and compared this command's result with stock pdfTeX output from the same run. partial: a linked case passed but checked fixed expectations, another reference engine or only part of the interface. not_evaluated: no linked passing case. Links are reviewed claims; neither level establishes full pdfTeX semantic parity."
+  },
+  "meaning_differs_without_evidence": [],
+  "commands": [
+    {
+      "name": "efcode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\efcode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\efcode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "fontinteger",
+        "operand": "100",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "expanded",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\expanded"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\expanded"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "EXPANDED_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "expansion-and-input",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "ifincsname",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\ifincsname"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\ifincsname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "IF_TEST",
+        "operand": "IF_IN_CSNAME_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "expansion-and-input",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "ifpdfabsdim",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\ifpdfabsdim"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\if"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "IF_TEST",
+        "operand": "23",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "absolute-conditionals",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "ifpdfabsnum",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\ifpdfabsnum"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\if"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "IF_TEST",
+        "operand": "22",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "absolute-conditionals",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "ifpdfprimitive",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\ifpdfprimitive"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\ifprimitive"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "IF_TEST",
+        "operand": "IF_PRIMITIVE_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "primitive-access",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "ignoreprimitiveerror",
+      "stock": {
+        "available": false,
+        "meaning_sample": null
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\ignoreprimitiveerror"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "INT_BASE + INT_PAR__ignore_primitive_error",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": null,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "ignore",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "input",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\input"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "macro:->\\@ifnextchar \\bgroup \\@iinput \\@@input "
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "INPUT",
+        "operand": "0",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "expansion-and-input",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "knaccode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\knaccode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\knaccode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "fontinteger",
+        "operand": "101",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "knbccode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\knbccode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\knbccode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "fontinteger",
+        "operand": "102",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "knbscode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\knbscode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\knbscode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "fontinteger",
+        "operand": "103",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "leftmarginkern",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\leftmarginkern"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\leftmarginkern"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "LEFT_MARGIN_KERN_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "letterspacefont",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\letterspacefont"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\letterspacefont"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "132",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "letterspace",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "native-letterspace",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "lpcode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\lpcode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\lpcode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_FONT_INT",
+        "operand": "2",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-layout",
+          "case": "metric-cache",
+          "claim": "partial",
+          "reference": "xetex"
+        }
+      ]
+    },
+    {
+      "name": "partokencontext",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\partokencontext"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\partokencontext"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "INT_BASE + INT_PAR__partoken_context",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "paragraph-tokens",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "partokenname",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\partokenname"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\partokenname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "AFTER_GROUP",
+        "operand": "1",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "paragraph-tokens",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfadjustinterwordglue",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfadjustinterwordglue"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfadjustinterwordglue"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Integer",
+        "initializer": "0",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfadjustspacing",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfadjustspacing"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\PitexFontExpansion"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "INT_BASE + INT_PAR__pitex_font_expansion",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfannot",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfannot"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfannot"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "108",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "links",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfappendkern",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfappendkern"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfappendkern"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Integer",
+        "initializer": "0",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfcatalog",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfcatalog"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfcatalog"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "104",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfcolorstack",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfcolorstack"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "117",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "color-stack",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "color-stacks",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfcolorstackinit",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfcolorstackinit"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\jobname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "104",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "color-stack",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "color-stacks",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfcompresslevel",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfcompresslevel"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\count1114677"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "6",
+        "initializer": "7"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfcopyfont",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfcopyfont"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfcopyfont"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "131",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-copy",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfcreationdate",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfcreationdate"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\creationdate"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "PDF_CREATION_DATE_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "dates",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfdecimaldigits",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfdecimaldigits"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfdecimaldigits"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "3",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "precision",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfdest",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfdest"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfdest"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "111",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-0",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-2",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "links",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfdestmargin",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfdestmargin"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfdestmargin"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-0",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "destination-2",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfdraftmode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfdraftmode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfdraftmode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "draft",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-mode",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfeachlinedepth",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfeachlinedepth"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfeachlinedepth"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Dimension",
+        "initializer": "-65_536_000",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfeachlineheight",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfeachlineheight"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfeachlineheight"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Dimension",
+        "initializer": "-65_536_000",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfelapsedtime",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfelapsedtime"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\elapsedtime"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "ELAPSED_TIME_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfendlink",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfendlink"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfendlink"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "110",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfendthread",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfendthread"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfendthread"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "172",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "active-thread",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfescapehex",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfescapehex"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\jobname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "102",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfescapename",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfescapename"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\jobname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "101",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfescapestring",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfescapestring"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\jobname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "100",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdffakespace",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffakespace"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdffakespace"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "136",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "fake-space",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "space-font",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdffiledump",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffiledump"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\filedump"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "PDF_FILE_DUMP_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdffilemoddate",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffilemoddate"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\filemoddate"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "PDF_FILE_MOD_DATE_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdffilesize",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffilesize"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\filesize"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "PDF_FILE_SIZE_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdffirstlineheight",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffirstlineheight"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdffirstlineheight"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Dimension",
+        "initializer": "-65_536_000",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdffontattr",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffontattr"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdffontattr"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "135",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-default",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdffontexpand",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffontexpand"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdffontexpand"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "130",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdffontname",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffontname"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdffontname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "convert",
+        "operand": "131",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-default",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdffontobjnum",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffontobjnum"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdffontobjnum"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "convert",
+        "operand": "132",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "unused-font",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdffontsize",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdffontsize"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdffontsize"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "convert",
+        "operand": "130",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-copy",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfforcepagebox",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfforcepagebox"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfforcepagebox"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfgamma",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfgamma"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfgamma"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "1000",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "gamma",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfgentounicode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfgentounicode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfgentounicode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "1",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "glyph-unicode",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "unicode",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfglyphtounicode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfglyphtounicode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "210",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "glyph-unicode",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "unicode",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfhorigin",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfhorigin"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown dimen parameter!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "4736287",
+        "initializer": "8"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "origin",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "page-parameters",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfignoreddimen",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfignoreddimen"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfignoreddimen"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Dimension",
+        "initializer": "-65_536_000",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-mode",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfimageapplygamma",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfimageapplygamma"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfimageapplygamma"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "gamma",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfimagegamma",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfimagegamma"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfimagegamma"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "2200",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "gamma",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfimagehicolor",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfimagehicolor"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfimagehicolor"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "1",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "highcolor",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfimageresolution",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfimageresolution"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfimageresolution"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "72",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "resolution",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfincludechars",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfincludechars"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfincludechars"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "134",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "font-resources",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "unused-font",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfinclusioncopyfonts",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfinclusioncopyfonts"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfinclusioncopyfonts"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "font-copy",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "font-local",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfinclusionerrorlevel",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfinclusionerrorlevel"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfinclusionerrorlevel"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "version-0-0",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "version-1-0",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfinfo",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfinfo"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfinfo"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "103",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "explicit-date",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfinfoomitdate",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfinfoomitdate"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfinfoomitdate"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "omit-date",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfinsertht",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfinsertht"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfinsertht"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "convert",
+        "operand": "133",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "insert-height",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfinterwordspaceoff",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfinterwordspaceoff"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfinterwordspaceoff"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "138",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "fake-space",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfinterwordspaceon",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfinterwordspaceon"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfinterwordspaceon"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "137",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "fake-space",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdflastannot",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastannot"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastannot"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "2400",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdflastlinedepth",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastlinedepth"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastlinedepth"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Dimension",
+        "initializer": "-65_536_000",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "paragraph-dimensions",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastlink",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastlink"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastlink"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "2401",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdflastmatch",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastmatch"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastmatch"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "111",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "negative-query",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastobj",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastobj"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastobj"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "6",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "object-references",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastxform",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastxform"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\badness"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "7",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "forms",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastximage",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastximage"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\badness"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "8",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastximagecolordepth",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastximagecolordepth"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastximagecolordepth"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "pdf_definitions.rs",
+        "command_or_alias": "lastitem",
+        "operand": "2402",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastximagepages",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastximagepages"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\badness"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "9",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastxpos",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastxpos"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastxpos"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "PDF_LAST_X_POS_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "positions",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflastypos",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflastypos"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflastypos"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "PDF_LAST_Y_POS_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "positions",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdflinkmargin",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdflinkmargin"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdflinkmargin"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfliteral",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfliteral"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfliteral"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "100",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "literal",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfmajorversion",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfmajorversion"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown int32_t parameter!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "1",
+        "initializer": "5"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfmapfile",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfmapfile"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\protected macro:#1->\\special {pdf:mapfile #1}"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "119",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "font-map-file",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfmapline",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfmapline"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\protected macro:#1->\\special {pdf:mapline #1}"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "118",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "font-map-line",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "duplicate-map-0",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfmatch",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfmatch"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfmatch"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "110",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfmdfivesum",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfmdfivesum"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\mdfivesum"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "PDF_MDFIVE_SUM_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfminorversion",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfminorversion"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown int32_t parameter!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "7",
+        "initializer": "6"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfmovechars",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfmovechars"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfmovechars"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Integer",
+        "initializer": "0",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "pdfnames",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfnames"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "120",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfnobuiltintounicode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfnobuiltintounicode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfnobuiltintounicode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "disable-unicode",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "bitmap-no-unicode",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfnoligatures",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfnoligatures"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfnoligatures"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "133",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "ligatures",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfnormaldeviate",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfnormaldeviate"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\normaldeviate"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "NORMAL_DEVIATE_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfobj",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfobj"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfobj"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "101",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "object-references",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfobjcompresslevel",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfobjcompresslevel"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfobjcompresslevel"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "level0",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "level3",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "version14",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfomitcharset",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfomitcharset"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfomitcharset"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "charset-omit",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "bitmap-omit-charset",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfomitinfodict",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfomitinfodict"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfomitinfodict"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "omit-info",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfomitprocset",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfomitprocset"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfomitprocset"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "resource-policy",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfoptionalwaysusepdfpagebox",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfoptionalwaysusepdfpagebox"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfoptionalwaysusepdfpagebox"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "PITEX_ALIAS",
+        "operand": "pdfforcepagebox",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfoptionpdfinclusionerrorlevel",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfoptionpdfinclusionerrorl"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfoptionpdfinclusionerrorl"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "PITEX_ALIAS",
+        "operand": "pdfinclusionerrorlevel",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "version--1-1",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfoptionpdfminorversion",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfminorversion"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown int32_t parameter!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "PITEX_ALIAS",
+        "operand": "pdfminorversion",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfoutline",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfoutline"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "116",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "outline",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "outline",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfoutput",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfoutput"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfoutput"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "INT_BASE + INT_PAR__pdfoutput",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "pdfpageattr",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpageattr"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\errhelp"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_TOKS",
+        "operand": "0",
+        "initializer": "3"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "page-parameters",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfpagebox",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpagebox"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpagebox"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfpageheight",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpageheight"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpageheight"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "DIMEN_BASE + DIMEN_PAR__pdf_page_height",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfpageref",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpageref"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpageref"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "pdf_definitions.rs",
+        "command_or_alias": "convert",
+        "operand": "175",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfpageresources",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpageresources"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\errhelp"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_TOKS",
+        "operand": "0",
+        "initializer": "4"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "page-parameters",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfpagesattr",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpagesattr"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpagesattr"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_TOKS",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfpagewidth",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpagewidth"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpagewidth"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "DIMEN_BASE + DIMEN_PAR__pdf_page_width",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "page-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfpkmode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpkmode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpkmode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_TOKS",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-dpi300-mode",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfpkresolution",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpkresolution"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpkresolution"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "raw-dpi300-mode",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-bitmap-fonts",
+          "case": "prebuilt-dpi600",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfprependkern",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfprependkern"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfprependkern"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Integer",
+        "initializer": "0",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "prepend-append",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfprimitive",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfprimitive"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\jobname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "112",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "primitive-access",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfprotrudechars",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfprotrudechars"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\XeTeXprotrudechars"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "INT_BASE + INT_PAR__xetex_protrude_chars",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfpxdimen",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfpxdimen"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfpxdimen"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "65782",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfrandomseed",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfrandomseed"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\randomseed"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "RANDOM_SEED_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfrefobj",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfrefobj"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfrefobj"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "102",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "object-references",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfrefxform",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfrefxform"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "113",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "forms",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfrefximage",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfrefximage"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "115",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfresettimer",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfresettimer"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\resettimer"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "RESET_TIMER_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfrestore",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfrestore"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfrestore"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "106",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "matrix",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfretval",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfretval"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfretval"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "2000",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "strings",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfrunninglinkoff",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfrunninglinkoff"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfrunninglinkoff"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "173",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "pdfrunninglinkon",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfrunninglinkon"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfrunninglinkon"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "174",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "pdfsave",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsave"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfsave"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "105",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "matrix",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfsavepos",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsavepos"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfsavepos"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "PDF_SAVE_POS_NODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "positions",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfsetmatrix",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsetmatrix"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfsetmatrix"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "107",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "content-operators",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "matrix",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfsetrandomseed",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsetrandomseed"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\setrandomseed"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "SET_RANDOM_SEED_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfshellescape",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfshellescape"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\shellescape"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "LAST_ITEM",
+        "operand": "PDF_SHELL_ESCAPE_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfspacefont",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfspacefont"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfspacefont"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "139",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "space-font",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfstartlink",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfstartlink"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfstartlink"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "109",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "annotations",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "interactive",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfstartthread",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfstartthread"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfstartthread"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "171",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "active-thread",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfstrcmp",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfstrcmp"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\strcmp"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "PDF_STRCMP_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "alias-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppressptexinfo",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppressptexinfo"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppressptexinfo"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "ptex-mask",
+          "claim": "partial",
+          "reference": null
+        },
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "ptex-import-15",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppresswarningdupdest",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppresswarningdupdest"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppresswarningdupdest"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "duplicate-dest-1",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppresswarningdupmap",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppresswarningdupmap"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppresswarningdupmap"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "duplicate-map-1",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfsuppresswarningpagegroup",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppresswarningpagegroup"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfsuppresswarningpagegroup"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-policy",
+          "case": "page-group-1",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdftexbanner",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdftexbanner"
+      },
+      "native": {
+        "available": false,
+        "meaning_sample": null
+      },
+      "declared_in_registration_sources": false,
+      "registry": null,
+      "identity_command": true,
+      "meaning_matches_reference": null,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "pdftexrevision",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdftexrevision"
+      },
+      "native": {
+        "available": false,
+        "meaning_sample": null
+      },
+      "declared_in_registration_sources": false,
+      "registry": null,
+      "identity_command": true,
+      "meaning_matches_reference": null,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "pdftexversion",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdftexversion"
+      },
+      "native": {
+        "available": false,
+        "meaning_sample": null
+      },
+      "declared_in_registration_sources": false,
+      "registry": null,
+      "identity_command": true,
+      "meaning_matches_reference": null,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "pdfthread",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfthread"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfthread"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "170",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "threads",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfthreadmargin",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfthreadmargin"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfthreadmargin"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-structures",
+          "case": "threads",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdftracingfonts",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdftracingfonts"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdftracingfonts"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Integer",
+        "initializer": "0",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "glyph-expansion",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdftrailer",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdftrailer"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "121",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdftrailerid",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdftrailerid"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "122",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "output-dictionaries",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "output-options",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfunescapehex",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfunescapehex"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\jobname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "103",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "escaping",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "escaping",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfuniformdeviate",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfuniformdeviate"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\uniformdeviate"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "UNIFORM_DEVIATE_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-primitives",
+          "case": "aliases",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfuniqueresname",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfuniqueresname"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfuniqueresname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "partial",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "resource-policy",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfuseptexunderscore",
+      "stock": {
+        "available": false,
+        "meaning_sample": null
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfuseptexunderscore"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "0",
+        "initializer": "pitex_runtime_registration"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": null,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-strings",
+          "case": "ptex-underscore",
+          "claim": "partial",
+          "reference": null
+        }
+      ]
+    },
+    {
+      "name": "pdfvorigin",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfvorigin"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown dimen parameter!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_DIMEN",
+        "operand": "4736287",
+        "initializer": "9"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-backend-options",
+          "case": "origin",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfxform",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfxform"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "112",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "forms",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfxformname",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfxformname"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfxformname"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "pdf_definitions.rs",
+        "command_or_alias": "convert",
+        "operand": "176",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfximage",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfximage"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "[unknown extension!]"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "114",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": false,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "image-pages",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "pdfximagebbox",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\pdfximagebbox"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\pdfximagebbox"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "pdf_definitions.rs",
+        "command_or_alias": "convert",
+        "operand": "177",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-engine-queries",
+          "case": "expandable-queries",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "quitvmode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\quitvmode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\quitvmode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "extension",
+        "operand": "140",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "quitvmode",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "rightmarginkern",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\rightmarginkern"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\rightmarginkern"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "CONVERT",
+        "operand": "RIGHT_MARGIN_KERN_CODE",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "rpcode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\rpcode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\rpcode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_FONT_INT",
+        "operand": "3",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "protrusion",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-layout",
+          "case": "metric-cache",
+          "claim": "partial",
+          "reference": "xetex"
+        }
+      ]
+    },
+    {
+      "name": "shbscode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\shbscode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\shbscode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "fontinteger",
+        "operand": "105",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "showstream",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\showstream"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\showstream"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command": "Storage::Integer",
+        "initializer": "-1",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-core-controls",
+          "case": "show-stream",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "special",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\special"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\special"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "EXTENSION",
+        "operand": "SPECIAL_NODE",
+        "initializer": "FROZEN_SPECIAL"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "partial",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdf-features",
+          "case": "annotation",
+          "claim": "partial",
+          "reference": "xetex"
+        }
+      ]
+    },
+    {
+      "name": "stbscode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\stbscode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\stbscode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "fontinteger",
+        "operand": "104",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "interword-glue",
+          "claim": "tested",
+          "reference": "pdftex"
+        },
+        {
+          "tool": "preview-regress-font-typography",
+          "case": "code-tables",
+          "claim": "partial",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "tagcode",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\tagcode"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\tagcode"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "source": "font_definitions.rs",
+        "command_or_alias": "fontinteger",
+        "operand": "106",
+        "initializer_reference_present": true
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-core-controls",
+          "case": "font-tags",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    },
+    {
+      "name": "tracinglostchars",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\tracinglostchars"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\tracinglostchars"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "INT_BASE + INT_PAR__tracing_lost_chars",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "tracingstacklevels",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\tracingstacklevels"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\tracingstacklevels"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "ASSIGN_INT",
+        "operand": "INT_BASE + INT_PAR__tracing_stack_levels",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "not_evaluated",
+      "semantic_evidence": []
+    },
+    {
+      "name": "vadjust",
+      "stock": {
+        "available": true,
+        "meaning_sample": "\\vadjust"
+      },
+      "native": {
+        "available": true,
+        "meaning_sample": "\\vadjust"
+      },
+      "declared_in_registration_sources": true,
+      "registry": {
+        "command": "VADJUST",
+        "operand": "0",
+        "initializer": "xf_prim_init_none"
+      },
+      "identity_command": false,
+      "meaning_matches_reference": true,
+      "semantic_parity": "tested",
+      "semantic_evidence": [
+        {
+          "tool": "preview-regress-pdftex-semantics",
+          "case": "paragraph-tokens",
+          "claim": "tested",
+          "reference": "pdftex"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,695 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Run the full matrix (Windows included) on a branch without a PR:
+  # gh workflow run CI --ref <branch>
+  workflow_dispatch:
+
+jobs:
+  updates:
+    name: Update installers (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-updates --
+
+  gates:
+    name: Repository gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node Tools/verify-target-dag.mjs
+      - run: node Tools/verify-rust-dag.mjs
+      - run: node Tools/validate-xcodeproj.mjs
+      - run: node Tools/check-markdown-preview.mjs
+      - run: node Tools/check-bundled-skills.mjs
+      - run: node Tools/check-linkage-audit.mjs
+      - run: node Tools/generate-sbom.mjs
+      - run: node Tools/verify-release-surface.mjs
+      - name: History gate (forbid junk/local-path adds)
+        # Per-commit scan of ADDED paths. PRs check base..head; pushes check
+        # before..sha (skipped when before is all zeros, e.g. a new branch).
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            RANGE=""
+          fi
+          if [ -n "$RANGE" ]; then
+            node Tools/verify-release-surface.mjs --commits "$RANGE" --sbom Evidence/sbom.cdx.json
+          fi
+
+  swift:
+    name: Swift packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import Swift signing keys
+        run: curl --fail --silent --show-error --location --compressed --retry 3 https://www.swift.org/keys/all-keys.asc | gpg --batch --import
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.3.3'
+      - run: swift test
+        working-directory: Packages/TexCore
+      - run: swift test
+        working-directory: Packages/TexApp
+
+  macos:
+    name: macOS app and native editor checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release app
+        id: build
+        run: |
+          xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
+            -configuration Release -derivedDataPath build \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      - name: App-local Pi installs, RPC and update rollback (Bun and npm)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: swift Tools/check-pi-runtime.swift build/Build/Products/Release --latest
+      # Keep the older checks running if this new regression fails; the
+      # final outcome step below still makes its failure fail the job.
+      - name: Document layout native regression checks
+        id: document_layout
+        continue-on-error: true
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-document-layout.py build/Build/Products/Release
+      - name: Document layout logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-layout-${{ github.job }}
+          path: /tmp/pitex-document-layout-current/
+          if-no-files-found: warn
+      - name: Sidebar UI checks (English and Korean)
+        run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release
+      - name: Sidebar UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-ui-screenshots
+          path: /tmp/pitex-sidebar-*.png
+          if-no-files-found: warn
+      - name: Native editor regression checks
+        run: swift test --package-path Packages/TexApp --build-system native
+      - name: Git and subprocess regression checks
+        run: |
+          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|GitRepositoryReaderTests|ProcessRunnerTests|DiskContentHashTests|RemoteCoreTests'
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-git-performance --
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-ime-completion --
+      - name: Native highlighting checks
+        run: swift Tools/check-highlighting-performance.swift
+      - name: Minimap and completion checks
+        run: swift Tools/check-editor-performance.swift
+      - name: Fold layout checks
+        run: swift Tools/check-fold-layout.swift
+      # BasicTeX puts xelatex at the harness's hardcoded
+      # /Library/TeX/texbin path; texbin joins PATH because xelatex execs
+      # xdvipdfmx through it. The article-class fixture needs no tlmgr.
+      - name: Install BasicTeX
+        id: tex
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          brew install --cask basictex
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
+      - name: Native SyncTeX harness
+        run: python3 Tools/check-macos-synctex.py build/Build/Products/Release
+      # Self-contained: builds its own two-file fixture with BasicTeX,
+      # then exercises navigation plus the detached preview window.
+      # The outcome gates keep one new check's failure from hiding the rest.
+      - name: Workspace navigation and detached preview checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.tex.outcome == 'success' }}
+        run: python3 Tools/check-workspace-navigation.py build/Build/Products/Release
+      - name: Find bar overlay checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-find-bar.py build/Build/Products/Release
+      - name: Settings menu checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-settings-menu.py build/Build/Products/Release
+      - name: Preview backend Settings screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-backend-settings-${{ github.job }}
+          path: /tmp/pitex-preview-backend-current/
+          if-no-files-found: warn
+      - name: Native SSH local preview and manual save boundary
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.tex.outcome == 'success' }}
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          preview_ssh_dir=$(mktemp -d "$RUNNER_TEMP/pitex-preview-ssh.XXXXXX")
+          preview_sshd_pid=""
+          trap 'if [ -n "$preview_sshd_pid" ]; then sudo kill "$preview_sshd_pid" || true; fi; hdiutil detach "$preview_ssh_dir/dmg" >/dev/null 2>&1 || true' EXIT
+          # The frontend is built from this commit. Its embedded helper comes
+          # from this repository's latest checksum-verified release.
+          if ! gh release view --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::warning::No published release yet; the SSH preview fixture needs one."
+            exit 0
+          fi
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern 'Pitex-v*-macos-arm64.dmg' --pattern SHA256SUMS --dir "$preview_ssh_dir"
+          preview_dmg=$(cd "$preview_ssh_dir" && ls Pitex-v*-macos-arm64.dmg)
+          (cd "$preview_ssh_dir" && grep " $preview_dmg\$" SHA256SUMS | shasum -a 256 -c -)
+          mkdir "$preview_ssh_dir/dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$preview_ssh_dir/dmg" \
+            "$preview_ssh_dir/$preview_dmg" > "$preview_ssh_dir/mount.log"
+          ssh-keygen -q -t ed25519 -N '' -f "$preview_ssh_dir/identity"
+          ssh-keygen -q -t ed25519 -N '' -f "$preview_ssh_dir/hostkey"
+          preview_ssh_user=$(whoami)
+          cat > "$preview_ssh_dir/sshd_config" <<EOF
+          Port 22322
+          ListenAddress 127.0.0.1
+          HostKey $preview_ssh_dir/hostkey
+          AuthorizedKeysFile $preview_ssh_dir/identity.pub
+          PidFile $preview_ssh_dir/sshd.pid
+          AllowUsers $preview_ssh_user
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+          StrictModes no
+          UsePAM no
+          EOF
+          sudo /usr/sbin/sshd -D -f "$preview_ssh_dir/sshd_config" -E "$preview_ssh_dir/sshd.log" &
+          preview_sshd_pid=$!
+          mkdir -p "$HOME/.ssh"
+          for preview_attempt in 1 2 3 4 5; do
+            if ssh-keyscan -p 22322 -t ed25519 127.0.0.1 > "$preview_ssh_dir/known_hosts" 2>/dev/null; then break; fi
+            if [ "$preview_attempt" = 5 ]; then cat "$preview_ssh_dir/sshd.log"; exit 1; fi
+            sleep 1
+          done
+          cat "$preview_ssh_dir/known_hosts" >> "$HOME/.ssh/known_hosts"
+          PITEX_CHECK_SSH_PORT=22322 PITEX_CHECK_SSH_IDENTITY_FILE="$preview_ssh_dir/identity" \
+            PITEX_PREVIEW_HELPER="$preview_ssh_dir/dmg/Pitex.app/Contents/Helpers/PreviewEngine/pitex-preview" \
+            swift Tools/check-remote-autosave.swift 127.0.0.1
+      - name: Native completion checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-native-completion.py build/Build/Products/Release
+      # Real SwiftUI lifecycle + LaunchServices `open -a`: window fronting
+      # and activation without a Dock click (needs no TeX). Runs last so a
+      # failure here can't hide the other checks' results.
+      - name: External open routing checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-external-open.py build/Build/Products/Release
+      - name: Require document layout acceptance
+        if: ${{ always() && steps.document_layout.outcome == 'failure' }}
+        run: exit 1
+
+  macos-window-checks:
+    name: Golden Gate window and SyncTeX checks
+    # xcode-27 runs the macOS 27 ("Golden Gate") image — the OS where the
+    # external-open regression was reported. Only the two window-focused
+    # native harnesses run here; macos-latest keeps the full suite.
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: sw_vers
+      # The xcode-27 image ships without the Metal toolchain the build
+      # invokes; download it once or `xcodebuild` fails with 'missing
+      # Metal Toolchain'.
+      - run: xcodebuild -downloadComponent MetalToolchain
+      - name: Build release app
+        id: build
+        run: |
+          xcodebuild -project Mac/Pitex.xcodeproj -scheme Pitex \
+            -configuration Release -derivedDataPath build \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+      # Keep the older checks running if this new regression fails; the
+      # final outcome step below still makes its failure fail the job.
+      - name: Document layout native regression checks
+        id: document_layout
+        continue-on-error: true
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-document-layout.py build/Build/Products/Release
+      - name: Document layout logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-layout-${{ github.job }}
+          path: /tmp/pitex-document-layout-current/
+          if-no-files-found: warn
+      - name: Native completion checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 Tools/check-native-completion.py build/Build/Products/Release 2>&1 | tee /tmp/pitex-native-completion-golden.log
+      - name: Native completion log
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-completion-log-golden-gate
+          path: /tmp/pitex-native-completion-golden.log
+          if-no-files-found: error
+      - name: Native editor mutation regression checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: swift test --package-path Packages/TexApp --build-system native --filter EditorMacAdapterMutationTests
+      # Vision OCR is unavailable on Golden Gate; the macos job retains
+      # the full rendered/localization/tint suite. Measure actual layout here.
+      - name: Sidebar native geometry checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-sidebar-ui.py build/Build/Products/Release --geometry-only
+      - name: Sidebar UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-ui-screenshots-golden-gate
+          path: /tmp/pitex-sidebar-*.png
+          if-no-files-found: warn
+      # BasicTeX puts xelatex at the harness's hardcoded
+      # /Library/TeX/texbin path; texbin joins PATH because xelatex execs
+      # xdvipdfmx through it. The article-class fixture needs no tlmgr.
+      - name: Install BasicTeX
+        id: tex
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          brew install --cask basictex
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
+      - name: Workspace navigation and detached preview checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.tex.outcome == 'success' }}
+        run: python3 Tools/check-workspace-navigation.py build/Build/Products/Release
+      - name: Find bar overlay checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-find-bar.py build/Build/Products/Release
+      - name: Settings menu checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-settings-menu.py build/Build/Products/Release
+      # The window-routing probe runs last so its result can't mask the
+      # navigation/detached-preview evidence above.
+      - name: External open routing checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 Tools/check-external-open.py build/Build/Products/Release
+      - name: Require document layout acceptance
+        if: ${{ always() && steps.document_layout.outcome == 'failure' }}
+        run: exit 1
+
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev \
+            libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
+            libvte-2.91-gtk4-dev libpoppler-glib-dev libwebkitgtk-6.0-dev \
+            xvfb gdb dbus-x11
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      - run: cargo test --workspace
+        working-directory: Linux
+      - name: Allow unprivileged user namespaces for the WebKit sandbox
+        # WebKitGTK's bubblewrap sandbox needs unprivileged userns; the GitHub
+        # ubuntu-24.04 runner restricts them (apparmor_restrict_unprivileged_
+        # userns=1), so WebKitWebView creation aborts. Enable them for this
+        # job. The sandbox itself stays ON — no WEBKIT_DISABLE_SANDBOX and no
+        # test is skipped.
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+      - name: Agent update through the real Settings button (Bun and npm)
+        timeout-minutes: 10
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib agent_update_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Search navigation and match counter
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Replaced editors release their buffer and state
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib editor_release_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Native GTK editing and PDF worker checks
+        run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
+        working-directory: Linux
+      - name: Stale-revision rebase and caret regressions
+        run: xvfb-run -a cargo test -p pitex-shell --test editor_rebase -- --ignored
+        working-directory: Linux
+      - name: Full window startup and small project check
+        run: |
+          binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
+          GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- gdb -batch -return-child-result -ex run -ex 'thread apply all bt' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Compare release optimization profiles
+        run: cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-optimization-profiles --
+
+  rust-ubuntu2204:
+    name: Rust workspace (Ubuntu 22.04 compat)
+    # 22.04 has GTK 4.6 / libadwaita 1.1 and ships no VTE-GTK4 — the compat
+    # build (--no-default-features) must compile and link against exactly
+    # these system libraries, so the job runs inside the real container.
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:22.04
+      # WebKit keeps its own bubblewrap sandbox. The outer container must
+      # permit user and network namespaces on the Ubuntu 24.04 runner.
+      options: --cap-add SYS_ADMIN --cap-add NET_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y build-essential pkg-config libssl-dev curl \
+            ca-certificates git unzip \
+            libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
+            libpoppler-glib-dev poppler-utils libwebkitgtk-6.0-dev xvfb xdotool \
+            ibus-hangul dbus-x11 texlive-xetex texlive-fonts-recommended \
+            libteckit-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
+            libfreetype-dev libfontconfig-dev libpng-dev zlib1g-dev
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-10-04
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      # The job exercises the deb's exact feature set: `--no-default-features`
+      # + all three previews (the ubuntu2204 variant in pitex/Cargo.toml).
+      - name: Build embedded preview helpers
+        run: make -C PreviewEngine BUILD_DIR="$PWD/Linux/target/preview-engine" all selftest
+      - run: cargo build -p pitex --no-default-features --features markdown-preview,equation-preview,embedded-preview
+        working-directory: Linux
+      - name: Unit tests (22.04 feature set)
+        run: cargo test --workspace --exclude pitex --no-default-features --features markdown-preview,equation-preview,embedded-preview
+        working-directory: Linux
+      - name: Rust IBus compatibility adapter
+        run: cargo test -p pitex --no-default-features --features embedded-preview ibus_compat
+        working-directory: Linux
+      - name: Agent update through the real Settings button on GTK 4.6
+        timeout-minutes: 10
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview,equation-preview,embedded-preview agent_update_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Search navigation and match counter on GTK 4.6
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview,equation-preview,embedded-preview search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Replaced editors release their buffer and state on GTK 4.6
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview,equation-preview,embedded-preview editor_release_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Million-file Git pane on GTK 4.6
+        timeout-minutes: 3
+        working-directory: Linux
+        env:
+          GSK_RENDERER: cairo
+        run: xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview,equation-preview,embedded-preview startup_tests::small_project_opens_without_blocking_the_ui -- --ignored --nocapture --test-threads=1
+      - name: Fast and exact equation popovers on GTK 4.6
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview,equation-preview,embedded-preview equation_preview::tests::renderer_page_contract -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Unsaved editor changes through the real embedded preview on GTK 4.6
+        env:
+          PITEX_PREVIEW_HELPER: ${{ github.workspace }}/Linux/target/preview-engine/bin/pitex-preview
+          GSK_RENDERER: cairo
+        run: xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview,equation-preview,embedded-preview ubuntu_preview_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Embedded terminal core (emulator, PTY round trip)
+        run: cargo test -p terminal-core
+        working-directory: Linux
+      - name: Terminal application mouse and focus input on GTK 4.6
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib --no-default-features --features markdown-preview,equation-preview,embedded-preview application_input_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+
+
+  windows:
+    name: Windows workspace (MSYS2 UCRT64)
+    # The Windows app links the MSYS2 GTK stack, so the authoritative compile
+    # gate is a real UCRT64 toolchain — no cross-compile from Linux.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-gtksourceview5
+            mingw-w64-ucrt-x86_64-poppler
+            mingw-w64-ucrt-x86_64-librsvg
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme
+            mingw-w64-ucrt-x86_64-hicolor-icon-theme
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      - name: Windows command environment and batch path checks
+        # Node/Bun helpers must work with native Windows filenames too.
+        run: cargo test -p build-core --test command_environment
+        working-directory: Linux
+      - name: Portable agent skill helpers (Node and Bun)
+        run: |
+          node Tools/check-bundled-skills.mjs
+          bun Tools/check-bundled-skills.mjs
+      # The orchestrator suite is the build scheduler's deterministic
+      # tests — native coverage for the relative live-output path logic.
+      - name: Build scheduler orchestration (relative live outputs)
+        run: cargo test -p build-core --test orchestrator
+        working-directory: Linux
+      - name: Build feature scheduler
+        run: cargo test -p build-feature
+        working-directory: Windows
+      - name: Windows process-tree ownership and application exit
+        run: cargo test --manifest-path Linux/Cargo.toml -p build-core --test windows_job -- --nocapture --test-threads=1
+      # SyncTeX path mapping (host-dependent separators) — lib-only, no GUI.
+      - name: SyncTeX path mapping
+        run: "cargo test -p pitex-shell --lib synctex::"
+        working-directory: Windows
+      - run: cargo build -p pitex-windows
+        working-directory: Windows
+      - name: Stage WebView2 loader for native preview tests
+        run: |
+          loader=''
+          for candidate in target/debug/build/webview2-com-sys-*/out/x64/WebView2Loader.dll; do
+            if [ -f "$candidate" ] && { [ -z "$loader" ] || [ "$candidate" -nt "$loader" ]; }; then
+              loader="$candidate"
+            fi
+          done
+          test -n "$loader"
+          cp "$loader" target/debug/WebView2Loader.dll
+          cp "$loader" target/debug/deps/WebView2Loader.dll
+        working-directory: Windows
+      - name: Windows platform and portable runtime contracts
+        run: |
+          cargo test -p windows-platform
+          cargo test -p pitex-windows --bin pitex
+        working-directory: Windows
+      - name: Windows editing-preview helper contracts
+        run: cargo test --locked --manifest-path PreviewEngine/Windows/Cargo.toml
+      - name: Build Windows editing-preview helper
+        run: CARGO_TARGET_DIR="$PWD/Windows/target/preview-engine" cargo build --release --locked --manifest-path PreviewEngine/Windows/Cargo.toml
+      - name: Ensure WebView2 runtime for native renderer acceptance
+        shell: pwsh
+        run: ./Tools/setup-webview2-runtime.ps1
+      - name: Native Windows MathJax and WebView2 renderer
+        run: cargo test -p pitex-shell --lib windows_renderer_page_contract -- --ignored --nocapture --test-threads=1
+        working-directory: Windows
+      - uses: r-lib/actions/setup-tinytex@v2
+      - name: Install the Windows preview fixture's TeX runtime
+        shell: pwsh
+        run: |
+          tlmgr update --self
+          tlmgr install xetex latex-bin cm amsfonts synctex
+      - name: Equation context, profile, and preview contracts
+        id: windows_exact
+        continue-on-error: true
+        run: |
+          pdflatex --version
+          cargo test --manifest-path ../Linux/Cargo.toml -p language-core --test equation_preview_syntax
+          cargo test --manifest-path ../Linux/Cargo.toml -p build-core --test equation_exact
+          cargo test -p pitex-shell --lib equation_preview::
+        working-directory: Windows
+      - name: Real XeLaTeX unsaved editing preview and SyncTeX
+        id: windows_preview
+        continue-on-error: true
+        run: cargo test --locked --manifest-path PreviewEngine/Windows/Cargo.toml --test protocol real_tex -- --ignored --nocapture
+      # terminal-core is a member of the Linux workspace only; the manifest
+      # path resolves it and builds just the crate (no GTK needed).
+      - name: Embedded terminal core (emulator, ConPTY round trip)
+        run: cargo test -p terminal-core
+        working-directory: Linux
+      - name: Remote sync core (OpenSSH/bsdtar path logic)
+        run: cargo test -p remote-core
+        working-directory: Windows
+      - name: Git polling, diff caching, and Open screen policy
+        run: |
+          cargo test -p git-core
+          cargo test -p pitex-shell --lib git::tests
+          cargo test -p pitex-shell --test startup_policy
+        working-directory: Windows
+      - name: Native Windows Agent update (Bun and npm)
+        timeout-minutes: 10
+        run: cargo test -p pitex-shell --lib agent_update_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Windows
+      - name: Native Windows search navigation and counter
+        run: cargo test -p pitex-shell --lib search::tests::navigation_counts_edits_and_unicode -- --ignored --nocapture --test-threads=1
+        working-directory: Windows
+      - name: Window routing protocol (loopback IPC)
+        run: cargo test -p pitex-shell --lib window_ipc
+        working-directory: Windows
+      - name: Require native Windows TeX acceptance
+        if: always()
+        run: |
+          test '${{ steps.windows_exact.outcome }}' = success
+          test '${{ steps.windows_preview.outcome }}' = success
+
+  preview-engine:
+    name: Rust embedded preview helpers
+    # License boundary check: build the helpers standalone and audit their
+    # linkage (TECkit must stay a shared dep; no xdvipdfmx/MuPDF/dpx).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-10-04
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config \
+            libteckit-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
+            libfreetype-dev libfontconfig-dev libpng-dev zlib1g-dev \
+            texlive-xetex texlive-latex-extra texlive-science texlive-pstricks \
+            texlive-fonts-recommended texlive-fonts-extra texlive-bibtex-extra biber \
+            texlive-lang-korean texlive-lang-cjk \
+            fonts-noto-cjk fonts-sil-padauk fonts-arphic-uming \
+            fonts-dejavu-core fonts-dejavu-extra fonts-lato \
+            poppler-utils mupdf-tools ghostscript
+      - name: Build helpers
+        run: make -C PreviewEngine BUILD_DIR="$RUNNER_TEMP/pitex-preview-engine"
+      - name: Boundary selftest (specials/cmap/truncation)
+        run: make -C PreviewEngine selftest BUILD_DIR="$RUNNER_TEMP/pitex-preview-engine"
+      - name: In-process service and PDF interpreter tests
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/pitex-preview-engine/cargo
+        run: cargo +nightly-2026-10-04 test --release --locked --manifest-path PreviewEngine/Cargo.toml --bin pitex-preview
+      - name: Differential TeX, PDF, PostScript and auxiliary regressions
+        env:
+          PITEX_BIN: ${{ runner.temp }}/pitex-preview-engine/bin
+          PITEX_EVIDENCE: ${{ runner.temp }}/pitex-semantic-evidence.jsonl
+        run: |
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-tex-compat
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-pdf-features
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-engine-primitives
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-engine-queries
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-core-controls
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-postscript
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-auxiliary
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-bibtex-style
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-pdf-structures
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-engine-strings
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-typography
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-backend-options
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-pdf-policy
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-bitmap-fonts
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-opentype-math
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-discovery
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-postscript-vm
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-postscript-color
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-bibliography-controls
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-pdftex-semantics
+      - name: Semantic evidence gate unit test
+        run: cargo test --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-audit-pdftex-vocabulary
+      # Every catalog evidence link must match a case that passed above for
+      # these helpers, and the committed report may not claim other levels.
+      - name: Native pdfTeX vocabulary availability and semantic evidence
+        env:
+          PITEX_BIN: ${{ runner.temp }}/pitex-preview-engine/bin
+        run: >-
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-audit-pdftex-vocabulary --
+          --require-native --evidence "$RUNNER_TEMP/pitex-semantic-evidence.jsonl"
+          --check PreviewEngine/compatibility/pdftex-vocabulary-report.json
+      - name: Audit helper linkage
+        run: bash PreviewEngine/tools/audit-linkage.sh "$RUNNER_TEMP/pitex-preview-engine/bin"
+      - name: Bundle source-record check
+        run: bash Tools/check-bundle-source-record.sh
+
+  macos-preview-engine:
+    name: macOS embedded preview helpers
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-10-04
+      - name: Native and TeX test dependencies
+        run: |
+          brew install freetype harfbuzz graphite2 icu4c@78 libpng zlib pkgconf poppler ghostscript autoconf automake libtool
+          # TECkit has no Homebrew formula. Build the same verified shared
+          # library used by the release payload, outside the checkout.
+          preview_deps="$RUNNER_TEMP/preview-deps"
+          preview_source="$RUNNER_TEMP/preview-source"
+          mkdir -p "$preview_deps" "$preview_source"
+          curl --fail --location --retry 3 \
+            https://github.com/silnrsi/teckit/releases/download/v2.5.13/teckit-2.5.13.tar.xz \
+            -o "$preview_source/teckit-2.5.13.tar.xz"
+          echo "3f55cd3670f1ff1a439d5a40071870b9e4ca2be8877a0eb80e24783cb532b380  $preview_source/teckit-2.5.13.tar.xz" | shasum -a 256 -c -
+          tar xJf "$preview_source/teckit-2.5.13.tar.xz" -C "$preview_source"
+          (
+            cd "$preview_source/teckit-2.5.13"
+            ./autogen.sh
+            ./configure --prefix="$preview_deps" --with-system-zlib
+            make -j"$(sysctl -n hw.ncpu)"
+            make install
+          )
+          echo "PKG_CONFIG_PATH=$preview_deps/lib/pkgconfig:$(brew --prefix icu4c@78)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          brew install --cask basictex
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
+          sudo /Library/TeX/texbin/tlmgr update --self
+          sudo /Library/TeX/texbin/tlmgr install collection-xetex collection-latexrecommended unicode-math lm-math
+      - name: Build helpers against the macOS SDK
+        run: make -C PreviewEngine BUILD_DIR="$RUNNER_TEMP/pitex-preview-engine" all selftest
+      - name: In-process service and PDF interpreter tests
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/pitex-preview-engine/cargo
+        run: cargo +nightly-2026-10-04 test --release --locked --manifest-path PreviewEngine/Cargo.toml --bin pitex-preview
+      - name: OpenType and CoreText runtime comparisons
+        env:
+          PITEX_BIN: ${{ runner.temp }}/pitex-preview-engine/bin
+        run: |
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-audit-pdftex-vocabulary -- --require-native
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-opentype-math
+          PITEX_LAYOUT_CASE=opentype-tables cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
+          PITEX_LAYOUT_CASE=metric-cache cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
+          PITEX_LAYOUT_CASE=vertical cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-discovery
+      - name: Audit helper linkage
+        run: bash PreviewEngine/tools/audit-linkage.sh "$RUNNER_TEMP/pitex-preview-engine/bin"

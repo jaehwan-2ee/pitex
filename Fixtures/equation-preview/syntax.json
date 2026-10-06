@@ -1,0 +1,701 @@
+{
+ "comment": "Shared by Swift (TexCoreTests/EquationPreviewSyntaxTests) and Rust (language-core tests/equation_preview.rs). U+2038 '‸' marks the caret (removed before scanning); mode 'character' treats it as the pointer's character position.",
+ "regions": [
+  {
+   "name": "inline dollar",
+   "source": "$a‸+b$",
+   "expected": {
+    "text": "$a+b$",
+    "render": "a+b",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "inline parenthesis",
+   "source": "Text \\(a+‸b\\) end",
+   "expected": {
+    "text": "\\(a+b\\)",
+    "render": "a+b",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "display bracket",
+   "source": "\\[\na‸+b\n\\]",
+   "expected": {
+    "text": "\\[\na+b\n\\]",
+    "render": "\na+b\n",
+    "display": true,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "display dollars",
+   "source": "$$x‸^2$$",
+   "expected": {
+    "text": "$$x^2$$",
+    "render": "x^2",
+    "display": true,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "equation body only",
+   "source": "\\begin{equation}\na‸+b\n\\end{equation}",
+   "expected": {
+    "text": "\\begin{equation}\na+b\n\\end{equation}",
+    "render": "\na+b\n",
+    "display": true,
+    "environment": "equation",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "align whole environment",
+   "source": "\\begin{align}\na &= b \\\\\nc &= d‸\n\\end{align}",
+   "expected": {
+    "text": "\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}",
+    "render": "\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}",
+    "display": true,
+    "environment": "align",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "gather star",
+   "source": "\\begin{gather*}\na‸\\\\b\n\\end{gather*}",
+   "expected": {
+    "text": "\\begin{gather*}\na\\\\b\n\\end{gather*}",
+    "render": "\\begin{gather*}\na\\\\b\n\\end{gather*}",
+    "display": true,
+    "environment": "gather*",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "math environment is inline",
+   "source": "\\begin{math}a‸\\end{math}",
+   "expected": {
+    "text": "\\begin{math}a\\end{math}",
+    "render": "a",
+    "display": false,
+    "environment": "math",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "displaymath body",
+   "source": "\\begin{displaymath}a‸\\end{displaymath}",
+   "expected": {
+    "text": "\\begin{displaymath}a\\end{displaymath}",
+    "render": "a",
+    "display": true,
+    "environment": "displaymath",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "standalone aligned",
+   "source": "\\begin{aligned}\na &= b‸\n\\end{aligned}",
+   "expected": {
+    "text": "\\begin{aligned}\na &= b\n\\end{aligned}",
+    "render": "\\begin{aligned}\na &= b\n\\end{aligned}",
+    "display": true,
+    "environment": "aligned",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "standalone cases",
+   "source": "\\begin{cases} a‸ \\end{cases}",
+   "expected": {
+    "text": "\\begin{cases} a \\end{cases}",
+    "render": "\\begin{cases} a \\end{cases}",
+    "display": true,
+    "environment": "cases",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "split inside equation belongs to equation",
+   "source": "\\begin{equation}\n\\begin{split}\na‸ &= b\n\\end{split}\n\\end{equation}",
+   "expected": {
+    "text": "\\begin{equation}\n\\begin{split}\na &= b\n\\end{split}\n\\end{equation}",
+    "render": "\n\\begin{split}\na &= b\n\\end{split}\n",
+    "display": true,
+    "environment": "equation",
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "pmatrix inside dollars",
+   "source": "$\\begin{pmatrix} a‸ \\end{pmatrix}$",
+   "expected": {
+    "text": "$\\begin{pmatrix} a \\end{pmatrix}$",
+    "render": "\\begin{pmatrix} a \\end{pmatrix}",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "escaped dollars are text",
+   "source": "Price \\$5 and \\$‸6",
+   "expected": null
+  },
+  {
+   "name": "escaped dollar inside math",
+   "source": "$\\$5 + x‸$",
+   "expected": {
+    "text": "$\\$5 + x$",
+    "render": "\\$5 + x",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "commented math",
+   "source": "% $not ‸math$\ntext",
+   "expected": null
+  },
+  {
+   "name": "comment hides a dollar inside math",
+   "source": "$a % $\n+ b‸$",
+   "expected": {
+    "text": "$a % $\n+ b$",
+    "render": "a % $\n+ b",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "text-mode dollars nest inside math",
+   "source": "$x \\text{ costs $5$ ‸total} y$",
+   "expected": {
+    "text": "$x \\text{ costs $5$ total} y$",
+    "render": "x \\text{ costs $5$ total} y",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "verbatim environment",
+   "source": "\\begin{verbatim}\n$x‸$\n\\end{verbatim}",
+   "expected": null
+  },
+  {
+   "name": "verb argument",
+   "source": "\\verb|$x‸$| and $y$",
+   "expected": null
+  },
+  {
+   "name": "after verb argument",
+   "source": "\\verb|$x$| and $y‸$",
+   "expected": {
+    "text": "$y$",
+    "render": "y",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "unfinished fraction",
+   "source": "$\\frac{‸",
+   "expected": {
+    "text": "$\\frac{",
+    "complete": false
+   }
+  },
+  {
+   "name": "unfinished opener",
+   "source": "text $‸",
+   "expected": {
+    "text": "$",
+    "complete": false
+   }
+  },
+  {
+   "name": "paragraph break ends unfinished math",
+   "source": "$a + b‸\n\nNext $c$",
+   "expected": {
+    "text": "$a + b",
+    "complete": false
+   }
+  },
+  {
+   "name": "math after an unfinished paragraph",
+   "source": "$a + b\n\nNext $c‸$",
+   "expected": {
+    "text": "$c$",
+    "render": "c",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "par ends unfinished math",
+   "source": "$a‸ \\par b$",
+   "expected": {
+    "text": "$a ",
+    "complete": false
+   }
+  },
+  {
+   "name": "mismatched end",
+   "source": "\\begin{equation}\na‸\n\\end{align}",
+   "expected": {
+    "text": "\\begin{equation}\na\n",
+    "complete": false
+   }
+  },
+  {
+   "name": "lone dollar inside display dollars",
+   "source": "$$ a ‸$ b",
+   "expected": {
+    "text": "$$ a ",
+    "complete": false
+   }
+  },
+  {
+   "name": "unbalanced braces closed by dollar",
+   "source": "$\\frac{1}{2‸$",
+   "expected": {
+    "text": "$\\frac{1}{2$",
+    "render": "\\frac{1}{2",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": false
+   }
+  },
+  {
+   "name": "nothing after end document",
+   "source": "\\end{document}\n$x‸$",
+   "expected": null
+  },
+  {
+   "name": "caret just after closer",
+   "source": "$x$‸ text",
+   "expected": {
+    "text": "$x$",
+    "render": "x",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "caret just before opener",
+   "source": "‸$x$",
+   "expected": null
+  },
+  {
+   "name": "pointer on opener",
+   "source": "‸$x$",
+   "mode": "character",
+   "expected": {
+    "text": "$x$",
+    "render": "x",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "pointer just after closer",
+   "source": "$x$‸ text",
+   "mode": "character",
+   "expected": null
+  },
+  {
+   "name": "adjacent inline math",
+   "source": "$a$$b‸$",
+   "expected": {
+    "text": "$b$",
+    "render": "b",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "unicode text and math",
+   "source": "한국어 $\\alpha‸ + 가$ 끝 👩🏽‍💻",
+   "expected": {
+    "text": "$\\alpha + 가$",
+    "render": "\\alpha + 가",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "crlf inside math",
+   "source": "$a\r\n+ b‸$",
+   "expected": {
+    "text": "$a\r\n+ b$",
+    "render": "a\r\n+ b",
+    "display": false,
+    "environment": null,
+    "complete": true,
+    "wellFormed": true
+   }
+  },
+  {
+   "name": "crlf paragraph break",
+   "source": "$a\r\n\r\nb‸$",
+   "expected": null
+  },
+  {
+   "name": "comment environment",
+   "source": "\\begin{comment}\n\\[x‸\\]\n\\end{comment}",
+   "expected": null
+  },
+  {
+   "name": "url argument is inert",
+   "source": "\\url{http://x/%$‸$} and $y$",
+   "expected": null
+  }
+ ],
+ "definitions": [
+  {
+   "name": "newcommand",
+   "source": "\\newcommand{\\R}{\\mathbb{R}}",
+   "expected": [
+    {
+     "kind": "newCommand",
+     "name": "\\R",
+     "mathJax": "\\newcommand{\\R}{\\mathbb{R}}"
+    }
+   ]
+  },
+  {
+   "name": "renewcommand star without braces",
+   "source": "\\renewcommand*\\vect[1]{\\mathbf{#1}}",
+   "expected": [
+    {
+     "kind": "renewCommand",
+     "name": "\\vect",
+     "mathJax": "\\renewcommand{\\vect}[1]{\\mathbf{#1}}"
+    }
+   ]
+  },
+  {
+   "name": "providecommand with default",
+   "source": "\\providecommand{\\abs}[2][x]{|#2|_{#1}}",
+   "expected": [
+    {
+     "kind": "provideCommand",
+     "name": "\\abs",
+     "mathJax": "\\newcommand{\\abs}[2][x]{|#2|_{#1}}"
+    }
+   ]
+  },
+  {
+   "name": "starred operator",
+   "source": "\\DeclareMathOperator*{\\argmax}{arg\\,max}",
+   "expected": [
+    {
+     "kind": "declareMathOperator",
+     "name": "\\argmax",
+     "mathJax": "\\DeclareMathOperator*{\\argmax}{arg\\,max}"
+    }
+   ]
+  },
+  {
+   "name": "operator without braces",
+   "source": "\\DeclareMathOperator\\Tr{Tr}",
+   "expected": [
+    {
+     "kind": "declareMathOperator",
+     "name": "\\Tr",
+     "mathJax": "\\DeclareMathOperator{\\Tr}{Tr}"
+    }
+   ]
+  },
+  {
+   "name": "newenvironment",
+   "source": "\\newenvironment{mat}[1][b]{\\begin{#1matrix}}{\\end{#1matrix}}",
+   "expected": [
+    {
+     "kind": "newEnvironment",
+     "name": "mat",
+     "mathJax": "\\newenvironment{mat}[1][b]{\\begin{#1matrix}}{\\end{#1matrix}}"
+    }
+   ]
+  },
+  {
+   "name": "renewenvironment",
+   "source": "\\renewenvironment{proof}{\\text{P:}}{}",
+   "expected": [
+    {
+     "kind": "renewEnvironment",
+     "name": "proof",
+     "mathJax": "\\renewenvironment{proof}{\\text{P:}}{}"
+    }
+   ]
+  },
+  {
+   "name": "commented definition",
+   "source": "% \\newcommand{\\X}{x}\n\\newcommand{\\Y}{y}",
+   "expected": [
+    {
+     "kind": "newCommand",
+     "name": "\\Y",
+     "mathJax": "\\newcommand{\\Y}{y}"
+    }
+   ]
+  },
+  {
+   "name": "verbatim definition",
+   "source": "\\begin{verbatim}\\newcommand{\\X}{x}\\end{verbatim}",
+   "expected": []
+  },
+  {
+   "name": "unfinished definition",
+   "source": "\\newcommand{\\X}{x",
+   "expected": []
+  },
+  {
+   "name": "comment inside body",
+   "source": "\\newcommand{\\f}[1]{\\frac{#1}{2} % }\n}",
+   "expected": [
+    {
+     "kind": "newCommand",
+     "name": "\\f",
+     "mathJax": "\\newcommand{\\f}[1]{\\frac{#1}{2} % }\n}"
+    }
+   ]
+  },
+  {
+   "name": "definition inside math is local",
+   "source": "$\\newcommand{\\X}{x}\\X$",
+   "expected": []
+  },
+  {
+   "name": "newcommand: comment between optional arg and body",
+   "source": "\\newcommand{\\F}[1]% sized variant\n{F_{#1}}",
+   "expected": [
+    {
+     "kind": "newCommand",
+     "name": "\\F",
+     "mathJax": "\\newcommand{\\F}[1]{F_{#1}}"
+    }
+   ]
+  },
+  {
+   "name": "DeclareMathOperator: comment between name and body",
+   "source": "\\DeclareMathOperator{\\E}% expectation\n{E}",
+   "expected": [
+    {
+     "kind": "declareMathOperator",
+     "name": "\\E",
+     "mathJax": "\\DeclareMathOperator{\\E}{E}"
+    }
+   ]
+  },
+  {
+   "name": "newenvironment: comments between begin and end args",
+   "source": "\\newenvironment{boxed}% open\n{\\begin{framed}}% close\n{\\end{framed}}",
+   "expected": [
+    {
+     "kind": "newEnvironment",
+     "name": "boxed",
+     "mathJax": "\\newenvironment{boxed}{\\begin{framed}}{\\end{framed}}"
+    }
+   ]
+  },
+  {
+   "name": "paragraph break must not complete a definition",
+   "source": "\\newcommand{\\F}\n\n{F}\n$% no math invented here\nx$",
+   "expected": []
+  },
+  {
+   "name": "escaped percent inside definition body",
+   "source": "\\newcommand{\\pct}{25\\%}",
+   "expected": [
+    {
+     "kind": "newCommand",
+     "name": "\\pct",
+     "mathJax": "\\newcommand{\\pct}{25\\%}"
+    }
+   ]
+  },
+  {
+   "name": "comment ends a definition, next command starts fresh",
+   "source": "\\newcommand{\\a}{x}% tail comment\n\\newcommand{\\b}{y}",
+   "expected": [
+    {
+     "kind": "newCommand",
+     "name": "\\a",
+     "mathJax": "\\newcommand{\\a}{x}"
+    },
+    {
+     "kind": "newCommand",
+     "name": "\\b",
+     "mathJax": "\\newcommand{\\b}{y}"
+    }
+   ]
+  }
+ ],
+ "includes": [
+  {
+   "name": "include forms",
+   "source": "\\input{commands}\n\\include{ch/one}\n\\usepackage[opt]{mystyle, amsmath}\n\\import{dir}{file}\n% \\input{no}\n\\begin{verbatim}\\input{no}\\end{verbatim}",
+   "expected": [
+    "commands",
+    "ch/one",
+    "mystyle.sty",
+    "amsmath.sty",
+    "dir/file"
+   ]
+  },
+  {
+   "name": "comments inside argument lists",
+   "source": "\\usepackage{%\n  amsmath, % trailing note\n  hyperref}\n\\input{dir% comment ends here\n}\n\\input{path% no newline\n}",
+   "expected": [
+    "amsmath.sty",
+    "hyperref.sty",
+    "dir",
+    "path"
+   ]
+  },
+  {
+   "name": "escaped percent inside arguments",
+   "source": "\\input{my\\%file}\n\\usepackage{pack\\%age}",
+   "expected": [
+    "my\\%file",
+    "pack\\%age.sty"
+   ]
+  },
+  {
+   "name": "CRLF endings and NBSP arguments",
+   "source": "\\usepackage{%\r\n  amsmath\r\n}\r\n\\input{ hard}",
+   "expected": [
+    "amsmath.sty",
+    " hard"
+   ]
+  }
+ ],
+ "contexts": [
+  {
+   "name": "first equation sees included definitions",
+   "files": {
+    "/p/main.tex": "\\documentclass{article}\n\\input{commands}\n\\newcommand{\\A}{a}\n\\begin{document}\n$x \\in \\R‸$\n\\renewcommand{\\R}{\\mathbf{R}}\n$y \\in \\R$\n\\input{chapters/chapter}\n\\end{document}\n",
+    "/p/commands.tex": "\\newcommand{\\R}{\\mathbb{R}}\n\\providecommand{\\A}{b}\n\\DeclareMathOperator{\\Tr}{Tr}\n",
+    "/p/chapters/chapter.tex": "\\providecommand{\\A}{z}\n\\providecommand{\\B}{c}\n$z$\n"
+   },
+   "root": "/p/main.tex",
+   "active": "/p/main.tex",
+   "expected": [
+    "\\newcommand{\\R}{\\mathbb{R}}",
+    "\\newcommand{\\A}{b}",
+    "\\DeclareMathOperator{\\Tr}{Tr}",
+    "\\newcommand{\\A}{a}"
+   ],
+   "body": []
+  },
+  {
+   "name": "redefinition applies after it",
+   "files": {
+    "/p/main.tex": "\\documentclass{article}\n\\input{commands}\n\\newcommand{\\A}{a}\n\\begin{document}\n$x \\in \\R$\n\\renewcommand{\\R}{\\mathbf{R}}\n$y \\in \\R‸$\n\\input{chapters/chapter}\n\\end{document}\n",
+    "/p/commands.tex": "\\newcommand{\\R}{\\mathbb{R}}\n\\providecommand{\\A}{b}\n\\DeclareMathOperator{\\Tr}{Tr}\n",
+    "/p/chapters/chapter.tex": "\\providecommand{\\A}{z}\n\\providecommand{\\B}{c}\n$z$\n"
+   },
+   "root": "/p/main.tex",
+   "active": "/p/main.tex",
+   "expected": [
+    "\\newcommand{\\R}{\\mathbb{R}}",
+    "\\newcommand{\\A}{b}",
+    "\\DeclareMathOperator{\\Tr}{Tr}",
+    "\\newcommand{\\A}{a}",
+    "\\renewcommand{\\R}{\\mathbf{R}}"
+   ],
+   "body": [
+    "\\renewcommand{\\R}{\\mathbf{R}}"
+   ]
+  },
+  {
+   "name": "included chapter sees the main tree before it",
+   "files": {
+    "/p/main.tex": "\\documentclass{article}\n\\input{commands}\n\\newcommand{\\A}{a}\n\\begin{document}\n$x \\in \\R$\n\\renewcommand{\\R}{\\mathbf{R}}\n$y \\in \\R$\n\\input{chapters/chapter}\n\\end{document}\n",
+    "/p/commands.tex": "\\newcommand{\\R}{\\mathbb{R}}\n\\providecommand{\\A}{b}\n\\DeclareMathOperator{\\Tr}{Tr}\n",
+    "/p/chapters/chapter.tex": "\\providecommand{\\A}{z}\n\\providecommand{\\B}{c}\n$z‸$\n"
+   },
+   "root": "/p/main.tex",
+   "active": "/p/chapters/chapter.tex",
+   "expected": [
+    "\\newcommand{\\R}{\\mathbb{R}}",
+    "\\newcommand{\\A}{b}",
+    "\\DeclareMathOperator{\\Tr}{Tr}",
+    "\\newcommand{\\A}{a}",
+    "\\renewcommand{\\R}{\\mathbf{R}}",
+    "\\newcommand{\\B}{c}"
+   ],
+   "body": [
+    "\\renewcommand{\\R}{\\mathbf{R}}",
+    "\\providecommand{\\B}{c}"
+   ]
+  },
+  {
+   "name": "a document without the definitions sees none",
+   "files": {
+    "/q/other.tex": "\\documentclass{article}\n\\begin{document}\n$x \\in \\R‸$\n\\end{document}\n"
+   },
+   "root": "/q/other.tex",
+   "active": "/q/other.tex",
+   "expected": [],
+   "body": []
+  },
+  {
+   "name": "include cycles terminate",
+   "files": {
+    "/c/a.tex": "\\newcommand{\\X}{x}\n\\input{b}\n$\\X‸$\n",
+    "/c/b.tex": "\\newcommand{\\Y}{y}\n\\input{a}\n"
+   },
+   "root": "/c/a.tex",
+   "active": "/c/a.tex",
+   "expected": [
+    "\\newcommand{\\X}{x}",
+    "\\newcommand{\\Y}{y}"
+   ],
+   "body": [
+    "\\newcommand{\\X}{x}",
+    "\\newcommand{\\Y}{y}"
+   ]
+  }
+ ]
+}

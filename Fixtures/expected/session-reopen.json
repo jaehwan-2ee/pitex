@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "root": {
+    "projectID": "multifile"
+  },
+  "graph": {
+    "files": [
+      {
+        "documentID": "details",
+        "path": "sections/details.tex"
+      },
+      {
+        "documentID": "intro",
+        "path": "sections/intro.tex"
+      },
+      {
+        "documentID": "main",
+        "path": "main.tex"
+      }
+    ],
+    "includeEdges": [
+      {
+        "source": "main",
+        "target": "details"
+      },
+      {
+        "source": "main",
+        "target": "intro"
+      }
+    ]
+  },
+  "tabs": [
+    "main",
+    "intro",
+    "details"
+  ],
+  "activeTab": "intro",
+  "buildTargets": [
+    {
+      "id": "draft",
+      "documentID": "main",
+      "command": {
+        "executable": "pdflatex",
+        "arguments": [
+          "-draftmode",
+          "main.tex"
+        ]
+      }
+    },
+    {
+      "id": "pdf",
+      "documentID": "main",
+      "command": {
+        "executable": "latexmk",
+        "arguments": [
+          "-pdf",
+          "main.tex"
+        ]
+      }
+    }
+  ],
+  "selectedBuildTargetID": "pdf",
+  "externalRevisions": [
+    {
+      "documentID": "intro",
+      "revision": "disk-2"
+    }
+  ]
+}

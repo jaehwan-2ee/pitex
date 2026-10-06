@@ -1,0 +1,1 @@
+cd -- "$1" || exit 3; tar -cf - --null -T -

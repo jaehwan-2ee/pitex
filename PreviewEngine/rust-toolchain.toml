@@ -1,0 +1,4 @@
+[toolchain]
+# The migrated C ABI includes variadic definitions (c_variadic).
+channel = "nightly-2026-10-04"
+profile = "minimal"

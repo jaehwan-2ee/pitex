@@ -1,0 +1,7662 @@
+//! Native GTK4/libadwaita application shell — the Linux port of the SwiftUI
+//! `WorkspaceView`/`EditorContainerView` layer. All widgets are `Rc`-bound on
+//! the main thread; `WorkspaceModel` async completions arrive through a
+//! channel and are dispatched here.
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::mpsc::Sender;
+use std::time::Duration;
+
+use app_ports::DocumentMutationResult;
+#[cfg(unix)]
+use linux_platform::LinuxEnvironment as PlatformEnvironment;
+#[cfg(windows)]
+use windows_platform::WindowsEnvironment as PlatformEnvironment;
+use document_session_core::{DocumentMutation, DocumentSaveState, DocumentSession};
+use gtk4::prelude::*;
+use gtk4::{gdk, gio, glib};
+use libadwaita as adw;
+use adw::prelude::*;
+use sourceview5::prelude::*;
+
+use crate::compat;
+use settings_feature::{BuildPreferences, EditorPreferences, PersistedSettings, ShellExecutionPreference};
+
+use gtk_editor_adapter::{FnSessionClient, GtkEditorAdapter, SessionClient};
+use language_core::{DeterministicTeXLexer, TeXDialect};
+
+use crate::agent::{AgentCoordinator, AgentSelectionAttachment};
+use crate::ghost_completion::{CompletionContext, GhostCompletionCoordinator};
+use crate::l10n::{resolve_language, tr, tr1};
+use crate::markdown_preview::MarkdownPreview;
+use crate::model::{
+    ConsoleSection, DocumentTodoItem, SidebarSection, TodoLineEdit,
+    WorkspaceBuildState, WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
+};
+use crate::pdf::{PdfInfo, PdfRenderer};
+use crate::settings::{AppearanceColorRole, AppearanceSettings, Preferences, SettingsStore, Theme};
+use git_core::GitChange;
+
+pub const APP_ID: &str = "dev.pitex.app";
+
+/// Widget name + accessible label — the GTK equivalent of SwiftUI's
+/// `accessibilityIdentifier`/`accessibilityLabel`. Labels resolve through
+/// `LANG` so the helper is safe to call while `AppState` is mutably borrowed.
+pub fn a11y<T>(widget: &T, id: &str, label_key: &str)
+where
+    T: IsA<gtk4::Widget> + IsA<gtk4::Accessible>,
+{
+    widget.set_widget_name(id);
+    let lang = LANG.with(|l| l.get());
+    widget.update_property(&[gtk4::accessible::Property::Label(&tr(lang, label_key))]);
+}
+
+/// The workspace window — dialogs and sheets attach to it.
+pub(crate) fn main_window() -> Option<gtk4::Window> {
+    UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.clone().upcast()))
+}
+
+/// Every widget the refresh logic touches, in one place (SwiftUI's
+/// `@Published` surface replaced by explicit handle updates).
+#[derive(Default)]
+pub struct UiHandles {
+    pub root_stack: RefCell<Option<gtk4::Stack>>,
+    pub status_page: RefCell<Option<adw::StatusPage>>,
+    pub window: RefCell<Option<adw::ApplicationWindow>>,
+    pub toast_overlay: RefCell<Option<adw::ToastOverlay>>,
+    pub tab_row: RefCell<Option<gtk4::Box>>,
+    pub outer_paned: RefCell<Option<gtk4::Paned>>,
+    pub inner_paned: RefCell<Option<gtk4::Paned>>,
+    pub console_paned: RefCell<Option<gtk4::Paned>>,
+    pub editor_scroller: RefCell<Option<gtk4::ScrolledWindow>>,
+    /// Overlay wrapping `editor_scroller`; hosts the fold chip layer and
+    /// the ghost-completion label.
+    pub editor_overlay: RefCell<Option<gtk4::Overlay>>,
+    /// The translucent ghost-text label the completion coordinator
+    /// repositions at the caret — created once in `build_editor_column`.
+    pub ghost_label: RefCell<Option<gtk4::Label>>,
+    pub editor_stack: RefCell<Option<gtk4::Stack>>,
+    pub minimap: RefCell<Option<sourceview5::Map>>,
+    pub footer: RefCell<Option<gtk4::Box>>,
+    pub footer_path: RefCell<Option<gtk4::Label>>,
+    pub footer_words: RefCell<Option<gtk4::Label>>,
+    pub disk_status: RefCell<Option<gtk4::Button>>,
+    pub conflict_banner: RefCell<Option<gtk4::Box>>,
+    pub conflict_label: RefCell<Option<gtk4::Label>>,
+    /// WindowTitle in the header — its subtitle carries the remote status.
+    pub window_title: RefCell<Option<adw::WindowTitle>>,
+    /// `remoteConflicts` section — banner under the document conflict
+    /// banner, one row per file changed on both sides.
+    pub remote_conflict_banner: RefCell<Option<gtk4::Box>>,
+    pub remote_conflict_title: RefCell<Option<gtk4::Label>>,
+    pub remote_conflict_rows: RefCell<Option<gtk4::Box>>,
+    pub sidebar_stack: RefCell<Option<gtk4::Stack>>,
+    pub sidebar_section_dropdown: RefCell<Option<gtk4::DropDown>>,
+    pub outline_list: RefCell<Option<gtk4::ListBox>>,
+    pub labels_list: RefCell<Option<gtk4::ListBox>>,
+    pub bib_list: RefCell<Option<gtk4::ListBox>>,
+    pub todo_list: RefCell<Option<gtk4::ListBox>>,
+    pub todo_add_button: RefCell<Option<gtk4::Button>>,
+    pub workspace_list: RefCell<Option<gtk4::ListBox>>,
+    pub project_list: RefCell<Option<gtk4::ListBox>>,
+    pub project_output_sep: RefCell<Option<gtk4::Widget>>,
+    pub project_output_list: RefCell<Option<gtk4::ListBox>>,
+    pub pin_button: RefCell<Option<gtk4::Button>>,
+    /// `win.save` / `win.saveas` / `win.saveall` — enabled state mirrors the
+    /// macOS File menu's `.disabled(...)` conditions.
+    pub save_action: RefCell<Option<gio::SimpleAction>>,
+    pub save_as_action: RefCell<Option<gio::SimpleAction>>,
+    pub save_all_action: RefCell<Option<gio::SimpleAction>>,
+    pub build_button: RefCell<Option<gtk4::Button>>,
+    pub build_status: RefCell<Option<gtk4::Label>>,
+    pub header_build_button: RefCell<Option<gtk4::Button>>,
+    /// Live-compile toggle next to the build button — mirrors
+    /// `live_compile_enabled` and retires live work immediately on toggle.
+    pub live_toggle: RefCell<Option<gtk4::ToggleButton>>,
+    pub build_command_entry: RefCell<Option<gtk4::Entry>>,
+    pub custom_command_entry: RefCell<Option<gtk4::Entry>>,
+    pub console_section_dropdown: RefCell<Option<gtk4::DropDown>>,
+    pub console_stack: RefCell<Option<gtk4::Stack>>,
+    pub terminal: RefCell<Option<compat::ShellTerminal>>,
+    pub issues_list: RefCell<Option<gtk4::ListBox>>,
+    pub issue_filter: RefCell<Option<gtk4::DropDown>>,
+    pub build_log_view: RefCell<Option<gtk4::TextView>>,
+    /// The `build_preview_pane` column holding the SyncTeX/PDF widgets —
+    /// swapped for the Markdown preview while a Markdown document is active.
+    pub pdf_column: RefCell<Option<gtk4::Box>>,
+    pub pdf_toolbar: RefCell<Option<gtk4::Box>>,
+    pub pdf_name_label: RefCell<Option<gtk4::Label>>,
+    pub pdf_picture: RefCell<Option<gtk4::Picture>>,
+    pub pdf_highlight: RefCell<Option<gtk4::DrawingArea>>,
+    pub pdf_scroll: RefCell<Option<gtk4::ScrolledWindow>>,
+    pub pdf_empty: RefCell<Option<adw::StatusPage>>,
+    pub pdf_page_label: RefCell<Option<gtk4::Label>>,
+    pub pdf_prev_button: RefCell<Option<gtk4::Button>>,
+    pub pdf_next_button: RefCell<Option<gtk4::Button>>,
+    pub synctex_status_icon: RefCell<Option<gtk4::Image>>,
+    pub synctex_status_label: RefCell<Option<gtk4::Label>>,
+    pub transcript_box: RefCell<Option<gtk4::Box>>,
+    pub transcript_scroll: RefCell<Option<gtk4::ScrolledWindow>>,
+    pub agent_model_picker: RefCell<Option<gtk4::DropDown>>,
+    pub agent_reasoning_picker: RefCell<Option<gtk4::DropDown>>,
+    pub agent_attach_toggle: RefCell<Option<gtk4::Switch>>,
+    /// Anchor for the conversation-history popover (`/resume` opens it too).
+    pub agent_history_button: RefCell<Option<gtk4::Button>>,
+    pub agent_composer: RefCell<Option<gtk4::Entry>>,
+    /// Reloaded (not re-added) whenever `ai.fontSize` changes so the composer
+    /// entry tracks the conversation font.
+    pub agent_composer_font: RefCell<Option<gtk4::CssProvider>>,
+    pub agent_send_button: RefCell<Option<gtk4::Button>>,
+    pub agent_stop_button: RefCell<Option<gtk4::Button>>,
+    pub agent_status_label: RefCell<Option<gtk4::Label>>,
+    /// Right-aligned usage/context readout in the assistant controls row —
+    /// populated from `get_session_stats`, hidden until stats arrive.
+    pub agent_usage_label: RefCell<Option<gtk4::Label>>,
+    pub selection_chip: RefCell<Option<gtk4::Box>>,
+    pub selection_chip_label: RefCell<Option<gtk4::Label>>,
+    pub search_bar: RefCell<Option<gtk4::SearchBar>>,
+    pub search_entry: RefCell<Option<gtk4::SearchEntry>>,
+    pub search_count: RefCell<Option<gtk4::Label>>,
+    pub shell_warning: RefCell<Option<gtk4::Box>>,
+    /// "+" menu button — its model is rebuilt on refresh so the Open Recent
+    /// section mirrors `recent_documents` (macOS File → Open Recent).
+    pub add_menu_button: RefCell<Option<gtk4::MenuButton>>,
+    /// Header open button — the popover's anchor when `win.open` fires from
+    /// a shortcut or menu item rather than a button click.
+    pub open_button: RefCell<Option<gtk4::Button>>,
+    // Git Integration pane (`GitIntegrationView`).
+    pub git_stack: RefCell<Option<gtk4::Stack>>,
+    pub git_repo_name: RefCell<Option<gtk4::Label>>,
+    pub git_branch_dropdown: RefCell<Option<gtk4::DropDown>>,
+    pub git_branch_model: RefCell<Option<gtk4::StringList>>,
+    pub git_ahead_behind: RefCell<Option<gtk4::Label>>,
+    pub git_busy_spinner: RefCell<Option<gtk4::Spinner>>,
+    pub git_error_label: RefCell<Option<gtk4::Label>>,
+    /// The same `git_error` mirrored onto the "not a repository" page —
+    /// an unreachable device reports its SSH failure there instead of
+    /// pretending the project has no repo.
+    pub git_empty_error_label: RefCell<Option<gtk4::Label>>,
+    pub git_changes_list: RefCell<Option<gtk4::ListView>>,
+    pub(crate) git_changes_model: RefCell<Option<crate::git_list::GitList>>,
+    pub(crate) git_rendered_commits: RefCell<Vec<git_core::GitCommit>>,
+    /// `(expanded, file-list busy, file-list loaded)` — graph rebuild
+    /// state that `git_rendered_commits` alone doesn't capture.
+    #[allow(clippy::type_complexity)]
+    pub(crate) git_rendered_graph_state:
+        RefCell<(std::collections::BTreeSet<String>, std::collections::BTreeSet<String>, std::collections::BTreeSet<String>)>,
+    pub git_graph_list: RefCell<Option<gtk4::ListBox>>,
+    pub git_commit_view: RefCell<Option<gtk4::TextView>>,
+    pub git_commit_button: RefCell<Option<gtk4::Button>>,
+    /// The "Suggest" half of the commit box — child swaps to a Spinner
+    /// while `git_suggest_busy`.
+    pub git_suggest_button: RefCell<Option<gtk4::Button>>,
+    /// `CommitDiffView` — the diff overlay child of `editor_stack` and
+    /// the per-session header/content widgets it updates.
+    pub git_diff_stack: RefCell<Option<gtk4::Stack>>,
+    pub git_diff_badge: RefCell<Option<gtk4::Label>>,
+    pub git_diff_path: RefCell<Option<gtk4::Label>>,
+    pub git_diff_adds: RefCell<Option<gtk4::Label>>,
+    pub git_diff_dels: RefCell<Option<gtk4::Label>>,
+    pub git_diff_files: RefCell<Option<gtk4::Label>>,
+    pub git_diff_chip: RefCell<Option<gtk4::Label>>,
+    pub git_diff_subject: RefCell<Option<gtk4::Label>>,
+    pub git_diff_error: RefCell<Option<gtk4::Label>>,
+    pub(crate) git_diff_model: RefCell<Option<crate::git_diff::DiffList>>,
+}
+
+#[derive(Clone)]
+enum RemoteSaveAction {
+    Build,
+    CloseProject,
+    CloseDocument(PathBuf),
+    CloseWindow,
+    Open(PathBuf),
+    ExitForUpdate,
+}
+
+impl RemoteSaveAction {
+    fn closes_workspace(&self) -> bool {
+        !matches!(self, Self::Build)
+    }
+}
+
+/// Shared application state. Model callbacks queue effects for the GTK main loop.
+pub struct AppState {
+    pub model: WorkspaceModel,
+    pub store: SettingsStore,
+    pub appearance: AppearanceSettings,
+    pub agent: Option<AgentCoordinator>,
+    pub language: &'static str,
+    /// The inspector's Markdown preview (lazy WebKitGTK page, or the
+    /// unavailable status page without the feature) — one per window.
+    pub markdown: MarkdownPreview,
+    pub terminal_running: bool,
+    pub editor: Option<Rc<GtkEditorAdapter>>,
+    search: Option<crate::search::EditorSearch>,
+    /// The `FoldEngine` bound to the current adapter — rebuilt per session
+    /// like the macOS environment's `adapter`.
+    pub fold: Option<Rc<crate::fold::FoldEngine>>,
+    /// Copilot-style inline completion — a dedicated pi subprocess that
+    /// never touches the chat transcript. Rebound per session in
+    /// `attach_session`, shut down with the workspace.
+    pub completion: Rc<GhostCompletionCoordinator>,
+    /// Equation hover/caret preview — one MathJax web view per window,
+    /// rebound per session in `attach_session`.
+    #[cfg(feature = "equation-preview")]
+    pub equation_preview: Rc<crate::equation_preview::EquationPreviewHost>,
+    /// The fold chip layer currently overlaid on the editor scroller —
+    /// tracked so `rebind_editor_widget` can remove the previous one.
+    pub fold_chip: RefCell<Option<gtk4::DrawingArea>>,
+    /// Last `AgentCoordinator::ui_revision` rendered by `refresh_assistant`
+    /// — the transcript/picker rebuild is skipped while it matches.
+    pub rendered_agent_revision: Cell<u64>,
+    /// When the transcript last re-rendered, and whether a deferred
+    /// re-render is queued — streaming bursts render at most every
+    /// `TRANSCRIPT_RENDER_INTERVAL`.
+    transcript_rendered_at: Cell<std::time::Instant>,
+    transcript_render_pending: Cell<bool>,
+    /// Last AI font size applied to the transcript CSS — changes force a
+    /// rebuild even when `ui_revision` is unchanged.
+    pub rendered_ai_font_size: Cell<f64>,
+    rendered_transcript_keys: RefCell<Vec<u64>>,
+    rendered_picker_key: Cell<u64>,
+    rendered_sidebar_keys: Cell<[u64; 4]>,
+    rendered_log: RefCell<String>,
+    rendered_issues_key: Cell<u64>,
+    build_ui_pending: Cell<bool>,
+    git_panel_was_visible: Cell<bool>,
+    /// Assistant pane shown on the last check — its first appearance
+    /// starts pi (`AgentPanel`'s `.task { prepare() }` on macOS).
+    assistant_was_visible: Cell<bool>,
+    /// `AppEnvironment` bundle — the Linux platform ports (`files` feeds the
+    /// capability lease like `capabilityBroker`, `workspace` opens externals).
+    pub env: PlatformEnvironment,
+    /// `CFBundleShortVersionString` equivalent — compared against release
+    /// tags by the updater.
+    pub app_version: String,
+    pub active_session: Option<DocumentSession>,
+    /// Last `structure_revision`/`files_revision` rendered by
+    /// `refresh_sidebar` — the list/tree rebuilds are skipped while they
+    /// match (this ran on every keystroke).
+    pub rendered_structure_revision: Cell<u64>,
+    pub rendered_files_revision: Cell<u64>,
+    /// Last `refresh_tabs` identity key — tab chips rebuild only on a bump.
+    pub rendered_tabs_key: Cell<u64>,
+    /// Last `render_pdf_page` key — the raster skips while doc/page/scale match.
+    pub rendered_pdf_key: Cell<u64>,
+    displayed_pdf_key: Cell<u64>,
+    pending_pdf_highlight: Option<(i64, f64, f64, f64, f64)>,
+    /// Debounce for external-change coalescing (0.35s).
+    pub disk_pending: RefCell<HashMap<PathBuf, glib::SourceId>>,
+    pub watchers: Vec<gio::FileMonitor>,
+    pub pdf: Option<PdfInfo>,
+    pdf_renderer: PdfRenderer,
+    pub pdf_page: usize,
+    pub pdf_scale: f64,
+    /// `pi` config dir monitor — restarts the agent when auth/models/
+    /// settings change so provider edits apply without an app restart.
+    pub agent_config_monitor: Option<gio::FileMonitor>,
+    /// Debounce generation for the agent-config monitor (~500ms).
+    pub agent_config_generation: Cell<u64>,
+    /// PDFView `autoScales` — fit page width to the pane until the user zooms.
+    pub pdf_auto_fit: bool,
+    /// Hash of the PDF byte buffer currently loaded in `pdf`.
+    pub pdf_hash: u64,
+    /// Bumps on every workspace open AND close — reopening the same
+    /// project must reset the viewport even for identical PDF bytes.
+    pub workspace_epoch: u64,
+    /// `(workspace_epoch, retained.source)` of the rendered document —
+    /// viewport is preserved only while both match.
+    pdf_identity: Option<(u64, String)>,
+    /// Set by the coordinator's activity callback; consumed after `handle`.
+    pub agent_activity_pending: Rc<Cell<bool>>,
+    /// Staged for the coordinator's persist-dirty-sessions callback.
+    pub persist_result: Rc<RefCell<Option<Option<String>>>>,
+    /// Cached context the coordinator's provider closure reads.
+    pub context_cell: Rc<RefCell<crate::agent::AgentContextSnapshot>>,
+    /// `on_selection_attachment` → pending attachment update (Option = clear).
+    pub attachment_cell: Rc<RefCell<Option<Option<AgentSelectionAttachment>>>>,
+    /// `on_synctex_highlight` → (page, x, y, w, h) to draw.
+    pub highlight_cell: Rc<RefCell<Option<(i64, f64, f64, f64, f64)>>>,
+    /// Invalidates a pending forward-marker removal when a newer navigation
+    /// arrives first (the Swift coordinator's highlightTask cancellation).
+    pub highlight_generation: Rc<Cell<u64>>,
+    /// `on_jump_to` → (line, column) to reveal.
+    pub jump_cell: Rc<RefCell<Option<(usize, usize)>>>,
+    /// `on_terminal_feed` / `on_terminal_send` queues.
+    pub feed_queue: Rc<RefCell<Vec<String>>>,
+    pub send_queue: Rc<RefCell<Vec<String>>>,
+    /// One-shot flags for refresh scheduling from model callbacks.
+    pub snapshot_flag: Rc<Cell<bool>>,
+    pub structure_flag: Rc<Cell<bool>>,
+    pub active_doc_flag: Rc<Cell<bool>>,
+    pub autosave_flag: Rc<Cell<bool>>,
+    pub tx: Option<Sender<WorkspaceMessage>>,
+    /// Change awaiting the discard confirmation dialog (`discardTarget`).
+    pub git_pending_discard: Option<GitChange>,
+    /// Guards the branch dropdown's `selected` notify while a refresh
+    /// re-splices the model — otherwise the programmatic selection would
+    /// read as a user branch switch.
+    pub git_branch_updating: Cell<bool>,
+    pending_remote_save: Option<RemoteSaveAction>,
+    queued_remote_save: Option<RemoteSaveAction>,
+    allow_window_close: bool,
+    remote_save_building: bool,
+}
+
+impl AppState {
+    fn new(store: SettingsStore, tx: Sender<WorkspaceMessage>, app_version: String) -> Self {
+        let mut model = WorkspaceModel::new();
+        model.set_event_sink(tx.clone());
+        model.set_live_clock(std::rc::Rc::new(|| {
+            (glib::monotonic_time().max(0) as u64) / 1_000
+        }));
+        model.load_recents(&store);
+        let appearance = AppearanceSettings::new(store.prefs());
+        let language = resolve_language(appearance.language);
+        let mut state = Self {
+            model,
+            store,
+            appearance,
+            agent: None,
+            language,
+            markdown: MarkdownPreview::new(language),
+            terminal_running: false,
+            editor: None,
+            search: None,
+            fold: None,
+            completion: GhostCompletionCoordinator::new(),
+            #[cfg(feature = "equation-preview")]
+            equation_preview: crate::equation_preview::EquationPreviewHost::new(),
+            fold_chip: RefCell::new(None),
+            rendered_agent_revision: Cell::new(0),
+            transcript_rendered_at: Cell::new(std::time::Instant::now()),
+            transcript_render_pending: Cell::new(false),
+            rendered_ai_font_size: Cell::new(0.0),
+            rendered_transcript_keys: RefCell::new(Vec::new()),
+            rendered_picker_key: Cell::new(0),
+            rendered_sidebar_keys: Cell::new([0; 4]),
+            rendered_log: RefCell::new(String::new()),
+            rendered_issues_key: Cell::new(0),
+            build_ui_pending: Cell::new(false),
+            git_panel_was_visible: Cell::new(false),
+            assistant_was_visible: Cell::new(false),
+            env: PlatformEnvironment::make("dev.pitex.app"),
+            app_version,
+            active_session: None,
+            rendered_structure_revision: Cell::new(0),
+            rendered_pdf_key: Cell::new(0),
+            displayed_pdf_key: Cell::new(0),
+            pending_pdf_highlight: None,
+            rendered_files_revision: Cell::new(0),
+            rendered_tabs_key: Cell::new(0),
+            disk_pending: RefCell::new(HashMap::new()),
+            watchers: Vec::new(),
+            pdf: None,
+            pdf_renderer: PdfRenderer::new(tx.clone()),
+            pdf_page: 0,
+            pdf_scale: 1.5,
+            agent_config_monitor: None,
+            agent_config_generation: Cell::new(0),
+            pdf_auto_fit: true,
+            pdf_hash: 0,
+            workspace_epoch: 0,
+            pdf_identity: None,
+            agent_activity_pending: Rc::new(Cell::new(false)),
+            persist_result: Rc::new(RefCell::new(None)),
+            context_cell: Rc::new(RefCell::new(Default::default())),
+            attachment_cell: Rc::new(RefCell::new(None)),
+            highlight_cell: Rc::new(RefCell::new(None)),
+            highlight_generation: Rc::new(Cell::new(0)),
+            jump_cell: Rc::new(RefCell::new(None)),
+            feed_queue: Rc::new(RefCell::new(Vec::new())),
+            send_queue: Rc::new(RefCell::new(Vec::new())),
+            snapshot_flag: Rc::new(Cell::new(false)),
+            structure_flag: Rc::new(Cell::new(false)),
+            active_doc_flag: Rc::new(Cell::new(false)),
+            autosave_flag: Rc::new(Cell::new(false)),
+            tx: Some(tx),
+            git_pending_discard: None,
+            git_branch_updating: Cell::new(false),
+            pending_remote_save: None,
+            queued_remote_save: None,
+            allow_window_close: false,
+            remote_save_building: false,
+        };
+        state.wire_model_callbacks();
+        // `completion.contextProvider` — reads live workspace state
+        // through `STATE` at fire time, so the setting toggle and document
+        // switches apply immediately without re-attaching.
+        state.completion.set_context_provider(Box::new(|| {
+            STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .and_then(|state| {
+                        state
+                            .try_borrow()
+                            .ok()
+                            .map(|st| st.completion_context())
+                    })
+                    .unwrap_or_default()
+            })
+        }));
+        // Included definitions come from open buffers before disk.
+        #[cfg(feature = "equation-preview")]
+        state.equation_preview.set_open_text_provider(Box::new(|path| {
+            STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .and_then(|state| state.try_borrow().ok().and_then(|st| st.open_document_text(path)))
+            })
+        }));
+        state
+    }
+
+    /// Re-read imported preferences into the live stores after a settings
+    /// backup import — `store`'s encoded blob plus every appearance value.
+    /// (On `self`, not the call site: `RefMut`'s deref_mut holds `s` while
+    /// `store`/`appearance` split cleanly only through `&mut self`.)
+    pub fn reload_imported_settings(&mut self) {
+        self.store.reload();
+        self.appearance.reload(self.store.prefs());
+        self.apply_live_settings();
+    }
+
+    /// Wire `WorkspaceModel.on_*` callbacks into the `Rc` side-effect cells.
+    fn wire_model_callbacks(&mut self) {
+        let highlight = self.highlight_cell.clone();
+        self.model.on_synctex_highlight = Some(Box::new(move |p, x, y, w, h| {
+            *highlight.borrow_mut() = Some((p, x, y, w, h));
+        }));
+        let jump = self.jump_cell.clone();
+        self.model.on_jump_to = Some(Box::new(move |line, col| {
+            *jump.borrow_mut() = Some((line, col));
+        }));
+        let attachment = self.attachment_cell.clone();
+        self.model.on_selection_attachment = Some(Box::new(move |a| {
+            *attachment.borrow_mut() = Some(a.map(|(path, start, end, text)| {
+                AgentSelectionAttachment {
+                    path,
+                    start_line: start,
+                    end_line: end,
+                    text,
+                }
+            }));
+        }));
+        let feed = self.feed_queue.clone();
+        self.model.on_terminal_feed = Some(Box::new(move |text| {
+            if let Ok(mut s) = feed.try_borrow_mut() { s.push(text); }
+        }));
+        let send = self.send_queue.clone();
+        self.model.on_terminal_send = Some(Box::new(move |cmd| {
+            if let Ok(mut s) = send.try_borrow_mut() { s.push(cmd); }
+        }));
+        let flag = self.snapshot_flag.clone();
+        self.model.on_snapshot_changed = Some(Box::new(move |_| flag.set(true)));
+        let flag = self.structure_flag.clone();
+        self.model.on_structure_changed = Some(Box::new(move || flag.set(true)));
+        let flag = self.active_doc_flag.clone();
+        self.model.on_active_document_changed = Some(Box::new(move || flag.set(true)));
+        let flag = self.autosave_flag.clone();
+        self.model.on_autosave_schedule = Some(Box::new(move || flag.set(true)));
+
+    }
+
+    /// Consume queued side effects written by model callbacks. Runs at the
+    /// end of every `dispatch` and on the agent poll tick.
+    fn drain_side_effects(&mut self) {
+        let feeds: Vec<String> = self.feed_queue.borrow_mut().drain(..).collect();
+        for text in feeds {
+            self.terminal_feed(&text);
+        }
+        let sends: Vec<String> = self.send_queue.borrow_mut().drain(..).collect();
+        for cmd in sends {
+            self.terminal_send(&cmd);
+        }
+        // Deferred inverse-SyncTeX jump: `apply_inverse_result` parks the
+        // target in `pending_jump` while the owning document activates, then
+        // `apply_activate` republishes it through `on_jump_to`. Draining here
+        // is what lets a cross-file navigation land its caret at all.
+        let jump = self.jump_cell.borrow_mut().take();
+        if let Some((line, col)) = jump {
+            let highlight = self.store.inverse_sync_highlight();
+            self.jump_to(line, col, highlight);
+        }
+        let attachment = self.attachment_cell.borrow_mut().take();
+        if let Some(attachment) = attachment {
+            self.ensure_agent();
+            if let Some(agent) = self.agent.as_mut() {
+                agent.update_selection_attachment(attachment);
+            }
+            self.refresh_selection_chip();
+        }
+        if self.structure_flag.replace(false) {
+            self.refresh_sidebar();
+        }
+        let active_changed = self.active_doc_flag.replace(false);
+        if active_changed {
+            // Closing the active tab selects an existing session directly,
+            // without ActivateFinished. Bind the editor to that session too.
+            let session = self.model.document_snapshot.as_ref().and_then(|snapshot| {
+                self.model.registered_sessions.iter().find(|s| s.path() == &snapshot.path).cloned()
+            });
+            if let Some(session) = session {
+                if !self.active_session.as_ref().is_some_and(|active| active.same_session(&session)) {
+                    self.attach_session(session);
+                }
+            } else {
+                self.active_session = None;
+            }
+        }
+        if self.snapshot_flag.replace(false) || active_changed {
+            self.refresh_after_document_change();
+        }
+        if active_changed && self.model.has_project() {
+            // `agent = coordinator` + `coordinator.prepare()` — the Swift
+            // workspace creates and prepares the coordinator inside `open()`.
+            self.ensure_agent();
+        }
+        if self.autosave_flag.replace(false) {
+            self.schedule_autosave();
+        }
+        self.sync_assistant_visibility();
+    }
+
+    // ── helpers used by panes.rs ────────────────────────────────────────────
+
+    pub fn editor_font_desc(&self) -> gtk4::pango::FontDescription {
+        let mut desc = gtk4::pango::FontDescription::from_string(&self.appearance.font_description());
+        if desc.size() <= 0 {
+            desc.set_size(12 * gtk4::pango::SCALE);
+        }
+        desc
+    }
+
+    /// `completionContext()` — the fire-time gates for inline completion:
+    /// setting toggle, .tex extension, project root for the subprocess
+    /// cwd, and the file name that lands in the prompt header.
+    fn completion_context(&self) -> CompletionContext {
+        let mut context = CompletionContext {
+            project_root: self.model.project_url.clone(),
+            enabled: self.store.ai_autocompletion(),
+            is_tex: self
+                .model
+                .active_document_url
+                .as_ref()
+                .and_then(|u| u.extension())
+                .map(|e| e.eq_ignore_ascii_case("tex"))
+                .unwrap_or(false),
+            editable: self
+                .editor
+                .as_ref()
+                .map(|e| e.view().is_editable() && !e.has_marked_text())
+                .unwrap_or(false),
+            ..Default::default()
+        };
+        context.file_name = self
+            .model
+            .document_snapshot
+            .as_ref()
+            .map(|s| s.path.to_string())
+            .or_else(|| {
+                self.model
+                    .active_document_url
+                    .as_ref()
+                    .and_then(|u| u.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "document.tex".into());
+        context
+    }
+
+    /// Terminal font: custom family when set, otherwise the editor font.
+    pub fn terminal_font_desc(&self) -> gtk4::pango::FontDescription {
+        if self.appearance.terminal_font_family.is_empty() {
+            return self.editor_font_desc();
+        }
+        let mut desc = gtk4::pango::FontDescription::from_string(
+            &self.appearance.terminal_font_description(),
+        );
+        if desc.size() <= 0 {
+            desc.set_size(13 * gtk4::pango::SCALE);
+        }
+        desc
+    }
+
+    /// Name of the rendered PDF — the basename; the artifact's full
+    /// project-relative path stays in `latest_built_pdf_name` for fetch
+    /// and download (an editing preview shows its own session file name).
+    pub fn pdf_display_name(&self) -> String {
+        let shown = match &self.model.retained_pdf {
+            Some(r) if self.model.displaying_editing_preview() => Some(r.artifact.as_str()),
+            _ => self.model.latest_built_pdf_name.as_deref(),
+        };
+        shown
+            .and_then(|n| std::path::Path::new(n).file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "document.pdf".into())
+    }
+
+    pub fn toast(&self, message: &str) {
+        if let Some(overlay) = UI.with(|ui| ui.toast_overlay.borrow().clone()) {
+            let toast = adw::Toast::new(message);
+            // Airspace: a WebView2 child HWND can't be overdrawn by the
+            // in-surface toast layer — the preview hides while one is open.
+            // Engines GTK composites itself ignore the hint.
+            self.markdown.overlay_opened();
+            let markdown = self.markdown.clone();
+            toast.connect_dismissed(move |_| markdown.overlay_closed());
+            overlay.add_toast(toast);
+        }
+    }
+
+    pub fn set_console_section(&mut self, section: ConsoleSection) {
+        self.model.console_section = section;
+        self.refresh_console_visibility();
+    }
+
+    pub fn persist_commands(&mut self) {
+        self.model.persist_commands(&mut self.store);
+        // The exact equation preview follows the build command's engine.
+        self.sync_equation_preview();
+    }
+
+    pub fn sync_build_entries(&self) {
+        UI.with(|ui| {
+            if let Some(e) = ui.build_command_entry.borrow().as_ref() {
+                e.set_text(&self.model.build_command_text);
+            }
+            if let Some(e) = ui.custom_command_entry.borrow().as_ref() {
+                e.set_text(&self.model.custom_command_text);
+            }
+        });
+    }
+
+    // ── settings mutations ─────────────────────────────────────────────────
+
+    pub fn update_build_prefs(&mut self, f: impl FnOnce(&mut BuildPreferences)) {
+        let mut next: PersistedSettings = self.store.settings.clone();
+        f(&mut next.build);
+        self.store.update_settings(next);
+    }
+
+    pub fn update_editor_prefs(&mut self, f: impl FnOnce(&mut EditorPreferences)) {
+        let mut next: PersistedSettings = self.store.settings.clone();
+        f(&mut next.editor);
+        self.store.update_settings(next);
+    }
+
+    /// `shellAckBinding` — the acknowledgement only latches while a custom
+    /// shell command is configured (`acknowledgingCustomShell`).
+    pub fn update_shell_acknowledgement(&mut self, acknowledged: bool) {
+        let mut next: PersistedSettings = self.store.settings.clone();
+        next.build.custom_shell_acknowledged = acknowledged
+            && matches!(
+                next.build.shell_execution,
+                ShellExecutionPreference::Custom { .. }
+            );
+        self.store.update_settings(next);
+        self.refresh_shell_warning();
+    }
+
+    /// `customCommandBinding` — an empty field disables the login-shell
+    /// fallback and clears the acknowledgement; a non-empty command keeps
+    /// whatever acknowledgement state was already stored.
+    pub fn set_shell_execution(&mut self, command: &str) {
+        let mut next: PersistedSettings = self.store.settings.clone();
+        if command.is_empty() {
+            next.build.shell_execution = ShellExecutionPreference::Disabled;
+            next.build.custom_shell_acknowledged = false;
+        } else {
+            next.build.shell_execution = ShellExecutionPreference::Custom {
+                command: command.to_string(),
+            };
+        }
+        self.store.update_settings(next);
+        self.refresh_shell_warning();
+    }
+
+    // ── appearance ─────────────────────────────────────────────────────────
+
+    pub fn apply_theme(&self) {
+        let manager = adw::StyleManager::default();
+        manager.set_color_scheme(match self.appearance.theme {
+            Theme::Dark => adw::ColorScheme::ForceDark,
+            Theme::Light => adw::ColorScheme::ForceLight,
+            Theme::System => adw::ColorScheme::Default,
+        });
+        // Unset role colors default to the effective mode's palette, so the
+        // scheme must be in place before `stored_hex` reads below.
+        self.appearance.resolved_dark.set(manager.is_dark());
+        self.sync_equation_preview();
+        // Generate a GtkSourceView style scheme from the palette — the
+        // native mechanism for editor/gutter/line-number colors.
+        let prefs = self.store.prefs();
+        let scheme_xml = style_scheme_xml(&self.appearance, prefs);
+        if let Some(display) = gdk::Display::default() {
+            // One provider for the process, reloaded in place — adding a new
+            // one per call (every document switch) piled up providers that
+            // GTK re-matched on every style lookup.
+            let (provider, fresh) = THEME_PROVIDER.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                match slot.as_ref() {
+                    Some(provider) => (provider.clone(), false),
+                    None => (slot.insert(gtk4::CssProvider::new()).clone(), true),
+                }
+            });
+            let bg = self.appearance.stored_hex(prefs, AppearanceColorRole::EditorBackground);
+            let fg = self.appearance.stored_hex(prefs, AppearanceColorRole::BodyText);
+            let family = if self.appearance.font_family.is_empty() {
+                "Monospace".to_string()
+            } else {
+                self.appearance.font_family.clone()
+            };
+            let size = self.appearance.font_size.max(1.0);
+            // Diff cell tints — `NSColor.systemRed`/`systemGreen` at the
+            // macOS `.opacity(0.16)` row alpha, light then dark.
+            let (removed, added) = if self.appearance.effective_dark() {
+                ("rgba(255, 69, 58, 0.16)", "rgba(48, 209, 88, 0.16)")
+            } else {
+                ("rgba(255, 59, 48, 0.16)", "rgba(40, 205, 65, 0.16)")
+            };
+            provider.load_from_data(&format!(
+                ".pitex-editor, .pitex-editor text {{ background-color: {bg}; color: {fg}; caret-color: {fg}; font-family: {family}; font-size: {size}pt; }}
+                 .pitex-diff-removed {{ background-color: {removed}; }}
+                 .pitex-diff-added {{ background-color: {added}; }}
+                 .pitex-diff-empty {{ background-color: alpha(currentColor, 0.05); }}
+                 .pitex-diff-fold {{ background-color: alpha(currentColor, 0.10); padding: 4px 0; }}
+                 .pitex-diff-filehdr {{ background-color: alpha(currentColor, 0.08); border-radius: 0; }}
+                 .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}"
+            ));
+            if fresh {
+                gtk4::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
+        }
+        // Rewrite + rescan only when the generated scheme changed: the
+        // rescan re-reads every scheme file on the search path, and the
+        // path itself was appended again on each call.
+        let manager = sourceview5::StyleSchemeManager::default();
+        let changed = SCHEME_XML.with(|last| last.borrow().as_deref() != Some(scheme_xml.as_str()));
+        if changed {
+            let scheme_dir = dirs::cache_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("pitex/schemes");
+            let _ = std::fs::create_dir_all(&scheme_dir);
+            if std::fs::write(scheme_dir.join("pitex-theme.xml"), &scheme_xml).is_err() {
+                return;
+            }
+            if !SCHEME_PATH_ADDED.with(|added| added.replace(true)) {
+                manager.append_search_path(&scheme_dir.to_string_lossy());
+            }
+            manager.force_rescan();
+            SCHEME_XML.with(|last| *last.borrow_mut() = Some(scheme_xml));
+        }
+        if let (Some(scheme), Some(editor)) = (manager.scheme("pitex-dynamic"), &self.editor) {
+            editor.buffer().set_style_scheme(Some(&scheme));
+        }
+    }
+
+    /// GtkSourceView style schemes don't cover all eleven roles, so token
+    /// colors also go through TextTags created lazily by the adapter —
+    /// this (re)colors them after the palette changes.
+    fn apply_tag_colors(&self) {
+        let Some(editor) = &self.editor else { return };
+        let table = editor.buffer().tag_table();
+        let prefs = self.store.prefs();
+        for kind in token_kinds() {
+            let name = editor_feature::decoration_tag_name(&kind);
+            if let Some(tag) = table.lookup(&name) {
+                let hex = self
+                    .appearance
+                    .stored_hex(prefs, color_role_for(&kind));
+                if let Some((r, g, b, _a)) = crate::settings::parse_hex_color(&hex) {
+                    // Runs after every highlight pass: re-setting an equal
+                    // color still emits `changed`, which makes GTK drop the
+                    // cached line layouts of the view and minimap.
+                    let color = gdk::RGBA::new(r as f32, g as f32, b as f32, 1.0);
+                    if !tag.is_foreground_set() || tag.foreground_rgba().as_ref() != Some(&color) {
+                        tag.set_foreground_rgba(Some(&color));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn apply_editor_preferences(&self) {
+        let Some(editor) = &self.editor else { return };
+        let settings = &self.store.settings.editor;
+        editor.view().set_tab_width(settings.tab_width as u32);
+        editor.view().set_wrap_mode(if settings.wraps_lines {
+            gtk4::WrapMode::Word
+        } else {
+            gtk4::WrapMode::None
+        });
+        editor.view().set_insert_spaces_instead_of_tabs(true);
+        editor.view().set_auto_indent(true);
+        editor.view().set_highlight_current_line(true);
+        editor.view().set_show_line_numbers(true);
+        editor.buffer().set_highlight_matching_brackets(true);
+        if let Some(fold) = &self.fold {
+            fold.set_enabled(self.store.code_folding());
+        }
+        let font = self.terminal_font_desc();
+        UI.with(|ui| {
+            if let Some(map) = ui.minimap.borrow().as_ref() {
+                map.set_visible(self.store.minimap());
+            }
+            if let Some(term) = ui.terminal.borrow().as_ref() {
+                term.set_font(Some(&font));
+            }
+        });
+        // The ghost label tracks the editor font so suggestion text and
+        // document text share family and size.
+        self.completion.refresh_font(&self.editor_font_desc());
+        self.sync_equation_preview();
+    }
+
+    /// Unsaved text of an open document — the equation preview reads
+    /// included definitions from buffers before disk.
+    pub fn open_document_text(&self, path: &std::path::Path) -> Option<String> {
+        let root = self.model.project_url.as_ref()?;
+        let relative = WorkspaceModel::relative_path(path, root).ok()?;
+        self.model
+            .registered_sessions
+            .iter()
+            .find(|session| session.path() == &relative)
+            .map(|session| session.snapshot().text)
+    }
+
+    /// Push settings, theme, font, build command and main file to the
+    /// equation preview — each part is a no-op when unchanged.
+    #[cfg(feature = "equation-preview")]
+    pub fn sync_equation_preview(&self) {
+        use editor_feature::equation_preview::{EquationPreviewAppearance, EquationPreviewScheme, EquationPreviewSettings};
+        let settings = EquationPreviewSettings::from_persisted(
+            self.store.equation_preview_enabled(),
+            self.store.equation_preview_while_typing(),
+            self.store.equation_preview_placement(),
+            self.store.equation_preview_renderer(),
+            self.store.equation_preview_delay_milliseconds(),
+        );
+        let manager = adw::StyleManager::default();
+        let scheme = match (manager.is_high_contrast(), manager.is_dark()) {
+            (true, true) => EquationPreviewScheme::HighContrastDark,
+            (true, false) => EquationPreviewScheme::HighContrastLight,
+            (false, true) => EquationPreviewScheme::Dark,
+            (false, false) => EquationPreviewScheme::Light,
+        };
+        // Math reads best a little larger than body text.
+        let appearance = EquationPreviewAppearance { scheme, font_size: self.appearance.font_size.max(1.0) + 3.0 };
+        self.equation_preview.set_language(self.language);
+        self.equation_preview.sync(
+            settings,
+            appearance,
+            &self.model.build_command_text,
+            self.model.build_source_url(),
+        );
+    }
+
+    #[cfg(not(feature = "equation-preview"))]
+    pub fn sync_equation_preview(&self) {}
+
+    /// `rehighlight()` — re-tokenize and push decorations + structure.
+    pub fn rehighlight(&self) {
+        let Some(editor) = &self.editor else { return };
+        let Some(snapshot) = &self.model.document_snapshot else { return };
+        let dialect = dialect_for(self.model.active_document_url.as_deref());
+        // Markdown gets no lexer — the LaTeX tokenizer would grey out
+        // everything after a `%`.
+        let tokens = if self.model.active_is_markdown() {
+            Vec::new()
+        } else {
+            DeterministicTeXLexer::tokenize(&snapshot.text, dialect)
+        };
+        if let Some(fold) = &self.fold { fold.recompute_with_tokens(&snapshot.text, &tokens); }
+        let decorations = tokens
+            .into_iter()
+            .map(|t| editor_feature::EditorDecoration {
+                range: t.range,
+                token_kind: t.kind,
+            })
+            .collect();
+        editor.apply_decorations(editor_feature::EditorDecorationSnapshot::new(
+            snapshot.revision,
+            decorations,
+        ));
+        self.apply_tag_colors();
+    }
+
+    /// Debounced variant — Swift's `scheduleHighlight` (`ANALYSIS_DEBOUNCE`),
+    /// delivered through `schedule_rehighlight`/`schedule_autosave` so the
+    /// timer callbacks re-borrow `AppState` lazily.
+
+    // ── document/session wiring ────────────────────────────────────────────
+
+    /// Build a `SessionClient` bridging the adapter to the canonical
+    /// `DocumentSession`, mirroring `EditorMacAdapter.make(session:)`.
+    /// `on_applied` is invoked on the main context after the session accepts
+    /// a mutation so the model can resynchronize.
+    fn session_client(
+        session: document_session_core::DocumentSession,
+        on_applied: impl Fn() + 'static,
+    ) -> Rc<dyn SessionClient> {
+        let snap_session = session.clone();
+        let submit_session = session.clone();
+        Rc::new(FnSessionClient::new(
+            move || {
+                let s = snap_session.snapshot();
+                app_ports::DocumentSnapshot {
+                    revision: s.revision,
+                    text: s.text,
+                }
+            },
+            move |mutation| {
+                let result = submit_session.apply(
+                    DocumentMutation::ReplaceRange {
+                        utf16_offset: mutation.range.location,
+                        utf16_length: mutation.range.length,
+                        text: mutation.replacement.clone(),
+                    },
+                    mutation.base_revision,
+                );
+                match result {
+                    Ok(snapshot) => {
+                        on_applied();
+                        DocumentMutationResult::Applied(app_ports::DocumentSnapshot {
+                            revision: snapshot.revision,
+                            text: snapshot.text,
+                        })
+                    }
+                    Err(document_session_core::DocumentSessionError::StaleRevision { .. }) => {
+                        let s = submit_session.snapshot();
+                        DocumentMutationResult::Rejected {
+                            current: app_ports::DocumentSnapshot {
+                                revision: s.revision,
+                                text: s.text,
+                            },
+                        }
+                    }
+                    Err(_) => {
+                        let s = submit_session.snapshot();
+                        DocumentMutationResult::Rejected {
+                            current: app_ports::DocumentSnapshot {
+                                revision: s.revision,
+                                text: s.text,
+                            },
+                        }
+                    }
+                }
+            },
+        ))
+    }
+
+    /// Pull the adapter-committed snapshot into the model + refresh derived
+    /// UI (structure, decorations, footer). Called via the session client.
+    pub fn sync_snapshot_from_session(&mut self) {
+        if self.closing_remote_workspace() { return; }
+        if let Some(session) = self.active_session.clone() {
+            self.model.document_snapshot = Some(session.snapshot());
+        }
+        // Live compile — real text changes queue a build; saves and
+        // snapshot republishes carry the same content hash and skip it.
+        let requests = self.model.note_source_edit(&self.store);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.arm_live_timer();
+        self.arm_embedded_timer();
+        // Structure parse is debounced — it re-parses the whole document
+        // and ran on every keystroke.
+        self.schedule_structure_refresh();
+        self.refresh_after_document_change();
+        self.model.sync_selection_attachment();
+        self.schedule_autosave();
+        self.schedule_rehighlight();
+    }
+
+    /// (Re)arm the live-compile debounce. The delay comes from the
+    /// scheduler's pending deadline — an IME composition or an in-flight
+    /// run retries at the scheduler's bounded rate instead of dropping
+    /// the edit.
+    fn arm_live_timer(&mut self) {
+        LIVE_SOURCE.with(|s| {
+            if let Some(id) = s.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let Some(delay) = self.model.live_poll_delay(composing) else {
+            return;
+        };
+        let id = glib::timeout_add_local_once(
+            Duration::from_millis(delay.max(1)),
+            live_timer_fire,
+        );
+        LIVE_SOURCE.with(|s| *s.borrow_mut() = Some(id));
+    }
+
+    /// Pushes live-compile settings into the scheduler and performs any
+    /// resulting requests — used by the settings rows, the toolbar toggle
+    /// and a settings import.
+    pub fn apply_live_settings(&mut self) {
+        let requests = self.model.sync_live_settings(&self.store);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.arm_live_timer();
+        self.arm_embedded_timer();
+        self.refresh_preview_label();
+        self.refresh_build_ui();
+    }
+
+    /// `scheduleAutosave` — every edit cancels the pending timer and re-arms
+    /// a fresh one, so the save lands `autoSaveDelay` seconds after the last
+    /// change. The timer is armed only while autosave is enabled and the
+    /// document is dirty with read-write access; `save()` re-checks `canSave`
+    /// at fire time exactly like the Swift task.
+    fn schedule_autosave(&self) {
+        // `autosaveTask?.cancel()` — the pending source is destroyed so a new
+        // edit always restarts the full delay.
+        AUTOSAVE_SOURCE.with(|s| {
+            if let Some(id) = s.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        // guard settings.autoSave && saveState == .dirty && lease == .readWrite
+        if !(self.store.auto_save() && self.model.remote.is_none() && self.model.can_save()) {
+            return;
+        }
+        let delay = self.store.auto_save_delay().max(1) as u64;
+        let id = glib::timeout_add_local_once(Duration::from_secs(delay), move || {
+            AUTOSAVE_SOURCE.with(|s| s.borrow_mut().take());
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let Ok(mut st) = state.try_borrow_mut() else { return };
+                    if st.model.remote.is_none() && st.store.auto_save() {
+                        st.model.save();
+                        st.refresh_after_document_change();
+                    }
+                }
+            });
+        });
+        AUTOSAVE_SOURCE.with(|s| *s.borrow_mut() = Some(id));
+    }
+
+    /// Attach a session to the (single) editor adapter — mirrors the macOS
+    /// environment rebuilding `adapter` when the active document changes.
+    pub fn attach_session(&mut self, session: DocumentSession) {
+        self.active_session = Some(session.clone());
+        let client = Self::session_client(session, || {
+            // Defer: the submit callback runs inside a GTK signal; doing the
+            // model update through idle avoids RefCell re-entrancy.
+            glib::idle_add_local_once(|| {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        state.borrow_mut().sync_snapshot_from_session();
+                    }
+                });
+            });
+        });
+        let adapter = Rc::new(GtkEditorAdapter::make(client));
+        adapter.view().add_css_class("pitex-editor");
+        a11y(adapter.view(), "pitex.editor.text", "editor.title");
+        compat::unhide_pointer_on_typing(adapter.view());
+        // Completion provider — the GTK counterpart of the mac adapter's
+        // `completionSource`: candidates come from the model through STATE
+        // so the provider itself stays data-agnostic.
+        let provider = crate::completion::TexCompletionProvider::new(
+            &tr(self.language, "editor.completion"),
+            Rc::new(|context: &language_core::CompletionContext| {
+                STATE.with(|s| {
+                    s.borrow()
+                        .as_ref()
+                        .and_then(|state| {
+                            state
+                                .try_borrow()
+                                .ok()
+                                .map(|st| st.model.editor_completions(context))
+                        })
+                        .unwrap_or_default()
+                })
+            }),
+        );
+        adapter.view().completion().add_provider(&provider);
+        // FoldEngine attaches before the widget rebind so its chip layer
+        // lands on the editor overlay, mirroring FoldEngine.attach.
+        let dialect = dialect_for(self.model.active_document_url.as_deref());
+        let fold = crate::fold::FoldEngine::attach(
+            adapter.view(),
+            dialect,
+            self.store.code_folding(),
+        );
+        self.search = UI.with(|ui| ui.search_count.borrow().as_ref().map(|label| {
+            let search = crate::search::EditorSearch::new(adapter.view(), adapter.buffer(), label);
+            if ui.search_bar.borrow().as_ref().is_some_and(|bar| bar.is_search_mode()) {
+                if let Some(entry) = ui.search_entry.borrow().as_ref() { search.set_query(&entry.text()); }
+            }
+            search
+        }));
+        self.editor = Some(adapter.clone());
+        self.fold = Some(fold);
+        // Ghost completion rebinds to the fresh view/buffer like
+        // FoldEngine — `completion.attach(to:)` in the Swift workspace.
+        let ghost_label = UI.with(|ui| ui.ghost_label.borrow().clone());
+        if let Some(ghost_label) = ghost_label {
+            self.completion
+                .attach(adapter.view(), adapter.buffer(), &ghost_label);
+        }
+        #[cfg(feature = "equation-preview")]
+        {
+            self.equation_preview.set_project_root(self.model.project_url.clone());
+            self.equation_preview.set_document(self.model.active_document_url.clone());
+            self.equation_preview.attach(adapter.view(), adapter.buffer());
+        }
+        self.rebind_editor_widget();
+        self.apply_editor_preferences();
+        self.apply_theme();
+        self.rehighlight();
+        self.install_editor_controllers();
+        self.sync_equation_preview();
+    }
+
+    /// Swap the editor child inside the scroller and (re)wire the minimap.
+    /// The view stays the scroller's direct child — a non-Scrollable child
+    /// would disconnect its adjustments and kill minimap/jump-to — while
+    /// the fold chip layer overlays the scroller from outside.
+    fn rebind_editor_widget(&self) {
+        let Some(editor) = &self.editor else { return };
+        UI.with(|ui| {
+            // GtkSourceMap (5.12) hooks the view's vadjustment as it is at
+            // set_view time and unhooks whatever vadjustment the view has
+            // at the next set_view. Leaving the scroller gives a view a fresh
+            // adjustment, so swapping first made the unhook miss
+            // (GLib-GObject-CRITICAL "has no handler with id" on every
+            // document switch) and leaked two handlers on the scroller's
+            // adjustment each time. Unhook while the old view still holds
+            // the scroller's adjustment, and hook once the new one does.
+            let map = ui.minimap.borrow().clone();
+            if let Some(map) = &map {
+                map.set_property("view", None::<sourceview5::View>);
+            }
+            if let Some(scroller) = ui.editor_scroller.borrow().as_ref() {
+                let previous = scroller
+                    .child()
+                    .and_then(|child| child.downcast::<sourceview5::View>().ok())
+                    .filter(|old| old != editor.view());
+                scroller.set_child(Some(editor.view()));
+                // GtkSourceView 5 never finalizes a view that has gutter
+                // renderers (line numbers, fold triangles) once it is
+                // unparented — the gutter keeps a reference to its view —
+                // so every replaced editor pinned its whole buffer (text,
+                // one tag per token, undo history), ~28 MB per switch for a
+                // 600 KB document. Detach the buffer; only the empty view
+                // shell stays behind.
+                if let Some(old) = previous {
+                    old.set_buffer(Some(&sourceview5::Buffer::new(None)));
+                }
+            }
+            if let Some(map) = &map {
+                map.set_view(editor.view());
+            }
+            if let Some(overlay) = ui.editor_overlay.borrow().as_ref() {
+                if let Some(old) = self.fold_chip.borrow_mut().take() {
+                    overlay.remove_overlay(&old);
+                }
+                if let Some(fold) = &self.fold {
+                    overlay.add_overlay(fold.chip_area());
+                    *self.fold_chip.borrow_mut() = Some(fold.chip_area().clone());
+                }
+            }
+        });
+    }
+
+    /// Ctrl+click → forward SyncTeX; mark-set → selection attachment.
+    fn install_editor_controllers(&self) {
+        let Some(editor) = &self.editor else { return };
+        let click = gtk4::GestureClick::new();
+        click.set_button(1);
+        // Weak: the view owns this controller — a strong capture kept every
+        // replaced editor view (buffer, tags, undo history) alive.
+        let view = editor.view().downgrade();
+        click.connect_pressed(move |gesture, _, x, y| {
+            let state = gesture.current_event_state();
+            if !state.contains(gdk::ModifierType::CONTROL_MASK) {
+                return;
+            }
+            let Some(view) = view.upgrade() else { return };
+            let (bx, by) = view.window_to_buffer_coords(
+                gtk4::TextWindowType::Widget,
+                x as i32,
+                y as i32,
+            );
+            let iter = view.iter_at_location(bx, by).or_else(|| {
+                let (mut iter, _top) = view.line_at_y(by);
+                if !iter.ends_line() {
+                    iter.forward_to_line_end();
+                }
+                Some(iter)
+            });
+            if let Some(iter) = iter {
+                let line = iter.line() as usize + 1;
+                let mut start = iter;
+                start.set_line_offset(0);
+                let col_text = view.buffer().text(&start, &iter, true);
+                let column = crate::model::utf16_len(col_text.as_str());
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() {
+                            s.sync_forward_at(line, column);
+                        }
+                    }
+                });
+            }
+        });
+        editor.view().add_controller(click);
+
+        // Track selection → editor_selection + agent attachment chip.
+        let buffer = editor.buffer().clone();
+        buffer.connect_mark_set(|buffer, _iter, mark| {
+            if mark != &buffer.get_insert() && mark != &buffer.selection_bound() {
+                return;
+            }
+            // One idle per burst: a caret move sets both marks, and each
+            // pass copies the text up to the caret for the UTF-16 offset.
+            if SELECTION_SYNC_PENDING.with(|pending| pending.replace(true)) {
+                return;
+            }
+            glib::idle_add_local_once(|| {
+                SELECTION_SYNC_PENDING.with(|pending| pending.set(false));
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        let Ok(mut st) = state.try_borrow_mut() else { return };
+                        if let Some(range) =
+                            st.editor.as_ref().map(|e| e.selected_range())
+                        {
+                            st.model.editor_selection = (
+                                range.location.max(0) as usize,
+                                range.length.max(0) as usize,
+                            );
+                        }
+                        st.model.sync_selection_attachment();
+                        st.drain_side_effects();
+                        st.refresh_footer();
+                    }
+                });
+            });
+        });
+
+        // Editor→preview scroll sync rides the view's scroll adjustments —
+        // hooked through `on_view_scroll` so each document switch no longer
+        // stacks another handler on the scroller's adjustment.
+        on_view_scroll(editor.view(), || {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(st) = state.try_borrow() {
+                        st.markdown_editor_scrolled();
+                    }
+                }
+            });
+        });
+
+        // ⇧↩ = `win.build` while the source editor has focus — an
+        // EventControllerKey on the view so the composer, terminal, search
+        // and settings keep their plain Shift+Return.
+        install_build_key(
+            editor.view(),
+            Rc::new({
+                // Weak for the same reason: the key controller lives on the
+                // adapter's own view.
+                let editor = Rc::downgrade(editor);
+                move || editor.upgrade().is_some_and(|editor| editor.has_marked_text())
+            }),
+            Rc::new({
+                let view = editor.view().downgrade();
+                move || {
+                    if let Some(view) = view.upgrade() {
+                        let _ = view.activate_action("win.build", None);
+                    }
+                }
+            }),
+        );
+    }
+
+    /// After any text-affecting change: footer, save button, structure lists.
+    pub fn refresh_after_document_change(&mut self) {
+        // The resolved main document may have changed with the edit.
+        self.sync_equation_preview();
+        self.refresh_footer();
+        self.refresh_tabs();
+        self.refresh_sidebar();
+        self.refresh_conflict_banner();
+        self.refresh_shell_warning();
+        self.refresh_save_sensitivity();
+        // Also restores the inspector after a dismissed diff — it owns
+        // the editor-stack child and inspector visibility updates.
+        self.refresh_git_diff();
+        // `restoreBuiltPreview` may have swapped the bound PDF alongside the
+        // document change (main document vs. chapter/bibliography target).
+        self.refresh_pdf_ui();
+        self.schedule_markdown_render();
+    }
+
+    /// The visible `editor_stack` child — a `gitDiff` session covers the
+    /// editor like `WorkspaceView`'s `CommitDiffView` overlay.
+    fn editor_stack_child(&self) -> &'static str {
+        if self.model.git_diff.is_some() {
+            "diff"
+        } else if self.model.document_snapshot.is_some() {
+            "editor"
+        } else {
+            "empty"
+        }
+    }
+
+    /// Push `model.git_diff` into the diff overlay: stack child, header
+    /// labels, content state, and the while-open inspector hiding
+    /// (`WorkspaceView` hides it whenever `gitDiff != nil`).
+    pub fn refresh_git_diff(&self) {
+        UI.with(|ui| {
+            if let Some(stack) = ui.editor_stack.borrow().as_ref() {
+                stack.set_visible_child_name(self.editor_stack_child());
+            }
+            if let Some(paned) = ui.inner_paned.borrow().as_ref() {
+                if let Some(inspector) = paned.end_child() {
+                    inspector
+                        .set_visible(self.model.inspector_visible && self.model.git_diff.is_none());
+                }
+            }
+            let Some(diff) = self.model.git_diff.as_ref() else {
+                return;
+            };
+            if let Some(badge) = ui.git_diff_badge.borrow().as_ref() {
+                badge.set_visible(diff.file.is_some());
+                if let Some(file) = &diff.file {
+                    badge.set_label(file.kind.badge());
+                    for class in ["warning", "success", "error", "accent"] {
+                        badge.remove_css_class(class);
+                    }
+                    badge.add_css_class(match file.kind {
+                        git_core::GitChangeKind::Modified | git_core::GitChangeKind::TypeChanged => "warning",
+                        git_core::GitChangeKind::Added | git_core::GitChangeKind::Untracked => "success",
+                        git_core::GitChangeKind::Deleted | git_core::GitChangeKind::Conflicted => "error",
+                        git_core::GitChangeKind::Renamed | git_core::GitChangeKind::Copied => "accent",
+                    });
+                }
+            }
+            if let Some(path) = ui.git_diff_path.borrow().as_ref() {
+                path.set_visible(diff.file.is_some());
+                if let Some(file) = &diff.file {
+                    path.set_label(&file.path);
+                }
+            }
+            // `+N −N` appears once the sections land, like
+            // `session.sections?.first` on macOS.
+            let stats = diff
+                .file
+                .as_ref()
+                .and_then(|_| diff.sections.as_ref())
+                .and_then(|s| s.stats.first());
+            if let Some(adds) = ui.git_diff_adds.borrow().as_ref() {
+                adds.set_visible(stats.is_some());
+                if let Some((additions, _)) = stats {
+                    adds.set_label(&format!("+{additions}"));
+                }
+            }
+            if let Some(dels) = ui.git_diff_dels.borrow().as_ref() {
+                dels.set_visible(stats.is_some());
+                if let Some((_, deletions)) = stats {
+                    dels.set_label(&format!("−{deletions}"));
+                }
+            }
+            if let Some(files) = ui.git_diff_files.borrow().as_ref() {
+                let show = diff.file.is_none() && diff.sections.is_some();
+                files.set_visible(show);
+                if show {
+                    files.set_label(&tr1(
+                        self.language,
+                        "git.diff.files",
+                        &diff.sections.as_ref().map_or(0, |s| s.sections.len()).to_string(),
+                    ));
+                }
+            }
+            match &diff.source {
+                crate::model::GitDiffSource::Commit(commit) => {
+                    if let Some(chip) = ui.git_diff_chip.borrow().as_ref() {
+                        chip.set_label(&commit.hash);
+                    }
+                    if let Some(subject) = ui.git_diff_subject.borrow().as_ref() {
+                        subject.set_label(&commit.subject);
+                        subject.set_visible(true);
+                    }
+                }
+                crate::model::GitDiffSource::WorkingTree { staged } => {
+                    if let Some(chip) = ui.git_diff_chip.borrow().as_ref() {
+                        chip.set_label(&tr(
+                            self.language,
+                            if *staged { "git.diff.staged" } else { "git.diff.working_tree" },
+                        ));
+                    }
+                    if let Some(subject) = ui.git_diff_subject.borrow().as_ref() {
+                        subject.set_visible(false);
+                    }
+                }
+            }
+            if let Some(stack) = ui.git_diff_stack.borrow().as_ref() {
+                if let Some(error) = &diff.error {
+                    stack.set_visible_child_name("error");
+                    if let Some(label) = ui.git_diff_error.borrow().as_ref() {
+                        label.set_label(error);
+                    }
+                } else if let Some(sections) = &diff.sections {
+                    if sections.sections.is_empty() {
+                        stack.set_visible_child_name("empty");
+                    } else {
+                        stack.set_visible_child_name("rows");
+                        if let Some(model) = ui.git_diff_model.borrow().as_ref() {
+                            // Binds can run while AppState is borrowed, so
+                            // the markup colors travel with the model.
+                            let (r, g, b, _) = self.appearance.color(
+                                self.store.prefs(),
+                                crate::settings::AppearanceColorRole::EditorBackground,
+                            );
+                            model.set_theme_colors(
+                                self.appearance.effective_dark(),
+                                (r, g, b),
+                            );
+                            // `set_sections` no-ops on the same session —
+                            // check before cloning every row of the diff.
+                            if model.session() != diff.id {
+                                model.set_sections(diff.id, diff.file.is_some(), sections.clone());
+                            }
+                        }
+                    }
+                } else {
+                    stack.set_visible_child_name("loading");
+                }
+            }
+        });
+    }
+
+    /// Re-highlight once typing pauses. The slot is a thread-local, not
+    /// AppState: this runs while STATE is already borrowed (snapshot
+    /// submission), so it must not borrow it again.
+    fn schedule_rehighlight(&self) {
+        restart_timer(&HIGHLIGHT_SOURCE, ANALYSIS_DEBOUNCE, || {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(st) = state.try_borrow() {
+                        st.rehighlight();
+                    }
+                }
+            });
+        });
+    }
+
+    /// Debounced structure refresh — one parse + sidebar rebuild once
+    /// typing pauses, on the same cadence as highlighting.
+    fn schedule_structure_refresh(&self) {
+        restart_timer(&STRUCTURE_SOURCE, ANALYSIS_DEBOUNCE, || {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.model.refresh_structure();
+                        st.refresh_sidebar();
+                        st.refresh_footer();
+                    }
+                }
+            });
+        });
+    }
+
+    // ── command actions ────────────────────────────────────────────────────
+
+    /// `close()`'s agent half — terminate the coordinator and its subprocess
+    /// with the project; a fresh one is built on the next open.
+    fn shutdown_agent(&mut self) {
+        // `completion?.shutdown()` — the dedicated subprocess dies with the
+        // workspace and `attach` respawns it on the next document.
+        self.completion.shutdown();
+        #[cfg(feature = "equation-preview")]
+        self.equation_preview.shutdown();
+        if let Some(agent) = self.agent.as_mut() {
+            agent.shutdown();
+        }
+        self.agent = None;
+        self.assistant_was_visible.set(false);
+    }
+
+    pub fn open_selected(&mut self, path: PathBuf) {
+        if self.model.remote.is_some() {
+            self.begin_remote_save(RemoteSaveAction::Open(path));
+            return;
+        }
+        self.open_selected_after_save(path);
+    }
+
+    fn open_selected_after_save(&mut self, path: PathBuf) {
+        self.shutdown_agent();
+        if let Some(tx) = &self.tx {
+            self.model.open(path, tx.clone());
+        }
+        self.refresh_phase();
+    }
+
+    /// VS Code-style open (`WorkspaceWindows.route` on macOS): this window
+    /// takes `path` when it is empty or `path` lies inside its project;
+    /// anything else opens in a new window.
+    pub fn open_routed(&mut self, path: PathBuf) {
+        if self.show_if_owned(&path) {
+            return;
+        }
+        // Another Pitex window (a separate process) may own the project.
+        if crate::window_ipc::offer_to_other_windows(&path) {
+            return;
+        }
+        let loading = matches!(self.model.phase, WorkspacePhase::Loading(_));
+        if self.model.project_url.is_none() && !loading {
+            self.open_selected(path);
+        } else if let Err(e) = open_in_new_window(&path) {
+            self.toast(&e.to_string());
+        }
+    }
+
+    /// Brings this window forward and shows `path` when it lies inside the
+    /// window's project (a listed file activates like a sidebar click).
+    /// `false` leaves the file to another window.
+    pub fn show_if_owned(&mut self, path: &Path) -> bool {
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let Some(root) = self.model.project_url.as_deref().map(canonical) else {
+            return false;
+        };
+        let file = canonical(path);
+        if !file.starts_with(&root) {
+            return false;
+        }
+        UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.present()));
+        let listed = self.model.project_files.iter().find(|f| canonical(f) == file).cloned();
+        if let Some(url) = listed {
+            self.activate_document(url);
+        } else if file.is_file() {
+            self.open_selected(path.to_path_buf());
+        }
+        true
+    }
+
+    /// File → Open Recent — `open(url)` for a recents entry (menu target is
+    /// the index into `recent_documents`).
+    pub fn open_recent_action(&mut self, index: i32) {
+        let Some(url) = self
+            .model
+            .recent_documents
+            .get(index.max(0) as usize)
+            .cloned()
+        else {
+            return;
+        };
+        self.open_routed(url);
+    }
+
+    /// File → Open Recent → Clear — `clearRecents()`.
+    pub fn clear_recents_action(&mut self) {
+        self.model.clear_recents(&mut self.store);
+        self.refresh_phase();
+    }
+
+    /// `anchor` is the button that triggered the chooser — the popover
+    /// points at it. `win.open` (shortcut/menu) passes `None` and falls
+    /// back to the header open button, then the window.
+    pub fn present_open(&self, anchor: Option<&gtk4::Widget>) {
+        let anchor = anchor.cloned().or_else(|| {
+            UI.with(|ui| {
+                ui.open_button
+                    .borrow()
+                    .as_ref()
+                    .filter(|b| b.is_mapped())
+                    .map(|b| b.clone().upcast::<gtk4::Widget>())
+                    .or_else(|| {
+                        ui.window
+                            .borrow()
+                            .as_ref()
+                            .map(|w| w.clone().upcast::<gtk4::Widget>())
+                    })
+            })
+        });
+        let Some(anchor) = anchor else { return };
+        let menu = gtk4::Popover::new();
+        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        let file_btn = gtk4::Button::with_label(&tr(self.language, "workspace.open"));
+        let folder_btn = gtk4::Button::with_label(&tr(self.language, "workspace.open_project"));
+        file_btn.set_has_frame(false);
+        folder_btn.set_has_frame(false);
+        let menu_state = menu.clone();
+        file_btn.connect_clicked(move |b| {
+            menu_state.popdown();
+            let window = b.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+            compat::pick_source_file(window.as_ref(), "Open", |path| {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() { s.open_routed(path); }
+                    }
+                });
+            });
+        });
+        let menu_state = menu.clone();
+        folder_btn.connect_clicked(move |b| {
+            menu_state.popdown();
+            let window = b.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+            compat::pick_folder(window.as_ref(), "Open Project Folder", |path| {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() { s.open_routed(path); }
+                    }
+                });
+            });
+        });
+        vbox.append(&file_btn);
+        vbox.append(&folder_btn);
+        // "Open via SSH…" — the third open path in the macOS Open menu.
+        {
+            let ssh_btn = gtk4::Button::with_label(&tr(self.language, "command.open_via_ssh"));
+            ssh_btn.set_has_frame(false);
+            a11y(&ssh_btn, "pitex.command.openViaSSH", "command.open_via_ssh");
+            let lang = self.language;
+            let menu_state = menu.clone();
+            ssh_btn.connect_clicked(move |_| {
+                menu_state.popdown();
+                crate::ssh_ui::present_open_via_ssh(lang);
+            });
+            vbox.append(&ssh_btn);
+        }
+        menu.set_child(Some(&vbox));
+        menu.set_parent(&anchor);
+        menu.popup();
+    }
+
+    /// The write finishes off the main thread; `SaveFinished` refreshes
+    /// the document chrome and Git once it has landed.
+    pub fn save_action(&mut self) {
+        if self.model.remote.is_some() {
+            self.begin_remote_save(RemoteSaveAction::Build);
+            return;
+        }
+        self.model.save();
+        self.refresh_after_document_change();
+    }
+
+    pub fn save_all_action(&mut self) {
+        if self.model.remote.is_some() {
+            self.begin_remote_save(RemoteSaveAction::Build);
+            return;
+        }
+        if let Some(err) = self.model.persist_dirty_sessions() {
+            self.toast(&err);
+        }
+        self.refresh_after_document_change();
+        self.refresh_git();
+    }
+
+    pub fn save_as_action(&self) {
+        let window = UI.with(|ui| ui.window.borrow().clone());
+        let Some(window) = window else { return };
+        let name = self
+            .model
+            .active_document_url
+            .as_ref()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+        compat::save_file(Some(window.upcast_ref()), "Save As", name.as_deref(), |path| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let Ok(mut st) = state.try_borrow_mut() else { return };
+                    let save_remote = st.model.remote.is_some()
+                        && st.model.project_url.as_ref().is_some_and(|root| path.starts_with(root));
+                    if let Some(tx) = st.tx.clone() {
+                        st.model.save_as(path, tx);
+                    }
+                    if save_remote && !matches!(st.model.phase, WorkspacePhase::Failed(_)) {
+                        st.begin_remote_save(RemoteSaveAction::Build);
+                    }
+                    st.refresh_after_document_change();
+                }
+            });
+        });
+    }
+
+    /// File → New Document: creates `untitled.tex` at the project root and
+    /// activates it — matches `createDocument()` (no save panel).
+    pub fn create_document_action(&mut self) {
+        if let Some(tx) = self.tx.clone() {
+            self.model.create_document(tx);
+        }
+        self.refresh_after_document_change();
+    }
+
+    pub fn activate_document(&mut self, url: PathBuf) {
+        if let Some(tx) = self.tx.clone() {
+            self.model.activate_document(url, tx);
+        }
+        // `activateDocument` dismisses the diff overlay synchronously.
+        self.refresh_git_diff();
+    }
+
+    pub fn close_document(&mut self, url: PathBuf) {
+        if self.model.remote.is_some() {
+            self.begin_remote_save(RemoteSaveAction::CloseDocument(url));
+            return;
+        }
+        self.close_document_after_save(url);
+    }
+
+    fn close_document_after_save(&mut self, url: PathBuf) {
+        self.model.close_document(&url);
+        self.refresh_after_document_change();
+        // The open-source set changed: refresh so the helper drops the
+        // override and SyncTeX can rebind (no edit-revision bump).
+        self.model.request_embedded_refresh(&self.store);
+        self.model.request_embedded_restart(&self.store);
+        self.arm_embedded_timer();
+    }
+
+    pub fn reload_active(&mut self) {
+        let confirm = self.store.confirm_overwrite();
+        self.model.reload_active_document_from_disk(confirm);
+        if let Some(editor) = &self.editor {
+            editor.refresh_from_session();
+        }
+        self.refresh_after_document_change();
+    }
+
+    pub fn resolve_conflict(&mut self, use_disk: bool) {
+        self.model.resolve_conflict(use_disk);
+        if let Some(editor) = &self.editor {
+            editor.refresh_from_session();
+        }
+        self.refresh_after_document_change();
+    }
+
+    /// `jumpTo(line:column:highlight:)` — reveal the position in the editor
+    /// and update the tracked selection (UTF-16 units, like `NSTextView`).
+    /// The find indicator only flashes when `highlight` is set.
+    pub fn jump_to(&mut self, line: usize, column: usize, highlight: bool) {
+        if let Some(editor) = &self.editor {
+            let text = editor.text();
+            let utf16 = line_col_to_utf16(&text, line.saturating_sub(1), column);
+            editor.reveal_selection(
+                editor_feature::EditorTextRange {
+                    location: utf16 as i64,
+                    length: 0,
+                },
+                highlight,
+            );
+            self.model.editor_selection = (utf16, 0);
+        }
+    }
+
+    pub fn jump_to_issue(&mut self, index: usize) {
+        let issue = self.filtered_issues().get(index).cloned();
+        let Some(issue) = issue else { return };
+        let (Some(file), Some(line)) = (issue.file.clone(), issue.line) else {
+            return;
+        };
+        let path = self
+            .model
+            .project_url
+            .as_ref()
+            .map(|root| root.join(&file))
+            .unwrap_or_else(|| PathBuf::from(&file));
+        self.activate_document(path);
+        let column = issue.column.unwrap_or(0) as usize;
+        self.jump_to(line.max(1) as usize, column, false);
+    }
+
+    pub fn filtered_issues(&self) -> Vec<build_core::BuildIssueRecord> {
+        let mode = UI.with(|ui| {
+            ui.issue_filter
+                .borrow()
+                .as_ref()
+                .map(|d| d.selected())
+                .unwrap_or(0)
+        });
+        self.model
+            .build_issues
+            .iter()
+            .filter(|i| match mode {
+                1 => i.severity == build_core::BuildIssueSeverity::Error,
+                2 => i.severity == build_core::BuildIssueSeverity::Warning,
+                _ => true,
+            })
+            .cloned()
+            .collect()
+    }
+
+    // ── build / terminal actions ───────────────────────────────────────────
+
+    pub fn start_build_action(&mut self) {
+        if self.model.remote.is_some() {
+            self.begin_remote_save(RemoteSaveAction::Build);
+            return;
+        }
+        self.model.start_build(&self.store, self.language);
+        self.restart_embedded_preview();
+        self.refresh_build_ui();
+    }
+
+    pub fn cancel_build_action(&mut self) {
+        self.model.cancel_build();
+        self.refresh_build_ui();
+    }
+
+    pub fn toggle_build_action(&mut self) {
+        if self.model.is_building() {
+            self.cancel_build_action();
+        } else {
+            self.start_build_action();
+        }
+    }
+
+    pub fn run_custom_command_action(&mut self) {
+        let acknowledged = self.store.settings.build.custom_shell_acknowledged;
+        let shell = self.store.custom_shell_executable();
+        self.model.run_custom_command(acknowledged, &shell);
+        self.model.console_section = ConsoleSection::Terminal;
+        self.refresh_console_visibility();
+    }
+
+    pub fn clean_artifacts_action(&mut self) {
+        self.model.clean_build_artifacts();
+        self.toast(&tr(self.language, "command.clean"));
+    }
+
+    /// `openTodo(_:)` — the model parks cross-file jumps in `pending_jump`
+    /// (replayed by `apply_activate`); a same-file jump publishes through
+    /// `on_jump_to`, which `drain_side_effects` lands immediately here.
+    pub fn open_todo(&mut self, item: &DocumentTodoItem) {
+        if let Some(tx) = self.tx.clone() {
+            self.model.open_todo(item, tx);
+        }
+        self.drain_side_effects();
+    }
+
+    /// TODOs `+` — `addTodo()`: inserts `% TODO: ` at the caret when the
+    /// active document is .tex (the buffer's change hook submits the edit
+    /// through the session, like `insertText`), otherwise appends it to the
+    /// build target on disk — guarded against dirty sessions by the model.
+    pub fn add_todo_action(&mut self) {
+        let active_is_tex = self
+            .model
+            .active_document_url
+            .as_ref()
+            .and_then(|u| u.extension())
+            .map(|e| e.eq_ignore_ascii_case("tex"))
+            .unwrap_or(false);
+        if active_is_tex {
+            if let Some(editor) = &self.editor {
+                let buffer = editor.buffer().clone();
+                buffer.begin_user_action();
+                buffer.insert_at_cursor("% TODO: ");
+                buffer.end_user_action();
+            }
+            self.refresh_after_document_change();
+        } else {
+            self.model.append_todo_to_target();
+            self.model.refresh_structure();
+            self.refresh_sidebar();
+        }
+    }
+
+    /// `renameTodo`/`removeTodo`/`toggleTodo` — active-document edits come
+    /// back as a (UTF-16 range, replacement) applied through the buffer as
+    /// a user action (`toggle_comment_action` path); other files are written
+    /// by the model on disk unless a dirty session owns them.
+    pub fn todo_edit_action(&mut self, item: &DocumentTodoItem, edit: TodoLineEdit) {
+        if let Some((range, replacement)) = self.model.edit_todo(item, edit) {
+            if let Some(editor) = self.editor.clone() {
+                let text = editor.text();
+                let start_char =
+                    gtk_editor_adapter::utf16_offset_to_char_offset(&text, range.start);
+                let end_char =
+                    gtk_editor_adapter::utf16_offset_to_char_offset(&text, range.end);
+                let buffer = editor.buffer().clone();
+                buffer.begin_user_action();
+                let mut start = buffer.iter_at_offset(start_char as i32);
+                let mut end = buffer.iter_at_offset(end_char as i32);
+                buffer.delete(&mut start, &mut end);
+                if !replacement.is_empty() {
+                    let mut at = buffer.iter_at_offset(start_char as i32);
+                    buffer.insert(&mut at, &replacement);
+                }
+                buffer.end_user_action();
+            }
+            self.refresh_after_document_change();
+        } else {
+            // Disk write (or a guarded no-op) — rescan so the row repaints.
+            self.model.refresh_structure();
+            self.refresh_sidebar();
+        }
+    }
+
+    /// Figure rows open in the system viewer — the GTK half of
+    /// `NSWorkspace.shared.open(url)`. GTK 4.6 has no `FileLauncher`, so the
+    /// launch goes through `gio::AppInfo`; failures get a window-modal
+    /// error dialog (`MessageDialog` — `AlertDialog` needs GTK 4.10).
+    #[allow(deprecated)]
+    pub fn open_external(&self, url: &Path) {
+        self.open_external_uri(&gio::File::for_path(url).uri());
+    }
+
+    /// `NSWorkspace.shared.open` — any URI, with the same error dialog.
+    pub fn open_external_uri(&self, uri: &str) {
+        if let Err(e) =
+            gio::AppInfo::launch_default_for_uri(uri, gio::AppLaunchContext::NONE)
+        {
+            let window = UI.with(|ui| ui.window.borrow().clone());
+            let dialog = gtk4::MessageDialog::new(
+                window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()),
+                gtk4::DialogFlags::MODAL,
+                gtk4::MessageType::Error,
+                gtk4::ButtonsType::Close,
+                &e.to_string(),
+            );
+            dialog.connect_response(|d, _| d.close());
+            dialog.present();
+        }
+    }
+
+    /// Edit → Toggle Line Comment — `toggleLineComment()`: the model computes
+    /// the transformed line range (UTF-16), the buffer applies it as a user
+    /// action so undo groups it and the adapter's change hook submits it.
+    pub fn toggle_comment_action(&mut self) {
+        let Some(editor) = self.editor.clone() else { return };
+        let Some((range, transformed)) = self.model.toggle_line_comment_transform()
+        else {
+            return;
+        };
+        let text = editor.text();
+        let start_char =
+            gtk_editor_adapter::utf16_offset_to_char_offset(&text, range.start);
+        let end_char = gtk_editor_adapter::utf16_offset_to_char_offset(&text, range.end);
+        let buffer = editor.buffer().clone();
+        buffer.begin_user_action();
+        let mut start = buffer.iter_at_offset(start_char as i32);
+        let mut end = buffer.iter_at_offset(end_char as i32);
+        buffer.delete(&mut start, &mut end);
+        let mut at = buffer.iter_at_offset(start_char as i32);
+        buffer.insert(&mut at, &transformed);
+        buffer.end_user_action();
+        self.refresh_after_document_change();
+    }
+
+    /// Edit → Send Selection to AI — `sendSelectionToAssistant()`: reveal the
+    /// assistant and insert the fenced selection into the composer.
+    pub fn send_selection_action(&mut self) {
+        let Some(payload) = self.model.selection_for_assistant() else { return };
+        self.model.reveal_assistant();
+        self.refresh_console_visibility();
+        self.refresh_assistant();
+        if let Some(agent) = &mut self.agent {
+            agent.insert_into_composer(&payload);
+        }
+        self.apply_pending_composer();
+    }
+
+    /// File → Close — drop the project (sessions, watchers, lease) and return
+    /// to the status page.
+    pub fn close_action(&mut self) {
+        if self.model.remote.is_some() {
+            self.begin_remote_save(RemoteSaveAction::CloseProject);
+            return;
+        }
+        self.close_after_save();
+    }
+
+    fn close_after_save(&mut self) {
+        self.watchers.clear();
+        self.editor = None;
+        self.active_session = None;
+        self.search = None;
+        UI.with(|ui| { if let Some(label) = ui.search_count.borrow().as_ref() { label.set_text("0 / 0"); } });
+        self.fold = None;
+        // `agent?.shutdown(); agent = nil` — terminate the agent process with
+        // the project; a reopen builds a fresh coordinator and subprocess.
+        self.shutdown_agent();
+        self.workspace_epoch = self.workspace_epoch.wrapping_add(1);
+        self.model.close();
+        self.refresh_phase();
+    }
+
+    /// File → Pin Build Target — `togglePinnedBuildTarget()`.
+    pub fn pin_target_action(&mut self) {
+        self.model.toggle_pinned_build_target();
+        self.restart_embedded_preview();
+        self.refresh_sidebar();
+        self.refresh_pdf_ui();
+    }
+
+    /// View toggles — the paned visibility bindings the macOS commands flip.
+    pub fn toggle_sidebar_action(&mut self) {
+        self.model.sidebar_visible = !self.model.sidebar_visible;
+        self.refresh_console_visibility();
+    }
+    pub fn toggle_inspector_action(&mut self) {
+        // `.disabled(gitDiff != nil)` — the inspector stays while a diff
+        // covers the editor area.
+        if self.model.git_diff.is_some() {
+            return;
+        }
+        self.model.inspector_visible = !self.model.inspector_visible;
+        self.refresh_console_visibility();
+    }
+    pub fn toggle_bottom_panel_action(&mut self) {
+        self.model.bottom_panel_visible = !self.model.bottom_panel_visible;
+        self.refresh_console_visibility();
+    }
+    /// `toggleAssistant()` — reveal/hide the assistant console section.
+    pub fn toggle_assistant_action(&mut self) {
+        self.model.toggle_assistant();
+        self.refresh_console_visibility();
+        self.refresh_assistant();
+    }
+
+    /// `on_terminal_feed` — ANSI status text into the terminal pane.
+    pub fn terminal_feed(&self, text: &str) {
+        UI.with(|ui| {
+            if let Some(term) = ui.terminal.borrow().as_ref() {
+                term.feed(text);
+            }
+        });
+    }
+
+    /// `on_terminal_send` — a full command line to the embedded shell's
+    /// stdin (external-terminal fallback if no shell is running).
+    pub fn terminal_send(&self, command: &str) {
+        UI.with(|ui| {
+            if let Some(term) = ui.terminal.borrow().as_ref() {
+                term.send(command, self.model.project_url.as_deref());
+            }
+        });
+    }
+
+    // ── SyncTeX / PDF actions ─────────────────────────────────────────────
+
+    pub fn sync_forward_action(&mut self) {
+        if let Some(editor) = &self.editor {
+            let range = editor.selected_range();
+            let (line, col) = utf16_to_line_col(&editor.text(), range.location.max(0) as usize);
+            self.model.sync_forward_at(line + 1, col);
+        } else {
+            self.model.sync_forward();
+        }
+    }
+
+    pub fn sync_forward_at(&mut self, line: usize, column: usize) {
+        self.model.sync_forward_at(line, column);
+    }
+
+    pub fn pdf_prev_page(&mut self) {
+        if self.pdf_page > 0 {
+            self.pdf_page -= 1;
+            self.render_pdf_page();
+        }
+    }
+
+    pub fn pdf_next_page(&mut self) {
+        if let Some(doc) = &self.pdf {
+            if self.pdf_page + 1 < doc.page_count() {
+                self.pdf_page += 1;
+                self.render_pdf_page();
+            }
+        }
+    }
+
+    pub fn pdf_zoom(&mut self, factor: f64) {
+        self.pdf_auto_fit = false;
+        self.pdf_scale = (self.pdf_scale * factor).clamp(0.4, 6.0);
+        self.render_pdf_page();
+    }
+
+    /// Scale that fits the page width inside the preview scroller.
+    fn pdf_fit_scale(&self) -> f64 {
+        let Some(doc) = &self.pdf else { return self.pdf_scale };
+        let Some((w_pt, _)) = doc.page_size(self.pdf_page) else { return self.pdf_scale };
+        let viewport = UI.with(|ui| {
+            ui.pdf_scroll.borrow().as_ref().map(|s| s.width()).unwrap_or(0)
+        });
+        if viewport > 0 {
+            ((viewport as f64 - 16.0) / w_pt).clamp(0.2, 6.0)
+        } else {
+            self.pdf_scale
+        }
+    }
+
+    /// Called when the preview scroller changes size — refits while
+    /// `pdf_auto_fit` is on, like PDFView `autoScales`.
+    pub fn pdf_viewport_resized(&mut self) {
+        if !self.pdf_auto_fit || self.pdf.is_none() {
+            return;
+        }
+        let fit = self.pdf_fit_scale();
+        if (fit - self.pdf_scale).abs() > 0.01 {
+            self.pdf_scale = fit;
+            self.render_pdf_page();
+        }
+    }
+
+    /// Click on the PDF → inverse SyncTeX (widget px → PDF points).
+    pub fn pdf_click(&mut self, picture: &gtk4::Picture, x: f64, y: f64) {
+        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() { return; }
+        let Some(doc) = &self.pdf else { return };
+        let Some((w_pt, h_pt)) = doc.page_size(self.pdf_page) else { return };
+        // The Picture uses ContentFit::Contain inside the scroller; compute
+        // the displayed rect from the texture's natural aspect.
+        let alloc_w = picture.width() as f64;
+        let alloc_h = picture.height() as f64;
+        if alloc_w <= 0.0 || alloc_h <= 0.0 {
+            return;
+        }
+        let scale = (alloc_w / w_pt).min(alloc_h / h_pt);
+        let disp_w = w_pt * scale;
+        let disp_h = h_pt * scale;
+        let ox = (alloc_w - disp_w) / 2.0;
+        let oy = (alloc_h - disp_h) / 2.0;
+        let px = (x - ox) / scale;
+        let py = (y - oy) / scale;
+        if px < 0.0 || py < 0.0 || px > w_pt || py > h_pt {
+            return;
+        }
+        // `synctex edit` wants top-left origin points — widget coords are
+        // already top-left, so pass them through unflipped.
+        if let Ok(point) = synctex_core::PDFPoint::new(px, py) {
+            self.model.sync_inverse(self.pdf_page as i64 + 1, point);
+        }
+    }
+
+    /// Re-render the current page into the picture widget.
+    fn render_pdf_page(&self) {
+        let Some(doc) = &self.pdf else { return };
+        let scale = if self.pdf_auto_fit { self.pdf_fit_scale() } else { self.pdf_scale };
+        // Skip the raster when nothing changed — `refresh_pdf_ui` calls
+        // this on every keystroke.
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            self.pdf_hash.hash(&mut h);
+            self.pdf_page.hash(&mut h);
+            scale.to_bits().hash(&mut h);
+            h.finish()
+        };
+        if key == self.rendered_pdf_key.get() {
+            return;
+        }
+        self.rendered_pdf_key.set(key);
+        self.pdf_renderer.render(self.pdf_hash, key, self.pdf_page, scale);
+        UI.with(|ui| {
+            if let Some(label) = ui.pdf_page_label.borrow().as_ref() {
+                label.set_text(&format!(
+                    "{} / {}",
+                    self.pdf_page + 1,
+                    doc.page_count()
+                ));
+            }
+            if let Some(b) = ui.pdf_prev_button.borrow().as_ref() {
+                b.set_sensitive(self.pdf_page > 0);
+            }
+            if let Some(b) = ui.pdf_next_button.borrow().as_ref() {
+                b.set_sensitive(self.pdf_page + 1 < doc.page_count());
+            }
+        });
+    }
+
+    /// `clearSyncHighlight()` — hide the marker and bump the generation so a
+    /// pending auto-hide for a previous marker cannot fire later.
+    pub fn clear_synctex_highlight(&mut self) {
+        self.pending_pdf_highlight = None;
+        self.highlight_generation.set(self.highlight_generation.get() + 1);
+        UI.with(|ui| {
+            if let Some(hl) = ui.pdf_highlight.borrow().as_ref() {
+                hl.set_visible(false);
+            }
+        });
+    }
+
+    /// `apply_forward_result` UI half — show the highlight box on the page.
+    /// Forward-sync destination: the page scroll always runs — the yellow
+    /// marker is the optional part gated by `forwardSyncHighlight`. The
+    /// existing marker clears first like `clearSyncHighlight()` at the top
+    /// of the Swift handler, so a newer navigation supersedes the old one.
+    fn show_synctex_highlight(&mut self, page: i64, x: f64, y: f64, w: f64, h: f64) {
+        let target = (page.max(1) - 1) as usize;
+        if self.pdf_page != target {
+            self.pdf_page = target;
+            self.render_pdf_page();
+        }
+        self.clear_synctex_highlight();
+        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() {
+            self.pending_pdf_highlight = Some((page, x, y, w, h));
+            return;
+        }
+        if !self.store.forward_sync_highlight() {
+            return;
+        }
+        let generation = self.highlight_generation.get();
+        UI.with(|ui| {
+            let (Some(picture), Some(hl), Some(doc)) = (
+                ui.pdf_picture.borrow().as_ref().cloned(),
+                ui.pdf_highlight.borrow().as_ref().cloned(),
+                self.pdf.as_ref(),
+            ) else {
+                return;
+            };
+            let Some((w_pt, h_pt)) = doc.page_size(self.pdf_page) else {
+                return;
+            };
+            let alloc_w = picture.width() as f64;
+            let alloc_h = picture.height() as f64;
+            if alloc_w <= 0.0 || alloc_h <= 0.0 {
+                return;
+            }
+            let scale = (alloc_w / w_pt).min(alloc_h / h_pt);
+            let ox = (alloc_w - w_pt * scale) / 2.0;
+            let oy = (alloc_h - h_pt * scale) / 2.0;
+            // SyncTeX h/v are in PostScript points from the top-left? The
+            // CLI reports h/v in TeX points from the page's top-left with y
+            // growing downward — convert like PDFDocumentView does.
+            hl.set_size_request((w * scale).max(2.0) as i32, (h * scale).max(2.0) as i32);
+            hl.set_margin_start((x * scale + ox).max(0.0) as i32);
+            hl.set_margin_top((y * scale + oy).max(0.0) as i32);
+            hl.set_halign(gtk4::Align::Start);
+            hl.set_valign(gtk4::Align::Start);
+            hl.set_visible(true);
+            let generation_cell = self.highlight_generation.clone();
+            glib::timeout_add_local_once(Duration::from_millis(1500), move || {
+                // A newer navigation cancels the earlier removal, like the
+                // coordinator's highlightTask cancellation.
+                if generation_cell.get() == generation {
+                    hl.set_visible(false);
+                }
+            });
+        });
+    }
+
+    // ── agent actions ─────────────────────────────────────────────────────
+
+    pub fn ensure_agent(&mut self) {
+        if self.closing_remote_workspace() { return; }
+        // The coordinator reads this cell in `prepare()` (project root) and
+        // when sending (`send_agent_draft` refreshes it first), so it only
+        // has to follow the project here — rebuilding it (a copy of the
+        // whole document) on every keystroke and caret move was pure waste.
+        let root_changed = self.context_cell.borrow().project_root != self.model.project_url;
+        if self.agent.is_none() || root_changed {
+            *self.context_cell.borrow_mut() = self.model.agent_context();
+        }
+        if self.agent.is_none() {
+            let mut coordinator = AgentCoordinator::new(&self.store);
+            let cell = self.context_cell.clone();
+            coordinator.context_provider = Some(Box::new(move || cell.borrow().clone()));
+            let persist = self.persist_result.clone();
+            coordinator.persist_dirty_sessions = Some(Box::new(move || {
+                persist.borrow_mut().take().flatten()
+            }));
+            let flag = self.agent_activity_pending.clone();
+            coordinator.on_agent_activity_finished = Some(Box::new(move || flag.set(true)));
+            // PitexApp.swift:407-409 — the workspace injects the AI settings
+            // into the new coordinator: attach-default wins over the persisted
+            // session key (the didSet mirrors it back), the default model seeds
+            // the picker, and the history cap bounds the transcript.
+            let attach_default = self.store.ai_attach_default();
+            coordinator.set_attach_active_document(&mut self.store, attach_default);
+            let default_model = self.store.ai_default_model();
+            coordinator.preferred_model_id = if default_model.is_empty() {
+                None
+            } else {
+                Some(default_model)
+            };
+            coordinator.history_limit = self.store.chat_history_limit().max(0) as usize;
+            self.agent = Some(coordinator);
+            // pi is spawned lazily, when the Assistant pane first shows
+            // (`sync_assistant_visibility`) — like macOS since v1.8.3.
+        }
+    }
+
+    /// Starts pi the first time the Assistant pane is visible for an open
+    /// project. Only on the hidden→shown edge: `prepare()` re-runs
+    /// toolchain discovery while pi is missing, so calling it on every
+    /// refresh would respawn discovery continuously.
+    fn sync_assistant_visibility(&mut self) {
+        if self.closing_remote_workspace() { return; }
+        let visible = self.model.has_project()
+            && self.model.bottom_panel_visible
+            && self.model.console_section == ConsoleSection::Assistant;
+        if !visible {
+            self.assistant_was_visible.set(false);
+            return;
+        }
+        if self.assistant_was_visible.replace(true) {
+            return;
+        }
+        self.ensure_agent();
+        if let Some(agent) = self.agent.as_mut() {
+            agent.prepare();
+        }
+    }
+
+    pub fn send_agent_draft(&mut self) {
+        let draft = UI.with(|ui| {
+            ui.agent_composer
+                .borrow()
+                .as_ref()
+                .map(|e| e.text().to_string())
+                .unwrap_or_default()
+        });
+        if draft.trim().is_empty() {
+            return;
+        }
+        self.ensure_agent();
+        *self.context_cell.borrow_mut() = self.model.agent_context();
+        *self.persist_result.borrow_mut() = Some(self.model.persist_dirty_sessions());
+        if let Some(agent) = self.agent.as_mut() {
+            agent.send(&draft);
+        }
+        UI.with(|ui| {
+            if let Some(e) = ui.agent_composer.borrow().as_ref() {
+                e.set_text("");
+            }
+        });
+        self.refresh_assistant();
+    }
+
+    /// Apply queued composer insertion text (attach-files flow).
+    pub fn apply_pending_composer(&mut self) {
+        let insertion = self
+            .agent
+            .as_mut()
+            .and_then(|a| a.pending_composer_insertion.take());
+        if let Some(text) = insertion {
+            UI.with(|ui| {
+                if let Some(e) = ui.agent_composer.borrow().as_ref() {
+                    let mut pos = e.position();
+                    e.insert_text(&text, &mut pos);
+                }
+            });
+        }
+    }
+
+    /// `attachFiles()` — convert absolute paths to project-relative where
+    /// possible, then insert them into the composer.
+    pub fn attach_files_action(&mut self, paths: Vec<String>) {
+        self.ensure_agent();
+        let root = self.model.project_url.clone();
+        let converted: Vec<String> = paths
+            .iter()
+            .map(|p| {
+                let url = PathBuf::from(p);
+                root.as_ref()
+                    .and_then(|r| WorkspaceModel::relative_path(&url, r).ok())
+                    .map(|rel| rel.raw_value().to_string())
+                    .unwrap_or_else(|| p.clone())
+            })
+            .collect();
+        if let Some(agent) = self.agent.as_mut() {
+            agent.insert_into_composer(&format!("{} ", converted.join(" ")));
+        }
+        self.apply_pending_composer();
+    }
+
+    /// `openAuthenticationInTerminal` — toolchain discovery + script
+    /// generation block on shell probes, so they run off the UI thread and
+    /// the terminal hand-off hops back through idle. `terminal_send` picks
+    /// the embedded PTY or an external emulator per build variant.
+    pub fn run_agent_auth_script(&mut self, logout: bool) {
+        std::thread::spawn(move || {
+            let result = crate::agent::pi_installer::authentication_script(logout);
+            glib::idle_add_once(move || {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            match result {
+                                Ok(script) => {
+                                    // Shell-quote the path — `{:?}` debug
+                                    // format is NOT quoting: `$`, backticks
+                                    // and `\` stay live inside bash quotes.
+                                    #[cfg(unix)]
+                                    let command = format!(
+                                        "bash {} && exit",
+                                        crate::agent::pi_installer::shell_quote(
+                                            &script.display().to_string()
+                                        )
+                                    );
+                                    // The embedded shell (or the external
+                                    // `cmd /k` fallback) runs the .bat.
+                                    // `cmd /c` not bare `"path"`: under a
+                                    // configured PowerShell a quoted path is
+                                    // a string literal, not an invocation.
+                                    #[cfg(windows)]
+                                    let command =
+                                        format!("cmd /c \"{}\"", script.display());
+                                    st.model.console_section = ConsoleSection::Terminal;
+                                    st.model.bottom_panel_visible = true;
+                                    st.refresh_console_visibility();
+                                    st.terminal_send(&command);
+                                }
+                                Err(e) => st.toast(&e),
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    }
+
+    // ── refresh: phase & layout ────────────────────────────────────────────
+
+    pub fn refresh_phase(&mut self) {
+        self.refresh_save_sensitivity();
+        UI.with(|ui| {
+            if let Some(stack) = ui.root_stack.borrow().as_ref() {
+                let (name, title, desc, icon) = match &self.model.phase {
+                    WorkspacePhase::NoProject => (
+                        "empty",
+                        tr(self.language, "workspace.no_project"),
+                        tr(self.language, "workspace.no_project_detail"),
+                        "folder-open-symbolic",
+                    ),
+                    WorkspacePhase::Loading(_) => (
+                        "loading",
+                        tr(self.language, "state.loading"),
+                        String::new(),
+                        "folder-open-symbolic",
+                    ),
+                    WorkspacePhase::Ready => ("ready", String::new(), String::new(), ""),
+                    WorkspacePhase::Failed(msg) => (
+                        "error",
+                        tr(self.language, "error.title"),
+                        msg.clone(),
+                        "dialog-error-symbolic",
+                    ),
+                };
+                stack.set_visible_child_name(name);
+                if let Some(page) = stack
+                    .visible_child()
+                    .and_then(|w| w.downcast::<adw::StatusPage>().ok())
+                {
+                    if !title.is_empty() {
+                        page.set_title(&title);
+                    }
+                    if name != "loading" {
+                        page.set_description(if desc.is_empty() {
+                            None
+                        } else {
+                            Some(desc.as_str())
+                        });
+                    }
+                    if !icon.is_empty() {
+                        page.set_icon_name(Some(icon));
+                    }
+                }
+            }
+            if let Some(window) = ui.window.borrow().as_ref() {
+                let title = self
+                    .model
+                    .project_url
+                    .as_ref()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .unwrap_or_else(|| tr(self.language, "app.name"));
+                window.set_title(Some(&title));
+                if let Some(title_widget) = ui.window_title.borrow().as_ref() {
+                    title_widget.set_title(&title);
+                    title_widget.set_subtitle(&self.model.remote_status_text(self.language));
+                }
+            }
+            // Rebuild the "+" menu — the Open Recent section follows the
+            // model's `recent_documents` like the macOS File menu submenu.
+            if let Some(add) = ui.add_menu_button.borrow().as_ref() {
+                let menu = gio::Menu::new();
+                menu.append(Some(&tr(self.language, "command.new")), Some("win.newdoc"));
+                menu.append(Some(&tr(self.language, "command.open")), Some("win.open"));
+                if !self.model.recent_documents.is_empty() {
+                    let recents = gio::Menu::new();
+                    for (i, url) in self.model.recent_documents.iter().enumerate() {
+                        // `recentTitle(for:)` — a mirror's label names its
+                        // device; anything else shows the folder name.
+                        let label = WorkspaceModel::recent_title(self.language, url);
+                        recents.append(
+                            Some(&label),
+                            Some(&format!("win.openrecent({i})")),
+                        );
+                    }
+                    recents.append(
+                        Some(&tr(self.language, "command.clear_recents")),
+                        Some("win.clearrecents"),
+                    );
+                    menu.append_submenu(
+                        Some(&tr(self.language, "command.open_recent")),
+                        &recents,
+                    );
+                }
+                {
+                    menu.append(
+                        Some(&tr(self.language, "command.open_via_ssh")),
+                        Some("win.openssh"),
+                    );
+
+                }
+                let tail = gio::Menu::new();
+                tail.append(
+                    Some(&tr(self.language, "command.pin_build_target")),
+                    Some("win.pintarget"),
+                );
+                tail.append(Some(&tr(self.language, "command.close")), Some("win.close"));
+                // `command.clear_session` — `await workspace.close()` again.
+                tail.append(
+                    Some(&tr(self.language, "command.clear_session")),
+                    Some("win.close"),
+                );
+                menu.append_section(None, &tail);
+                add.set_menu_model(Some(&menu));
+            }
+        });
+        self.refresh_console_visibility();
+        self.refresh_after_document_change();
+        self.refresh_build_ui();
+        self.refresh_pdf_ui();
+    }
+
+    fn refresh_console_visibility(&self) {
+        UI.with(|ui| {
+            if let Some(stack) = ui.console_stack.borrow().as_ref() {
+                let name = match self.model.console_section {
+                    ConsoleSection::Assistant => "assistant",
+                    ConsoleSection::Git => "git",
+                    ConsoleSection::Terminal => "terminal",
+                    ConsoleSection::Issues => "issues",
+                    ConsoleSection::Log => "log",
+                };
+                stack.set_visible_child_name(name);
+            }
+            if let Some(dd) = ui.console_section_dropdown.borrow().as_ref() {
+                let idx = match self.model.console_section {
+                    ConsoleSection::Assistant => 0,
+                    ConsoleSection::Git => 1,
+                    ConsoleSection::Issues => 2,
+                    ConsoleSection::Terminal => 3,
+                    ConsoleSection::Log => 4,
+                };
+                if dd.selected() != idx {
+                    dd.set_selected(idx);
+                }
+            }
+            if let Some(paned) = ui.console_paned.borrow().as_ref() {
+                if let Some(console) = paned.end_child() {
+                    console.set_visible(self.model.bottom_panel_visible);
+                }
+            }
+            if let Some(paned) = ui.outer_paned.borrow().as_ref() {
+                if let Some(sidebar) = paned.start_child() {
+                    sidebar.set_visible(self.model.sidebar_visible);
+                }
+            }
+            if let Some(paned) = ui.inner_paned.borrow().as_ref() {
+                if let Some(inspector) = paned.end_child() {
+                    // `WorkspaceView` hides the inspector while `gitDiff`
+                    // covers the editor area.
+                    inspector
+                        .set_visible(self.model.inspector_visible && self.model.git_diff.is_none());
+                }
+            }
+        });
+        let visible = self.model.console_section == ConsoleSection::Git && self.model.bottom_panel_visible;
+        if visible && !self.git_panel_was_visible.replace(visible) { self.refresh_git(); }
+        if !visible { self.git_panel_was_visible.set(false); }
+        self.refresh_git_panel();
+    }
+
+    fn refresh_save_sensitivity(&self) {
+        // Save button sensitivity follows `canSave`.
+        UI.with(|ui| {
+            if let Some(action) = ui.save_action.borrow().as_ref() {
+                action.set_enabled(if self.model.remote.is_some() {
+                    self.model.read_write && !self.closing_remote_workspace()
+                } else {
+                    self.model.can_save()
+                });
+            }
+            if let Some(action) = ui.save_as_action.borrow().as_ref() {
+                action.set_enabled(self.model.document_snapshot.is_some());
+            }
+            if let Some(action) = ui.save_all_action.borrow().as_ref() {
+                action.set_enabled(self.model.project_url.is_some());
+            }
+        });
+    }
+
+    pub fn refresh_shell_warning(&self) {
+        let show = {
+            let settings = &self.store.settings.build;
+            matches!(settings.shell_execution, ShellExecutionPreference::Custom { .. })
+                && !settings.custom_shell_acknowledged
+        };
+        UI.with(|ui| {
+            if let Some(b) = ui.shell_warning.borrow().as_ref() {
+                b.set_visible(show);
+            }
+        });
+    }
+
+    // ── refresh: tabs / sidebar / footer ───────────────────────────────────
+
+    pub fn refresh_tabs(&mut self) {
+        // Cheap identity key — rebuilding every tab chip per keystroke was
+        // O(tabs) widget churn on each `refresh_after_document_change`.
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            self.model.open_documents.hash(&mut h);
+            self.model.active_document_url.hash(&mut h);
+            self.model
+                .document_snapshot
+                .as_ref()
+                .map(|s| s.save_state != DocumentSaveState::Clean)
+                .hash(&mut h);
+            h.finish()
+        };
+        if key == self.rendered_tabs_key.get() {
+            return;
+        }
+        self.rendered_tabs_key.set(key);
+        UI.with(|ui| {
+            let Some(row) = ui.tab_row.borrow().as_ref().cloned() else { return };
+            while let Some(child) = row.first_child() {
+                row.remove(&child);
+            }
+            let relative = |url: &PathBuf| self.model.project_url.as_ref()
+                .and_then(|root| url.strip_prefix(root).ok()).unwrap_or(url)
+                .to_string_lossy().replace('\\', "/");
+            let labels = project_feature::project_file_labels(&self.model.project_files.iter().map(relative).collect::<Vec<_>>());
+            for url in &self.model.open_documents {
+                let active = self.model.active_document_url.as_ref() == Some(url);
+                let is_dirty = self
+                    .model
+                    .document_snapshot
+                    .as_ref()
+                    .map(|s| active && s.save_state != DocumentSaveState::Clean)
+                    .unwrap_or(false);
+                let chip = gtk4::Box::new(gtk4::Orientation::Horizontal, 5);
+                chip.add_css_class("pitex-tab");
+                if active {
+                    chip.add_css_class("pitex-tab-active");
+                }
+                chip.set_margin_start(2);
+                chip.set_margin_end(2);
+                let title = gtk4::Label::new(labels.get(&relative(url)).map(String::as_str));
+                if is_dirty {
+                    title.add_css_class("dim-label");
+                }
+                let url2 = url.clone();
+                let gesture = gtk4::GestureClick::new();
+                gesture.connect_released(move |_, _, _, _| {
+                    STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            if let Ok(mut s) = state.try_borrow_mut() { s.activate_document(url2.clone()); }
+                        }
+                    });
+                });
+                chip.add_controller(gesture);
+                let close = gtk4::Button::from_icon_name("window-close-symbolic");
+                close.add_css_class("flat");
+                compat::initial_tooltip(&close, &tr(self.language, "editor.close"));
+                a11y(&close, "pitex.editor.tabClose", "editor.close");
+                let url3 = url.clone();
+                close.connect_clicked(move |_| {
+                    STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            if let Ok(mut s) = state.try_borrow_mut() { s.close_document(url3.clone()); }
+                        }
+                    });
+                });
+                chip.append(&title);
+                chip.append(&close);
+                a11y(&chip, "pitex.editor.tab", "editor.title");
+                row.append(&chip);
+            }
+        });
+    }
+
+    pub fn refresh_sidebar(&mut self) {
+        let lang = self.language;
+        UI.with(|ui| {
+            let structure_dirty =
+                self.model.structure_revision != self.rendered_structure_revision.get();
+            let files_dirty =
+                self.model.files_revision != self.rendered_files_revision.get();
+            if structure_dirty {
+                self.rendered_structure_revision.set(self.model.structure_revision);
+            }
+            let mut changed = [false; 4];
+            if structure_dirty {
+                let keys = [
+                    view_key(&(lang, &self.model.outline_items)),
+                    view_key(&(lang, &self.model.label_items)),
+                    view_key(&(lang, &self.model.bibliography_items)),
+                    view_key(&(lang, &self.model.todo_items)),
+                ];
+                let previous = self.rendered_sidebar_keys.replace(keys);
+                for i in 0..4 { changed[i] = keys[i] != previous[i]; }
+            }
+            if files_dirty {
+                self.rendered_files_revision.set(self.model.files_revision);
+            }
+            if let Some(stack) = ui.sidebar_stack.borrow().as_ref() {
+                let name = match self.model.sidebar_section {
+                    SidebarSection::Outline => "outline",
+                    SidebarSection::Labels => "labels",
+                    SidebarSection::BibTeX => "bibtex",
+                };
+                stack.set_visible_child_name(name);
+            }
+            if let Some(dd) = ui.sidebar_section_dropdown.borrow().as_ref() {
+                let idx = match self.model.sidebar_section {
+                    SidebarSection::Outline => 0,
+                    SidebarSection::Labels => 1,
+                    SidebarSection::BibTeX => 2,
+                };
+                if dd.selected() != idx {
+                    dd.set_selected(idx);
+                }
+            }
+            if changed[0] {
+            if let Some(list) = ui.outline_list.borrow().as_ref() {
+                clear_list(list);
+                for (i, item) in self.model.outline_items.iter().enumerate() {
+                    let row = gtk4::Label::new(Some(&item.title));
+                    row.set_xalign(0.0);
+                    row.set_margin_start(8 + item.level as i32 * 10);
+                    row.set_margin_top(3);
+                    row.set_margin_bottom(3);
+                    row.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                    row.set_widget_name(&format!("outline-{i}"));
+                    list.append(&row);
+                }
+                if self.model.outline_items.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "sidebar.no_outline")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(20);
+                    list.append(&row);
+                }
+            }
+            }
+            if changed[1] {
+            if let Some(list) = ui.labels_list.borrow().as_ref() {
+                clear_list(list);
+                for (i, item) in self.model.label_items.iter().enumerate() {
+                    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+                    let name = gtk4::Label::new(Some(&item.name));
+                    name.set_xalign(0.0);
+                    name.set_hexpand(true);
+                    let line = gtk4::Label::new(Some(&item.line.to_string()));
+                    line.add_css_class("dim-label");
+                    row.append(&name);
+                    row.append(&line);
+                    row.set_margin_start(8);
+                    row.set_margin_end(8);
+                    row.set_margin_top(3);
+                    row.set_margin_bottom(3);
+                    row.set_widget_name(&format!("label-{i}"));
+                    list.append(&row);
+                }
+                if self.model.label_items.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "sidebar.no_labels")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(20);
+                    list.append(&row);
+                }
+            }
+            }
+            if changed[2] {
+            if let Some(list) = ui.bib_list.borrow().as_ref() {
+                clear_list(list);
+                for item in &self.model.bibliography_items {
+                    let row = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
+                    let key = gtk4::Label::new(Some(&item.key));
+                    key.set_xalign(0.0);
+                    let meta = gtk4::Label::new(Some(&format!("{} · {}", item.kind, item.file)));
+                    meta.set_xalign(0.0);
+                    meta.add_css_class("dim-label");
+                    row.append(&key);
+                    row.append(&meta);
+                    row.set_margin_start(8);
+                    row.set_margin_top(3);
+                    row.set_margin_bottom(3);
+                    list.append(&row);
+                }
+                if self.model.bibliography_items.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "sidebar.no_bib")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(20);
+                    list.append(&row);
+                }
+            }
+            }
+            if changed[3] {
+            if let Some(list) = ui.todo_list.borrow().as_ref() {
+                clear_list(list);
+                for (i, item) in self.model.todo_items.iter().enumerate() {
+                    append_todo_row(list, i, item, lang);
+                }
+                if self.model.todo_items.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "sidebar.no_todos")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(20);
+                    list.append(&row);
+                }
+            }
+            }
+            if let Some(add) = ui.todo_add_button.borrow().as_ref() {
+                add.set_sensitive(self.model.can_add_todo());
+            }
+            if files_dirty {
+            // Project file tree — always visible at the bottom. Built from
+            // relative paths through the shared `project-feature` builder
+            // so directories nest like the macOS project tree.
+            if let Some(list) = ui.workspace_list.borrow().as_ref() {
+                clear_list(list);
+                let root = self.model.project_url.clone();
+                let rel_paths: Vec<String> = self
+                    .model
+                    .project_files
+                    .iter()
+                    .map(|url| {
+                        root.as_ref()
+                            .and_then(|r| url.strip_prefix(r).ok().map(|p| p.to_path_buf()))
+                            .unwrap_or_else(|| url.clone())
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                    })
+                    .collect();
+                let tree = project_feature::build_project_file_tree(&rel_paths);
+                for node in &tree {
+                    append_project_node(list, node, 0, &root, &self.model);
+                }
+            }
+            if let Some(list) = ui.project_list.borrow().as_ref() {
+                clear_list(list);
+                for node in &self.model.document_project.tree {
+                    append_project_node(list, node, 0, &self.model.project_url, &self.model);
+                }
+            }
+            if let (Some(sep), Some(list)) = (ui.project_output_sep.borrow().as_ref(), ui.project_output_list.borrow().as_ref()) {
+                clear_list(list);
+                let visible = !self.model.document_project.outputs.is_empty();
+                sep.set_visible(visible);
+                list.set_visible(visible);
+                for node in &self.model.document_project.outputs {
+                    append_project_node(list, node, 0, &self.model.project_url, &self.model);
+                }
+            }
+            }
+            if let Some(pin) = ui.pin_button.borrow().as_ref() {
+                pin.set_sensitive(
+                    self.model
+                        .active_document_url
+                        .as_ref()
+                        .and_then(|u| u.extension())
+                        .map(|e| e.eq_ignore_ascii_case("tex"))
+                        .unwrap_or(false),
+                );
+                pin.set_icon_name(if self.model.pinned_build_target.is_some() {
+                    "emblem-favorite-symbolic"
+                } else {
+                    "emblem-important-symbolic"
+                });
+            }
+        });
+    }
+
+    pub fn refresh_footer(&self) {
+        UI.with(|ui| {
+            if let Some(path) = ui.footer_path.borrow().as_ref() {
+                path.set_text(
+                    &self
+                        .model
+                        .active_document_relative_path()
+                        .unwrap_or_default(),
+                );
+            }
+            if let Some(words) = ui.footer_words.borrow().as_ref() {
+                words.set_text(&format!(
+                    "{} {}",
+                    if self.model.document_snapshot.is_some() {
+                        self.model.word_count().to_string()
+                    } else {
+                        "—".into()
+                    },
+                    tr(self.language, "editor.words_unit")
+                ));
+            }
+        });
+    }
+
+    fn refresh_conflict_banner(&self) {
+        let conflicted = self
+            .model
+            .document_snapshot
+            .as_ref()
+            .map(|s| s.save_state == DocumentSaveState::Conflicted)
+            .unwrap_or(false);
+        UI.with(|ui| {
+            if let Some(banner) = ui.conflict_banner.borrow().as_ref() {
+                banner.set_visible(conflicted);
+            }
+            if conflicted {
+                if let Some(label) = ui.conflict_label.borrow().as_ref() {
+                    let name = self
+                        .model
+                        .active_document_url
+                        .as_ref()
+                        .and_then(|u| u.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .unwrap_or_default();
+                    label.set_text(&crate::l10n::tr1(
+                        self.language,
+                        "conflict.message",
+                        &name,
+                    ));
+                }
+            }
+        });
+    }
+
+    // ── remote session UI (RemoteSupport.swift) ───────────────────────────
+
+    /// "Open via SSH…" — the menu/welcome entry point
+    /// (`presentOpenViaSSH`); the sheet needs the window to attach to.
+    pub fn present_open_via_ssh(&mut self) {
+        crate::ssh_ui::present_open_via_ssh(self.language);
+    }
+
+    fn finish_remote_build_wait(&mut self) {
+        if self.remote_save_building && !self.model.is_building() {
+            self.remote_save_building = false;
+            self.pending_remote_save = None;
+            if let Some(action) = self.queued_remote_save.take() {
+                self.begin_remote_save(action);
+            }
+            self.refresh_save_sensitivity();
+        }
+    }
+
+    fn closing_remote_workspace(&self) -> bool {
+        self.pending_remote_save.as_ref().is_some_and(RemoteSaveAction::closes_workspace)
+            || self.queued_remote_save.as_ref().is_some_and(RemoteSaveAction::closes_workspace)
+    }
+
+    /// Persist/upload is authorized only by a manual action or forced close.
+    /// Closing freezes input and stops project processes before the snapshot.
+    fn begin_remote_save(&mut self, action: RemoteSaveAction) {
+        if self.closing_remote_workspace() && !action.closes_workspace() {
+            return;
+        }
+        let already_saving = self.pending_remote_save.is_some();
+        if already_saving {
+            self.queued_remote_save = Some(action.clone());
+        } else {
+            self.pending_remote_save = Some(action.clone());
+        }
+        if action.closes_workspace() {
+            UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.set_sensitive(false)));
+            self.shutdown_agent();
+            self.model.invalidate_live();
+            self.model.cancel_build();
+            self.model.stop_embedded();
+        }
+        if already_saving {
+            return;
+        }
+        // Adapter mutations commit into the session synchronously; copy its
+        // newest snapshot without re-arming background work during close.
+        if let Some(session) = &self.active_session {
+            self.model.document_snapshot = Some(session.snapshot());
+        }
+        let requests = self.model.note_source_edit(&self.store);
+        self.model.dispatch_live_requests(requests, &self.store, self.language);
+        if let Err(error) = self.model.save_remote_sources() {
+            self.pending_remote_save = None;
+            UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.set_sensitive(true)));
+            self.toast(&error);
+            self.apply_live_settings();
+        }
+        self.refresh_after_document_change();
+        self.refresh_remote_status();
+    }
+
+    fn finish_remote_save(&mut self, root: PathBuf, result: Result<Vec<String>, String>) {
+        if !self.model.remote.as_ref().is_some_and(|r| r.sync.mirror.directory == root) {
+            return;
+        }
+        self.model.apply_remote_push(&root, result.clone());
+        let action = self.pending_remote_save.take();
+        let problem = match result {
+            Ok(conflicts) if conflicts.is_empty() => None,
+            Ok(conflicts) => Some(crate::l10n::trn(self.language, "remote.build.conflicts", &[&conflicts.join(", ")])),
+            Err(error) => Some(crate::l10n::trn(self.language, "remote.build.upload_failed", &[&error])),
+        };
+        if let Some(problem) = problem {
+            self.queued_remote_save = None;
+            UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.set_sensitive(true)));
+            self.toast(&problem);
+            self.apply_live_settings();
+        } else if let Some(queued) = self.queued_remote_save.take() {
+            // A close arriving during Save takes a fresh snapshot after that
+            // transfer, so intervening edits cannot be lost on termination.
+            self.begin_remote_save(queued);
+        } else if let Some(action) = action {
+            UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.set_sensitive(true)));
+            match action {
+                RemoteSaveAction::Build => {
+                    self.pending_remote_save = Some(RemoteSaveAction::Build);
+                    self.model.start_build(&self.store, self.language);
+                    self.remote_save_building = self.model.is_building();
+                    if !self.remote_save_building {
+                        self.pending_remote_save = None;
+                    }
+                    self.restart_embedded_preview();
+                    self.refresh_build_ui();
+                }
+                RemoteSaveAction::CloseProject => self.close_after_save(),
+                RemoteSaveAction::CloseDocument(url) => self.close_document_after_save(url),
+                RemoteSaveAction::Open(path) => self.open_selected_after_save(path),
+                RemoteSaveAction::CloseWindow => {
+                    self.allow_window_close = true;
+                    self.close_after_save();
+                    glib::idle_add_local_once(|| {
+                        UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.close()));
+                    });
+                }
+                RemoteSaveAction::ExitForUpdate => std::process::exit(0),
+            }
+        }
+        self.refresh_save_sensitivity();
+        self.refresh_remote_status();
+    }
+
+    /// The WindowTitle subtitle + remote conflict banner after any remote
+    /// status or conflict change.
+    pub fn refresh_remote_status(&self) {
+        let subtitle = self.model.remote_status_text(self.language);
+        UI.with(|ui| {
+            if let Some(title) = ui.window_title.borrow().as_ref() {
+                title.set_subtitle(&subtitle);
+            }
+        });
+        self.refresh_remote_conflict_banner();
+    }
+
+    /// `remoteConflicts` section — one row per file changed both here and
+    /// on the device; each row resolves that file either way on a worker.
+    fn refresh_remote_conflict_banner(&self) {
+        UI.with(|ui| {
+            let banner_cell = ui.remote_conflict_banner.borrow();
+            let Some(banner) = banner_cell.as_ref() else { return };
+            let Some(remote) = self.model.remote.as_ref() else {
+                banner.set_visible(false);
+                return;
+            };
+            if let Some(title) = ui.remote_conflict_title.borrow().as_ref() {
+                title.set_text(&crate::l10n::trn(
+                    self.language,
+                    "remote.conflict.title",
+                    &[remote.device_name()],
+                ));
+            }
+            if let Some(rows) = ui.remote_conflict_rows.borrow().as_ref() {
+                while let Some(child) = rows.first_child() {
+                    rows.remove(&child);
+                }
+                for path in &remote.conflicts {
+                    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+                    row.set_margin_start(24);
+                    let name = gtk4::Label::new(Some(path));
+                    name.set_xalign(0.0);
+                    name.set_hexpand(true);
+                    name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+                    row.append(&name);
+                    let take_remote = gtk4::Button::with_label(&tr(
+                        self.language,
+                        "remote.conflict.take_remote",
+                    ));
+                    take_remote.add_css_class("flat");
+                    {
+                        let path = path.clone();
+                        take_remote.connect_clicked(move |_| {
+                            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                                let mut st = state.borrow_mut();
+                                st.model.resolve_remote_conflict(path.clone(), false);
+                                st.refresh_remote_status();
+                            }
+                        });
+                    }
+                    row.append(&take_remote);
+                    let keep_mine = gtk4::Button::with_label(&tr(
+                        self.language,
+                        "remote.conflict.keep_mine",
+                    ));
+                    keep_mine.add_css_class("flat");
+                    {
+                        let path = path.clone();
+                        keep_mine.connect_clicked(move |_| {
+                            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                                let mut st = state.borrow_mut();
+                                st.model.resolve_remote_conflict(path.clone(), true);
+                                st.refresh_remote_status();
+                            }
+                        });
+                    }
+                    row.append(&keep_mine);
+                    rows.append(&row);
+                }
+            }
+            banner.set_visible(!remote.conflicts.is_empty());
+        });
+    }
+
+    // ── refresh: issues / log / build ──────────────────────────────────────
+
+    pub fn refresh_issues(&mut self) {
+        let key = view_key(&(self.language, &self.model.build_issues));
+        if self.rendered_issues_key.replace(key) == key { return; }
+        let issues = self.filtered_issues();
+        let lang = self.language;
+        UI.with(|ui| {
+            if let Some(list) = ui.issues_list.borrow().as_ref() {
+                clear_list(list);
+                if issues.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "console.no_issues")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(20);
+                    list.append(&row);
+                    return;
+                }
+                for (i, issue) in issues.iter().enumerate() {
+                    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+                    let icon = gtk4::Image::from_icon_name(match issue.severity {
+                        build_core::BuildIssueSeverity::Error => "dialog-error-symbolic",
+                        build_core::BuildIssueSeverity::Warning => "dialog-warning-symbolic",
+                    });
+                    let text = gtk4::Label::new(Some(&issue.message));
+                    text.set_xalign(0.0);
+                    text.set_hexpand(true);
+                    text.set_wrap(true);
+                    let loc = gtk4::Label::new(Some(&match (&issue.file, issue.line) {
+                        (Some(f), Some(l)) => format!("{f}:{l}"),
+                        (Some(f), None) => f.clone(),
+                        _ => String::new(),
+                    }));
+                    loc.add_css_class("dim-label");
+                    row.append(&icon);
+                    row.append(&text);
+                    row.append(&loc);
+                    row.set_margin_start(8);
+                    row.set_margin_end(8);
+                    row.set_margin_top(4);
+                    row.set_margin_bottom(4);
+                    row.set_widget_name(&format!("issue-{i}"));
+                    if !issue.is_clickable() {
+                        row.set_sensitive(false);
+                    }
+                    list.append(&row);
+                }
+            }
+        });
+    }
+
+    /// `GitIntegrationView` body — repopulates the pane from `model.git_*`.
+    pub fn refresh_git_panel(&self) {
+        if self.model.console_section != ConsoleSection::Git || !self.model.bottom_panel_visible { return; }
+        let lang = self.language;
+        let busy = self.model.git_busy;
+        UI.with(|ui| {
+            if let Some(stack) = ui.git_stack.borrow().as_ref() {
+                stack.set_visible_child_name(if self.model.git_status.is_some() {
+                    "repo"
+                } else {
+                    "empty"
+                });
+            }
+            if let Some(spinner) = ui.git_busy_spinner.borrow().as_ref() {
+                spinner.set_visible(busy);
+                if busy {
+                    spinner.start();
+                } else {
+                    spinner.stop();
+                }
+            }
+            for handle in [
+                ui.git_error_label.borrow().as_ref().cloned(),
+                ui.git_empty_error_label.borrow().as_ref().cloned(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if let Some(error) = &self.model.git_error {
+                    handle.set_label(error);
+                    handle.set_visible(true);
+                } else {
+                    handle.set_visible(false);
+                }
+            }
+            if let Some(model) = ui.git_changes_model.borrow().as_ref() {
+                model.set_status(self.model.git_status.clone());
+            }
+            let Some(status) = self.model.git_status.as_ref() else { return; };
+            if let Some(label) = ui.git_repo_name.borrow().as_ref() {
+                label.set_label(&status.repo_name);
+            }
+            if let Some(label) = ui.git_ahead_behind.borrow().as_ref() {
+                label.set_visible(status.ahead > 0 || status.behind > 0);
+                label.set_label(&format!("↑{} ↓{}", status.ahead, status.behind));
+            }
+            // Branch dropdown — re-splice under the guard so the selected
+            // notify does not read as a user branch switch.
+            if let (Some(dd), Some(model)) = (
+                ui.git_branch_dropdown.borrow().as_ref().cloned(),
+                ui.git_branch_model.borrow().as_ref().cloned(),
+            ) {
+                self.git_branch_updating.set(true);
+                let items = &self.model.git_branches;
+                let strings: Vec<&str> = items.iter().map(String::as_str).collect();
+                if model.n_items() as usize != items.len() || items.iter().enumerate().any(|(i, branch)| model.string(i as u32).as_deref() != Some(branch.as_str())) {
+                    model.splice(0, model.n_items(), &strings);
+                }
+                if let Some(idx) = items.iter().position(|b| *b == status.branch) {
+                    dd.set_selected(idx as u32);
+                }
+                self.git_branch_updating.set(false);
+            }
+            if let Some(list) = ui.git_graph_list.borrow().as_ref() {
+                // Expansion state lives outside `git_commits` — fold it
+                // into the rendered fingerprint so a toggle/file-load
+                // rebuilds the rows too.
+                let expanded: std::collections::BTreeSet<String> =
+                    self.model.git_expanded_commits.iter().cloned().collect();
+                let busy: std::collections::BTreeSet<String> =
+                    self.model.git_commit_files_busy.iter().cloned().collect();
+                let loaded: std::collections::BTreeSet<String> =
+                    self.model.git_commit_files.keys().cloned().collect();
+                let graph_state = (expanded, busy, loaded);
+                if *ui.git_rendered_commits.borrow() == self.model.git_commits
+                    && *ui.git_rendered_graph_state.borrow() == graph_state
+                    && list.first_child().is_some()
+                {
+                    return;
+                }
+                *ui.git_rendered_commits.borrow_mut() = self.model.git_commits.clone();
+                *ui.git_rendered_graph_state.borrow_mut() = graph_state;
+                clear_list(list);
+                if self.model.git_commits.is_empty() {
+                    let row = gtk4::Label::new(Some(&tr(lang, "git.no_commits")));
+                    row.add_css_class("dim-label");
+                    row.set_margin_top(12);
+                    list.append(&row);
+                } else {
+                    for commit in &self.model.git_commits {
+                        list.append(&crate::panes::git_commit_row(
+                            commit,
+                            self.model.git_expanded_commits.contains(&commit.full_hash),
+                            self.model
+                                .git_commit_files
+                                .get(&commit.full_hash)
+                                .map(Vec::as_slice),
+                            self.model.git_commit_files_busy.contains(&commit.full_hash),
+                            lang,
+                        ));
+                    }
+                }
+            }
+        });
+        self.refresh_git_commit_button();
+    }
+
+    /// Commit button sensitivity — separate so the buffer `changed` hook
+    /// does not rebuild the lists on every keystroke.
+    pub(crate) fn refresh_git_commit_button(&self) {
+        UI.with(|ui| {
+            let no_changes = self
+                .model
+                .git_status
+                .as_ref()
+                .map(|s| s.staged.is_empty() && s.unstaged.is_empty())
+                .unwrap_or(true);
+            if let Some(button) = ui.git_commit_button.borrow().as_ref() {
+                let empty_message = self.model.git_commit_message.trim().is_empty();
+                button.set_sensitive(!empty_message && !self.model.git_busy && !no_changes);
+            }
+            if let Some(button) = ui.git_suggest_button.borrow().as_ref() {
+                button.set_sensitive(
+                    !self.model.git_busy && !self.model.git_suggest_busy && !no_changes,
+                );
+                if self.model.git_suggest_busy {
+                    let spinner = gtk4::Spinner::new();
+                    spinner.start();
+                    button.set_child(Some(&spinner));
+                } else {
+                    button.set_label(&tr(LANG.get(), "git.suggest"));
+                }
+            }
+        });
+    }
+
+    /// VSCode discard confirmation — `MessageDialog` (AlertDialog needs
+    /// GTK 4.10); destructive styling on the Discard button.
+    #[allow(deprecated)]
+    pub fn git_discard_dialog(&mut self) {
+        let Some(change) = self.git_pending_discard.clone() else {
+            return;
+        };
+        let lang = self.language;
+        let window = UI.with(|ui| ui.window.borrow().clone());
+        let key = if change.kind == git_core::GitChangeKind::Untracked {
+            "git.discard_confirm_untracked"
+        } else {
+            "git.discard_confirm"
+        };
+        let dialog = gtk4::MessageDialog::new(
+            window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()),
+            gtk4::DialogFlags::MODAL,
+            gtk4::MessageType::Warning,
+            gtk4::ButtonsType::None,
+            &tr1(lang, key, &change.path),
+        );
+        dialog.add_button(&tr(lang, "git.cancel"), gtk4::ResponseType::Cancel);
+        dialog
+            .add_button(&tr(lang, "git.discard"), gtk4::ResponseType::Accept)
+            .add_css_class("destructive-action");
+        dialog.connect_response(|d, response| {
+            if response == gtk4::ResponseType::Accept {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            if let Some(change) = st.git_pending_discard.take() {
+                                st.git_discard(&change);
+                            }
+                        }
+                    }
+                });
+            }
+            d.close();
+        });
+        dialog.present();
+    }
+
+    /// New-branch prompt — `MessageDialog` with an entry in its message
+    /// area (the compat story for `AlertDialog` + text field). `at` pins
+    /// the branch's start point — the graph context menu's "New Branch…"
+    /// branches off the selected commit (VSCode parity).
+    #[allow(deprecated)]
+    pub fn git_new_branch_dialog(&mut self, at: Option<String>) {
+        let lang = self.language;
+        let window = UI.with(|ui| ui.window.borrow().clone());
+        let dialog = gtk4::MessageDialog::new(
+            window.as_ref().map(|w| w.upcast_ref::<gtk4::Window>()),
+            gtk4::DialogFlags::MODAL,
+            gtk4::MessageType::Question,
+            gtk4::ButtonsType::None,
+            &tr(lang, "git.branch_new"),
+        );
+        let entry = gtk4::Entry::new();
+        entry.set_placeholder_text(Some(&tr(lang, "git.branch_name")));
+        entry.set_activates_default(true);
+        dialog
+            .message_area()
+            .downcast::<gtk4::Box>()
+            .unwrap()
+            .append(&entry);
+        dialog.add_button(&tr(lang, "git.cancel"), gtk4::ResponseType::Cancel);
+        dialog
+            .add_button(&tr(lang, "git.create"), gtk4::ResponseType::Accept)
+            .add_css_class("suggested-action");
+        dialog.set_default_response(gtk4::ResponseType::Accept);
+        dialog.connect_response(move |d, response| {
+            if response == gtk4::ResponseType::Accept {
+                let name = entry.text().to_string();
+                let at = at.clone();
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            st.git_create_branch(&name, at.as_deref());
+                        }
+                    }
+                });
+            }
+            d.close();
+        });
+        dialog.present();
+    }
+
+    pub fn refresh_build_ui(&mut self) {
+        let building = self.model.is_building();
+        UI.with(|ui| {
+            if let Some(b) = ui.build_button.borrow().as_ref() {
+                b.set_icon_name(if building {
+                    "media-playback-stop-symbolic"
+                } else {
+                    "media-playback-start-symbolic"
+                });
+                b.set_sensitive(building || self.model.build_unavailable_reason().is_none());
+            }
+            if let Some(b) = ui.header_build_button.borrow().as_ref() {
+                b.set_icon_name(if building {
+                    "media-playback-stop-symbolic"
+                } else {
+                    "media-playback-start-symbolic"
+                });
+                b.set_sensitive(building || self.model.build_unavailable_reason().is_none());
+            }
+            if let Some(t) = ui.live_toggle.borrow().as_ref() {
+                let enabled = self.store.live_compile_enabled();
+                if t.is_active() != enabled {
+                    t.set_active(enabled);
+                }
+            }
+            if let Some(label) = ui.build_status.borrow().as_ref() {
+                label.set_text(&match &self.model.build_state {
+                    WorkspaceBuildState::Building => tr(self.language, "build.running"),
+                    WorkspaceBuildState::Succeeded { .. } => tr(self.language, "build.succeeded"),
+                    WorkspaceBuildState::Failed(reason) => reason.clone(),
+                    WorkspaceBuildState::Unavailable(reason) => reason.clone(),
+                });
+            }
+            if let Some(view) = ui.build_log_view.borrow().as_ref() {
+                // Borrowed: this runs every 50 ms during a build, and
+                // cloning the whole log per tick was an O(log) copy.
+                let placeholder;
+                let text: &str = if self.model.build_log_text.is_empty() {
+                    placeholder = tr(self.language, "build.log_empty");
+                    &placeholder
+                } else {
+                    &self.model.build_log_text
+                };
+                let buffer = view.buffer();
+                let mut previous = self.rendered_log.borrow_mut();
+                if previous.as_str() != text {
+                    if let Some(added) = text.strip_prefix(previous.as_str()) {
+                        buffer.insert(&mut buffer.end_iter(), added);
+                        previous.push_str(added);
+                    } else {
+                        buffer.set_text(text);
+                        previous.clear();
+                        previous.push_str(text);
+                    }
+                    let mut end = buffer.end_iter();
+                    view.scroll_to_iter(&mut end, 0.0, false, 0.0, 1.0);
+                }
+            }
+        });
+        self.refresh_issues();
+    }
+
+    // ── refresh: PDF / synctex ─────────────────────────────────────────────
+
+    pub fn refresh_pdf_ui(&mut self) {
+        // The viewer renders the retained artifact — decoupled from the
+        // latest run's status, so a failed/superseded live build never
+        // blanks the last good PDF.
+        let retained = self.model.retained_pdf.clone();
+        // Viewport is preserved only while the workspace AND the resolved
+        // source target are the same — a different main or a reopen
+        // resets page/zoom/scroll even for byte-identical PDFs. Identity
+        // is explicit: the model can swap target and artifact in one
+        // mutation without an observable `retained == None` between.
+        let identity = retained
+            .as_ref()
+            .map(|r| (self.workspace_epoch, r.source.clone()));
+        match retained {
+            Some(retained) => {
+                if self.pdf_identity != identity {
+                    self.pdf_page = 0;
+                    self.pdf_auto_fit = true;
+                    self.pdf = None;
+                    self.pdf_hash = 0;
+                    self.rendered_pdf_key.set(0);
+                    self.pdf_identity = identity;
+                    // A different target's raster must not linger as the
+                    // placeholder for the new document, and its scroll
+                    // offset must not carry over either — a cleared
+                    // picture keeps the scroller's last adjustments.
+                    UI.with(|ui| {
+                        if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
+                            picture.set_paintable(None::<&gtk4::gdk::Paintable>);
+                        }
+                        if let Some(scroll) = ui.pdf_scroll.borrow().as_ref() {
+                            for adj in [scroll.hadjustment(), scroll.vadjustment()] {
+                                adj.set_value(adj.lower());
+                            }
+                        }
+                    });
+                }
+                if self.pdf_hash != retained.hash {
+                    self.pdf = None;
+                    self.pdf_hash = retained.hash;
+                    self.rendered_pdf_key.set(0);
+                    self.pdf_renderer.load(retained.hash, retained.pdf.clone());
+                    // Same target: the old raster stays on screen until
+                    // the new one is painted — no blank flash — and the
+                    // user's page, zoom mode and scroll position carry
+                    // over (the page is clamped in PdfLoaded if the
+                    // document shrank).
+                    self.clear_synctex_highlight();
+                }
+                UI.with(|ui| {
+                    if let Some(p) = ui.pdf_empty.borrow().as_ref() {
+                        p.set_visible(false);
+                    }
+                    for w in [
+                        ui.pdf_scroll.borrow().as_ref().cloned().map(|w| w.upcast::<gtk4::Widget>()),
+                        ui.pdf_toolbar.borrow().as_ref().cloned().map(|w| w.upcast::<gtk4::Widget>()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        w.set_visible(true);
+                    }
+                    if let Some(nav) = ui
+                        .pdf_page_label
+                        .borrow()
+                        .as_ref()
+                        .and_then(|l| l.parent())
+                    {
+                        nav.set_visible(true);
+                    }
+                    if let Some(name) = ui.pdf_name_label.borrow().as_ref() {
+                        name.set_text(&self.preview_header_text());
+                    }
+                });
+                self.render_pdf_page();
+            }
+            None => {
+                if self.pdf_hash != 0 {
+                    self.pdf = None;
+                    self.pdf_hash = 0;
+                    self.rendered_pdf_key.set(0);
+                    self.pdf_renderer.load(0, std::sync::Arc::from([]));
+                }
+                // No artifact on screen — viewport and identity reset so a
+                // later document starts from page 1 fit-to-width.
+                self.pdf_page = 0;
+                self.pdf_auto_fit = true;
+                self.pdf_identity = None;
+                UI.with(|ui| {
+                    if let Some(p) = ui.pdf_empty.borrow().as_ref() {
+                        p.set_visible(true);
+                    }
+                    if let Some(s) = ui.pdf_scroll.borrow().as_ref() {
+                        s.set_visible(false);
+                        for adj in [s.hadjustment(), s.vadjustment()] {
+                            adj.set_value(adj.lower());
+                        }
+                    }
+                    if let Some(t) = ui.pdf_toolbar.borrow().as_ref() {
+                        t.set_visible(false);
+                    }
+                    if let Some(nav) = ui
+                        .pdf_page_label
+                        .borrow()
+                        .as_ref()
+                        .and_then(|l| l.parent())
+                    {
+                        nav.set_visible(false);
+                    }
+                });
+            }
+        }
+        // Markdown documents swap the whole PDF column for the web preview;
+        // the hidden PDF children keep their per-state visibility.
+        let markdown_active = self.model.active_is_markdown();
+        UI.with(|ui| {
+            if let Some(pdf) = ui.pdf_column.borrow().as_ref() {
+                pdf.set_visible(!markdown_active);
+            }
+            self.markdown.widget.set_visible(markdown_active);
+        });
+        self.refresh_synctex_status();
+    }
+
+    fn refresh_synctex_status(&self) {
+        UI.with(|ui| {
+            let (icon_name, detail) = match &self.model.synctex_state {
+                WorkspaceSyncTeXState::Current => ("emblem-ok-symbolic", tr(self.language, "preview.synctex")),
+                WorkspaceSyncTeXState::Stale(msg) => ("dialog-warning-symbolic", msg.clone()),
+                WorkspaceSyncTeXState::Ambiguous(msg) => ("dialog-question-symbolic", msg.clone()),
+                WorkspaceSyncTeXState::Unavailable(msg) => ("process-stop-symbolic", msg.clone()),
+            };
+            if let Some(icon) = ui.synctex_status_icon.borrow().as_ref() {
+                icon.set_icon_name(Some(icon_name));
+            }
+            if let Some(label) = ui.synctex_status_label.borrow().as_ref() {
+                label.set_text(&detail);
+            }
+        });
+    }
+
+    // ── refresh: markdown preview ──────────────────────────────────────────
+
+    /// Per-edit hub for the Markdown preview — activation and saves render
+    /// immediately, live-preview edits debounce ~150ms, live-off edits wait
+    /// for the save. No-op while a non-Markdown document is active.
+    fn schedule_markdown_render(&self) {
+        let Some(url) = self.model.active_document_url.clone() else { return };
+        if !WorkspaceModel::is_markdown(&url) {
+            self.markdown.cancel_render();
+            return;
+        }
+        let clean = self
+            .model
+            .document_snapshot
+            .as_ref()
+            .map(|s| s.save_state == DocumentSaveState::Clean)
+            .unwrap_or(false);
+        if self.markdown.rendered_url().as_ref() != Some(&url) || clean {
+            self.markdown.cancel_render();
+            self.render_markdown_now();
+        } else if self.store.markdown_live_preview() {
+            self.markdown.schedule_render();
+        }
+    }
+
+    /// Push the current snapshot into the preview — the key dedupe inside
+    /// `MarkdownPreview::render` keeps no-change calls cheap.
+    pub fn render_markdown_now(&self) {
+        let (Some(url), Some(snapshot)) = (
+            self.model.active_document_url.as_ref(),
+            self.model.document_snapshot.as_ref(),
+        ) else {
+            return;
+        };
+        if !WorkspaceModel::is_markdown(url) {
+            return;
+        }
+        self.markdown.render(
+            url,
+            snapshot.revision,
+            &snapshot.text,
+            self.store.markdown_font_size(),
+            self.markdown_dark(),
+        );
+    }
+
+    /// `pitex.pref.markdown.theme` — "system" follows the app's effective
+    /// appearance; light/dark pin the page.
+    fn markdown_dark(&self) -> bool {
+        crate::markdown_preview::markdown_preview_dark(
+            self.store.markdown_theme(),
+            self.appearance.resolved_dark.get(),
+        )
+    }
+
+    /// Editor→preview scroll sync — rides the view's `vadjustment`, the
+    /// same scroll observation the minimap uses. Loop-guarded on both ends.
+    fn markdown_editor_scrolled(&self) {
+        if !self.model.active_is_markdown()
+            || !self.store.markdown_sync_scroll()
+            || !self.model.inspector_visible
+            || self.markdown.editor_scroll_suppressed()
+        {
+            return;
+        }
+        let Some(editor) = &self.editor else { return };
+        let rect = editor.view().visible_rect();
+        let (iter, _) = editor.view().line_at_y(rect.y());
+        self.markdown.scroll_to_line(iter.line());
+    }
+
+    /// Preview→editor scroll sync — lands the reported source line at the
+    /// top of the viewport; the programmatic scroll's vadjustment echo is
+    /// muted via `begin_programmatic_editor_scroll`.
+    pub fn scroll_editor_to_line(&self, line: f64) {
+        if !self.model.active_is_markdown()
+            || !self.store.markdown_sync_scroll()
+            || !self.model.inspector_visible
+        {
+            return;
+        }
+        let Some(editor) = &self.editor else { return };
+        let buffer = editor.buffer();
+        if buffer.line_count() <= 0 {
+            return;
+        }
+        self.markdown.begin_programmatic_editor_scroll();
+        let line = (line.max(0.0) as i32).min(buffer.line_count() - 1);
+        if let Some(mut iter) = buffer.iter_at_line(line) {
+            editor.view().scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+        }
+    }
+
+    /// `preview_link_action` routing — the WebKit navigation policy hands
+    /// every clicked URL here; only External/OpenFile ever reach the OS.
+    pub fn open_preview_link(&self, uri: &str) {
+        use crate::markdown_preview::PreviewLinkAction;
+        match crate::markdown_preview::preview_link_action(uri) {
+            PreviewLinkAction::External(uri) => self.open_external_uri(&uri),
+            PreviewLinkAction::OpenFile(path) => self.open_external(&path),
+            PreviewLinkAction::Refuse => {
+                self.toast(&tr(self.language, "preview.markdown.blocked_link"));
+            }
+            PreviewLinkAction::Ignore => {}
+        }
+    }
+
+    // ── refresh: assistant ─────────────────────────────────────────────────
+
+    /// Every RPC event wakes the UI, so a streaming reply re-rendered its
+    /// row (and re-hashed the transcript) per token. Renders now run at
+    /// most every `TRANSCRIPT_RENDER_INTERVAL` — the macOS delta batching —
+    /// and a throttled update schedules one deferred pass so the tail of a
+    /// reply is never left unrendered.
+    fn transcript_render_due(rendered_at: &Cell<std::time::Instant>, pending: &Cell<bool>) -> bool {
+        let now = std::time::Instant::now();
+        let next = rendered_at.get() + TRANSCRIPT_RENDER_INTERVAL;
+        if now >= next {
+            rendered_at.set(now);
+            return true;
+        }
+        if !pending.replace(true) {
+            schedule_transcript_render(next - now);
+        }
+        false
+    }
+
+    pub fn refresh_assistant(&mut self) {
+        self.ensure_agent();
+        self.sync_assistant_visibility();
+        let lang = self.language;
+        let agent = self.agent.as_mut().unwrap();
+        UI.with(|ui| {
+            // Rebuild the transcript + pickers only when agent state or the
+            // font size changed — the 40ms poll used to rebuild the whole
+            // widget tree every tick.
+            let font_size = self.store.ai_font_size();
+            let font_changed = font_size != self.rendered_ai_font_size.get();
+            // A deferred pass (scheduled below) picks up whatever a
+            // throttled streaming update left unrendered.
+            let dirty = (agent.ui_revision != self.rendered_agent_revision.get() || font_changed)
+                && Self::transcript_render_due(&self.transcript_rendered_at, &self.transcript_render_pending);
+            if std::mem::take(&mut agent.history_requested) {
+                if let Some(button) = ui.agent_history_button.borrow().clone() {
+                    let sessions = agent.past_sessions.clone();
+                    glib::idle_add_local_once(move || {
+                        crate::panes::show_session_history(&button, sessions, lang);
+                    });
+                }
+            }
+            if dirty {
+                self.rendered_agent_revision.set(agent.ui_revision);
+                self.rendered_ai_font_size.set(font_size);
+            }
+            if dirty {
+            if let Some(box_) = ui.transcript_box.borrow().as_ref() {
+                if agent.transcript.is_empty() {
+                    while let Some(child) = box_.first_child() { box_.remove(&child); }
+                    self.rendered_transcript_keys.borrow_mut().clear();
+                    let empty = adw::StatusPage::new();
+                    empty.set_title(&tr(lang, "assistant.empty_headline"));
+                    empty.set_icon_name(Some("starred-symbolic"));
+                    empty.add_css_class("pitex-conv-title");
+                    let detail = match &agent.connection {
+                        crate::agent::Connection::Idle => {
+                            tr(lang, "assistant.configure_hint")
+                        }
+                        crate::agent::Connection::PiMissing => tr(lang, "assistant.pi_missing"),
+                        crate::agent::Connection::Connecting => tr(lang, "state.loading"),
+                        _ => String::new(),
+                    };
+                    if !detail.is_empty() {
+                        empty.set_description(Some(&detail));
+                    }
+                    box_.append(&empty);
+                } else {
+                    let keys: Vec<u64> = agent.transcript.iter()
+                        .map(|entry| view_key(&(entry, font_size.to_bits())))
+                        .collect();
+                    let mut previous = self.rendered_transcript_keys.borrow_mut();
+                    if previous.is_empty() {
+                        while let Some(child) = box_.first_child() { box_.remove(&child); }
+                    }
+                    let mut child = box_.first_child();
+                    for (i, entry) in agent.transcript.iter().enumerate() {
+                        let next = child.as_ref().and_then(|row| row.next_sibling());
+                        if previous.get(i) != keys.get(i) {
+                            let row = transcript_row(entry, font_size);
+                            if let Some(old) = child.as_ref() {
+                                box_.insert_child_after(&row, old.prev_sibling().as_ref());
+                                box_.remove(old);
+                            } else {
+                                box_.append(&row);
+                            }
+                        }
+                        child = next;
+                    }
+                    while let Some(row) = child {
+                        child = row.next_sibling();
+                        box_.remove(&row);
+                    }
+                    *previous = keys;
+                }
+                if let Some(scroll) = ui.transcript_scroll.borrow().as_ref() {
+                    let adj = scroll.vadjustment();
+                    adj.set_value(adj.upper());
+                }
+            }
+            if let Some(label) = ui.agent_status_label.borrow().as_ref() {
+                label.set_text(agent.status_message.as_deref().unwrap_or(""));
+                label.set_visible(agent.status_message.is_some());
+            }
+            let picker_key = view_key(&(&agent.models, &agent.current_model,
+                &agent.thinking_levels, &agent.thinking_level,
+                agent.is_updating_model_settings, agent.connection == crate::agent::Connection::Ready, lang));
+            if self.rendered_picker_key.replace(picker_key) != picker_key {
+            // Model picker — when models span multiple providers the
+            // provider name disambiguates same-named entries.
+            if let Some(picker) = ui.agent_model_picker.borrow().as_ref() {
+                let providers: std::collections::HashSet<&str> =
+                    agent.models.iter().map(|m| m.provider.as_str()).collect();
+                let disambiguate = providers.len() > 1;
+                let titles: Vec<String> = if agent.models.is_empty() {
+                    vec![tr(lang, "assistant.model_placeholder")]
+                } else {
+                    agent
+                        .models
+                        .iter()
+                        .map(|m| {
+                            if disambiguate {
+                                format!("{} · {}", m.picker_title(), m.provider)
+                            } else {
+                                m.picker_title()
+                            }
+                        })
+                        .collect()
+                };
+                let list = gtk4::StringList::new(&titles.iter().map(String::as_str).collect::<Vec<_>>());
+                picker.set_model(Some(&list));
+                picker.set_sensitive(
+                    !agent.models.is_empty() && !agent.is_updating_model_settings,
+                );
+                if let Some(current) = agent.current_model.as_ref() {
+                    if let Some(idx) = agent.models.iter().position(|m| m == current) {
+                        picker.set_selected(idx as u32);
+                    }
+                } else {
+                    picker.set_selected(gtk4::INVALID_LIST_POSITION);
+                }
+            }
+            if let Some(picker) = ui.agent_reasoning_picker.borrow().as_ref() {
+                let levels = &agent.thinking_levels;
+                picker.set_visible(
+                    agent.connection == crate::agent::Connection::Ready && !levels.is_empty(),
+                );
+                let list =
+                    gtk4::StringList::new(&levels.iter().map(String::as_str).collect::<Vec<_>>());
+                picker.set_model(Some(&list));
+                picker.set_sensitive(levels.len() >= 2 && !agent.is_updating_model_settings);
+                if let Some(idx) = levels.iter().position(|l| *l == agent.thinking_level) {
+                    picker.set_selected(idx as u32);
+                }
+            }
+            }
+            if font_changed {
+                let mut slot = ui.agent_composer_font.borrow_mut();
+                if slot.is_none() {
+                    let p = gtk4::CssProvider::new();
+                    if let Some(display) = gtk4::gdk::Display::default() {
+                        gtk4::style_context_add_provider_for_display(
+                            &display,
+                            &p,
+                            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                        );
+                    }
+                    *slot = Some(p);
+                }
+                if let Some(provider) = slot.as_ref() {
+                    provider.load_from_data(&format!(
+                        ".pitex-conv-font {{ font-size: {font_size}pt; }} \
+                         .pitex-conv-title .title-1 {{ font-size: {font_size}pt; }}"
+                    ));
+                }
+            }
+            } // if dirty
+            if let Some(t) = ui.agent_attach_toggle.borrow().as_ref() {
+                if t.is_active() != agent.attach_active_document {
+                    t.set_active(agent.attach_active_document);
+                }
+            }
+            // Usage/context readout — `get_session_stats` payload formatted
+            // compactly ("12.3k/200k ctx (6%) · 45.2k tok · $0.12").
+            if let Some(label) = ui.agent_usage_label.borrow().as_ref() {
+                if let Some(stats) = &agent.session_stats {
+                    label.set_text(&crate::l10n::tr1(
+                        lang,
+                        "assistant.usage",
+                        &format_session_stats(stats),
+                    ));
+                    label.set_visible(true);
+                } else {
+                    label.set_visible(false);
+                }
+            }
+            if let Some(b) = ui.agent_send_button.borrow().as_ref() {
+                b.set_visible(!agent.is_running);
+            }
+            if let Some(b) = ui.agent_stop_button.borrow().as_ref() {
+                b.set_visible(agent.is_running);
+            }
+        });
+        self.refresh_selection_chip();
+    }
+
+    pub fn refresh_selection_chip(&mut self) {
+        let attachment = self
+            .agent
+            .as_ref()
+            .and_then(|a| a.selection_attachment.clone());
+        UI.with(|ui| {
+            if let (Some(chip), Some(label)) = (
+                ui.selection_chip.borrow().as_ref(),
+                ui.selection_chip_label.borrow().as_ref(),
+            ) {
+                if let Some(a) = attachment {
+                    let file = a.path.rsplit('/').next().unwrap_or(&a.path);
+                    let text = if a.start_line == a.end_line {
+                        format!("{file}:{}", a.start_line)
+                    } else {
+                        format!("{file}:{}–{}", a.start_line, a.end_line)
+                    };
+                    label.set_text(&text);
+                    chip.set_visible(true);
+                } else {
+                    chip.set_visible(false);
+                }
+            }
+        });
+    }
+    /// Drain the agent's event receiver + check for unexpected exit.
+    fn poll_agent(&mut self) {
+        self.ensure_agent();
+        let agent = self.agent.as_mut().unwrap();
+        agent.poll_toolchain();
+        while let Some(event) = agent.poll_event() {
+            agent.handle(&event);
+        }
+        if agent.poll_exit() {
+            agent.process_did_exit();
+        }
+        if self.agent_activity_pending.replace(false) {
+            let confirm = self.store.confirm_overwrite();
+            self.model.refresh_after_agent_activity(confirm);
+            if let Some(editor) = &self.editor {
+                editor.refresh_from_session();
+            }
+            self.refresh_after_document_change();
+        }
+        self.refresh_assistant();
+    }
+
+    /// The completion coordinator's event handler — toolchain await, event
+    /// drain and exit detection, all interior-mutated so `&self` suffices.
+    fn poll_completion(&self) {
+        let completion = self.completion.clone();
+        completion.poll_toolchain();
+        while let Some(event) = completion.poll_event() {
+            completion.handle(&event);
+        }
+        if completion.poll_exit() {
+            completion.process_did_exit();
+        }
+    }
+
+    // ── watchers ───────────────────────────────────────────────────────────
+
+    /// `FileSystemWatcher` — monitor every project file, coalesced 0.35s.
+    fn install_watchers(&mut self) {
+        self.watchers.clear();
+        for url in &self.model.project_files {
+            let file = gio::File::for_path(url);
+            let Ok(monitor) = file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            else {
+                continue;
+            };
+            let path = url.clone();
+            monitor.connect_changed(move |_, _, _, event| {
+                if !matches!(
+                    event,
+                    gio::FileMonitorEvent::Changed
+                        | gio::FileMonitorEvent::ChangesDoneHint
+                        | gio::FileMonitorEvent::Created
+                        | gio::FileMonitorEvent::Deleted
+                ) {
+                    return;
+                }
+                let path = path.clone();
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        // Coalesce: one process_disk_change per file per 350ms.
+                        let Ok(st) = state.try_borrow_mut() else { return };
+                        if let Some(old) = st.disk_pending.borrow_mut().remove(&path) {
+                            old.remove();
+                        }
+                        let p = path.clone();
+                        let id = glib::timeout_add_local_once(
+                            Duration::from_millis(350),
+                            move || {
+                                STATE.with(|s| {
+                                    if let Some(state) = s.borrow().as_ref() {
+                                        let Ok(mut st) = state.try_borrow_mut() else { return };
+                                        st.disk_pending.borrow_mut().remove(&p);
+                                        let confirm = st.store.confirm_overwrite();
+                                        st.model.process_disk_change(&p, confirm);
+                                        if p == *st.model.active_document_url.as_ref().unwrap_or(&PathBuf::new()) {
+                                            if let Some(editor) = &st.editor {
+                                                editor.refresh_from_session();
+                                            }
+                                        }
+                                        st.refresh_after_document_change();
+                                        // TeX may have read it (an unopened
+                                        // \input, a figure, a .bib): the
+                                        // helper rescans what it read.
+                                        let st = &mut *st;
+                                        st.model.request_embedded_refresh_for_disk_change(&p, &st.store);
+                                        st.arm_embedded_timer();
+                                    }
+                                });
+                            },
+                        );
+                        st.disk_pending.borrow_mut().insert(path, id);
+                    }
+                });
+            });
+            self.watchers.push(monitor);
+        }
+    }
+
+    /// Watch the pi agent dir: edits to `auth.json`, `models.json`, or
+    /// `settings.json` (Settings → AI, `pi /login`, a text editor) restart
+    /// the agent so the new provider config applies without an app restart.
+    /// Coalesced ~500ms like the project-file watchers.
+    fn install_agent_config_watch(&mut self) {
+        let dir = crate::agent::pi_paths::agent_directory();
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let file = gio::File::for_path(&dir);
+        let Ok(monitor) =
+            file.monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        else {
+            return;
+        };
+        monitor.connect_changed(move |_, file, _, event| {
+            if !matches!(
+                event,
+                gio::FileMonitorEvent::Changed
+                    | gio::FileMonitorEvent::ChangesDoneHint
+                    | gio::FileMonitorEvent::Created
+                    | gio::FileMonitorEvent::Deleted
+                    | gio::FileMonitorEvent::Moved
+            ) {
+                return;
+            }
+            let name = file
+                .basename()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if !matches!(name.as_str(), "auth.json" | "models.json" | "settings.json") {
+                return;
+            }
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let Ok(st) = state.try_borrow_mut() else { return };
+                    let generation = st.agent_config_generation.get() + 1;
+                    st.agent_config_generation.set(generation);
+                    glib::timeout_add_local_once(Duration::from_millis(500), move || {
+                        STATE.with(|s| {
+                            if let Some(state) = s.borrow().as_ref() {
+                                let Ok(mut st) = state.try_borrow_mut() else { return };
+                                if st.agent_config_generation.get() != generation {
+                                    return;
+                                }
+                                st.ensure_agent();
+                                if let Some(agent) = st.agent.as_mut() {
+                                    agent.restart();
+                                }
+                                st.refresh_assistant();
+                            }
+                        });
+                    });
+                }
+            });
+        });
+        self.agent_config_monitor = Some(monitor);
+    }
+
+    // ── workspace message dispatch ─────────────────────────────────────────
+
+    fn dispatch(&mut self, message: WorkspaceMessage) {
+        match message {
+            WorkspaceMessage::OpenFinished(result) => match result {
+                Ok(opened) => {
+                    let session = opened.session.clone();
+                    self.workspace_epoch = self.workspace_epoch.wrapping_add(1);
+                    self.model.apply_open(&mut self.store, opened);
+                    self.attach_session(session);
+                    self.install_watchers();
+                    self.refresh_phase();
+                    self.refresh_git();
+                }
+                Err(e) => {
+                    // `open()`'s catch runs `await close()` — including the
+                    // agent shutdown — before surfacing the failure.
+                    self.shutdown_agent();
+                    let message = match e {
+                        crate::model::OpenFailure::Error(message) => message,
+                        crate::model::OpenFailure::RemoteOpen { device, error } => {
+                            crate::l10n::trn(
+                                self.language,
+                                "remote.error.open",
+                                &[&device, &error],
+                            )
+                        }
+                    };
+                    self.model.open_failed(message);
+                    self.refresh_phase();
+                }
+            },
+            WorkspaceMessage::ActivateFinished(result) => match result {
+                Ok(activated) => {
+                    let session = activated.session.clone();
+                    self.model.apply_activate(activated);
+                    self.attach_session(session);
+                    self.refresh_after_document_change();
+                    // A clean open changed the all-open-source identity.
+                    self.model.request_embedded_refresh(&self.store);
+                    self.model.request_embedded_restart(&self.store);
+                    self.arm_embedded_timer();
+                }
+                // `activateDocument`'s catch publishes `.failed` — the
+                // workspace never went through a loading phase first.
+                Err(e) => {
+                    self.model.phase = crate::model::WorkspacePhase::Failed(e);
+                    self.refresh_phase();
+                }
+            },
+            WorkspaceMessage::PdfLoaded { hash, info } => {
+                if self.pdf_hash == hash {
+                    // Clamp the preserved page when the new document is
+                    // shorter — a live rebuild can drop pages.
+                    if let Some(info) = &info {
+                        let last = info.page_count().saturating_sub(1);
+                        if self.pdf_page > last {
+                            self.pdf_page = last;
+                        }
+                    }
+                    self.pdf = info;
+                    self.rendered_pdf_key.set(0);
+                    self.render_pdf_page();
+                }
+            }
+            WorkspaceMessage::PdfRendered { key, raster } => {
+                if key == self.rendered_pdf_key.get() {
+                    self.displayed_pdf_key.set(key);
+                    UI.with(|ui| {
+                        if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
+                            let texture = crate::pdf::texture_from_pixels(raster.pixels, raster.width, raster.height, raster.stride);
+                            picture.set_paintable(Some(&texture));
+                            picture.set_size_request(raster.width, raster.height);
+                        }
+                    });
+                    if let Some((page, x, y, w, h)) = self.pending_pdf_highlight.take() {
+                        glib::idle_add_local_once(move || STATE.with(|slot| {
+                            if let Some(state) = slot.borrow().as_ref() {
+                                let mut state = state.borrow_mut();
+                                if state.rendered_pdf_key.get() == key {
+                                    state.show_synctex_highlight(page, x, y, w, h);
+                                }
+                            }
+                        }));
+                    }
+                }
+            }
+            WorkspaceMessage::BuildEvent { build, event } => {
+                self.model.apply_build_event(&build, event);
+                if !self.build_ui_pending.replace(true) {
+                    glib::timeout_add_local_once(Duration::from_millis(50), || {
+                        STATE.with(|slot| {
+                            if let Some(state) = slot.borrow().as_ref() {
+                                let mut s = state.borrow_mut();
+                                s.build_ui_pending.set(false);
+                                s.refresh_build_ui();
+                            }
+                        });
+                    });
+                }
+            }
+            WorkspaceMessage::BuildFinished {
+                build,
+                outcome,
+                output_pdf,
+            } => {
+                // The scheduler's completion gate must see the CURRENT
+                // IME state — a pending edit may not dispatch while the
+                // user is composing.
+                self.model.live_composing.set(
+                    self.editor
+                        .as_ref()
+                        .map(|e| e.has_marked_text())
+                        .unwrap_or(false),
+                );
+                self.model.apply_build_finished(
+                    build,
+                    outcome,
+                    &output_pdf,
+                    &self.store,
+                    self.language,
+                );
+                self.refresh_build_ui();
+                self.refresh_pdf_ui();
+                self.restart_embedded_preview();
+                self.finish_remote_build_wait();
+                // A completed run may leave a newer pending edit waiting
+                // for its deadline.
+                self.arm_live_timer();
+            }
+            WorkspaceMessage::ForwardResult {
+                request,
+                root,
+                pdf,
+                result,
+            } => {
+                self.model.apply_forward_result(request, root, pdf, result);
+                let highlight = self.highlight_cell.borrow_mut().take();
+                if let Some((page, x, y, w, h)) = highlight {
+                    self.show_synctex_highlight(page, x, y, w, h);
+                }
+                self.refresh_synctex_status();
+            }
+            WorkspaceMessage::InverseResult {
+                request,
+                root,
+                pdf,
+                result,
+            } => {
+                if let Some(tx) = self.tx.clone() {
+                    self.model.apply_inverse_result(request, root, pdf, result, tx);
+                }
+                // `jumpTo(..., highlight: settings.inverseSyncHighlight)` —
+                // same-file inverse navigation lands here; a cross-file jump
+                // arrives through `drain_side_effects` after activation.
+                let jump = self.jump_cell.borrow_mut().take();
+                if let Some((line, col)) = jump {
+                    let highlight = self.store.inverse_sync_highlight();
+                    self.jump_to(line, col, highlight);
+                }
+                self.refresh_synctex_status();
+            }
+            WorkspaceMessage::BindingRefreshed {
+                id,
+                root,
+                pdf,
+                result,
+            } => {
+                self.model.apply_binding_refreshed(id, root, pdf, result);
+                self.refresh_synctex_status();
+            }
+            WorkspaceMessage::DiskChanged(path) => {
+                let confirm = self.store.confirm_overwrite();
+                self.model.process_disk_change(&path, confirm);
+                self.refresh_after_document_change();
+                // External edits also move git status — refresh keeps the
+                // panel live like VSCode's filesystem watcher.
+                self.refresh_git();
+                // TeX may have read the changed file.
+                self.model.request_embedded_refresh_for_disk_change(&path, &self.store);
+                self.arm_embedded_timer();
+            }
+            WorkspaceMessage::SaveFinished { path, result } => {
+                self.model.apply_save_finished(&path, result);
+                self.refresh_after_document_change();
+                self.refresh_git();
+                // Saved buffers stop overriding the helper's disk view.
+                self.model.request_embedded_refresh(&self.store);
+                self.arm_embedded_timer();
+            }
+            WorkspaceMessage::AgentActivityFinished => {
+                let confirm = self.store.confirm_overwrite();
+                self.model.refresh_after_agent_activity(confirm);
+                if let Some(editor) = &self.editor {
+                    editor.refresh_from_session();
+                }
+                self.refresh_after_document_change();
+                self.arm_embedded_timer();
+
+            }
+            WorkspaceMessage::RemoteSaveFinished { root, result } => {
+                self.finish_remote_save(root, result);
+            }
+            WorkspaceMessage::RemotePushFinished { root, result } => {
+                self.model.apply_remote_push(&root, result);
+                self.refresh_remote_status();
+            }
+            WorkspaceMessage::RemotePullFinished { root, result } => {
+                if self.model.apply_remote_pull(&root, result) {
+                    // `pullRemote` — adopt the downloaded bytes like a disk
+                    // change in every open session.
+                    let confirm = self.store.confirm_overwrite();
+                    self.model.refresh_after_agent_activity(confirm);
+                    if let Some(editor) = &self.editor {
+                        editor.refresh_from_session();
+                    }
+                    self.refresh_after_document_change();
+                    self.arm_embedded_timer();
+                }
+                self.refresh_remote_status();
+            }
+            WorkspaceMessage::RemoteResolveFinished {
+                root,
+                keep_local,
+                result,
+            } => {
+                if self.model.apply_remote_resolve(&root, keep_local, result) {
+                    let confirm = self.store.confirm_overwrite();
+                    self.model.refresh_after_agent_activity(confirm);
+                    if let Some(editor) = &self.editor {
+                        editor.refresh_from_session();
+                    }
+                    self.refresh_after_document_change();
+                    self.arm_embedded_timer();
+                }
+                self.refresh_remote_status();
+            }
+            WorkspaceMessage::RemoteBuildPrepFailed { build, problem } => {
+                // `prepareRemoteBuild` — the run ends before the executor
+                // ran. Error publication lives in the model (a live
+                // failure never steals the console); here only the IME
+                // state is current so the completion gate is right.
+                self.model.live_composing.set(
+                    self.editor
+                        .as_ref()
+                        .map(|e| e.has_marked_text())
+                        .unwrap_or(false),
+                );
+                self.model.apply_build_finished(
+                    build,
+                    Err(problem),
+                    "",
+                    &self.store,
+                    self.language,
+                );
+                self.refresh_build_ui();
+                self.refresh_console_visibility();
+                self.finish_remote_build_wait();
+                self.arm_live_timer();
+            }
+            WorkspaceMessage::GitRefreshed { context, request, result } => {
+                if request != self.model.git_refresh_seq.get() { return; }
+                if context != self.model.git_context() {
+                    self.model.git_refresh_pending.set(false);
+                    self.refresh_git();
+                    return;
+                }
+                if self.model.apply_git_refreshed(&result) {
+                    // Repo state cleared — an open diff refers to a repo
+                    // that may be gone (`clearGitHistoryState`).
+                    self.refresh_git_diff();
+                }
+                self.refresh_git_panel();
+            }
+            WorkspaceMessage::GitOpFinished {
+                context,
+                error,
+                clear_commit,
+            } => {
+                if context != self.model.git_context() { return; }
+                self.model.git_busy = false;
+                self.model.git_error = error;
+                if clear_commit && self.model.git_error.is_none() {
+                    self.model.git_commit_message.clear();
+                    UI.with(|ui| {
+                        if let Some(view) = ui.git_commit_view.borrow().as_ref() {
+                            view.buffer().set_text("");
+                        }
+                    });
+                }
+                // Post-op refresh — the panel rebuilds when GitRefreshed
+                // lands; update the busy spinner immediately.
+                self.refresh_git();
+                self.refresh_git_panel();
+            }
+            WorkspaceMessage::GitSuggestFinished { context, result } => {
+                if context != self.model.git_context() { return; }
+                self.model.git_suggest_busy = false;
+                match result {
+                    Ok(message) => {
+                        self.model.git_commit_message = message.clone();
+                        UI.with(|ui| {
+                            if let Some(view) = ui.git_commit_view.borrow().as_ref() {
+                                view.buffer().set_text(&message);
+                            }
+                        });
+                    }
+                    Err(error) => self.model.git_error = Some(error),
+                }
+                self.refresh_git_panel();
+                self.refresh_git_commit_button();
+            }
+            WorkspaceMessage::GitDiffLoaded { context, id, root, result } => {
+                // Stale-result guards — a later click, close, or project
+                // switch replaced the session this payload belongs to.
+                let current = context == self.model.git_context()
+                    && self.model.git_diff.as_ref().map(|d| d.id) == Some(id)
+                    && self.model.git_status.as_ref().map(|s| s.root.as_str())
+                        == Some(root.as_str());
+                if current {
+                    if let Some(diff) = self.model.git_diff.as_mut() {
+                        match result {
+                            Ok(sections) => diff.sections = Some(sections),
+                            Err(error) => diff.error = Some(error),
+                        }
+                    }
+                    self.refresh_git_diff();
+                }
+            }
+            WorkspaceMessage::GitCommitFilesLoaded { context, hash, root, files } => {
+                if context == self.model.git_context()
+                    && self.model.git_status.as_ref().map(|s| s.root.as_str())
+                    == Some(root.as_str())
+                {
+                    self.model.git_commit_files_busy.remove(&hash);
+                    self.model.git_commit_files.insert(hash, files);
+                }
+                self.refresh_git_panel();
+            }
+            WorkspaceMessage::EmbeddedPreview { session, event } => {
+                if self.model.apply_embedded_event(session, event) {
+                    self.refresh_pdf_ui();
+                }
+                self.refresh_preview_label();
+                self.refresh_synctex_status();
+            }
+        }
+        self.drain_side_effects();
+    }
+}
+
+// ─── module-level shared handles ─────────────────────────────────────────────
+
+thread_local! {
+    static UI: UiHandles = UiHandles::default();
+    pub(crate) static STATE: RefCell<Option<Rc<RefCell<AppState>>>> = const { RefCell::new(None) };
+    /// The pending autosave `glib` source — removed and re-armed on every
+    /// edit, which is the `autosaveTask?.cancel()` half of Swift's debounce.
+    static AUTOSAVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// The pending live-compile debounce source — re-armed on every real
+    /// edit and after each fire/completion until no work is pending.
+    static LIVE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// The pending embedded-preview coalescing source (independent of the
+    /// build slot: updates stream while the helper is still working).
+    static EMBEDDED_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// Resolved UI language for `a11y` — readable without borrowing state.
+    static LANG: Cell<&'static str> = const { Cell::new("en") };
+    /// Pending post-edit re-highlight / structure-refresh sources.
+    static HIGHLIGHT_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    static STRUCTURE_SOURCE: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    /// `apply_theme`'s single CSS provider, the last scheme XML it wrote,
+    /// and whether the scheme directory is on the manager's search path.
+    static THEME_PROVIDER: RefCell<Option<gtk4::CssProvider>> = const { RefCell::new(None) };
+    static SCHEME_XML: RefCell<Option<String>> = const { RefCell::new(None) };
+    static SCHEME_PATH_ADDED: Cell<bool> = const { Cell::new(false) };
+    /// A selection-sync idle is queued (caret moves set two marks).
+    static SELECTION_SYNC_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Updater exits pass through the same forced SSH Save as window close.
+pub(crate) fn request_exit_for_update() {
+    glib::idle_add_local_once(|| {
+        let retry = STATE.with(|slot| {
+            let slot = slot.borrow();
+            let Some(state) = slot.as_ref() else { std::process::exit(0) };
+            let Ok(mut st) = state.try_borrow_mut() else { return true };
+            if st.model.remote.is_some() {
+                st.begin_remote_save(RemoteSaveAction::ExitForUpdate);
+            } else {
+                std::process::exit(0);
+            }
+            false
+        });
+        if retry { request_exit_for_update(); }
+    });
+}
+
+/// One firing of the live-compile debounce: polls the scheduler and
+/// performs whatever it asks (start the newest revision). A borrowed
+/// state re-queues shortly — the edit is held, never dropped.
+fn live_timer_fire() {
+    LIVE_SOURCE.with(|s| s.borrow_mut().take());
+    let borrowed = STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else { return false };
+        let Ok(mut st) = state.try_borrow_mut() else { return true };
+        st.live_timer_attempt();
+        false
+    });
+    if borrowed {
+        glib::timeout_add_local_once(Duration::from_millis(150), live_timer_fire);
+    }
+}
+
+impl AppState {
+    fn live_timer_attempt(&mut self) {
+        if self.closing_remote_workspace() { return; }
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let requests = self.model.poll_live(composing);
+        self.model
+            .dispatch_live_requests(requests, &self.store, self.language);
+        self.refresh_build_ui();
+        self.arm_live_timer();
+    }
+}
+
+/// One firing of the embedded-preview coalescing timer: streams the newest
+/// buffers to the helper. A borrowed state re-queues shortly.
+fn embedded_timer_fire() {
+    EMBEDDED_SOURCE.with(|s| s.borrow_mut().take());
+    let borrowed = STATE.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref() else { return false };
+        let Ok(mut st) = state.try_borrow_mut() else { return true };
+        st.embedded_timer_attempt();
+        false
+    });
+    if borrowed {
+        glib::timeout_add_local_once(Duration::from_millis(50), embedded_timer_fire);
+    }
+}
+
+impl AppState {
+    /// A build-target change (pin, rescan, build start/finish) may have retired the editing preview: restart it once a target exists.
+    fn restart_embedded_preview(&mut self) {
+        self.model.request_embedded_restart(&self.store);
+        self.arm_embedded_timer();
+    }
+
+    /// (Re)arm the embedded-preview coalescing timer while an update is
+    /// pending; an IME composition retries instead of sending partial text.
+    fn arm_embedded_timer(&mut self) {
+        EMBEDDED_SOURCE.with(|s| {
+            if let Some(id) = s.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        let Some(delay) = self.model.embedded_poll_delay(composing) else {
+            return;
+        };
+        let id = glib::timeout_add_local_once(Duration::from_millis(delay.max(1)), embedded_timer_fire);
+        EMBEDDED_SOURCE.with(|s| *s.borrow_mut() = Some(id));
+    }
+
+    fn embedded_timer_attempt(&mut self) {
+        if self.closing_remote_workspace() { return; }
+        let composing = self
+            .editor
+            .as_ref()
+            .map(|e| e.has_marked_text())
+            .unwrap_or(false);
+        if composing {
+            self.arm_embedded_timer();
+            return;
+        }
+        self.model.flush_embedded_preview(&self.store);
+        self.refresh_preview_label();
+        self.arm_embedded_timer();
+    }
+
+    /// PDF header: which kind of artifact is on screen. Editing previews
+    /// are never presented as compiler output.
+    pub fn preview_header_text(&self) -> String {
+        use crate::embedded_preview::PreviewStatus;
+        let name = self.pdf_display_name();
+        if self.model.displaying_editing_preview() {
+            let mut text = format!("{} · {name}", tr(self.language, "preview.embedded_label"));
+            match &self.model.embedded.status {
+                PreviewStatus::Updating => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_updating"));
+                }
+                PreviewStatus::Failed(_) | PreviewStatus::Errors(_) => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_failed"));
+                }
+                PreviewStatus::Warnings(_) => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_warnings"));
+                }
+                PreviewStatus::Unavailable(_) => {
+                    text.push_str(" · ");
+                    text.push_str(&tr(self.language, "preview.embedded_unavailable"));
+                }
+                PreviewStatus::Current | PreviewStatus::Off => {}
+            }
+            return text;
+        }
+        let live_artifact = self
+            .model
+            .latest_built_pdf_name
+            .as_deref()
+            .map(|n| n.starts_with(".pitex-live/"))
+            .unwrap_or(false);
+        if live_artifact {
+            name
+        } else {
+            format!("{} · {name}", tr(self.language, "preview.final_label"))
+        }
+    }
+
+    /// Tooltip detail for the header: first TeX error or failure reason.
+    fn preview_header_detail(&self) -> Option<String> {
+        use crate::embedded_preview::PreviewStatus;
+        match &self.model.embedded.status {
+            PreviewStatus::Errors(m) | PreviewStatus::Warnings(m) | PreviewStatus::Failed(m) | PreviewStatus::Unavailable(m)
+                if !m.is_empty() =>
+            {
+                Some(m.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn refresh_preview_label(&self) {
+        let text = self.preview_header_text();
+        let detail = self.preview_header_detail();
+        UI.with(|ui| {
+            if let Some(name) = ui.pdf_name_label.borrow().as_ref() {
+                name.set_text(&text);
+                name.set_tooltip_text(detail.as_deref());
+            }
+        });
+    }
+}
+
+/// Per-edit analysis passes (highlight, fold, sidebar structure) wait for a
+/// typing pause of this long — the macOS `EditorTiming.analysisDebounce`.
+pub(crate) const ANALYSIS_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Runs `on_scroll` whenever `view` scrolls. A ScrolledWindow swaps its own
+/// adjustments into a child view (and fresh ones back in when the view
+/// leaves), so hooking `view.vadjustment()` before the view was parented
+/// listened to an orphaned pair. This follows the view's current
+/// adjustments and unhooks the previous ones, so nothing piles up on the
+/// scroller's long-lived adjustments across document switches.
+pub(crate) fn on_view_scroll(view: &sourceview5::View, on_scroll: impl Fn() + 'static) {
+    let on_scroll = Rc::new(on_scroll);
+    let hooks: Rc<RefCell<Vec<(gtk4::Adjustment, glib::SignalHandlerId)>>> = Rc::default();
+    let rehook = Rc::new(move |view: &sourceview5::View| {
+        for (adjustment, id) in hooks.borrow_mut().drain(..) {
+            adjustment.disconnect(id);
+        }
+        for adjustment in [view.hadjustment(), view.vadjustment()].into_iter().flatten() {
+            let on_scroll = on_scroll.clone();
+            let id = adjustment.connect_value_changed(move |_| on_scroll());
+            hooks.borrow_mut().push((adjustment, id));
+        }
+    });
+    rehook(view);
+    for property in ["hadjustment", "vadjustment"] {
+        let rehook = rehook.clone();
+        view.connect_notify_local(Some(property), move |view, _| rehook(view));
+    }
+}
+
+/// GTK 4.12's `GtkWindow:suspended` — the compositor has minimized or
+/// fully hidden the window. Looked up by name so the GTK 4.6/4.10 builds
+/// (no such property) simply never skip.
+fn window_suspended(window: &impl IsA<glib::Object>) -> bool {
+    window.find_property("suspended").is_some() && window.property::<bool>("suspended")
+}
+
+/// Minimum spacing between Assistant transcript re-renders.
+const TRANSCRIPT_RENDER_INTERVAL: Duration = Duration::from_millis(50);
+
+/// The deferred transcript pass; retries shortly if AppState is busy, so a
+/// throttled final update always lands.
+fn schedule_transcript_render(delay: Duration) {
+    glib::timeout_add_local_once(delay, || {
+        STATE.with(|slot| {
+            let Some(state) = slot.borrow().as_ref().cloned() else { return };
+            match state.try_borrow_mut() {
+                Ok(mut st) => {
+                    st.transcript_render_pending.set(false);
+                    st.refresh_assistant();
+                }
+                Err(_) => schedule_transcript_render(Duration::from_millis(16)),
+            };
+        });
+    });
+}
+
+/// Debounce on a thread-local source slot: every call restarts the delay.
+/// The fired source clears its slot first so it is never removed twice.
+fn restart_timer(
+    slot: &'static std::thread::LocalKey<RefCell<Option<glib::SourceId>>>,
+    delay: Duration,
+    fire: impl FnOnce() + 'static,
+) {
+    slot.with(|s| {
+        if let Some(id) = s.borrow_mut().take() {
+            id.remove();
+        }
+    });
+    let id = glib::timeout_add_local_once(delay, move || {
+        slot.with(|s| s.borrow_mut().take());
+        fire();
+    });
+    slot.with(|s| *s.borrow_mut() = Some(id));
+}
+
+pub(crate) fn wake_agent() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static PENDING: AtomicBool = AtomicBool::new(false);
+    if PENDING.swap(true, Ordering::AcqRel) { return; }
+    glib::idle_add_once(|| {
+        PENDING.store(false, Ordering::Release);
+        STATE.with(|slot| {
+            if let Some(state) = slot.borrow().as_ref() {
+                let mut s = state.borrow_mut();
+                if s.agent.is_some() { s.poll_agent(); }
+                s.poll_completion();
+                s.drain_side_effects();
+            }
+        });
+    });
+}
+
+fn view_key(value: &impl std::hash::Hash) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hash);
+    hash.finish()
+}
+
+fn clear_list(list: &gtk4::ListBox) {
+    while let Some(row) = list.row_at_index(0) {
+        list.remove(&row);
+    }
+}
+
+/// One TODOs-pane row: done checkbox, text + `file:line`, and the
+/// rename/delete affordances of the SwiftUI context menu. Activation
+/// (jump) is wired on the ListBox; the child carries the `todo-{i}` index.
+fn append_todo_row(list: &gtk4::ListBox, index: usize, item: &DocumentTodoItem, lang: &str) {
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    row.set_widget_name(&format!("todo-{index}"));
+    row.set_margin_start(8);
+    row.set_margin_end(8);
+    row.set_margin_top(3);
+    row.set_margin_bottom(3);
+
+    let check = gtk4::CheckButton::new();
+    check.set_active(item.done);
+    compat::initial_tooltip(&check, &tr(lang, "todos.toggle_help"));
+    check.connect_toggled(move |_| {
+        STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                if let Ok(mut s) = state.try_borrow_mut() {
+                    if let Some(item) = s.model.todo_items.get(index).cloned() {
+                        s.todo_edit_action(&item, TodoLineEdit::ToggleDone);
+                    }
+                }
+            }
+        });
+    });
+    row.append(&check);
+
+    let body = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
+    body.set_hexpand(true);
+    let text = gtk4::Label::new(Some(&item.text));
+    text.set_xalign(0.0);
+    text.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    if item.done {
+        // `.strikethrough + .secondary` — done items dim and strike through.
+        let attrs = gtk4::pango::AttrList::new();
+        attrs.insert(gtk4::pango::AttrInt::new_strikethrough(true));
+        text.set_attributes(Some(&attrs));
+        text.add_css_class("dim-label");
+    }
+    let meta = gtk4::Label::new(Some(&format!("{}:{}", item.file, item.line)));
+    meta.set_xalign(0.0);
+    meta.add_css_class("dim-label");
+    meta.add_css_class("caption");
+    body.append(&text);
+    body.append(&meta);
+    row.append(&body);
+
+    // Inline rename: swap the labels for an Entry; Return applies.
+    let rename = gtk4::Button::from_icon_name("document-edit-symbolic");
+    rename.add_css_class("flat");
+    compat::initial_tooltip(&rename, &tr(lang, "todos.rename"));
+    {
+        let body = body.clone();
+        rename.connect_clicked(move |_| {
+            let entry = gtk4::Entry::new();
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(s) = state.try_borrow() {
+                        if let Some(item) = s.model.todo_items.get(index) {
+                            entry.set_text(&item.text);
+                        }
+                    }
+                }
+            });
+            entry.set_hexpand(true);
+            entry.connect_activate(move |e| {
+                let new_text = e.text().to_string();
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() {
+                            if let Some(item) = s.model.todo_items.get(index).cloned() {
+                                s.todo_edit_action(&item, TodoLineEdit::Rename(new_text));
+                            }
+                        }
+                    }
+                });
+            });
+            while let Some(child) = body.first_child() {
+                body.remove(&child);
+            }
+            body.append(&entry);
+            entry.grab_focus();
+        });
+    }
+    row.append(&rename);
+
+    let delete = gtk4::Button::from_icon_name("user-trash-symbolic");
+    delete.add_css_class("flat");
+    compat::initial_tooltip(&delete, &tr(lang, "todos.delete"));
+    delete.connect_clicked(move |_| {
+        STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                if let Ok(mut s) = state.try_borrow_mut() {
+                    if let Some(item) = s.model.todo_items.get(index).cloned() {
+                        s.todo_edit_action(&item, TodoLineEdit::Delete);
+                    }
+                }
+            }
+        });
+    });
+    row.append(&delete);
+    list.append(&row);
+}
+
+/// Recursive renderer for the project tree — mirrors `ProjectTreeRows` in
+/// `ProjectSidebarView.swift`. Directories toggle collapse state (tracked
+/// in `WorkspaceModel::collapsed_project_dirs`); files activate documents.
+fn append_project_node(
+    list: &gtk4::ListBox,
+    node: &project_feature::ProjectFileNode,
+    depth: u32,
+    root: &Option<PathBuf>,
+    model: &crate::model::WorkspaceModel,
+) {
+    let indent = 8 + (depth as i32) * 24;
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 7);
+    row.set_margin_start(indent);
+    row.set_margin_end(8);
+    row.set_margin_top(3);
+    row.set_margin_bottom(3);
+
+    if node.is_directory {
+        let collapsed = model.collapsed_project_dirs.contains(&node.path);
+        let disclosure = gtk4::Image::from_icon_name(if collapsed {
+            "pan-end-symbolic"
+        } else {
+            "pan-down-symbolic"
+        });
+        let icon = gtk4::Image::from_icon_name("folder-symbolic");
+        let name = gtk4::Label::new(Some(&node.name));
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        row.append(&disclosure);
+        row.append(&icon);
+        row.append(&name);
+        let dir_path = node.path.clone();
+        let gesture = gtk4::GestureClick::new();
+        // The whole row (disclosure, icon, name) toggles. The rebuild waits
+        // for idle so the clicked row isn't destroyed mid-gesture.
+        gesture.connect_released(move |_, _, _, _| {
+            let dir_path = dir_path.clone();
+            glib::idle_add_local_once(move || {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut s) = state.try_borrow_mut() {
+                            s.model.toggle_project_dir(&dir_path);
+                            s.refresh_sidebar();
+                        }
+                    }
+                });
+            });
+        });
+        row.add_controller(gesture);
+        list.append(&row);
+        if !collapsed {
+            for child in node.children.as_deref().unwrap_or(&[]) {
+                append_project_node(list, child, depth + 1, root, model);
+            }
+        }
+        return;
+    }
+
+    let url = root
+        .as_ref()
+        .map(|r| r.join(&node.path))
+        .unwrap_or_else(|| PathBuf::from(&node.path));
+    // Sources activate in the editor; every other listed extension is a
+    // figure that opens in the system viewer.
+    let is_source = WorkspaceModel::is_source_file(&url);
+    let icon = gtk4::Image::from_icon_name(if !is_source {
+        "image-x-generic-symbolic"
+    } else if url.extension().map(|e| e == "bib").unwrap_or(false) {
+        "accessories-dictionary-symbolic"
+    } else {
+        "x-office-document-symbolic"
+    });
+    // Spacer keeps file labels aligned under the directory labels' names —
+    // files have no disclosure triangle.
+    let spacer = gtk4::Label::new(None);
+    spacer.set_width_chars(1);
+    let name = gtk4::Label::new(Some(&node.name));
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    row.append(&spacer);
+    row.append(&icon);
+    row.append(&name);
+    if is_source && model.pinned_build_target.as_ref() == Some(&url) {
+        row.append(&gtk4::Image::from_icon_name("emblem-important-symbolic"));
+    } else if is_source && model.automatic_build_target.as_ref() == Some(&url) {
+        // `hammer` — Adwaita's engineering icon marks the inferred main
+        // document like the SF Symbol does.
+        row.append(&gtk4::Image::from_icon_name(
+            "applications-engineering-symbolic",
+        ));
+    }
+    if model.active_document_url.as_ref() == Some(&url) {
+        row.add_css_class("pitex-tab-active");
+    }
+    let gesture = gtk4::GestureClick::new();
+    gesture.connect_released(move |_, _, _, _| {
+        STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                if let Ok(mut s) = state.try_borrow_mut() {
+                    if WorkspaceModel::is_source_file(&url) {
+                        s.activate_document(url.clone());
+                    } else {
+                        s.open_external(&url);
+                    }
+                }
+            }
+        });
+    });
+    row.add_controller(gesture);
+    list.append(&row);
+    for child in node.children.as_deref().unwrap_or(&[]) {
+        append_project_node(list, child, depth + 1, root, model);
+    }
+}
+
+fn dialect_for(url: Option<&Path>) -> TeXDialect {
+    match url.and_then(|u| u.extension()).and_then(|e| e.to_str()) {
+        Some("bib") => TeXDialect::Bibtex,
+        _ => TeXDialect::Latex,
+    }
+}
+
+/// Only bare Shift+Return/KP_Enter triggers a build — any other modifier
+/// set keeps its existing behaviour, and Caps Lock must not block it.
+pub fn shift_return_is_build(key: gdk::Key, state: gdk::ModifierType) -> bool {
+    let mods = state
+        & (gdk::ModifierType::SHIFT_MASK
+            | gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SUPER_MASK
+            | gdk::ModifierType::HYPER_MASK
+            | gdk::ModifierType::META_MASK);
+    matches!(key, gdk::Key::Return | gdk::Key::KP_Enter)
+        && mods == gdk::ModifierType::SHIFT_MASK
+}
+
+/// Shift+Return in the editor runs the build — an `EventControllerKey` on
+/// the source view, not an app accel, so it exists only while the editor
+/// has focus. `has_marked_text` skips while an IM is composing (the IM
+/// context also consumes its own keypresses first), and the completion
+/// popup keeps Return-accept while it is visible.
+pub fn install_build_key(
+    view: &sourceview5::View,
+    has_marked_text: Rc<dyn Fn() -> bool>,
+    build: Rc<dyn Fn()>,
+) -> gtk4::EventControllerKey {
+    let popup_visible = Rc::new(Cell::new(false));
+    {
+        let flag = popup_visible.clone();
+        view.completion().connect_show(move |_| flag.set(true));
+    }
+    {
+        let flag = popup_visible.clone();
+        view.completion().connect_hide(move |_| flag.set(false));
+    }
+    let keys = gtk4::EventControllerKey::new();
+    keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    keys.connect_key_pressed(move |_, key, _code, state| {
+        if !shift_return_is_build(key, state)
+            || has_marked_text()
+            || popup_visible.get()
+        {
+            return glib::Propagation::Proceed;
+        }
+        build();
+        glib::Propagation::Stop
+    });
+    view.add_controller(keys.clone().upcast::<gtk4::EventController>());
+    keys
+}
+
+fn token_kinds() -> Vec<language_core::LanguageTokenKind> {
+    use language_core::LanguageTokenKind as K;
+    vec![
+        K::ControlSequence(String::new()),
+        K::Comment(String::new()),
+        K::LeftBrace,
+        K::RightBrace,
+        K::Whitespace(String::new()),
+        K::Text(String::new()),
+        K::BibEntryMarker,
+        K::Punctuation(String::new()),
+        K::EnvironmentName(String::new()),
+        K::Math(String::new()),
+    ]
+}
+
+fn color_role_for(kind: &language_core::LanguageTokenKind) -> AppearanceColorRole {
+    use language_core::LanguageTokenKind as K;
+    match kind {
+        K::ControlSequence(_) => AppearanceColorRole::Commands,
+        K::Comment(_) => AppearanceColorRole::Comments,
+        K::LeftBrace | K::RightBrace | K::Punctuation(_) => AppearanceColorRole::Braces,
+        K::EnvironmentName(_) => AppearanceColorRole::Environments,
+        K::Math(_) => AppearanceColorRole::Math,
+        K::BibEntryMarker => AppearanceColorRole::Commands,
+        _ => AppearanceColorRole::BodyText,
+    }
+}
+
+/// Generate a GtkSourceView style scheme from the appearance palette — the
+/// native mechanism covering gutter, line numbers, selection and tokens.
+fn style_scheme_xml(
+    appearance: &AppearanceSettings,
+    prefs: &crate::settings::Preferences,
+) -> String {
+    let hex = |role: AppearanceColorRole| appearance.stored_hex(prefs, role);
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="pitex-dynamic" _name="Pitex" version="1.0">
+  <author>Pitex</author>
+  <color name="bg" value="{bg}"/>
+  <color name="fg" value="{fg}"/>
+  <color name="gutter" value="{gutter}"/>
+  <color name="linenr" value="{linenr}"/>
+  <color name="command" value="{command}"/>
+  <color name="env" value="{env}"/>
+  <color name="math" value="{math}"/>
+  <color name="brace" value="{brace}"/>
+  <color name="comment" value="{comment}"/>
+  <color name="bracket" value="{bracket}"/>
+  <style name="text" foreground="fg" background="bg"/>
+  <style name="background" background="bg"/>
+  <style name="selection" background="bracket"/>
+  <style name="current-line" background="gutter"/>
+  <style name="line-numbers" foreground="linenr" background="gutter"/>
+  <style name="right-margin" foreground="linenr"/>
+  <style name="bracket-match" foreground="bracket" bold="true"/>
+  <style name="bracket-mismatch" foreground="comment"/>
+  <style name="search-match" background="math"/>
+</style-scheme>"#,
+        bg = hex(AppearanceColorRole::EditorBackground),
+        fg = hex(AppearanceColorRole::BodyText),
+        gutter = hex(AppearanceColorRole::GutterBackground),
+        linenr = hex(AppearanceColorRole::LineNumbers),
+        command = hex(AppearanceColorRole::Commands),
+        env = hex(AppearanceColorRole::Environments),
+        math = hex(AppearanceColorRole::Math),
+        brace = hex(AppearanceColorRole::Braces),
+        comment = hex(AppearanceColorRole::Comments),
+        bracket = hex(AppearanceColorRole::BracketMatch),
+    )
+}
+
+/// UTF-16 offset → (0-based line, byte column) used for forward SyncTeX.
+fn utf16_to_line_col(text: &str, utf16_offset: usize) -> (usize, usize) {
+    let mut units = 0usize;
+    let mut line = 0usize;
+    let mut line_start_units = 0usize;
+    for c in text.chars() {
+        if units >= utf16_offset {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            line_start_units = units + 1;
+        }
+        units += c.len_utf16();
+    }
+    (line, utf16_offset.saturating_sub(line_start_units))
+}
+
+/// (0-based line, 0-based column in characters) → UTF-16 offset.
+fn line_col_to_utf16(text: &str, line: usize, column: usize) -> usize {
+    let mut units = 0usize;
+    for (i, l) in text.split('\n').enumerate() {
+        if i == line {
+            units += l.chars().take(column).map(|c| c.len_utf16()).sum::<usize>();
+            return units;
+        }
+        units += l.chars().map(|c| c.len_utf16()).sum::<usize>() + 1;
+    }
+    units
+}
+
+/// `.font(.system(size:))` for labels — pt size via Pango attributes.
+pub(crate) fn font_attrs(size: f64) -> gtk4::pango::AttrList {
+    let attrs = gtk4::pango::AttrList::new();
+    attrs.insert(gtk4::pango::AttrSize::new(
+        (size * gtk4::pango::SCALE as f64) as i32,
+    ));
+    attrs
+}
+
+/// Compact token count — "45.2k" past 999, raw below.
+fn compact_tokens(n: u64) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// `12.3k/200k ctx (6%) · 45.2k tok · $0.12` — the assistant usage readout.
+fn format_session_stats(stats: &crate::agent::PiSessionStats) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let (Some(tokens), Some(window)) = (stats.context_tokens, stats.context_window) {
+        let mut ctx = format!("{}/{} ctx", compact_tokens(tokens), compact_tokens(window));
+        if let Some(percent) = stats.context_percent {
+            ctx.push_str(&format!(" ({:.0}%)", percent));
+        }
+        parts.push(ctx);
+    }
+    parts.push(format!("{} tok", compact_tokens(stats.total_tokens)));
+    parts.push(format!("${:.2}", stats.cost));
+    parts.join(" · ")
+}
+
+fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64) -> gtk4::Widget {
+    let caption_size = (font_size - 2.0).max(9.0);
+    let row = gtk4::Box::new(gtk4::Orientation::Vertical, 3);
+    let (role, icon) = match entry.role {
+        crate::agent::TranscriptRole::User => ("You".to_string(), "avatar-default-symbolic"),
+        crate::agent::TranscriptRole::Assistant => {
+            ("Assistant".to_string(), "starred-symbolic")
+        }
+        crate::agent::TranscriptRole::Thinking => {
+            ("Thinking".to_string(), "weather-fog-symbolic")
+        }
+        crate::agent::TranscriptRole::Tool => {
+            ("Tool".to_string(), "emblem-system-symbolic")
+        }
+        crate::agent::TranscriptRole::Notice => {
+            ("Status".to_string(), "dialog-information-symbolic")
+        }
+    };
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    header.append(&gtk4::Image::from_icon_name(icon));
+    let title_text = if entry.title.is_empty() { role } else { entry.title.clone() };
+    let role_label = gtk4::Label::new(Some(&title_text));
+    role_label.add_css_class("dim-label");
+    role_label.set_xalign(0.0);
+    role_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    role_label.set_attributes(Some(&font_attrs(caption_size)));
+    header.append(&role_label);
+    row.append(&header);
+    if !entry.text.is_empty() {
+        let body = gtk4::Label::new(Some(&entry.text));
+        body.set_xalign(0.0);
+        body.set_wrap(true);
+        body.set_selectable(true);
+        // Assistant/user text at `fontSize`; thinking/tool captions scale down.
+        let size = match entry.role {
+            crate::agent::TranscriptRole::User | crate::agent::TranscriptRole::Assistant => {
+                font_size
+            }
+            _ => caption_size,
+        };
+        body.set_attributes(Some(&font_attrs(size)));
+        match entry.status {
+            crate::agent::TranscriptStatus::Streaming | crate::agent::TranscriptStatus::Running => {
+                body.add_css_class("dim-label")
+            }
+            crate::agent::TranscriptStatus::Failed => body.add_css_class("error"),
+            _ => {}
+        }
+        row.append(&body);
+    }
+    if !entry.detail.is_empty() {
+        let detail = gtk4::Label::new(Some(&entry.detail));
+        detail.set_xalign(0.0);
+        detail.set_wrap(true);
+        detail.set_selectable(true);
+        detail.add_css_class("dim-label");
+        detail.add_css_class("monospace");
+        detail.set_attributes(Some(&font_attrs(caption_size)));
+        row.append(&detail);
+    }
+    row.upcast()
+}
+
+// ─── window assembly ─────────────────────────────────────────────────────────
+
+/// Marks a process spawned by `open_in_new_window`.
+const NEW_WINDOW_FLAG: &str = "--new-window";
+
+/// A second window is a second Pitex process (`STATE`/`UI` hold one window
+/// per process). It runs non-unique so it keeps its own window instead of
+/// handing the file back to the first instance; the shared application id
+/// keeps both under one dock/taskbar entry.
+// Only the first instance receives OS opens; `window_ipc` lets it (and every
+// spawned window) hand a file to the window that already owns its project.
+fn open_in_new_window(path: &Path) -> std::io::Result<()> {
+    let mut child = std::process::Command::new(std::env::current_exe()?)
+        .arg(NEW_WINDOW_FLAG)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+pub fn run(app_version: &str) -> i32 {
+    let mut args: Vec<String> = std::env::args().collect();
+    let new_window = args.iter().position(|a| a == NEW_WINDOW_FLAG).map(|i| args.remove(i)).is_some();
+    let mut flags = gio::ApplicationFlags::HANDLES_OPEN;
+    if new_window {
+        flags |= gio::ApplicationFlags::NON_UNIQUE;
+    }
+    let app = adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(flags)
+        .build();
+    app.connect_shutdown(|_| {
+        crate::window_ipc::stop();
+        // Quitting right after a save must not cut the write short.
+        STATE.with(|slot| {
+            if let Some(state) = slot.borrow().as_ref() {
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.model.wait_for_pending_writes();
+                    // Quit skips `close_workspace`: drop the exact-preview temp tree too.
+                    #[cfg(feature = "equation-preview")]
+                    st.equation_preview.shutdown();
+                    // The editing-preview helper group and its temporary
+                    // directory go with the app.
+                    st.model.embedded.terminate_now();
+
+                }
+            }
+        });
+    });
+    connect_workspace_open_events(&app, app_version);
+    app.run_with_args(&args).value()
+}
+
+/// Plain launches show Open; OS file requests explicitly select a project.
+fn connect_workspace_open_events(app: &adw::Application, app_version: &str) {
+    let version = app_version.to_string();
+    {
+        let version = version.clone();
+        app.connect_activate(move |app| {
+            // A plain launch always shows Open. Stored recents remain
+            // available for an explicit selection in the welcome screen.
+            build_window(app, &version);
+        });
+    }
+    // `application(_:open:)` — files passed on the command line (or via the
+    // desktop file) open as projects, mirroring the macOS entry point.
+    app.connect_open(move |app, files, _hint| {
+        let running = STATE.with(|s| s.borrow().is_some());
+        if !running {
+            build_window(app, &version);
+        }
+        for file in files {
+            if let Some(path) = file.path() {
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        if let Ok(mut st) = state.try_borrow_mut() {
+                            st.open_routed(path.to_path_buf());
+                        }
+                    }
+                });
+            }
+        }
+    });
+}
+
+fn build_window(app: &adw::Application, app_version: &str) {
+    // Channel: worker threads → main context dispatch. The std mpsc receiver
+    // blocks on its worker and dispatches only arriving messages onto GTK.
+    // The Rc<RefCell<AppState>> remains main-thread-only.
+    let (model_tx, model_rx) = std::sync::mpsc::channel::<WorkspaceMessage>();
+
+    let state = Rc::new(RefCell::new(AppState::new(
+        SettingsStore::new(Preferences::standard()),
+        model_tx,
+        app_version.to_string(),
+    )));
+    let lang = resolve_language(state.borrow().appearance.language);
+    state.borrow_mut().language = lang;
+    LANG.with(|l| l.set(lang));
+    STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+    crate::window_ipc::listen();
+    state.borrow_mut().install_agent_config_watch();
+
+    UI.with(|ui| build_chrome(app, &state, ui, model_rx));
+
+    // Auto-update: check+download+install on a worker thread when the
+    // preference allows it. `ExitRequested` means the Windows updater is
+    // staged and the process must leave so it can swap binaries.
+    if state.borrow().store.auto_install_updates() {
+        let version = app_version.to_string();
+        std::thread::spawn(move || {
+            let result = crate::update::auto_update(&version);
+            // `invoke` needs `Send` — only the result crosses; the state is
+            // reached through the main-thread-local `STATE` like elsewhere.
+            gtk4::glib::MainContext::default().invoke(move || {
+                let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+                let Ok(mut st) = state.try_borrow_mut() else { return };
+                match result {
+                    Ok(Some((info, outcome))) => match outcome {
+                        crate::update::InstallOutcome::ExitRequested => {
+                            if st.model.remote.is_some() {
+                                st.begin_remote_save(RemoteSaveAction::ExitForUpdate);
+                            } else {
+                                std::process::exit(0);
+                            }
+                        }
+                        crate::update::InstallOutcome::AwaitingRestart => {
+                            st.toast(&crate::l10n::tr1(
+                                st.language,
+                                "settings.updates.installed_version",
+                                &info.tag,
+                            ));
+                        }
+                        crate::update::InstallOutcome::HandedToTerminal => {
+                            st.toast(&crate::l10n::tr(
+                                st.language,
+                                "settings.updates.install_terminal",
+                            ));
+                        }
+                        crate::update::InstallOutcome::ManualFallback => {
+                            st.toast(&crate::l10n::tr(st.language, "settings.updates.manual"));
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(e) => st.toast(&crate::l10n::tr1(
+                        st.language,
+                        "settings.updates.failed",
+                        &e,
+                    )),
+                }
+            });
+        });
+    }
+}
+
+fn build_chrome(
+    app: &adw::Application,
+    state: &Rc<RefCell<AppState>>,
+    ui: &UiHandles,
+    model_rx: std::sync::mpsc::Receiver<WorkspaceMessage>,
+) {
+    let lang = state.borrow().language;
+
+    // ── window chrome ──
+    let window = adw::ApplicationWindow::new(app);
+    window.set_default_size(1280, 800);
+    a11y(&window, "pitex.workspace", "app.name");
+    ui.window.replace(Some(window.clone()));
+    {
+        let state = state.clone();
+        window.connect_close_request(move |_| {
+            let Ok(mut st) = state.try_borrow_mut() else { return glib::Propagation::Stop };
+            if st.allow_window_close || st.model.remote.is_none() {
+                return glib::Propagation::Proceed;
+            }
+            st.begin_remote_save(RemoteSaveAction::CloseWindow);
+            glib::Propagation::Stop
+        });
+    }
+
+
+    // Vertical box mirrors ToolbarView's header+content layout; the plain
+    // Box keeps the same visuals on both GTK variants. The header itself
+    // moves to the window level below, wrapping the whole phase stack.
+    let toolbar_view = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let header = adw::HeaderBar::new();
+    // WindowTitle's subtitle line carries the remote status (macOS shows
+    // the same text in the title bar accessory).
+    let window_title = adw::WindowTitle::new(&tr(lang, "app.name"), "");
+    header.set_title_widget(Some(&window_title));
+    ui.window_title.replace(Some(window_title.clone()));
+
+    // Navigation side: sidebar toggle.
+    let sidebar_toggle = gtk4::Button::from_icon_name("sidebar-show-symbolic");
+    compat::initial_tooltip(&sidebar_toggle, &tr(lang, "editor.show_sidebar"));
+    a11y(&sidebar_toggle, "pitex.toolbar.sidebar", "editor.show_sidebar");
+    {
+        let state = state.clone();
+        sidebar_toggle.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.model.sidebar_visible = !s.model.sidebar_visible;
+            s.refresh_console_visibility();
+        });
+    }
+    header.pack_start(&sidebar_toggle);
+
+    // Trailing controls: open, right sidebar toggle, assistant, settings, find.
+    let open_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
+    compat::initial_tooltip(&open_btn, &tr(lang, "workspace.open"));
+    a11y(&open_btn, "pitex.toolbar.open", "workspace.open");
+    ui.open_button.replace(Some(open_btn.clone()));
+    {
+        let state = state.clone();
+        open_btn.connect_clicked(move |b| {
+            state.borrow().present_open(Some(b.upcast_ref()));
+        });
+    }
+    header.pack_end(&open_btn);
+
+    let pdf_toggle = gtk4::Button::from_icon_name("x-office-document-symbolic");
+    compat::initial_tooltip(&pdf_toggle, &tr(lang, "sidebar.right"));
+    a11y(&pdf_toggle, "pitex.toolbar.pdf", "sidebar.right");
+    {
+        let state = state.clone();
+        pdf_toggle.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            if s.model.git_diff.is_some() { return; }
+            s.model.inspector_visible = !s.model.inspector_visible;
+            s.refresh_console_visibility();
+        });
+    }
+    header.pack_end(&pdf_toggle);
+
+    let assistant_toggle = gtk4::Button::from_icon_name("starred-symbolic");
+    compat::initial_tooltip(&assistant_toggle, &tr(lang, "assistant.title"));
+    a11y(&assistant_toggle, "pitex.toolbar.assistant", "assistant.title");
+    {
+        let state = state.clone();
+        assistant_toggle.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.model.toggle_assistant();
+            s.refresh_console_visibility();
+            s.refresh_assistant();
+        });
+    }
+    header.pack_end(&assistant_toggle);
+
+    let settings_btn = gtk4::Button::from_icon_name("emblem-system-symbolic");
+    compat::initial_tooltip(&settings_btn, &tr(lang, "command.settings"));
+    a11y(&settings_btn, "pitex.settings", "command.settings");
+    {
+        let state = state.clone();
+        let win = window.clone();
+        settings_btn.connect_clicked(move |_| {
+            crate::panes::show_settings(&state, &win.clone().upcast());
+        });
+    }
+    header.pack_end(&settings_btn);
+
+    // Primary menu — the macOS menubar's Edit/Build/View command surface.
+    let primary = gio::Menu::new();
+    let edit_section = gio::Menu::new();
+    edit_section.append(
+        Some(&tr(lang, "command.toggle_comment")),
+        Some("win.comment"),
+    );
+    edit_section.append(
+        Some(&tr(lang, "command.send_selection_ai")),
+        Some("win.sendsel"),
+    );
+    primary.append_section(Some(&tr(lang, "command.project")), &edit_section);
+    let build_section = gio::Menu::new();
+    build_section.append(Some(&tr(lang, "command.build")), Some("win.build"));
+    build_section.append(
+        Some(&tr(lang, "command.cancel_build")),
+        Some("win.cancelbuild"),
+    );
+    build_section.append(Some(&tr(lang, "command.clean")), Some("win.clean"));
+    build_section.append(
+        Some(&tr(lang, "command.run_custom")),
+        Some("win.runcustom"),
+    );
+    build_section.append(
+        Some(&tr(lang, "command.sync_forward")),
+        Some("win.syncforward"),
+    );
+    #[cfg(feature = "equation-preview")]
+    build_section.append(
+        Some(&tr(lang, "command.exact_equation_preview")),
+        Some("win.exactequation"),
+    );
+    primary.append_section(Some(&tr(lang, "command.build_menu")), &build_section);
+    let view_section = gio::Menu::new();
+    view_section.append(
+        Some(&tr(lang, "command.toggle_inspector")),
+        Some("win.inspector"),
+    );
+    view_section.append(
+        Some(&tr(lang, "command.toggle_bottom")),
+        Some("win.bottompanel"),
+    );
+    view_section.append(
+        Some(&tr(lang, "command.toggle_sidebar")),
+        Some("win.sidebar"),
+    );
+    primary.append_section(Some(&tr(lang, "command.view")), &view_section);
+    let tail_section = gio::Menu::new();
+    tail_section.append(
+        Some(&tr(lang, "command.settings")),
+        Some("win.settings"),
+    );
+    primary.append_section(None, &tail_section);
+    let primary_btn = gtk4::MenuButton::new();
+    primary_btn.set_icon_name("open-menu-symbolic");
+    primary_btn.set_menu_model(Some(&primary));
+    compat::initial_tooltip(&primary_btn, &tr(lang, "command.view"));
+    a11y(&primary_btn, "pitex.menu.primary", "command.view");
+    header.pack_end(&primary_btn);
+
+    let find_btn = gtk4::Button::from_icon_name("edit-find-symbolic");
+    compat::initial_tooltip(&find_btn, &tr(lang, "editor.find"));
+    a11y(&find_btn, "pitex.toolbar.find", "editor.find");
+    {
+        find_btn.connect_clicked(move |_| {
+            UI.with(|ui| {
+                if let Some(bar) = ui.search_bar.borrow().as_ref() {
+                    bar.set_search_mode(!bar.is_search_mode());
+                }
+            });
+        });
+    }
+    header.pack_end(&find_btn);
+
+    // ── central three-column layout ──
+    let outer = gtk4::Paned::new(gtk4::Orientation::Horizontal);
+    outer.set_resize_start_child(false);
+    // Fixed minimum like the macOS sidebar (minWidth 170): the divider
+    // stops at the sidebar's min width — shrinking further would allocate
+    // below the min and GTK would shift+clip the content. The editor is
+    // protected by inner.shrink_start_child(false) below.
+    outer.set_shrink_start_child(false);
+    ui.outer_paned.replace(Some(outer.clone()));
+
+    let inner = gtk4::Paned::new(gtk4::Orientation::Horizontal);
+    inner.set_resize_end_child(false);
+    inner.set_shrink_end_child(false);
+    // The editor column must never be squeezed below its minimum — the
+    // preview absorbs the deficit instead (clipped, not overlapped).
+    inner.set_shrink_start_child(false);
+    ui.inner_paned.replace(Some(inner.clone()));
+
+    // Sidebar.
+    let sidebar = build_sidebar(state, ui);
+    outer.set_start_child(Some(&sidebar));
+    outer.set_end_child(Some(&inner));
+
+    // Center: editor column over the console in a vertical pane.
+    let console_paned = gtk4::Paned::new(gtk4::Orientation::Vertical);
+    console_paned.set_resize_start_child(true);
+    console_paned.set_shrink_end_child(false);
+    ui.console_paned.replace(Some(console_paned.clone()));
+    let editor_column = build_editor_column(state, ui);
+    console_paned.set_start_child(Some(&editor_column));
+    let console = crate::panes::build_console(state, ui);
+    console_paned.set_end_child(Some(&console));
+    console_paned.set_position(520);
+    inner.set_start_child(Some(&console_paned));
+
+    // Right inspector: PDF preview.
+    let preview = crate::panes::build_preview_pane(state, ui);
+    inner.set_end_child(Some(&preview));
+    // GTK clamps these positions to the children's minimum sizes. Start
+    // both side panes at that minimum and give the editor the remaining space.
+    inner.set_position(i32::MAX);
+    outer.set_position(0);
+
+    outer.set_vexpand(true);
+    toolbar_view.append(&outer);
+
+    // ── phase stack overlays the whole window ──
+    let root_stack = gtk4::Stack::new();
+    root_stack.add_named(&empty_page(state, ui), Some("empty"));
+    root_stack.add_named(&loading_page(state), Some("loading"));
+    root_stack.add_named(&error_page(state, ui), Some("error"));
+    root_stack.add_named(&toolbar_view, Some("ready"));
+    root_stack.set_visible_child_name("empty");
+    ui.root_stack.replace(Some(root_stack.clone()));
+
+    // Toast overlay wraps everything.
+    let toast = adw::ToastOverlay::new();
+    toast.set_child(Some(&root_stack));
+    ui.toast_overlay.replace(Some(toast.clone()));
+    #[cfg(feature = "modern-gtk")]
+    {
+        // The header is the window's top bar — window controls (min/max/
+        // close on Windows, close/min/max per decoration layout on Linux)
+        // appear on every stack page.
+        let chrome = adw::ToolbarView::new();
+        chrome.add_top_bar(&header);
+        chrome.set_content(Some(&toast));
+        window.set_content(Some(&chrome));
+    }
+    #[cfg(not(feature = "modern-gtk"))]
+    {
+        // libadwaita 1.1 has no ToolbarView — a plain vertical box puts the
+        // same header (and its window controls) above every stack page.
+        let chrome = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        chrome.append(&header);
+        toast.set_vexpand(true);
+        chrome.append(&toast);
+        window.set_content(Some(&chrome));
+    }
+
+    // ── keyboard shortcuts — the macOS `AppCommands` accelerator surface:
+    // ⌘N new, ⌘O open, ⌘P pin, ⌘W close, ⌘S save, ⌘⇧S save-as, ⌘⌥S save-all,
+    // ⌘/ comment, ⌘⇧A send-selection, ⌘B build, ⌘. cancel, ⌘⌃B custom,
+    // ⌘⇧J sync, ⌘T left sidebar, ⌘⌥P inspector, ⌘⇧Y bottom panel. (⌘ maps to
+    // Ctrl; macOS Control+Command pairs map to Ctrl+Alt here.)
+    app.set_accels_for_action("win.newdoc", &["<Control>n"]);
+    app.set_accels_for_action("win.open", &["<Control>o"]);
+    app.set_accels_for_action("win.pintarget", &["<Control>p"]);
+    app.set_accels_for_action("win.close", &["<Control>w"]);
+    app.set_accels_for_action("win.save", &["<Control>s"]);
+    app.set_accels_for_action("win.saveas", &["<Control><Shift>s"]);
+    app.set_accels_for_action("win.saveall", &["<Control><Alt>s"]);
+    app.set_accels_for_action("win.comment", &["<Control>slash"]);
+    app.set_accels_for_action("win.sendsel", &["<Control><Shift>a"]);
+    app.set_accels_for_action("win.build", &["<Control>b"]);
+    app.set_accels_for_action("win.cancelbuild", &["<Control>period"]);
+    app.set_accels_for_action("win.runcustom", &["<Control><Alt>b"]);
+    app.set_accels_for_action("win.syncforward", &["<Control><Shift>j"]);
+    // ⌘⌥E on macOS: exact TeX render of the equation at the caret/pointer.
+    #[cfg(feature = "equation-preview")]
+    app.set_accels_for_action("win.exactequation", &["<Control><Alt>e"]);
+    app.set_accels_for_action("win.sidebar", &["<Control>t"]);
+    app.set_accels_for_action("win.inspector", &["<Control><Alt>p"]);
+    app.set_accels_for_action("win.bottompanel", &["<Control><Shift>y"]);
+    app.set_accels_for_action("win.find", &["<Control>f"]);
+    app.set_accels_for_action("win.settings", &["<Control>comma"]);
+
+    let save_action = gio::SimpleAction::new("save", None);
+    {
+        let state = state.clone();
+        save_action.connect_activate(move |_, _| state.borrow_mut().save_action());
+    }
+    window.add_action(&save_action);
+    ui.save_action.replace(Some(save_action.clone()));
+    let build_action = gio::SimpleAction::new("build", None);
+    {
+        let state = state.clone();
+        build_action.connect_activate(move |_, _| state.borrow_mut().toggle_build_action());
+    }
+    window.add_action(&build_action);
+    let cancel_action = gio::SimpleAction::new("cancelbuild", None);
+    {
+        let state = state.clone();
+        cancel_action.connect_activate(move |_, _| state.borrow_mut().cancel_build_action());
+    }
+    window.add_action(&cancel_action);
+    let custom_action = gio::SimpleAction::new("runcustom", None);
+    {
+        let state = state.clone();
+        custom_action.connect_activate(move |_, _| state.borrow_mut().run_custom_command_action());
+    }
+    window.add_action(&custom_action);
+    let clean_action = gio::SimpleAction::new("clean", None);
+    {
+        let state = state.clone();
+        clean_action.connect_activate(move |_, _| state.borrow_mut().clean_artifacts_action());
+    }
+    window.add_action(&clean_action);
+    let comment_action = gio::SimpleAction::new("comment", None);
+    {
+        let state = state.clone();
+        comment_action.connect_activate(move |_, _| state.borrow_mut().toggle_comment_action());
+    }
+    window.add_action(&comment_action);
+    let sendsel_action = gio::SimpleAction::new("sendsel", None);
+    {
+        let state = state.clone();
+        sendsel_action.connect_activate(move |_, _| state.borrow_mut().send_selection_action());
+    }
+    window.add_action(&sendsel_action);
+    let pin_action = gio::SimpleAction::new("pintarget", None);
+    {
+        let state = state.clone();
+        pin_action.connect_activate(move |_, _| state.borrow_mut().pin_target_action());
+    }
+    window.add_action(&pin_action);
+    let close_action = gio::SimpleAction::new("close", None);
+    {
+        let state = state.clone();
+        close_action.connect_activate(move |_, _| state.borrow_mut().close_action());
+    }
+    window.add_action(&close_action);
+    let assistant_action = gio::SimpleAction::new("assistant", None);
+    {
+        let state = state.clone();
+        assistant_action.connect_activate(move |_, _| state.borrow_mut().toggle_assistant_action());
+    }
+    window.add_action(&assistant_action);
+    let inspector_action = gio::SimpleAction::new("inspector", None);
+    {
+        let state = state.clone();
+        inspector_action.connect_activate(move |_, _| state.borrow_mut().toggle_inspector_action());
+    }
+    window.add_action(&inspector_action);
+    let bottom_action = gio::SimpleAction::new("bottompanel", None);
+    {
+        let state = state.clone();
+        bottom_action.connect_activate(move |_, _| state.borrow_mut().toggle_bottom_panel_action());
+    }
+    window.add_action(&bottom_action);
+    let sidebar_action = gio::SimpleAction::new("sidebar", None);
+    {
+        let state = state.clone();
+        sidebar_action.connect_activate(move |_, _| state.borrow_mut().toggle_sidebar_action());
+    }
+    window.add_action(&sidebar_action);
+    let settings_action = gio::SimpleAction::new("settings", None);
+    {
+        let state = state.clone();
+        let win = window.clone();
+        settings_action.connect_activate(move |_, _| {
+            crate::panes::show_settings(&state, &win.clone().upcast());
+        });
+    }
+    window.add_action(&settings_action);
+    let find_action = gio::SimpleAction::new("find", None);
+    find_action.connect_activate(move |_, _| {
+        UI.with(|ui| {
+            if let Some(bar) = ui.search_bar.borrow().as_ref() {
+                bar.set_search_mode(true);
+                if let Some(entry) = ui.search_entry.borrow().as_ref() { entry.grab_focus(); }
+            }
+        });
+    });
+    window.add_action(&find_action);
+    let sync_action = gio::SimpleAction::new("syncforward", None);
+    {
+        let state = state.clone();
+        sync_action.connect_activate(move |_, _| state.borrow_mut().sync_forward_action());
+    }
+    window.add_action(&sync_action);
+    #[cfg(feature = "equation-preview")]
+    {
+        let exact_action = gio::SimpleAction::new("exactequation", None);
+        let state = state.clone();
+        exact_action.connect_activate(move |_, _| {
+            // Clone out first: the request may re-enter state through GTK.
+            let host = state.try_borrow().ok().map(|s| s.equation_preview.clone());
+            if let Some(host) = host {
+                host.request_exact();
+            }
+        });
+        window.add_action(&exact_action);
+    }
+    // Open Recent — the menu item carries the recents index as an int target.
+    // `win.openrecent(5)` parses `5` via g_variant_parse → int64 ("x").
+    let openrecent_action = gio::SimpleAction::new(
+        "openrecent",
+        Some(glib::VariantTy::new("x").expect("variant ty")),
+    );
+    {
+        let state = state.clone();
+        openrecent_action.connect_activate(move |_, param| {
+            if let Some(i) = param.and_then(|p| p.get::<i64>()) {
+                state.borrow_mut().open_recent_action(i as i32);
+            }
+        });
+    }
+    window.add_action(&openrecent_action);
+    let clearrecents_action = gio::SimpleAction::new("clearrecents", None);
+    {
+        let state = state.clone();
+        clearrecents_action
+            .connect_activate(move |_, _| state.borrow_mut().clear_recents_action());
+    }
+    window.add_action(&clearrecents_action);
+    // "Open via SSH…" is the remote-session entry in the "+" menu.
+    {
+        let openssh_action = gio::SimpleAction::new("openssh", None);
+        {
+            let state = state.clone();
+            openssh_action.connect_activate(move |_, _| {
+                state.borrow_mut().present_open_via_ssh();
+            });
+        }
+        window.add_action(&openssh_action);
+
+    }
+
+    // Wait off-thread; idle applications no longer poll empty channels.
+    std::thread::spawn(move || {
+        while let Ok(message) = model_rx.recv() {
+            glib::idle_add_once(move || {
+                STATE.with(|slot| {
+                    if let Some(state) = slot.borrow().as_ref() {
+                        state.borrow_mut().dispatch(message);
+                    }
+                });
+            });
+        }
+    });
+
+    // Git Integration — refresh while the pane is visible. VSCode watches
+    // the worktree; a light 4s poll covers external `git` CLI changes too.
+    // A suspended window (minimized or fully hidden, GTK 4.12+) runs no git
+    // subprocesses and refreshes the moment it shows again.
+    {
+        let state = state.clone();
+        let window = window.downgrade();
+        glib::timeout_add_local(Duration::from_secs(4), move || {
+            if window.upgrade().is_some_and(|window| window_suspended(&window)) {
+                return glib::ControlFlow::Continue;
+            }
+            let Ok(s) = state.try_borrow_mut() else {
+                return glib::ControlFlow::Continue;
+            };
+            if s.model.console_section == ConsoleSection::Git
+                && s.model.bottom_panel_visible
+                && !s.model.git_busy
+            {
+                s.refresh_git();
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+
+    if window.find_property("suspended").is_some() {
+        let state = state.clone();
+        window.connect_notify_local(Some("suspended"), move |window, _| {
+            if window_suspended(window) {
+                return;
+            }
+            let Ok(s) = state.try_borrow_mut() else { return };
+            if s.model.console_section == ConsoleSection::Git
+                && s.model.bottom_panel_visible
+                && !s.model.git_busy
+            {
+                s.refresh_git();
+            }
+        });
+    }
+
+    state.borrow_mut().apply_theme();
+    // System mode: when the OS flips light/dark the effective palette
+    // changes — re-resolve colors like the Swift `effectiveAppearance`
+    // observation does. Under a pinned Force* scheme `dark` never fires.
+    {
+        let state = state.clone();
+        adw::StyleManager::default().connect_dark_notify(move |_| {
+            let Ok(s) = state.try_borrow() else { return };
+            s.apply_theme();
+            s.rehighlight();
+            // A `system` Markdown theme tracks the app appearance.
+            s.render_markdown_now();
+        });
+    }
+    // Window came forward: pull when the last pull is over a minute old
+    // (`pullRemoteIfStale` on `.onChange(of: scenePhase)`).
+    {
+        let state = state.clone();
+        window.connect_notify_local(Some("is-active"), move |window, _| {
+            if !window.is_active() { return; }
+            let Ok(mut st) = state.try_borrow_mut() else { return };
+            st.model.pull_remote_if_stale();
+            st.refresh_remote_status();
+        });
+    }
+    state.borrow_mut().refresh_phase();
+    window.present();
+
+    // `applicationDidFinishLaunching` — the agent runtime self-installs on
+    // first launch and refreshes its bundled skills every launch, then the
+    // agent is prepared. The install runs off the main thread; the prepare
+    // hop returns through an idle on the main context.
+    std::thread::spawn(|| {
+        let _ = crate::agent::pi_installer::ensure_installed();
+        glib::idle_add_once(|| {
+            STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        if st.agent.is_some() {
+                            // Only an Assistant that was already opened
+                            // (e.g. it found pi missing before this
+                            // install finished) reconnects here.
+                            if let Some(agent) = st.agent.as_mut().filter(|a| a.wants_connection) {
+                                agent.prepare();
+                            }
+                            st.refresh_assistant();
+                        }
+                    }
+                }
+            });
+        });
+    });
+}
+
+fn empty_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
+    let lang = state.borrow().language;
+    let page = adw::StatusPage::new();
+    page.set_title(&tr(lang, "workspace.no_project"));
+    page.set_description(Some(&tr(lang, "workspace.no_project_detail")));
+    page.set_icon_name(Some("folder-open-symbolic"));
+    a11y(&page, "pitex.noProject", "workspace.no_project");
+    let button = gtk4::Button::with_label(&tr(lang, "workspace.open"));
+    button.set_halign(gtk4::Align::Center);
+    button.add_css_class("suggested-action");
+    button.add_css_class("pill");
+    a11y(&button, "pitex.open", "workspace.open");
+    {
+        let state = state.clone();
+        button.connect_clicked(move |b| {
+            state.borrow().present_open(Some(b.upcast_ref()));
+        });
+    }
+    let welcome = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    welcome.set_halign(gtk4::Align::Center);
+    welcome.append(&button);
+    // The welcome screen's second entry point (macOS "Open via SSH…").
+    {
+        let ssh_button = gtk4::Button::with_label(&tr(lang, "command.open_via_ssh"));
+        ssh_button.add_css_class("pill");
+        ssh_button.set_halign(gtk4::Align::Center);
+        a11y(&ssh_button, "pitex.openViaSSH", "command.open_via_ssh");
+        ssh_button.connect_clicked(move |_| crate::ssh_ui::present_open_via_ssh(lang));
+        welcome.append(&ssh_button);
+    }
+    page.set_child(Some(&welcome));
+    ui.status_page.replace(Some(page.clone()));
+    page.upcast()
+}
+
+fn loading_page(state: &Rc<RefCell<AppState>>) -> gtk4::Widget {
+    let lang = state.borrow().language;
+    let page = adw::StatusPage::new();
+    page.set_title(&tr(lang, "state.loading"));
+    page.set_icon_name(Some("folder-open-symbolic"));
+    let spinner = gtk4::Spinner::new();
+    spinner.start();
+    page.set_child(Some(&spinner));
+    a11y(&page, "pitex.loading", "state.loading");
+    page.upcast()
+}
+
+fn error_page(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
+    let lang = state.borrow().language;
+    let page = adw::StatusPage::new();
+    page.set_title(&tr(lang, "error.title"));
+    page.set_icon_name(Some("dialog-error-symbolic"));
+    a11y(&page, "pitex.error", "error.title");
+    let button = gtk4::Button::with_label(&tr(lang, "command.open"));
+    button.set_halign(gtk4::Align::Center);
+    {
+        let state = state.clone();
+        button.connect_clicked(move |b| {
+            state.borrow().present_open(Some(b.upcast_ref()));
+        });
+    }
+    page.set_child(Some(&button));
+    let _ = ui; // status_page shared with empty state
+    page.upcast()
+}
+
+/// Symbols popover — the GTK counterpart of `SymbolsPaletteView`: a
+/// category picker over a glyph grid from the shared `TEX_SYMBOLS`
+/// catalogue. A click copies the exact LaTeX command to the clipboard
+/// and closes the popover.
+fn build_symbols_popover() -> gtk4::Popover {
+    let lang = LANG.with(|l| l.get());
+    let popover = gtk4::Popover::new();
+    let root = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    root.set_margin_top(8);
+    root.set_margin_bottom(8);
+    root.set_margin_start(8);
+    root.set_margin_end(8);
+    a11y(&root, "pitex.symbols.palette", "editor.symbols");
+
+    let titles: Vec<String> = language_core::SymbolCategory::ALL
+        .iter()
+        .map(|category| tr(lang, category.title_key()))
+        .collect();
+    let title_strs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let picker = gtk4::DropDown::from_strings(&title_strs);
+    a11y(&picker, "pitex.symbols.category", "editor.symbols");
+    root.append(&picker);
+
+    let flow = gtk4::FlowBox::new();
+    flow.set_selection_mode(gtk4::SelectionMode::None);
+    flow.set_min_children_per_line(6);
+    flow.set_max_children_per_line(12);
+    flow.set_homogeneous(true);
+    let scroller = gtk4::ScrolledWindow::new();
+    scroller.set_min_content_width(360);
+    scroller.set_min_content_height(240);
+    scroller.set_child(Some(&flow));
+    root.append(&scroller);
+    popover.set_child(Some(&root));
+
+    let rebuild = {
+        let popover = popover.clone();
+        move |flow: &gtk4::FlowBox, index: u32| {
+            while let Some(child) = flow.first_child() {
+                flow.remove(&child);
+            }
+            let Some(&category) = language_core::SymbolCategory::ALL.get(index as usize)
+            else {
+                return;
+            };
+            for symbol in language_core::symbols_in(category) {
+                let button = gtk4::Button::with_label(symbol.glyph);
+                compat::initial_tooltip(&button, symbol.command);
+                let command = symbol.command;
+                let popover = popover.clone();
+                button.connect_clicked(move |button| {
+                    button.clipboard().set_text(command);
+                    popover.popdown();
+                });
+                // `insert(-1)` appends — `FlowBox::append` needs gtk4 v4_6,
+                // absent from the Ubuntu 22.04 no-default-features build.
+                flow.insert(&button, -1);
+            }
+        }
+    };
+    rebuild(&flow, 0);
+    {
+        let flow = flow.clone();
+        picker.connect_selected_notify(move |picker| rebuild(&flow, picker.selected()));
+    }
+    popover
+}
+
+fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
+    let lang = state.borrow().language;
+    let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    a11y(&root, "pitex.projectOutline", "sidebar.outline");
+    root.set_size_request(170, -1); // macOS sidebar minWidth parity
+
+    let structure = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    structure.set_size_request(-1, 120);
+    let navigator = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    navigator.set_size_request(-1, 160);
+
+    // Section picker (segmented → DropDown is the compact GTK equivalent).
+    let section_items = [
+        tr(lang, "sidebar.outline"),
+        tr(lang, "sidebar.labels"),
+        tr(lang, "sidebar.bibtex"),
+    ];
+    let section_strs: Vec<&str> = section_items.iter().map(String::as_str).collect();
+    let sections = gtk4::DropDown::from_strings(&section_strs);
+    sections.set_margin_start(6);
+    sections.set_margin_end(6);
+    sections.set_margin_top(6);
+    sections.set_margin_bottom(6);
+    a11y(&sections, "pitex.sidebar.section", "sidebar.outline");
+    {
+        let state = state.clone();
+        sections.connect_selected_notify(move |dd| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.model.sidebar_section = match dd.selected() {
+                1 => SidebarSection::Labels,
+                2 => SidebarSection::BibTeX,
+                _ => SidebarSection::Outline,
+            };
+            s.refresh_sidebar();
+        });
+    }
+    ui.sidebar_section_dropdown.replace(Some(sections.clone()));
+    structure.append(&sections);
+    structure.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+
+    // Section content stack.
+    let stack = gtk4::Stack::new();
+    stack.set_vexpand(true);
+    for (name, handle) in [
+        ("outline", &ui.outline_list),
+        ("labels", &ui.labels_list),
+        ("bibtex", &ui.bib_list),
+    ] {
+        let scroll = gtk4::ScrolledWindow::new();
+        scroll.set_vexpand(true);
+        let list = gtk4::ListBox::new();
+        list.set_selection_mode(gtk4::SelectionMode::None);
+        list.add_css_class("navigation-sidebar");
+        a11y(
+            &list,
+            match name {
+                "outline" => "pitex.sidebar.outline",
+                "labels" => "pitex.sidebar.labels",
+                _ => "pitex.sidebar.bibtex",
+            },
+            "sidebar.outline",
+        );
+        {
+            let state = state.clone();
+            let section = name.to_string();
+            list.connect_row_activated(move |_, row| {
+                let Ok(mut s) = state.try_borrow_mut() else { return };
+                let name = row
+                    .child()
+                    .map(|c| c.widget_name().to_string())
+                    .unwrap_or_default();
+                let idx = name
+                    .rsplit('-')
+                    .next()
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .unwrap_or(0);
+                let target = match section.as_str() {
+                    "outline" => s.model.outline_items.get(idx).map(|i| (i.line, 0usize)),
+                    "labels" => s.model.label_items.get(idx).map(|i| (i.line, 0usize)),
+                    _ => None,
+                };
+                if let Some((line, col)) = target {
+                    s.jump_to(line.max(1), col, false);
+                }
+            });
+        }
+        scroll.set_child(Some(&list));
+        handle.replace(Some(list));
+        stack.add_named(&scroll, Some(name));
+    }
+
+    // TODOs shares the lower pane with Project; task actions stay unchanged.
+    let todos_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let todos_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    todos_header.set_margin_start(10);
+    todos_header.set_margin_end(6);
+    todos_header.set_margin_top(4);
+    let todos_title = gtk4::Label::new(Some(&tr(lang, "sidebar.todos")));
+    todos_title.set_xalign(0.0);
+    todos_title.set_hexpand(true);
+    todos_title.add_css_class("caption");
+    todos_title.add_css_class("dim-label");
+    todos_header.append(&todos_title);
+    let todo_add = gtk4::Button::from_icon_name("list-add-symbolic");
+    todo_add.add_css_class("flat");
+    compat::initial_tooltip(&todo_add, &tr(lang, "todos.add_help"));
+    a11y(&todo_add, "pitex.sidebar.todos.add", "todos.add_help");
+    {
+        let state = state.clone();
+        todo_add.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.add_todo_action();
+        });
+    }
+    ui.todo_add_button.replace(Some(todo_add.clone()));
+    todos_header.append(&todo_add);
+    todos_page.append(&todos_header);
+    let todos_scroll = gtk4::ScrolledWindow::new();
+    todos_scroll.set_vexpand(true);
+    let todo_list = gtk4::ListBox::new();
+    todo_list.set_selection_mode(gtk4::SelectionMode::None);
+    todo_list.add_css_class("navigation-sidebar");
+    a11y(&todo_list, "pitex.sidebar.todos", "sidebar.todos");
+    {
+        let state = state.clone();
+        todo_list.connect_row_activated(move |_, row| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            let name = row
+                .child()
+                .map(|c| c.widget_name().to_string())
+                .unwrap_or_default();
+            let idx = name
+                .rsplit('-')
+                .next()
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0);
+            if let Some(item) = s.model.todo_items.get(idx).cloned() {
+                s.open_todo(&item);
+            }
+        });
+    }
+    todos_scroll.set_child(Some(&todo_list));
+    todos_page.append(&todos_scroll);
+    ui.todo_list.replace(Some(todo_list));
+
+    stack.set_visible_child_name("outline");
+    ui.sidebar_stack.replace(Some(stack.clone()));
+    structure.append(&stack);
+
+    // Workspace, Project and TODOs switch independently of document structure.
+    let workspace_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    header.set_margin_start(10);
+    header.set_margin_end(6);
+    header.set_margin_top(8);
+    let title = gtk4::Label::new(Some(&tr(lang, "sidebar.workspace")));
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    title.add_css_class("caption");
+    title.add_css_class("dim-label");
+    header.append(&title);
+    let rescan = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    rescan.add_css_class("flat");
+    compat::initial_tooltip(&rescan, &tr(lang, "sidebar.rescan_help"));
+    {
+        let state = state.clone();
+        rescan.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.model.rescan_project();
+            s.restart_embedded_preview();
+            s.refresh_sidebar();
+            s.install_watchers();
+        });
+    }
+    header.append(&rescan);
+    let pin = gtk4::Button::from_icon_name("emblem-important-symbolic");
+    pin.add_css_class("flat");
+    compat::initial_tooltip(&pin, &tr(lang, "sidebar.pin_help"));
+    a11y(&pin, "pitex.sidebar.pin", "sidebar.pin_help");
+    {
+        let state = state.clone();
+        pin.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.model.toggle_pinned_build_target();
+            s.restart_embedded_preview();
+            s.refresh_sidebar();
+            s.refresh_pdf_ui();
+        });
+    }
+    ui.pin_button.replace(Some(pin.clone()));
+    header.append(&pin);
+    workspace_page.append(&header);
+
+    let project_scroll = gtk4::ScrolledWindow::new();
+    project_scroll.set_vexpand(true);
+    project_scroll.set_min_content_height(140);
+    let project_list = gtk4::ListBox::new();
+    project_list.set_selection_mode(gtk4::SelectionMode::None);
+    project_list.add_css_class("navigation-sidebar");
+    project_scroll.set_child(Some(&project_list));
+    ui.workspace_list.replace(Some(project_list));
+    workspace_page.append(&project_scroll);
+
+    let project_page = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let project_title = gtk4::Label::new(Some(&tr(lang, "sidebar.project")));
+    project_title.set_xalign(0.0);
+    project_title.set_margin_start(10);
+    project_title.set_margin_top(8);
+    project_title.add_css_class("caption");
+    project_title.add_css_class("dim-label");
+    project_page.append(&project_title);
+    let dependency_scroll = gtk4::ScrolledWindow::new();
+    dependency_scroll.set_vexpand(true);
+    dependency_scroll.set_min_content_height(140);
+    let dependency_list = gtk4::ListBox::new();
+    dependency_list.set_selection_mode(gtk4::SelectionMode::None);
+    dependency_list.add_css_class("navigation-sidebar");
+    dependency_scroll.set_child(Some(&dependency_list));
+    ui.project_list.replace(Some(dependency_list));
+    project_page.append(&dependency_scroll);
+    let output_sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+    output_sep.set_margin_start(10);
+    output_sep.set_margin_end(10);
+    output_sep.set_visible(false);
+    let output_list = gtk4::ListBox::new();
+    output_list.set_selection_mode(gtk4::SelectionMode::None);
+    output_list.add_css_class("navigation-sidebar");
+    output_list.set_visible(false);
+    ui.project_output_sep.replace(Some(output_sep.clone().upcast()));
+    ui.project_output_list.replace(Some(output_list.clone()));
+    project_page.append(&output_sep);
+    project_page.append(&output_list);
+
+    let project_stack = gtk4::Stack::new();
+    project_stack.set_vexpand(true);
+    project_stack.add_titled(&workspace_page, Some("workspace"), &tr(lang, "sidebar.workspace"));
+    project_stack.add_titled(&project_page, Some("project"), &tr(lang, "sidebar.project"));
+    project_stack.add_titled(&todos_page, Some("todos"), &tr(lang, "sidebar.todos"));
+    project_stack.set_visible_child_name("workspace");
+    let project_switcher = gtk4::StackSwitcher::new();
+    project_switcher.set_stack(Some(&project_stack));
+    project_switcher.set_margin_start(6);
+    project_switcher.set_margin_end(6);
+    project_switcher.set_margin_top(6);
+    project_switcher.set_margin_bottom(6);
+    a11y(&project_switcher, "pitex.sidebar.projectSection", "sidebar.project");
+    navigator.append(&project_switcher);
+    navigator.append(&project_stack);
+    let split = gtk4::Paned::new(gtk4::Orientation::Vertical);
+    split.set_start_child(Some(&structure));
+    split.set_end_child(Some(&navigator));
+    split.set_shrink_start_child(false);
+    split.set_shrink_end_child(false);
+    split.set_position(350);
+    split.set_vexpand(true);
+    root.append(&split);
+    root.upcast()
+}
+
+fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
+    let lang = state.borrow().language;
+    let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+
+    // Tab strip + add/save/build/sync cluster.
+    let strip = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    strip.set_margin_start(6);
+    strip.set_margin_end(6);
+    let scroll = gtk4::ScrolledWindow::new();
+    scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
+    scroll.set_hexpand(true);
+    let tab_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    a11y(&tab_row, "pitex.tabs", "editor.title");
+    scroll.set_child(Some(&tab_row));
+    ui.tab_row.replace(Some(tab_row));
+    strip.append(&scroll);
+
+    // TeXifier-style symbols palette — the same catalogue + ordering the
+    // macOS `SymbolsPaletteView` renders; a glyph click copies the LaTeX
+    // command to the clipboard. Sits immediately left of the "+" menu like
+    // the macOS tab strip.
+    let symbols_btn = gtk4::MenuButton::new();
+    symbols_btn.set_icon_name("accessories-character-map-symbolic");
+    compat::initial_tooltip(&symbols_btn, &tr(lang, "editor.symbols"));
+    a11y(&symbols_btn, "pitex.toolbar.symbols", "editor.symbols");
+    symbols_btn.set_popover(Some(&build_symbols_popover()));
+    strip.append(&symbols_btn);
+
+    // "+" menu: the File-menu equivalent — new / open / pin / close; the
+    // Open Recent section is rebuilt in `refresh_phase` from the model.
+    let add_menu = gio::Menu::new();
+    add_menu.append(Some(&tr(lang, "command.new")), Some("win.newdoc"));
+    add_menu.append(Some(&tr(lang, "command.open")), Some("win.open"));
+    let add = gtk4::MenuButton::new();
+    add.set_icon_name("list-add-symbolic");
+    add.set_menu_model(Some(&add_menu));
+    a11y(&add, "pitex.editor.add", "command.new");
+    ui.add_menu_button.replace(Some(add.clone()));
+    strip.append(&add);
+
+    // Save menu: save / save as / save all.
+    let save_menu = gio::Menu::new();
+    save_menu.append(Some(&tr(lang, "editor.save")), Some("win.save"));
+    save_menu.append(Some(&tr(lang, "command.save_as")), Some("win.saveas"));
+    save_menu.append(Some(&tr(lang, "command.save_all")), Some("win.saveall"));
+    let save = gtk4::MenuButton::new();
+    save.set_icon_name("document-save-symbolic");
+    save.set_menu_model(Some(&save_menu));
+    a11y(&save, "pitex.toolbar.save", "editor.save");
+    strip.append(&save);
+
+    let build_btn = gtk4::Button::from_icon_name("media-playback-start-symbolic");
+    compat::initial_tooltip(&build_btn, &tr(lang, "build.start"));
+    a11y(&build_btn, "pitex.build", "build.start");
+    {
+        let state = state.clone();
+        build_btn.connect_clicked(move |_| state.borrow_mut().toggle_build_action());
+    }
+    ui.header_build_button.replace(Some(build_btn.clone()));
+    strip.append(&build_btn);
+
+    // Live-compile toggle — mirrors `live_compile_enabled`; toggling
+    // retires pending live work and cancels a live run immediately.
+    let live_toggle = gtk4::ToggleButton::new();
+    live_toggle.set_icon_name("media-record-symbolic");
+    compat::initial_tooltip(&live_toggle, &tr(lang, "toolbar.live_compile"));
+    a11y(&live_toggle, "pitex.toolbar.live_compile", "toolbar.live_compile");
+    live_toggle.set_active(state.borrow().store.live_compile_enabled());
+    {
+        let state = state.clone();
+        live_toggle.connect_toggled(move |b| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.store.set_live_compile_enabled(b.is_active());
+            s.apply_live_settings();
+        });
+    }
+    ui.live_toggle.replace(Some(live_toggle.clone()));
+    strip.append(&live_toggle);
+
+    root.append(&strip);
+
+    // "Editor" header: caption + disk status + reload.
+    let editor_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    editor_header.set_margin_start(10);
+    editor_header.set_margin_end(10);
+    let caption = gtk4::Label::new(Some(&tr(lang, "editor.title")));
+    caption.set_xalign(0.0);
+    caption.set_hexpand(true);
+    caption.add_css_class("caption");
+    caption.add_css_class("dim-label");
+    editor_header.append(&caption);
+    let disk = gtk4::Button::from_icon_name("emblem-synchronizing-symbolic");
+    disk.add_css_class("flat");
+    let tooltip_state = Rc::downgrade(state);
+    compat::dynamic_tooltip(&disk, move || {
+        let state = tooltip_state.upgrade()?;
+        let state = state.try_borrow().ok()?;
+        let conflicted = state.model.document_snapshot.as_ref()
+            .map(|s| s.save_state == DocumentSaveState::Conflicted).unwrap_or(false);
+        Some(tr(state.language, if conflicted { "editor.disk_changed" } else { "editor.disk_unchanged" }))
+    });
+    a11y(&disk, "pitex.editor.diskStatus", "editor.disk_unchanged");
+    {
+        let state = state.clone();
+        disk.connect_clicked(move |_| state.borrow_mut().reload_active());
+    }
+    ui.disk_status.replace(Some(disk.clone()));
+    editor_header.append(&disk);
+    let reload = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    reload.add_css_class("flat");
+    compat::initial_tooltip(&reload, &tr(lang, "editor.reload"));
+    a11y(&reload, "pitex.editor.reload", "editor.reload");
+    {
+        let state = state.clone();
+        reload.connect_clicked(move |_| state.borrow_mut().reload_active());
+    }
+    editor_header.append(&reload);
+    root.append(&editor_header);
+
+    // Conflict banner.
+    let banner = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    banner.set_margin_start(9);
+    banner.set_margin_end(9);
+    banner.set_margin_top(4);
+    banner.set_margin_bottom(4);
+    banner.add_css_class("warning");
+    banner.set_visible(false);
+    a11y(&banner, "pitex.conflict", "conflict.title");
+    banner.append(&gtk4::Image::from_icon_name("dialog-warning-symbolic"));
+    let banner_text = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    banner_text.set_hexpand(true);
+    let banner_title = gtk4::Label::new(Some(&tr(lang, "conflict.title")));
+    banner_title.set_xalign(0.0);
+    let banner_msg = gtk4::Label::new(None);
+    banner_msg.set_xalign(0.0);
+    banner_msg.add_css_class("caption");
+    banner_text.append(&banner_title);
+    banner_text.append(&banner_msg);
+    ui.conflict_label.replace(Some(banner_msg));
+    banner.append(&banner_text);
+    let use_disk = gtk4::Button::with_label(&tr(lang, "conflict.use_external"));
+    a11y(&use_disk, "pitex.conflict.useExternal", "conflict.use_external");
+    {
+        let state = state.clone();
+        use_disk.connect_clicked(move |_| state.borrow_mut().resolve_conflict(true));
+    }
+    banner.append(&use_disk);
+    let keep_mine = gtk4::Button::with_label(&tr(lang, "conflict.keep_mine"));
+    a11y(&keep_mine, "pitex.conflict.keepMine", "conflict.keep_mine");
+    {
+        let state = state.clone();
+        keep_mine.connect_clicked(move |_| state.borrow_mut().resolve_conflict(false));
+    }
+    banner.append(&keep_mine);
+    ui.conflict_banner.replace(Some(banner.clone()));
+    root.append(&banner);
+
+    // Remote conflict banner — files changed both here and on the device,
+    // resolved per file (`remoteConflicts` in the macOS workspace).
+    {
+        let remote_banner = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        remote_banner.set_margin_start(9);
+        remote_banner.set_margin_end(9);
+        remote_banner.set_margin_top(4);
+        remote_banner.set_margin_bottom(4);
+        remote_banner.add_css_class("warning");
+        remote_banner.set_visible(false);
+        a11y(&remote_banner, "pitex.remoteConflict", "remote.conflict.title");
+        let head = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        head.append(&gtk4::Image::from_icon_name("network-server-symbolic"));
+        let remote_title = gtk4::Label::new(None);
+        remote_title.set_xalign(0.0);
+        remote_title.add_css_class("heading");
+        head.append(&remote_title);
+        remote_banner.append(&head);
+        let remote_rows = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        remote_banner.append(&remote_rows);
+        ui.remote_conflict_banner.replace(Some(remote_banner.clone()));
+        ui.remote_conflict_title.replace(Some(remote_title));
+        ui.remote_conflict_rows.replace(Some(remote_rows));
+        root.append(&remote_banner);
+    }
+
+    // Custom-shell authority warning.
+    let shell_warn = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    shell_warn.set_margin_start(10);
+    shell_warn.set_margin_top(4);
+    shell_warn.set_margin_bottom(4);
+    shell_warn.add_css_class("warning");
+    shell_warn.set_visible(false);
+    a11y(&shell_warn, "pitex.shellWarning", "warning.custom_shell_authority");
+    shell_warn.append(&gtk4::Image::from_icon_name("dialog-warning-symbolic"));
+    let warn_label = gtk4::Label::new(Some(&tr(lang, "warning.custom_shell_authority")));
+    warn_label.set_xalign(0.0);
+    shell_warn.append(&warn_label);
+    ui.shell_warning.replace(Some(shell_warn.clone()));
+    root.append(&shell_warn);
+
+    // Search bar (GtkSourceView SearchContext behind it). NSTextView's
+    // find panel ships find + replace; the second row mirrors that.
+    let search_bar = gtk4::SearchBar::new();
+    let search_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    let find_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let entry = gtk4::SearchEntry::new();
+    entry.set_hexpand(true);
+    let prev = gtk4::Button::from_icon_name("go-up-symbolic");
+    let next = gtk4::Button::from_icon_name("go-down-symbolic");
+    let count = gtk4::Label::new(Some("0 / 0"));
+    count.add_css_class("dim-label");
+    count.set_widget_name("pitex.search.count");
+    ui.search_count.replace(Some(count.clone()));
+    a11y(&prev, "pitex.search.previous", "editor.find_previous");
+    a11y(&next, "pitex.search.next", "editor.find_next");
+    compat::initial_tooltip(&prev, &tr(lang, "editor.find_previous"));
+    compat::initial_tooltip(&next, &tr(lang, "editor.find_next"));
+    find_row.append(&entry);
+    find_row.append(&count);
+    find_row.append(&prev);
+    find_row.append(&next);
+    search_box.append(&find_row);
+    let replace_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let replace_entry = gtk4::Entry::new();
+    replace_entry.set_hexpand(true);
+    replace_entry.set_placeholder_text(Some(&tr(lang, "editor.replace")));
+    let replace_btn = gtk4::Button::with_label(&tr(lang, "editor.replace"));
+    let replace_all_btn = gtk4::Button::with_label(&tr(lang, "editor.replace_all"));
+    replace_row.append(&replace_entry);
+    replace_row.append(&replace_btn);
+    replace_row.append(&replace_all_btn);
+    search_box.append(&replace_row);
+    search_bar.set_child(Some(&search_box));
+    search_bar.connect_entry(&entry);
+    {
+        let state = state.clone();
+        entry.connect_search_changed(move |e| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                search_step(&state, &e.text(), true);
+            }
+        });
+        entry.connect_activate(move |e| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) { search_step(&state, &e.text(), true); }
+        });
+        entry.connect_previous_match(move |e| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) { search_step(&state, &e.text(), false); }
+        });
+        entry.connect_next_match(move |e| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) { search_step(&state, &e.text(), true); }
+        });
+        let e2 = entry.clone();
+        prev.connect_clicked(move |_| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                search_step(&state, &e2.text(), false);
+            }
+        });
+        let e3 = entry.clone();
+        next.connect_clicked(move |_| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                search_step(&state, &e3.text(), true);
+            }
+        });
+        let e4 = entry.clone();
+        let r1 = replace_entry.clone();
+        replace_btn.connect_clicked(move |_| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                search_replace(&state, &e4.text(), &r1.text());
+            }
+        });
+        let e5 = entry.clone();
+        let r2 = replace_entry.clone();
+        replace_all_btn.connect_clicked(move |_| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                search_replace_all(&state, &e5.text(), &r2.text());
+            }
+        });
+        let r3 = replace_entry.clone();
+        entry.connect_stop_search(move |_| {
+            r3.set_text("");
+        });
+        let _ = state;
+    }
+    let query_entry = entry.clone();
+    search_bar.connect_search_mode_enabled_notify(move |bar| {
+        if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+            if let Some(search) = &state.borrow().search {
+                let query = query_entry.text();
+                search.set_query(if bar.is_search_mode() { &query } else { "" });
+            }
+        }
+    });
+    ui.search_bar.replace(Some(search_bar.clone()));
+    ui.search_entry.replace(Some(entry));
+    root.append(&search_bar);
+
+    // Editor stack: empty placeholder vs scroller(view) + minimap.
+    let editor_stack = gtk4::Stack::new();
+    editor_stack.set_vexpand(true);
+    a11y(&editor_stack, "pitex.editor", "editor.title");
+    let no_doc = adw::StatusPage::new();
+    no_doc.set_title(&tr(lang, "editor.no_document"));
+    no_doc.set_icon_name(Some("x-office-document-symbolic"));
+    a11y(&no_doc, "pitex.editor.empty", "editor.no_document");
+    editor_stack.add_named(&no_doc, Some("empty"));
+
+    let editor_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    let scroller = gtk4::ScrolledWindow::new();
+    scroller.set_hexpand(true);
+    scroller.set_vexpand(true);
+    a11y(&scroller, "pitex.editor.scroll", "editor.title");
+    ui.editor_scroller.replace(Some(scroller.clone()));
+    // The fold chip layer overlays the scroller from outside — putting it
+    // inside would break the view's scroll adjustments (minimap, jump-to).
+    let editor_overlay = gtk4::Overlay::new();
+    editor_overlay.set_child(Some(&scroller));
+    ui.editor_overlay.replace(Some(editor_overlay.clone()));
+    // The ghost-completion label: translucent, non-interactive and
+    // hidden until a suggestion lands — the coordinator moves it to the
+    // caret's window position via margins. Decorative chrome like the
+    // fold chip layer, so it carries no a11y identifier.
+    let ghost = gtk4::Label::new(None);
+    ghost.set_opacity(crate::ghost_completion::GHOST_OPACITY);
+    ghost.set_halign(gtk4::Align::Start);
+    ghost.set_valign(gtk4::Align::Start);
+    ghost.set_can_target(false);
+    ghost.set_visible(false);
+    editor_overlay.add_overlay(&ghost);
+    ui.ghost_label.replace(Some(ghost));
+    editor_row.append(&editor_overlay);
+    let minimap = sourceview5::Map::new();
+    minimap.set_visible(state.borrow().store.minimap());
+    a11y(&minimap, "pitex.minimap", "editor.title");
+    ui.minimap.replace(Some(minimap.clone()));
+    editor_row.append(&minimap);
+    editor_stack.add_named(&editor_row, Some("editor"));
+    // `CommitDiffView` — a `gitDiff` session covers the editor area.
+    editor_stack.add_named(&crate::git_diff::build(&state, &ui, lang), Some("diff"));
+    editor_stack.set_visible_child_name("empty");
+    ui.editor_stack.replace(Some(editor_stack.clone()));
+    root.append(&editor_stack);
+
+    // Footer: panel toggles + path + word count.
+    let footer = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
+    footer.set_margin_start(10);
+    footer.set_margin_end(10);
+    footer.set_margin_top(2);
+    footer.set_margin_bottom(2);
+    a11y(&footer, "pitex.editor.status", "editor.title");
+    let sidebar_btn = gtk4::Button::from_icon_name("sidebar-show-symbolic");
+    sidebar_btn.add_css_class("flat");
+    {
+        let state = state.clone();
+        sidebar_btn.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.model.sidebar_visible = !s.model.sidebar_visible;
+            s.refresh_console_visibility();
+        });
+    }
+    footer.append(&sidebar_btn);
+    let bottom_btn = gtk4::Button::from_icon_name("pan-down-symbolic");
+    bottom_btn.add_css_class("flat");
+    {
+        let state = state.clone();
+        bottom_btn.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            s.model.bottom_panel_visible = !s.model.bottom_panel_visible;
+            s.refresh_console_visibility();
+        });
+    }
+    footer.append(&bottom_btn);
+    let flip_btn = gtk4::Button::from_icon_name("object-flip-horizontal-symbolic");
+    flip_btn.add_css_class("flat");
+    compat::initial_tooltip(&flip_btn, &tr(lang, "editor.flip_panels"));
+    {
+        let state = state.clone();
+        flip_btn.connect_clicked(move |_| {
+            UI.with(|ui| {
+                if let Some(paned) = ui.inner_paned.borrow().as_ref() {
+                    let start = paned.start_child();
+                    let end = paned.end_child();
+                    paned.set_start_child(end.as_ref());
+                    paned.set_end_child(start.as_ref());
+                }
+            });
+            let _ = &state;
+        });
+    }
+    footer.append(&flip_btn);
+    let inspector_btn = gtk4::Button::from_icon_name("sidebar-show-right-symbolic");
+    inspector_btn.add_css_class("flat");
+    {
+        let state = state.clone();
+        inspector_btn.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            if s.model.git_diff.is_some() { return; }
+            s.model.inspector_visible = !s.model.inspector_visible;
+            s.refresh_console_visibility();
+        });
+    }
+    footer.append(&inspector_btn);
+    let path_label = gtk4::Label::new(None);
+    path_label.set_xalign(0.0);
+    path_label.set_hexpand(true);
+    path_label.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
+    path_label.add_css_class("caption");
+    path_label.add_css_class("dim-label");
+    ui.footer_path.replace(Some(path_label.clone()));
+    footer.append(&path_label);
+    let words = gtk4::Label::new(None);
+    words.add_css_class("caption");
+    words.add_css_class("dim-label");
+    ui.footer_words.replace(Some(words.clone()));
+    footer.append(&words);
+    ui.footer.replace(Some(footer.clone()));
+    root.append(&footer);
+
+    // Window actions for menus.
+    let state2 = state.clone();
+    let newdoc = gio::SimpleAction::new("newdoc", None);
+    newdoc.connect_activate(move |_, _| state2.borrow_mut().create_document_action());
+    let state3 = state.clone();
+    let open_action = gio::SimpleAction::new("open", None);
+    open_action.connect_activate(move |_, _| state3.borrow().present_open(None));
+    let state4 = state.clone();
+    let saveas = gio::SimpleAction::new("saveas", None);
+    saveas.connect_activate(move |_, _| state4.borrow().save_as_action());
+    let state5 = state.clone();
+    let saveall = gio::SimpleAction::new("saveall", None);
+    saveall.connect_activate(move |_, _| state5.borrow_mut().save_all_action());
+    UI.with(|ui| {
+        if let Some(w) = ui.window.borrow().as_ref() {
+            w.add_action(&newdoc);
+            w.add_action(&open_action);
+            w.add_action(&saveas);
+            w.add_action(&saveall);
+        }
+        ui.save_as_action.replace(Some(saveas.clone()));
+        ui.save_all_action.replace(Some(saveall.clone()));
+    });
+
+    root.upcast()
+}
+
+fn search_step(state: &Rc<RefCell<AppState>>, query: &str, forward: bool) {
+    if let Some(search) = &state.borrow().search { search.step(query, forward); }
+}
+
+fn search_replace(state: &Rc<RefCell<AppState>>, query: &str, replacement: &str) {
+    if let Some(search) = &state.borrow().search { search.replace(query, replacement); }
+}
+
+fn search_replace_all(state: &Rc<RefCell<AppState>>, query: &str, replacement: &str) {
+    if let Some(search) = &state.borrow().search { search.replace_all(query, replacement); }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod startup_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn cleanup_startup_scratch(root: &Path) {
+        // WebKit and D-Bus helpers may finish writing after a test child
+        // exits. Cleanup must not turn successful lifecycle assertions
+        // into a failure; leave a diagnostic if bounded retries exhaust.
+        for attempt in 0..10 {
+            match std::fs::remove_dir_all(root) {
+                Ok(()) => return,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && !root.exists() => return,
+                Err(error) => {
+                    if attempt == 9 {
+                        eprintln!("startup scratch cleanup left {}: {error}", root.display());
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    }
+
+    /// Every phase runs in a fresh process with the same saved preferences.
+    /// Signals use the production handlers rather than calling model.open.
+    #[test]
+    #[ignore = "requires a GTK display and isolated child processes"]
+    fn saved_workspace_starts_at_open_and_os_files_still_open() {
+        let test_root = "PITEX_STARTUP_TEST_ROOT";
+        let test_phase = "PITEX_STARTUP_TEST_PHASE";
+        let Ok(root) = std::env::var(test_root) else {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "pitex-startup-lifecycle-{}-{stamp}", std::process::id()
+            ));
+            for phase in ["plain", "relaunch", "explicit"] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["app_ui::startup_tests::saved_workspace_starts_at_open_and_os_files_still_open",
+                        "--exact", "--ignored", "--nocapture"])
+                    .env(test_root, &root)
+                    .env(test_phase, phase)
+                    .status().unwrap();
+                assert!(status.success(), "startup phase {phase} failed");
+            }
+            cleanup_startup_scratch(&root);
+            return;
+        };
+        let root = PathBuf::from(root);
+        let phase = std::env::var(test_phase).unwrap();
+        for (name, directory) in [
+            ("XDG_CONFIG_HOME", "config"), ("XDG_CACHE_HOME", "cache"),
+            ("XDG_DATA_HOME", "data"), ("XDG_RUNTIME_DIR", "run"),
+            ("PI_CODING_AGENT_DIR", "pi"),
+        ] {
+            // Share saved settings/data across launches, and give each
+            // child's background helpers their own cache/runtime files.
+            let path = if matches!(name, "XDG_CACHE_HOME" | "XDG_RUNTIME_DIR") {
+                root.join(directory).join(&phase)
+            } else {
+                root.join(directory)
+            };
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::env::set_var(name, path);
+        }
+        std::env::set_var("PI_AGENT_PATH", "/usr/bin/false");
+        for name in ["saved", "explicit"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("main.tex"),
+                "\\documentclass{article}\n\\begin{document}\nStartup fixture.\n\\end{document}\n").unwrap();
+        }
+        let root = root.canonicalize().unwrap();
+        let saved = root.join("saved/main.tex");
+        let explicit = root.join("explicit/main.tex");
+        if phase == "plain" {
+            let mut prefs = Preferences::standard();
+            let mut settings = settings_feature::PersistedSettings::safe_defaults();
+            settings.project.restores_last_project = true;
+            prefs.set("dev.pitex.settings", serde_json::to_value(settings).unwrap());
+            prefs.set("pitex.pref.editor.restoreSession", true);
+            prefs.set("pitex.pref.workspace.recentDocuments", serde_json::json!([saved]));
+            prefs.set("pitex.pref.update.autoInstall", false);
+        }
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id("app.pitex.StartupPolicyTest")
+            .flags(gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        connect_workspace_open_events(&app, "startup-policy-test");
+        app.register(None::<&gio::Cancellable>).unwrap();
+        if phase == "explicit" {
+            app.open(&[gio::File::for_path(&explicit)], "");
+        } else {
+            app.activate();
+        }
+        let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        let context = glib::MainContext::default();
+        let drive = |timeout: Duration, condition: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + timeout;
+            loop {
+                for _ in 0..100 {
+                    if !context.pending() { break; }
+                    context.iteration(false);
+                }
+                if condition() { break; }
+                assert!(std::time::Instant::now() < deadline, "phase {phase} timed out");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        assert!(state.borrow().store.restore_session());
+        assert!(state.borrow().store.settings.project.restores_last_project);
+        if phase == "explicit" {
+            drive(Duration::from_secs(10), &|| matches!(state.borrow().model.phase, WorkspacePhase::Ready));
+            assert_eq!(state.borrow().model.active_document_url.as_ref(), Some(&explicit));
+        } else {
+            // Leave enough main-loop turns for a queued automatic restore.
+            let idle_until = std::time::Instant::now() + Duration::from_millis(500);
+            drive(Duration::from_secs(5), &|| std::time::Instant::now() >= idle_until);
+            assert!(matches!(state.borrow().model.phase, WorkspacePhase::NoProject));
+            assert!(state.borrow().model.active_document_url.is_none());
+            assert_eq!(state.borrow().model.recent_documents.first(), Some(&saved));
+            UI.with(|ui| assert_eq!(ui.root_stack.borrow().as_ref().unwrap()
+                .visible_child_name().as_deref(), Some("empty")));
+            if phase == "plain" {
+                // Explicitly choosing a recent project still opens it;
+                // the following child process must start empty again.
+                let selected = state.borrow().model.recent_documents[0].clone();
+                state.borrow_mut().open_selected(selected);
+                drive(Duration::from_secs(10), &|| matches!(state.borrow().model.phase, WorkspacePhase::Ready));
+                assert_eq!(state.borrow().model.active_document_url.as_ref(), Some(&saved));
+            }
+        }
+        state.borrow_mut().shutdown_agent();
+        UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
+        app.quit();
+        eprintln!("PASS: startup phase {phase}");
+    }
+
+    /// Run alone under Xvfb: this exercises the real window and async open path.
+    #[test]
+    #[ignore = "requires a GTK display and isolated process"]
+    fn small_project_opens_without_blocking_the_ui() {
+        // CI already runs this native check on both supported Ubuntu
+        // versions. Run launch-policy phases in their own GTK processes.
+        saved_workspace_starts_at_open_and_os_files_still_open();
+        let root = std::env::temp_dir().join(format!("pitex-startup-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        // Keep preferences, agent files and installer work inside this test.
+        std::env::set_var("XDG_CONFIG_HOME", root.join("config"));
+        std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
+        std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
+        let launcher = crate::agent::pi_paths::runtime_executable();
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, r#"#!/usr/bin/python3
+import json, sys, time
+time.sleep(2)
+model = {"id": "fixture", "provider": "fixture", "name": "Fixture model"}
+for line in sys.stdin:
+    request = json.loads(line)
+    command = request["type"]
+    data = {"get_state": {"model": model, "thinkingLevel": "off"},
+            "get_available_models": {"models": [model]},
+            "get_available_thinking_levels": {"levels": ["off"]},
+            "get_commands": {"commands": []}}.get(command, {})
+    print(json.dumps({"type": "response", "command": command, "id": request.get("id"), "success": True, "data": data}), flush=True)
+"#).unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(crate::agent::pi_paths::runtime_directory().join("package.json"),
+            format!(r#"{{"name":"{}","version":"{}"}}"#,
+                crate::agent::pi_installer::PACKAGE_NAME, crate::agent::pi_installer::DESIRED_VERSION)).unwrap();
+        let source = "\\documentclass{article}\n\\begin{document}\n\\section{Hello}\n한글 $x$ test.\n\\label{sec:hello}\n\\end{document}\n";
+        let file = project.join("main.tex");
+        std::fs::write(&file, source).unwrap();
+        std::fs::write(project.join("main.pdf"), include_bytes!("../../../../Fixtures/projects/startup-preview/main.pdf")).unwrap();
+        // An independent watchdog catches a GTK callback that never returns.
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watchdog = finished.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(20));
+            if !watchdog.load(std::sync::atomic::Ordering::Acquire) {
+                eprintln!("FAIL: application startup/file-open stopped processing GTK events");
+                std::process::abort();
+            }
+        });
+        adw::init().unwrap();
+        GhostCompletionCoordinator::check_ime_guards();
+        // GTK queries X11 from the tooltip setter even before a widget is
+        // parented, unless it is hidden. Check the real property notification.
+        for visible in [true, false] {
+            let button = gtk4::Button::new();
+            button.set_visible(visible);
+            button.connect_tooltip_text_notify(|button| assert!(!button.is_visible()));
+            compat::initial_tooltip(&button, "help");
+            assert_eq!(button.tooltip_text().as_deref(), Some("help"));
+            assert_eq!(button.is_visible(), visible);
+        }
+        let app = adw::Application::builder().application_id("app.pitex.StartupTest").build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        eprintln!("startup: building real window");
+        build_window(&app, "startup-test");
+        let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        let tooltip_changes = Rc::new(Cell::new(0));
+        UI.with(|ui| {
+            for button in [ui.disk_status.borrow().as_ref(), ui.build_button.borrow().as_ref()].into_iter().flatten() {
+                let changes = tooltip_changes.clone();
+                button.connect_tooltip_text_notify(move |_| changes.set(changes.get() + 1));
+            }
+        });
+        eprintln!("startup: opening small TeX file");
+        // pi starts lazily, when the Assistant pane first shows (like
+        // macOS) — show it the way a user opening the panel would, so the
+        // agent start is still covered by the no-blocking check.
+        {
+            let mut s = state.borrow_mut();
+            s.model.bottom_panel_visible = true;
+            s.model.console_section = ConsoleSection::Assistant;
+        }
+        state.borrow_mut().open_selected(file);
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut ready_ticks = 0;
+        while std::time::Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            if matches!(state.borrow().model.phase, WorkspacePhase::Ready) {
+                assert_eq!(state.borrow().editor.as_ref().unwrap().text(), source);
+                ready_ticks += 1;
+                if ready_ticks >= 500 && state.borrow().agent.as_ref().map(|a| !a.models.is_empty()).unwrap_or(false)
+                    && state.borrow().displayed_pdf_key.get() != 0 { break; }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if ready_ticks < 500 || !state.borrow().agent.as_ref().map(|a| !a.models.is_empty()).unwrap_or(false)
+            || state.borrow().displayed_pdf_key.get() == 0 {
+            eprintln!("FAIL: startup phase={:?}, ticks={}, PDF={}, agent={:?}", state.borrow().model.phase,
+                ready_ticks, state.borrow().displayed_pdf_key.get(), state.borrow().agent.as_ref().map(|a| &a.connection));
+            std::process::abort();
+        }
+        assert_eq!(tooltip_changes.get(), 0, "refreshing a mapped widget must not trigger X11 tooltip pointer queries");
+        {
+            let count: usize = std::env::var("PITEX_AUDIT_GIT_ROWS").unwrap_or_else(|_| "1012101".into()).parse().unwrap();
+            let status = std::sync::Arc::new(git_core::GitStatus {
+                root: project.to_string_lossy().into_owned(), repo_name: "large-status".into(),
+                branch: "main".into(), upstream: None, ahead: 0, behind: 0, staged: Vec::new(),
+                unstaged: (0..count).map(|i| git_core::GitChange {
+                    path: format!("files/{i}.txt"), original_path: None,
+                    kind: git_core::GitChangeKind::Untracked, staged: false,
+                }).collect(),
+            });
+            let started = std::time::Instant::now();
+            state.borrow_mut().model.git_status = Some(status);
+            state.borrow().refresh_git_panel();
+            eprintln!("GIT_AUDIT hidden {count} entries: {:?}", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(1), "hidden Git panel blocked the main thread");
+            let list = UI.with(|ui| ui.git_changes_list.borrow().as_ref().unwrap().clone());
+            let model = UI.with(|ui| ui.git_changes_model.borrow().as_ref().unwrap().clone());
+            assert_eq!(model.n_items(), 0, "hidden panel must not create rows");
+            // Keep the synthetic snapshot stable while exercising the real view.
+            state.borrow().model.git_refresh_pending.set(true);
+            let started = std::time::Instant::now();
+            {
+                let mut s = state.borrow_mut();
+                s.model.console_section = ConsoleSection::Git;
+                s.model.bottom_panel_visible = true;
+                s.refresh_console_visibility();
+            }
+            for _ in 0..20 {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            eprintln!("GIT_AUDIT visible {count} entries: {:?}", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(2), "showing Git blocked the main thread");
+            assert_eq!(model.n_items() as usize, count + 1);
+            let item = model.item(1).unwrap();
+            let started = std::time::Instant::now();
+            for _ in 0..100 { state.borrow().refresh_git_panel(); }
+            assert_eq!(model.item(1).unwrap(), item, "unchanged refresh rebuilt the list");
+            eprintln!("GIT_AUDIT 100 unchanged refreshes: {:?}", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(1));
+            let adjustment = list.vadjustment().unwrap();
+            let started = std::time::Instant::now();
+            adjustment.set_value(adjustment.upper() - adjustment.page_size());
+            for _ in 0..20 {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let mut children = 0;
+            let mut child = list.first_child();
+            while let Some(widget) = child { children += 1; child = widget.next_sibling(); }
+            eprintln!("GIT_AUDIT scroll to end: {:?}, {children} live row widgets", started.elapsed());
+            assert!(started.elapsed() < Duration::from_secs(2));
+            assert!(list.is_mapped() && list.height() > 0, "Git list must actually be visible");
+            assert!(children > 0 && children < 512, "list allocated offscreen rows");
+            fn has_name(widget: &gtk4::Widget, name: &str) -> bool {
+                if widget.widget_name() == name { return true; }
+                let mut child = widget.first_child();
+                while let Some(node) = child {
+                    if has_name(&node, name) { return true; }
+                    child = node.next_sibling();
+                }
+                false
+            }
+            assert!(has_name(list.upcast_ref(), &format!("gitc:u:files/{}.txt", count - 1)), "last file was not rendered after scrolling");
+            let Some(crate::git_list::Row::Change(last)) = model.row(count as u32) else { panic!("last row missing") };
+            assert_eq!(last.path, format!("files/{}.txt", count - 1));
+            // Editor events still run after displaying and scrolling the full list.
+            state.borrow().editor.as_ref().unwrap().view().grab_focus();
+            while context.pending() { context.iteration(false); }
+            assert_eq!(state.borrow().editor.as_ref().unwrap().text(), source);
+        }
+        state.borrow_mut().shutdown_agent();
+        UI.with(|ui| ui.window.borrow().as_ref().unwrap().close());
+        finished.store(true, std::sync::atomic::Ordering::Release);
+        eprintln!("PASS: small project opened and GTK continued processing events");
+    }
+
+    /// Screenshot sanity check for `CommitDiffView`: inject a real parsed
+    /// working-tree diff, present the window, and write a PNG to
+    /// `PITEX_DIFF_SHOT` (default /tmp/pitex-git-diff.png).
+    #[test]
+    #[ignore = "requires a GTK display (use xvfb-run)"]
+    fn git_diff_surface_renders_to_png() {
+        let root = std::env::temp_dir().join(format!("pitex-diffshot-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("config"));
+        std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
+        std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id("app.pitex.DiffShot")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        build_window(&app, "diffshot-test");
+        let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        // The diff surface sits inside the workspace — open a project.
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let file = project.join("main.tex");
+        std::fs::write(&file, "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n").unwrap();
+        state.borrow_mut().open_selected(file);
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            if matches!(state.borrow().model.phase, WorkspacePhase::Ready) { break; }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(state.borrow().model.phase, WorkspacePhase::Ready));
+
+        // A patch with a long folded context run and a changed pair
+        // exercising the intra-line highlight.
+        let mut patch = String::from(
+            "diff --git a/main.tex b/main.tex\nindex 1111111..2222222 100644\n--- a/main.tex\n+++ b/main.tex\n@@ -1,21 +1,21 @@\n",
+        );
+        for n in 1..=20 {
+            patch.push_str(&format!(" \\section{{Chapter {n}}} body text\n"));
+        }
+        patch.push_str("-the quick brown fox jumps over\n+the quick brown fox leaps over\n");
+        let section = git_core::GitDiffFileSection {
+            file: git_core::GitCommitFile {
+                path: "main.tex".into(),
+                kind: git_core::GitChangeKind::Modified,
+            },
+            binary: false,
+            rows: git_core::parse_file_diff(&patch),
+        };
+        {
+            let mut s = state.borrow_mut();
+            s.model.git_diff = Some(crate::model::GitDiff {
+                id: 1,
+                source: crate::model::GitDiffSource::WorkingTree { staged: false },
+                file: Some(section.file.clone()),
+                sections: Some(std::sync::Arc::new(git_core::GitDiffContent::new(vec![section]))),
+                error: None,
+            });
+        }
+        state.borrow().refresh_git_diff();
+        let window = UI.with(|ui| ui.window.borrow().as_ref().unwrap().clone());
+        window.present();
+        for _ in 0..50 {
+            while context.pending() { context.iteration(false); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let widget = window.upcast_ref::<gtk4::Widget>();
+        let (w, h) = (widget.width() as f64, widget.height() as f64);
+        let paintable = gtk4::WidgetPaintable::new(Some(widget));
+        let snapshot = gtk4::Snapshot::new();
+        paintable.snapshot(&snapshot, w, h);
+        let node = snapshot.to_node().expect("snapshot produced a node");
+        let renderer = window.native().unwrap().renderer().unwrap();
+        // `None` viewport renders the node's full bounds.
+        let texture = renderer.render_texture(&node, None);
+        let out = std::env::var("PITEX_DIFF_SHOT")
+            .unwrap_or_else(|_| "/tmp/pitex-git-diff.png".into());
+        texture.save_to_png(&out).unwrap();
+        eprintln!("diff screenshot written to {out}");
+        window.close();
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/support/agent_update_settings.rs"]
+mod agent_update_tests;
+
+#[cfg(all(test, target_os = "linux", feature = "embedded-preview"))]
+#[path = "ubuntu_preview_tests.rs"]
+mod ubuntu_preview_tests;
+
+#[cfg(test)]
+#[path = "../tests/support/parity_shots.rs"]
+mod parity_shots;
+
+#[cfg(test)]
+mod build_key_tests {
+    use super::*;
+
+    #[test]
+    fn only_bare_shift_return_is_build() {
+        let shift = gdk::ModifierType::SHIFT_MASK;
+        assert!(shift_return_is_build(gdk::Key::Return, shift));
+        assert!(shift_return_is_build(gdk::Key::KP_Enter, shift));
+        assert!(shift_return_is_build(
+            gdk::Key::Return,
+            shift | gdk::ModifierType::LOCK_MASK,
+        ));
+        for extra in [
+            gdk::ModifierType::CONTROL_MASK,
+            gdk::ModifierType::ALT_MASK,
+            gdk::ModifierType::SUPER_MASK,
+            gdk::ModifierType::HYPER_MASK,
+            gdk::ModifierType::META_MASK,
+        ] {
+            assert!(!shift_return_is_build(gdk::Key::Return, shift | extra));
+        }
+        assert!(!shift_return_is_build(gdk::Key::Return, gdk::ModifierType::empty()));
+        assert!(!shift_return_is_build(gdk::Key::a, shift));
+    }
+}
+
+#[cfg(test)]
+mod editor_release_tests {
+    use super::*;
+
+    fn session(name: &str, text: &str) -> DocumentSession {
+        let file = project_core::ProjectFile {
+            document_id: tex_domain::StableDocumentID::new(name).unwrap(),
+            path: tex_domain::NormalizedRelativePath::new(&format!("{name}.tex")).unwrap(),
+        };
+        DocumentSession::new(&file, text.to_string(), None)
+    }
+
+    /// A document switch replaces the editor; the old adapter, fold engine
+    /// and buffer (text, one tag per token, undo history) must be freed.
+    #[test]
+    #[ignore = "requires a GTK display (use xvfb-run)"]
+    fn replaced_editor_is_released() {
+        adw::init().unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state = Rc::new(RefCell::new(AppState::new(
+            SettingsStore::new(Preferences::default()),
+            tx,
+            "test".into(),
+        )));
+        // The app parents each editor view into the scroller and swaps it
+        // out on the next switch; do the same so the release path runs.
+        UI.with(|ui| {
+            *ui.editor_scroller.borrow_mut() = Some(gtk4::ScrolledWindow::new());
+            *ui.minimap.borrow_mut() = Some(sourceview5::Map::new());
+            *ui.search_count.borrow_mut() = Some(gtk4::Label::new(None));
+            *ui.ghost_label.borrow_mut() = Some(gtk4::Label::new(None));
+            *ui.editor_overlay.borrow_mut() = Some(gtk4::Overlay::new());
+        });
+        let text = "\\section{A}\nSome $x$ text {with} \\cmd tokens.\n".repeat(200);
+        // A model snapshot makes `rehighlight` run, so the adapter holds a
+        // real decoration snapshot like it does in the app.
+        let first = session("first", &text);
+        state.borrow_mut().model.document_snapshot = Some(first.snapshot());
+        state.borrow_mut().attach_session(first);
+        let (adapter, shared, fold, buffer) = {
+            let st = state.borrow();
+            let editor = st.editor.as_ref().unwrap();
+            (Rc::downgrade(editor), editor.lifetime_probe(), Rc::downgrade(st.fold.as_ref().unwrap()), editor.buffer().downgrade())
+        };
+        state.borrow_mut().attach_session(session("second", &text));
+        let context = glib::MainContext::default();
+        for _ in 0..50 {
+            while context.pending() {
+                context.iteration(false);
+            }
+        }
+        assert!(adapter.upgrade().is_none(), "old editor adapter still alive");
+        assert!(shared.upgrade().is_none(), "old editor state (text copies, decorations) still alive");
+        assert!(fold.upgrade().is_none(), "old fold engine still alive");
+        // The view shell itself is pinned by GtkSourceView's gutter (see
+        // `rebind_editor_widget`); its buffer must not be.
+        assert!(buffer.upgrade().is_none(), "old editor buffer still alive");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod remote_save_lifecycle_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+
+    fn drive_until(label: &str, condition: impl Fn() -> bool) {
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            for _ in 0..100 {
+                if !context.pending() {
+                    break;
+                }
+                context.iteration(false);
+            }
+            if condition() {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "timed out: {label}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn drive_for(duration: Duration) {
+        let until = std::time::Instant::now() + duration;
+        drive_until("GTK continued processing events", || {
+            std::time::Instant::now() >= until
+        });
+    }
+
+    fn edit(state: &Rc<RefCell<AppState>>, text: &str) -> String {
+        let editor = state.borrow().editor.as_ref().unwrap().clone();
+        let buffer = editor.buffer();
+        buffer.begin_user_action();
+        buffer.insert(&mut buffer.end_iter(), text);
+        buffer.end_user_action();
+        drive_until("editor mutation reached the model", || {
+            state
+                .borrow()
+                .model
+                .document_snapshot
+                .as_ref()
+                .is_some_and(|s| s.text.ends_with(text))
+        });
+        editor.text()
+    }
+
+    fn save() {
+        let action = UI.with(|ui| ui.save_action.borrow().as_ref().unwrap().clone());
+        assert!(action.is_enabled(), "the manual Save action is enabled");
+        action.activate(None);
+    }
+
+    fn read(path: impl AsRef<std::path::Path>) -> String {
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    /// Run alone under Xvfb with PITEX_TEST_SSH_DESTINATION, _PORT, _KEY
+    /// and _KNOWN_HOSTS pointing at a private localhost sshd. This uses
+    /// real GTK actions, editor callbacks, timers and worker dispatch.
+    #[test]
+    #[ignore = "requires an isolated GTK display and private localhost SSH fixture"]
+    fn ssh_save_and_close_wait_for_remote_sources() {
+        let connection = remote_core::SshConnection::new(
+            "lifecycle-test",
+            std::env::var("PITEX_TEST_SSH_DESTINATION").expect("private SSH fixture destination"),
+            None,
+            std::env::var("PITEX_TEST_SSH_PORT")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            std::env::var("PITEX_TEST_SSH_KEY").ok(),
+        );
+        let root = std::env::temp_dir().join(format!(
+            "pitex-ssh-gtk-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
+        for (name, directory) in [
+            ("XDG_CONFIG_HOME", "config"),
+            ("XDG_DATA_HOME", "data"),
+            ("XDG_CACHE_HOME", "cache"),
+            ("XDG_RUNTIME_DIR", "run"),
+            ("PI_CODING_AGENT_DIR", "pi"),
+        ] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+            std::env::set_var(name, root.join(directory));
+        }
+        // Keep startup's runtime check inside the fixture, without installing.
+        let launcher = crate::agent::pi_paths::runtime_executable();
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(
+            crate::agent::pi_paths::runtime_directory().join("package.json"),
+            format!(
+                r#"{{"name":"{}","version":"{}"}}"#,
+                crate::agent::pi_installer::PACKAGE_NAME,
+                crate::agent::pi_installer::DESIRED_VERSION
+            ),
+        )
+        .unwrap();
+        let mut preferences = SettingsStore::new(Preferences::standard());
+        preferences.set_auto_install_updates(false);
+        preferences.set_auto_save(true);
+        preferences.set_auto_save_delay(1);
+        preferences.set_live_compile_enabled(false);
+
+        let device = root.join("device");
+        std::fs::create_dir(&device).unwrap();
+        let initial = "\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}\n";
+        std::fs::write(device.join("main.tex"), initial).unwrap();
+        std::fs::write(device.join("chapter.tex"), "\\section{Chapter}\n").unwrap();
+        std::fs::write(
+            device.join("fixture.pdf"),
+            include_bytes!("../../../../Fixtures/projects/startup-preview/main.pdf"),
+        )
+        .unwrap();
+        let mirror = remote_core::RemoteMirror::prepare(
+            remote_core::RemoteProject::new(connection.clone(), device.to_str().unwrap()),
+            &remote_core::RemoteMirror::default_store(),
+        )
+        .unwrap();
+        let mut client = remote_core::SshClient::new(connection);
+        client.control_directory = None;
+        client.extra_arguments.extend([
+            "-o".into(),
+            format!(
+                "UserKnownHostsFile={}",
+                std::env::var("PITEX_TEST_SSH_KNOWN_HOSTS").expect("private fixture known hosts")
+            ),
+        ]);
+        remote_core::RemoteSync::install(
+            mirror.clone(),
+            client,
+            Some(Arc::new(crate::remote::SharedGate)),
+        );
+
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watchdog = finished.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(60));
+            if !watchdog.load(std::sync::atomic::Ordering::Acquire) {
+                eprintln!("SSH lifecycle test stopped processing GTK events");
+                std::process::abort();
+            }
+        });
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id("app.pitex.SshSaveLifecycleTest")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        build_window(&app, "ssh-lifecycle-test");
+        let state = STATE.with(|slot| slot.borrow().as_ref().unwrap().clone());
+        let window = UI.with(|ui| ui.window.borrow().as_ref().unwrap().clone());
+        state.borrow_mut().model.bottom_panel_visible = false;
+        state.borrow_mut().open_selected(mirror.root());
+        drive_until("SSH project opened", || {
+            let st = state.borrow();
+            matches!(st.model.phase, WorkspacePhase::Ready)
+                && st.model.remote.is_some()
+                && st.editor.is_some()
+        });
+        {
+            let mut st = state.borrow_mut();
+            st.store.settings.build.custom_shell_acknowledged = true;
+            // Each pass waits on a separate gate, so the test can inspect
+            // source bytes while that build is still running.
+            st.model.build_command_text = "n=$(cat build-count 2>/dev/null || printf 0); n=$((n+1)); printf '%s' \"$n\" > build-count; cp main.tex build-before-$n.txt; : > build-started-$n; while [ ! -e build-go-$n ]; do sleep 0.01; done; cp main.tex build-after-$n.txt; cp fixture.pdf main.pdf".into();
+        }
+
+        let first = edit(&state, "% waiting for manual Save\n");
+        assert!(AUTOSAVE_SOURCE.with(|source| source.borrow().is_none()));
+        drive_for(Duration::from_secs(2));
+        assert_eq!(
+            read(mirror.root().join("main.tex")),
+            initial,
+            "SSH Auto Save never persists the buffer"
+        );
+        assert_eq!(
+            read(device.join("main.tex")),
+            initial,
+            "SSH Auto Save never uploads"
+        );
+
+        save();
+        drive_until("first remote build started", || {
+            device.join("build-started-1").exists()
+        });
+        assert!(state.borrow().model.is_building());
+        assert_eq!(read(device.join("main.tex")), first);
+        let second = edit(&state, "% queued manual Save\n");
+        save();
+        assert!(state.borrow().queued_remote_save.is_some());
+        assert_eq!(
+            read(device.join("main.tex")),
+            first,
+            "queued Save waits for the running build"
+        );
+        std::fs::write(device.join("build-go-1"), "go").unwrap();
+        drive_until("queued Save starts its remote build", || {
+            device.join("build-started-2").exists()
+        });
+        assert_eq!(
+            read(device.join("build-after-1.txt")),
+            first,
+            "the first build sees one saved revision"
+        );
+        assert_eq!(read(device.join("main.tex")), second);
+        std::fs::write(device.join("build-go-2"), "go").unwrap();
+        drive_until("both explicit Saves finished", || {
+            let st = state.borrow();
+            st.pending_remote_save.is_none()
+                && st.queued_remote_save.is_none()
+                && !st.model.is_building()
+        });
+
+        let chapter = mirror.root().join("chapter.tex");
+        state.borrow_mut().activate_document(chapter.clone());
+        drive_until("chapter tab activated", || {
+            state.borrow().model.active_document_url.as_ref() == Some(&chapter)
+        });
+        let chapter_text = edit(&state, "% forced tab Save\n");
+        state.borrow_mut().close_document(chapter.clone());
+        assert!(
+            state.borrow().model.open_documents.contains(&chapter),
+            "tab waits for its forced Save"
+        );
+        drive_until("tab closes after upload", || {
+            !state.borrow().model.open_documents.contains(&chapter)
+        });
+        assert_eq!(read(device.join("chapter.tex")), chapter_text);
+
+        drive_until("main tab restored", || {
+            state.borrow().model.active_document_url.as_ref()
+                == Some(&mirror.root().join("main.tex"))
+        });
+        let project_text = edit(&state, "% forced project Save\n");
+        state.borrow_mut().close_action();
+        assert!(
+            state.borrow().model.remote.is_some(),
+            "project waits for its forced Save"
+        );
+        drive_until("project closes after upload", || {
+            matches!(state.borrow().model.phase, WorkspacePhase::NoProject)
+        });
+        assert_eq!(read(device.join("main.tex")), project_text);
+        assert!(window.is_visible());
+
+        state.borrow_mut().open_selected(mirror.root());
+        drive_until("SSH project reopened", || {
+            let st = state.borrow();
+            matches!(st.model.phase, WorkspacePhase::Ready)
+                && st.model.remote.is_some()
+                && st.editor.is_some()
+        });
+        let main = mirror.root().join("main.tex");
+        state.borrow_mut().close_document(main.clone());
+        drive_until("last tab closes and releases its editor session", || {
+            let st = state.borrow();
+            st.model.document_snapshot.is_none() && st.active_session.is_none()
+        });
+        assert_eq!(state.borrow().editor_stack_child(), "empty", "the closed editor is hidden");
+        state.borrow_mut().activate_document(main.clone());
+        drive_until("main reopens in a fresh editor", || {
+            let st = state.borrow();
+            st.model.active_document_url.as_ref() == Some(&main)
+                && st.editor.as_ref().is_some_and(|editor| editor.text() == project_text)
+        });
+
+        let window_text = edit(&state, "% forced window Save\n");
+        let healthy_sync = state.borrow().model.remote.as_ref().unwrap().sync.clone();
+        {
+            let mut failed_client = healthy_sync.client.clone();
+            failed_client.ssh_executable = PathBuf::from("/bin/false");
+            state.borrow_mut().model.remote.as_mut().unwrap().sync =
+                Arc::new(remote_core::RemoteSync::new(
+                    mirror.clone(),
+                    failed_client,
+                    Some(Arc::new(crate::remote::SharedGate)),
+                ));
+        }
+        window.close();
+        assert!(
+            window.is_visible(),
+            "window remains open until upload completes"
+        );
+        drive_until("failed close restores the window", || {
+            state.borrow().pending_remote_save.is_none() && window.is_sensitive()
+        });
+        assert!(window.is_visible() && state.borrow().model.remote.is_some());
+        assert!(!state.borrow().allow_window_close);
+        assert_eq!(
+            state
+                .borrow()
+                .active_session
+                .as_ref()
+                .unwrap()
+                .snapshot()
+                .text,
+            window_text
+        );
+        assert_eq!(
+            read(mirror.root().join("main.tex")),
+            window_text,
+            "failed upload keeps the saved source locally"
+        );
+        assert_eq!(
+            read(device.join("main.tex")),
+            project_text,
+            "failed upload leaves device bytes intact"
+        );
+
+        state.borrow_mut().model.remote.as_mut().unwrap().sync = healthy_sync;
+        window.close();
+        drive_until("window closes after successful forced Save", || {
+            !window.is_visible()
+        });
+        assert!(state.borrow().model.remote.is_none());
+        assert_eq!(read(device.join("main.tex")), window_text);
+        assert_eq!(
+            read(device.join("build-count")),
+            "2",
+            "close actions do not start background builds"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+        finished.store(true, std::sync::atomic::Ordering::Release);
+    }
+}

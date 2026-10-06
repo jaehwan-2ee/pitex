@@ -1,0 +1,30 @@
+[package]
+name = "pitex-preview-engine"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-or-later AND MIT"
+build = "build.rs"
+
+[dependencies]
+libc = "0.2"
+c2rust-bitfields = "=0.22.1"
+regex = "=1.13.1"
+jpeg-decoder = { version = "=0.3.2", default-features = false }
+
+[[bin]]
+name = "pitex-preview"
+path = "src/bin/pitex-preview.rs"
+
+[[bin]]
+name = "pitex-preview-xetex"
+path = "src/bin/pitex-preview-xetex.rs"
+
+[[bin]]
+name = "selftest"
+path = "src/bin/selftest.rs"
+
+[profile.release]
+opt-level = 2
+debug = 2
+panic = "abort"

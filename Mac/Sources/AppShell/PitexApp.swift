@@ -1,0 +1,3227 @@
+import AppKit
+import AppPorts
+import AppShell
+import BuildCore
+import BuildFeature
+import Combine
+import Darwin
+import DocumentSessionCore
+import EditorMacAdapter
+import Foundation
+import GitCore
+import LanguageCore
+import MacPlatform
+import ProjectCore
+import ProjectFeature
+import RemoteCore
+import SyncTeXCore
+import SwiftUI
+import TexDomain
+import UniformTypeIdentifiers
+
+enum WorkspacePhase {
+    case noProject
+    case loading(URL)
+    case ready
+    case failed(String)
+}
+
+enum WorkspaceBuildState: Equatable {
+    case unavailable(String)
+    case building
+    case succeeded(pdf: Data, log: String)
+    case failed(String)
+}
+
+enum WorkspaceSyncTeXState: Equatable {
+    case unavailable(String)
+    case current
+    case stale(String)
+    case ambiguous(String)
+}
+
+/// What a content change, an atomic replace, a touch or a chmod moves — and what an access-time or extended-attribute update does NOT:
+/// (device, inode, size, mtime in ns, mode). A read of the watched file raises an attribute event whose tuple is unchanged.
+private struct WatchedFileState: Equatable {
+    let device: dev_t
+    let inode: ino_t
+    let size: off_t
+    let mtimeSeconds: Int
+    let mtimeNanoseconds: Int
+    let mode: mode_t
+    /// nil when the path cannot be stat'ed (deleted / unreadable): such an event is processed as before.
+    init?(path: String) {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        device = info.st_dev; inode = info.st_ino; size = info.st_size
+        mtimeSeconds = info.st_mtimespec.tv_sec; mtimeNanoseconds = info.st_mtimespec.tv_nsec; mode = info.st_mode
+    }
+}
+
+/// Bytes + identity of the last PDF a build or the embedded editing
+/// preview published. Kept separately from `buildState` so building/
+/// failure/cancel states can change around it without the preview
+/// unmounting.
+struct RetainedPDF: Equatable {
+    /// PDF bytes as published — the preview renders these, not whatever
+    /// a later failed build may have left on disk.
+    var data: Data
+    /// Project-relative build output (may live under `.pitex-live`), or
+    /// the absolute path of an editing-preview artifact in its session
+    /// directory — resolve it with `fileURL(projectRoot:)`.
+    var artifactPath: String
+    /// Project-relative main source the build resolved — the identity
+    /// that decides whether a target switch invalidates this output.
+    var sourceTarget: String
+    /// An embedded-engine editing preview, never final compiler output.
+    var isEmbeddedPreview = false
+
+    /// Manual Build output: neither an editing preview nor a live
+    /// compiler build under `.pitex-live`.
+    var isFinalOutput: Bool {
+        !isEmbeddedPreview && !artifactPath.hasPrefix(BuildTarget.liveDirectoryName + "/")
+    }
+
+    func fileURL(projectRoot: URL) -> URL {
+        artifactPath.hasPrefix("/")
+            ? URL(fileURLWithPath: artifactPath)
+            : projectRoot.appendingPathComponent(artifactPath)
+    }
+}
+
+/// Bottom console tabs: Assistant | Git Integration | Issues | Terminal |
+/// Build Log. The assistant lives here (not in the inspector) so the PDF
+/// preview and the assistant can be visible at the same time.
+enum ConsoleSection: String, CaseIterable, Identifiable {
+    case assistant
+    case git
+    case issues
+    case terminal
+    case log
+    var id: Self { self }
+}
+
+/// Upper sidebar sections: Outline | Labels | BibTeX.
+enum SidebarSection: String, CaseIterable, Identifiable {
+    case outline
+    case labels
+    case bibtex
+    var id: Self { self }
+}
+
+/// One row in the document outline (a sectioning command in the active file).
+struct DocumentOutlineItem: Identifiable, Hashable, Sendable {
+    let id: Int
+    let title: String
+    let level: Int
+    let line: Int
+}
+
+/// One \label{…} entry in the active document.
+struct DocumentLabelItem: Identifiable, Hashable, Sendable {
+    let id: Int
+    let name: String
+    let line: Int
+}
+
+/// One @entry{key,…} row collected from the project's .bib files.
+struct BibliographyItem: Identifiable, Hashable, Sendable {
+    let id: String
+    let key: String
+    let type: String
+    let file: String
+}
+
+/// One `% TODO:`/`% DONE:` comment collected from the project's .tex files.
+struct DocumentTodoItem: Identifiable, Hashable, Sendable {
+    var id: String { "\(url.path)#\(line)" }
+    /// Project-relative path (like `BibliographyItem.file`).
+    let file: String
+    let url: URL
+    /// 1-based line of the comment.
+    let line: Int
+    let text: String
+    let done: Bool
+}
+
+actor NativeDocumentSessionPort: AppPorts.DocumentSessionPort {
+    let session: DocumentSessionCore.DocumentSession
+    private let didChange: @MainActor @Sendable (DocumentSessionCore.DocumentSnapshot) -> Void
+
+    init(
+        session: DocumentSessionCore.DocumentSession,
+        didChange: @escaping @MainActor @Sendable (DocumentSessionCore.DocumentSnapshot) -> Void
+    ) {
+        self.session = session
+        self.didChange = didChange
+    }
+
+    func snapshot() async -> AppPorts.DocumentSnapshot {
+        let snapshot = await session.snapshot()
+        return AppPorts.DocumentSnapshot(revision: snapshot.revision, text: snapshot.text)
+    }
+
+    func submit(_ mutation: AppPorts.DocumentMutation) async throws -> AppPorts.DocumentMutationResult {
+        let current = await session.snapshot()
+        guard mutation.baseRevision == current.revision else {
+            return .rejected(current: .init(revision: current.revision, text: current.text))
+        }
+        let source = current.text as NSString
+        let range = NSRange(location: mutation.range.location, length: mutation.range.length)
+        guard range.location >= 0,
+              range.length >= 0,
+              range.location <= source.length,
+              range.length <= source.length - range.location else {
+            return .rejected(current: .init(revision: current.revision, text: current.text))
+        }
+        // replacingCharacters bridges an NSString; making the result a
+        // native string keeps equality and hashing off the slow foreign path.
+        var replacement = source.replacingCharacters(in: range, with: mutation.replacement)
+        replacement.makeContiguousUTF8()
+        do {
+            let updated = try await session.apply(
+                .replaceText(replacement),
+                expectedRevision: mutation.baseRevision
+            )
+            await didChange(updated)
+            return .applied(.init(revision: updated.revision, text: updated.text))
+        } catch let error as DocumentSessionError {
+            switch error {
+            case .staleRevision:
+                let latest = await session.snapshot()
+                return .rejected(current: .init(revision: latest.revision, text: latest.text))
+            default:
+                throw error
+            }
+        }
+    }
+}
+
+@MainActor
+final class WorkspaceModel: ObservableObject {
+    @Published internal(set) var phase: WorkspacePhase = .noProject
+    @Published private(set) var projectURL: URL? {
+        didSet {
+            window?.title = projectURL?.lastPathComponent ?? "Pitex"
+            rebuildProjectTree()
+        }
+    }
+    @Published private(set) var projectFiles: [URL] = [] {
+        didSet { rebuildProjectTree() }
+    }
+    @Published private(set) var openDocuments: [URL] = []
+    /// Per-document caret + scroll position restored on re-activation —
+    /// each activation rebuilds the editor adapter, so positions are
+    /// snapshotted here. Keyed by the standardized URL like pendingWrites.
+    private var editorViewStates: [URL: EditorMacAdapter.ViewState] = [:]
+    /// In-memory pane preferences follow document lifetime, not SwiftUI mounts.
+    let paneLayout = WorkspacePaneLayoutState()
+    @Published private(set) var activeDocumentURL: URL? {
+        willSet { paneLayout.activate(newValue) }
+    }
+    /// Editor↔preview scroll channel for the Markdown web view — created
+    /// once per workspace so the editor and inspector sides meet.
+    let markdownScrollSync = MarkdownScrollSync()
+    @Published private(set) var environment: AppEnvironment? {
+        didSet { observeEditorSelection() }
+    }
+    @Published private(set) var documentSnapshot: DocumentSessionCore.DocumentSnapshot? {
+        didSet {
+            scheduleStructureRefresh()
+            scheduleAutosave()
+            noteLiveCompileEdit(oldValue: oldValue)
+        }
+    }
+    @Published var buildLogText = ""
+    /// Buffered build-log chunks; flushed into buildLogText on a ~100 ms
+    /// cadence by BuildSupport.scheduleLogFlush.
+    var pendingLogText = ""
+    /// Issue records buffered the same way — appended to buildIssues in the
+    /// same flush so a warning-heavy run publishes once per batch.
+    var pendingBuildIssues: [BuildIssueRecord] = []
+    var logFlushScheduled = false
+    @Published var buildIssues: [BuildIssueRecord] = []
+    @Published internal(set) var buildState: WorkspaceBuildState = .unavailable(
+        "No build target has been configured for this project."
+    )
+    @Published private(set) var syncTeXState: WorkspaceSyncTeXState = .unavailable(
+        "SyncTeX is unavailable until a successful build produces matching metadata."
+    )
+    @Published var showingSettings = false
+
+    private var documentLoadGeneration = UUID()
+    /// Identity of the mounted project — bumped by `close()`, which every
+    /// `open` passes through, so a reopen of the same path still fails a
+    /// previous build run's captured context.
+    var projectGeneration = UUID() {
+        didSet { cancelGitRequests() }
+    }
+    var gitRefreshInFlight = false
+    let gitRuntime = GitPanelRuntime()
+    @Published private(set) var wordCount = 0
+    let registry = DocumentSessionRegistry()
+    let settings = SettingsStore.shared
+    /// Local builds, or the device's while a remote project is open.
+    let buildExecutor: WorkspaceBuildExecutor
+    let buildOrchestrator: BuildOrchestrator
+    /// Set while the project is a folder on another device (Open via SSH).
+    @Published var remote: RemoteWorkspace? {
+        didSet {
+            // Update native text in place: SwiftUI's subtitle transition
+            // overlaps short Syncing → Synced changes.
+            syncWindowCloseDelegate()
+            let subtitle = remote?.statusText ?? ""
+            if window?.subtitle != subtitle { window?.subtitle = subtitle }
+            // SSH editing previews run against the local mirror.
+            scheduleAutosave()
+            syncLiveScheduler()
+        }
+    }
+    @Published var showingOpenViaSSH = false
+    /// Manual remote saves are serialized; local disk writes never upload.
+    var manualRemoteSaveTask: Task<String?, Never>?
+    /// Local compiler previews pause while an explicit SSH save commits sources.
+    var remoteSavesInFlight = 0
+    var activeBuildTask: Task<Void, Never>?
+    var remoteSavedEditRevision: UInt64 = 0
+    var remoteSavedBuildTarget: URL?
+    @Published private(set) var isClosing = false
+    private var closeTask: Task<UUID?, Never>?
+    private var terminationFrozen = false
+    /// Cancel pressed before the orchestrator started (a remote build
+    /// uploads the edits first).
+    var buildCancelRequested = false
+    /// Live-compile debounce state machine (BuildFeature): the workspace
+    /// feeds it millisecond timestamps and performs the `LiveRequest`s it
+    /// returns. Timer/dispatch glue lives in `BuildSupport`.
+    var liveScheduler = LiveCompileScheduler()
+    /// Token of the run currently holding the build slot, matched by
+    /// `cancelScheduledRun` — the scheduler can only cancel the run it
+    /// thinks is active.
+    var activeRunToken: LiveRunToken?
+    /// Debounce Task armed at `liveScheduler.pendingDeadline`.
+    var liveCompileTask: Task<Void, Never>?
+    /// Embedded editing-preview session (`EmbeddedPreview.swift`): streams
+    /// buffer updates independently of the build slot; its progress is
+    /// `embeddedPreviewStatus`, never `buildState`.
+    let embeddedPreview = EmbeddedPreviewState()
+    @Published var embeddedPreviewStatus: EmbeddedPreviewStatus = .off
+    /// Settings/import → scheduler sync (enable flag and delay changes).
+    private var liveSettingsObserver: AnyCancellable?
+    let syncTeXRunner = SyncTeXRunner()
+    let highlighter = SyntaxHighlighter()
+    private(set) var agent: AgentCoordinator?
+    /// The Copilot-style inline completion session — a dedicated pi
+    /// subprocess that never touches the chat transcript. Created per
+    /// project like `agent` and shut down in `close()`.
+    private(set) var completion: GhostCompletionCoordinator?
+    /// Overleaf-style equation hover/caret preview — created with the
+    /// project like `completion`, rebound per editor, shut down in `close()`.
+    private(set) var equationPreview: EquationPreviewController?
+    private(set) var syncTeXBinding: SyncTeXBinding?
+    /// Epoch for SyncTeX work: bumped at every build start and at every
+    /// workspace/target switch so an in-flight refresh or query belonging
+    /// to an older build can never attach its result.
+    var syncTeXEpoch = UUID()
+    /// The last PDF a build actually produced — bytes for the preview, the
+    /// project-relative artifact path (which may hide under `.pitex-live`),
+    /// and the main source that produced it. Retained across building/
+    /// failure/cancel/off so the preview never unmounts mid-typing;
+    /// cleared on workspace close or a different resolved build target.
+    /// Chapters sharing the same main keep it.
+    @Published internal(set) var retainedPDF: RetainedPDF?
+    var activeBuildID: BuildID?
+    /// Name (relative to the project root) of the PDF produced by the most
+    /// recent successful build; surfaced to the agent as preview context.
+    internal(set) var latestBuiltPDFName: String?
+    /// Bottom console tab (Assistant / Terminal / Issues / Build Log).
+    @Published var consoleSection: ConsoleSection = .assistant
+    /// Left sidebar tab (Outline / Labels / BibTeX).
+    @Published var sidebarSection: SidebarSection = .outline
+    @Published var sidebarVisible = true
+    @Published var bottomPanelVisible = false
+    @Published var inspectorVisible = true
+    /// File pinned as the build target; nil means "build the active document".
+    @Published var pinnedBuildTarget: URL?
+    @Published internal(set) var automaticBuildTarget: URL?
+    /// Sidebar file tree, rebuilt only when its inputs change — computing it
+    /// in the view body re-sorted the whole tree on every keystroke.
+    @Published private(set) var projectTree: [ProjectFileNode] = []
+    @Published private(set) var documentProject = DocumentProject()
+    private(set) var projectFileNames: [String: String] = [:]
+    @Published internal(set) var buildTargetMessage: String?
+
+    /// Parsed-file cache handed to each refreshBuildTarget resolver so a
+    /// document activation doesn't re-read and re-tokenize every project
+    /// .tex file. Stat-keyed (mtime + size); cleared with the workspace.
+    private var resolverDiskCache: [URL: (mtime: Double, size: Int, snapshot: LanguageFileSnapshot)] = [:]
+    /// Recently opened documents/projects, shown in the tab bar's + menu.
+    @Published private(set) var recentDocuments: [URL] = []
+    /// Build command shown in the console bar, remembered per project.
+    @Published var buildCommandText = "xelatex -interaction=nonstopmode -synctex=1 {file}" {
+        didSet {
+            persistCommands()
+            // A different command means different flags/outputs — live
+            // work compiled under the old one is dead.
+            performLiveRequests(liveScheduler.invalidate())
+            // The exact equation preview follows the project's engine.
+            equationPreview?.setBuildCommand(buildCommandText)
+        }
+    }
+    /// Free-form terminal command run with ⌃⌘B, remembered per project.
+    @Published var customCommandText = ""
+    /// Accumulated terminal output shown in the console's Terminal tab.
+    /// Live handle to the embedded SwiftTerm shell in the console's Terminal
+    /// tab; status notices and saved commands are pushed into it.
+    let terminalSession = TerminalSession()
+    /// Document-structure data for the sidebar tabs, recomputed on each
+    /// snapshot/file-list change.
+    @Published private(set) var outlineItems: [DocumentOutlineItem] = []
+    @Published private(set) var labelItems: [DocumentLabelItem] = []
+    @Published private(set) var bibliographyItems: [BibliographyItem] = []
+    @Published private(set) var todoItems: [DocumentTodoItem] = []
+    /// Git Integration panel — driven by `WorkspaceModel+Git.swift`; nil
+    /// until the first refresh reports whether the project is a repository.
+    @Published internal(set) var gitStatus: GitStatus?
+    @Published internal(set) var gitCommits: [GitCommit] = []
+    @Published internal(set) var gitBranches: [String] = []
+    @Published var gitCommitMessage = ""
+    @Published internal(set) var gitBusy = false
+    /// Separate spinner for `suggestCommitMessage` — a pi subprocess, not
+    /// a git op, so pull/push stay enabled while it runs.
+    @Published internal(set) var gitSuggestBusy = false
+    @Published internal(set) var gitError: String?
+    /// Commit rows expanded in the graph → their `git show --name-status`
+    /// file lists, fetched lazily and cached per hash.
+    @Published internal(set) var gitExpandedCommits: Set<String> = []
+    @Published internal(set) var gitCommitFiles: [String: [GitCommitFile]] = [:]
+    @Published internal(set) var gitCommitFilesBusy: Set<String> = []
+    /// Commit diff covering the editor area (VSCode Source Control style).
+    /// While set, the PDF inspector is hidden and its toggles disabled.
+    @Published internal(set) var gitDiff: GitDiffSession?
+    /// Project-wide \label keys and .bib citation keys feeding the editor's
+    /// native completion. Rebuilt on the structure-refresh cadence through
+    /// mtime-keyed caches — never reparsed per keystroke.
+    @Published private(set) var projectLabels: Set<String> = []
+    @Published private(set) var citationKeys: Set<String> = []
+
+    var capabilityBroker: (any FileCapabilityBroker)?
+    var capabilityLease: FileAccessLease?
+    var registeredSessions: [DocumentSessionCore.DocumentSession] = []
+    private var fileWatchers: [URL: DispatchSourceFileSystemObject] = [:]
+    /// The file state at the last PROCESSED event (and at watcher start) per watched URL — see `fileChangedOnDisk`.
+    private var watchedFileStates: [URL: WatchedFileState] = [:]
+    private var pendingDiskChecks: [URL: Task<Void, Never>] = [:]
+    /// Newest queued write per document; the next write chains onto it so
+    /// a file's saves can never overlap or reorder.
+    private var pendingWrites: [URL: Task<SessionWriteResult, Never>] = [:]
+    /// Writes queued or in flight — quit and teardown drain them first.
+    private var pendingWriteCount = 0
+    /// Hash of the text the newest write puts on disk, recorded before the
+    /// write starts so `processDiskChange` can tell our own rename from an
+    /// external edit. Cleared when the document closes.
+    private var lastOwnWrite: [URL: DiskContentHash] = [:]
+    private var selectionObserver: NSObjectProtocol?
+
+    init() {
+        let executor = WorkspaceBuildExecutor()
+        buildExecutor = executor
+        buildOrchestrator = BuildOrchestrator(executor: executor)
+        // objectWillChange fires inside the setter, so the sync is deferred
+        // one hop to read the stored value — covers Settings edits and
+        // settings imports (reload()) alike.
+        liveSettingsObserver = settings.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in self?.syncLiveScheduler() }
+        }
+        loadRecents()
+    }
+
+    var hasProject: Bool { projectURL != nil }
+
+    // MARK: - Window routing
+
+    /// The window hosting this workspace — set by `WorkspaceWindow` so a
+    /// Finder open routed here can bring it forward.
+    private var windowCloseDelegate: WorkspaceWindowCloseDelegate?
+    weak var window: NSWindow? {
+        didSet {
+            // Weak + non-published: publish the attachment so the menu's
+            // Close gate re-evaluates — deferred one actor turn because
+            // WindowReader calls this inside SwiftUI's view update.
+            if oldValue !== window {
+                windowCloseDelegate?.restoreOriginalDelegate()
+                windowCloseDelegate = nil
+                syncWindowCloseDelegate()
+                Task { @MainActor [weak self] in self?.objectWillChange.send() }
+            }
+            window?.title = projectURL?.lastPathComponent ?? "Pitex"
+            window?.subtitle = remote?.statusText ?? ""
+            // Startup always presents Open; native restoration must not
+            // recreate a workspace from a previously closed window.
+            window?.isRestorable = false
+            // A routed open may have asked for fronting before the native
+            // window existed — finish the job on attachment.
+            if presentOnAttach, window != nil { present() }
+        }
+    }
+    /// Local scenes keep SwiftUI's native window delegate so LaunchServices
+    /// recognizes and reuses them. Only SSH sessions need the save gate.
+    private func syncWindowCloseDelegate() {
+        guard remote != nil, let window else {
+            windowCloseDelegate?.restoreOriginalDelegate()
+            windowCloseDelegate = nil
+            return
+        }
+        guard windowCloseDelegate == nil else { return }
+        let delegate = WorkspaceWindowCloseDelegate(workspace: self, window: window)
+        windowCloseDelegate = delegate
+        window.delegate = delegate
+    }
+
+    /// Set by `present()` while no NSWindow is attached yet (a window just
+    /// created by `openWindow(value:)`); consumed by the assignment above.
+    private var presentOnAttach = false
+
+    /// Brings this workspace's window and the app forward. An open event
+    /// can arrive while the app is inactive — ordering a window front
+    /// alone then leaves it behind the frontmost app until a Dock click.
+    func present() {
+        guard let window else {
+            presentOnAttach = true
+            return
+        }
+        presentOnAttach = false
+        NSApp.unhide(nil)
+        NSApp.activate()
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// True when `url` is this window's project folder or lies inside it.
+    func owns(_ url: URL) -> Bool {
+        guard let root = projectURL?.standardizedFileURL.path else { return false }
+        let path = url.standardizedFileURL.path
+        return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+    }
+
+    /// An empty window (nothing open, nothing loading) takes the next open.
+    var acceptsNewProject: Bool {
+        if case .loading = phase { return false }
+        return !hasProject
+    }
+
+    /// Brings this window forward and shows `url` — a file of its project
+    /// activates like a sidebar click; a folder just focuses the window.
+    func reveal(_ url: URL) {
+        present()
+        let url = url.standardizedFileURL
+        if projectFiles.contains(url) {
+            Task { await activateDocument(url) }
+        } else if Self.isSourceFile(url) {
+            Task { await open(url) }
+        }
+    }
+    var canSave: Bool {
+        guard !isClosing, capabilityLease?.access == .readWrite,
+              let snapshot = documentSnapshot, snapshot.saveState != .conflicted else { return false }
+        // A clean mirror may contain Assistant/disk edits not uploaded yet.
+        return remote != nil || snapshot.saveState == .dirty
+    }
+    var saveUnavailableReason: String? {
+        guard let snapshot = documentSnapshot else { return "No document is open." }
+        if snapshot.saveState == .conflicted {
+            return "The file changed on disk. Resolve the conflict before saving."
+        }
+        if snapshot.saveState == .clean && remote == nil { return "The document has no unsaved changes." }
+        if capabilityLease?.access != .readWrite { return "This project was opened read-only." }
+        return nil
+    }
+    var buildUnavailableReason: String? {
+        if isBuilding || canBuild { return nil }
+        if let buildTargetMessage { return buildTargetMessage }
+        if case let .unavailable(reason) = buildState { return reason }
+        return "Open a project with a .tex source before building."
+    }
+    var canBuild: Bool {
+        // A newly edited root directive is resolved again when Build is
+        // pressed, so an unresolved target must not leave this button stuck.
+        if case .ready = phase { return true }
+        return false
+    }
+
+    func presentOpenPanel() {
+        let panel = NSOpenPanel()
+        panel.title = String(localized: "workspace.open_panel_title")
+        panel.prompt = String(localized: "workspace.open")
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = ["tex", "bib", "md", "markdown"]
+            .compactMap { UTType(filenameExtension: $0) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        WorkspaceWindows.route(url, from: self)
+    }
+
+    // MARK: - Detached preview
+
+    /// The popped-out preview's window while `previewDetached` — a plain
+    /// NSWindow (not a scene), so it never registers as a workspace and
+    /// keeps rendering this model's retainedPDF/SyncTeX state.
+    private(set) var detachedPreviewWindow: NSWindow?
+    /// Held strongly while the window lives — NSWindow.delegate is weak.
+    private var detachedPreviewDelegate: DetachedPreviewWindowDelegate?
+    /// While true the inspector column renders nothing: the detached
+    /// window is the pane's single renderer.
+    @Published private(set) var previewDetached = false
+
+    /// Moves the preview pane into its own window over the same model —
+    /// build output, SyncTeX forward/inverse and markdown all keep working
+    /// because the detached `Preview` observes this same instance.
+    func detachPreview() {
+        guard detachedPreviewWindow == nil else { return }
+        let delegate = DetachedPreviewWindowDelegate(workspace: self)
+        let window = DetachedPreviewWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentMinSize = NSSize(width: 320, height: 360)
+        window.title = String(localized: "preview.title")
+        window.delegate = delegate
+        // Publishes the owning workspace to focused-scene commands as a
+        // fallback; the key-window lookup in AppCommands is what routes
+        // them for this plain NSWindow today.
+        window.contentView = NSHostingView(
+            rootView: Preview(workspace: self, detached: true).focusedSceneObject(self)
+        )
+        detachedPreviewWindow = window
+        detachedPreviewDelegate = delegate
+        previewDetached = true
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Returns the preview to the inspector — also ⌘W's behaviour while
+    /// the detached window is key, so the shortcut can't kill the project.
+    func attachPreview() {
+        closeDetachedPreview()
+    }
+
+    /// The detached window closed (its traffic-light button) — the pane
+    /// reattaches in the inspector.
+    func detachedPreviewDidClose(_ window: NSWindow) {
+        guard window === detachedPreviewWindow else { return }
+        detachedPreviewWindow = nil
+        detachedPreviewDelegate = nil
+        previewDetached = false
+        // The closed window can outlive this call through AppKit — drop
+        // its view so it can't retain the preview's workspace/observers.
+        window.delegate = nil
+        window.contentView = nil
+    }
+
+    /// Tears the detached window down; idempotent — the window cannot
+    /// outlive the model it renders (also runs on workspace close()).
+    private func closeDetachedPreview() {
+        let window = detachedPreviewWindow
+        detachedPreviewWindow = nil
+        detachedPreviewDelegate = nil
+        previewDetached = false
+        // Cleared before close() so windowWillClose's callback no-ops and
+        // a retained window can't keep the preview's observers alive.
+        window?.delegate = nil
+        window?.contentView = nil
+        window?.close()
+    }
+
+    /// Sidebar/footer/menu inspector toggle: while the pane lives in its
+    /// own window the toggle reattaches it — flipping a hidden inline
+    /// pane would do nothing the user can see.
+    func toggleInspectorPane() {
+        if previewDetached { attachPreview() } else { inspectorVisible.toggle() }
+    }
+
+    /// File → Close / ⌘W. While the detached preview is key it only
+    /// reattaches the pane; elsewhere keeps the old semantics (close the
+    /// project, or the window itself when it is empty).
+    func performCloseCommand() {
+        if let detached = detachedPreviewWindow, detached === NSApp.keyWindow {
+            attachPreview()
+        } else if hasProject {
+            Task { await close() }
+        } else {
+            window?.performClose(nil)
+        }
+    }
+
+    // MARK: - Recents & file operations
+
+    private static let recentsKey = "pitex.pref.workspace.recentDocuments"
+
+    private func recordRecent(_ url: URL) {
+        recentDocuments.removeAll { $0 == url }
+        recentDocuments.insert(url, at: 0)
+        if recentDocuments.count > 10 { recentDocuments = Array(recentDocuments.prefix(10)) }
+        UserDefaults.standard.set(recentDocuments.map(\.path), forKey: Self.recentsKey)
+    }
+
+    func loadRecents() {
+        recentDocuments = (UserDefaults.standard.stringArray(forKey: Self.recentsKey) ?? [])
+            .map { URL(fileURLWithPath: $0) }
+    }
+
+    func clearRecents() {
+        recentDocuments = []
+        UserDefaults.standard.removeObject(forKey: Self.recentsKey)
+    }
+
+    /// File → New: creates an empty .tex file inside the open project and
+    /// opens it. Without a project this is a no-op.
+    func createDocument() async {
+        guard !isClosing, let root = projectURL else { return }
+        // Name choice and write as one step against a remote sync commit.
+        await MirrorWrites.shared.enter()
+        var index = 1
+        var url = root.appendingPathComponent("untitled.tex")
+        while FileManager.default.fileExists(atPath: url.path) {
+            index += 1
+            url = root.appendingPathComponent("untitled-\(index).tex")
+        }
+        let written = Result {
+            try "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n"
+                .write(to: url, atomically: true, encoding: .utf8)
+        }
+        MirrorWrites.shared.leave()
+        do {
+            try written.get()
+            if !projectFiles.contains(url) {
+                projectFiles.append(url)
+                projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+            }
+            await activateDocument(url)
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// File → Save As…: writes the active document to a chosen path. When the
+    /// destination lives inside the project it becomes the active document.
+    func saveAs() async {
+        guard !isClosing, documentSnapshot != nil else { return }
+        let context = projectGeneration
+        let editor = environment?.editor
+        await editor?.flushPendingChanges()
+        guard projectGeneration == context, !isClosing else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = activeDocumentURL?.lastPathComponent ?? "document.tex"
+        panel.allowedContentTypes = ["tex", "bib", "md", "markdown"]
+            .compactMap { UTType(filenameExtension: $0) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        await editor?.flushPendingChanges()
+        guard projectGeneration == context, !isClosing,
+              let snapshot = documentSnapshot else { return }
+        do {
+            await MirrorWrites.shared.enter()
+            let written = Result { try snapshot.text.write(to: url, atomically: true, encoding: .utf8) }
+            MirrorWrites.shared.leave()
+            try written.get()
+            if let root = projectURL,
+               (try? Self.relativePath(for: url, root: root)) != nil {
+                if !projectFiles.contains(url) {
+                    projectFiles.append(url)
+                    projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+                }
+                await activateDocument(url)
+                if remote != nil { await saveAll() }
+            }
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Edit → Toggle Line Comment: inserts or removes a leading % on every
+    /// line covered by the selection.
+    func toggleLineComment() {
+        guard let textView = environment?.editor.textView,
+              let text = documentSnapshot?.text else { return }
+        let nsText = text as NSString
+        let range = textView.selectedRange()
+        guard range.location + range.length <= nsText.length else { return }
+        let lineRange = nsText.lineRange(for: range)
+        let block = nsText.substring(with: lineRange)
+        let lines = block.components(separatedBy: "\n")
+        let contentLines = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let allCommented = !contentLines.isEmpty && contentLines.allSatisfy {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("%")
+        }
+        let transformed = lines.map { line -> String in
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return line }
+            if allCommented {
+                guard let percentIndex = line.firstIndex(of: "%") else { return line }
+                var result = line
+                result.remove(at: percentIndex)
+                if result.first == " " { result.removeFirst() }
+                return result
+            }
+            return "%" + line
+        }.joined(separator: "\n")
+        guard textView.shouldChangeText(in: lineRange, replacementString: transformed) else { return }
+        textView.replaceCharacters(in: lineRange, with: transformed)
+        textView.didChangeText()
+    }
+
+    func open(_ selectedURL: URL) async {
+        guard let generation = await close(), documentLoadGeneration == generation else { return }
+        phase = .loading(selectedURL)
+        // A remote project's mirror is refreshed from the device before any
+        // file is read; an unreachable device with nothing cached fails here.
+        guard await beginRemoteSession(for: selectedURL), documentLoadGeneration == generation else { return }
+        do {
+            let (root, files, initialURL, initialText) = try await Task.detached(priority: .userInitiated) {
+                let values = try selectedURL.resourceValues(forKeys: [.isDirectoryKey])
+                let isDirectory = values.isDirectory == true
+                // Standardize so symlinked roots (/tmp → /private/tmp) canonicalize
+                // identically to document paths in SyncTeX/path containment checks.
+                var resolver = TeXProjectResolver()
+                let root = (isDirectory ? selectedURL : resolver.projectRoot(for: selectedURL)).standardizedFileURL
+                let files = try Self.discoverTexFiles(root: root, selected: selectedURL, isDirectory: isDirectory)
+                let initialURL: URL
+                if isDirectory {
+                    guard let first = resolver.initialDocument(in: files) else { throw WorkspaceOpenError.noTexSources }
+                    initialURL = first
+                } else {
+                    initialURL = selectedURL.standardizedFileURL
+                }
+
+                // NSOpenPanel grants immediate access. AppShell's broker then owns the durable lease.
+                let initialText = try Self.readExactUTF8(initialURL)
+                return (root, files, initialURL, initialText)
+            }.value
+            guard documentLoadGeneration == generation else { return }
+            let relativePath = try Self.relativePath(for: initialURL, root: root)
+            let file = ProjectFile(
+                documentID: try StableDocumentID(rawValue: Self.documentID(for: relativePath.rawValue)),
+                path: relativePath
+            )
+            let session = try await registry.open(
+                projectRoot: root,
+                file: file,
+                initialText: initialText,
+                diskBaselineHash: .hashing(initialText)
+            )
+            guard documentLoadGeneration == generation else { return }
+            projectURL = root
+            projectFiles = files
+            registeredSessions = [session]
+            loadProjectCommands(root: root)
+            refreshGit()
+            let port = NativeDocumentSessionPort(session: session) { [weak self] snapshot in
+                guard let self, activeDocumentURL == initialURL else { return }
+                documentSnapshot = snapshot
+            }
+            let appEnvironment = try await AppShell.make(documentSession: port)
+            guard documentLoadGeneration == generation else { return }
+            let capability: FileCapability
+            do {
+                capability = try await appEnvironment.files.issueCapability(
+                    for: selectedURL,
+                    access: .readWrite
+                )
+            } catch {
+                capability = try await appEnvironment.files.issueCapability(
+                    for: selectedURL,
+                    access: .readOnly
+                )
+            }
+            let lease = try await appEnvironment.files.beginAccess(to: capability)
+            guard documentLoadGeneration == generation else {
+                try? await appEnvironment.files.endAccess(lease)
+                return
+            }
+            capabilityBroker = appEnvironment.files
+            capabilityLease = lease
+            let verifiedText = try await Task.detached(priority: .userInitiated) {
+                try Self.readExactUTF8(initialURL)
+            }.value
+            let snapshot = await session.snapshot()
+            guard documentLoadGeneration == generation else { return }
+            guard verifiedText == initialText else {
+                throw WorkspaceOpenError.changedWhileOpening
+            }
+
+            // Created before `environment` publishes so no body re-evaluation
+            // can build the editor with a permanently-nil `completion:` — a
+            // struct input evaluated once per makeNSView pass.
+            let completion = GhostCompletionCoordinator()
+            completion.contextProvider = { [weak self] in
+                self?.completionContext() ?? GhostCompletionCoordinator.Context()
+            }
+            completion.attach(to: appEnvironment.editor)
+            self.completion = completion
+            let equationPreview = EquationPreviewController()
+            equationPreview.workspace = EquationPreviewController.Workspace(
+                openText: { [weak self] url in await self?.openDocumentText(url) },
+                projectRoot: root
+            )
+            self.equationPreview = equationPreview
+
+            environment = appEnvironment
+            activeDocumentURL = initialURL
+            openDocuments = [initialURL]
+            documentSnapshot = snapshot
+            equationPreview.setDocument(initialURL)
+            equationPreview.setBuildCommand(buildCommandText)
+            refreshBuildTarget()
+            buildState = .unavailable("No build has run yet for this project.")
+            syncTeXState = .unavailable(
+                "SyncTeX is unavailable until a successful build produces matching metadata."
+            )
+
+            let coordinator = AgentCoordinator(environment: appEnvironment)
+            coordinator.contextProvider = { [weak self] in self?.agentContext() ?? AgentContextSnapshot() }
+            coordinator.persistDirtySessions = { [weak self] in
+                guard let self else { return "The workspace is not available." }
+                return await self.persistDirtySessions()
+            }
+            coordinator.agentActivityDidFinish = { [weak self] in
+                await self?.refreshAfterAgentActivity()
+            }
+            coordinator.attachActiveDocument = settings.aiAttachDefault
+            coordinator.preferredModelID = settings.aiDefaultModel
+            coordinator.historyLimit = settings.chatHistoryLimit
+            agent = coordinator
+            highlighter.attach(to: appEnvironment.editor, fileExtension: initialURL.pathExtension)
+            attachCompletion(to: appEnvironment.editor)
+            startWatcher(for: initialURL)
+            // The pi subprocess stays unspawned until the Assistant panel
+            // first appears (AgentPanel's .task calls prepare()).
+            phase = .ready
+            syncLiveScheduler()
+            await restoreBuiltPreview()
+            recordRecent(selectedURL)
+        } catch {
+            guard documentLoadGeneration == generation else { return }
+            guard let closedGeneration = await close(), documentLoadGeneration == closedGeneration else { return }
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    func activateDocument(_ url: URL) async {
+        guard url != activeDocumentURL,
+              let root = projectURL,
+              projectFiles.contains(url) else { return }
+        // Activating a real document dismisses a commit-diff overlay —
+        // the user asked to see the document, not the diff.
+        gitDiff = nil
+        // Keep the workspace mounted when switching sources: a loading phase
+        // destroys the split view and PDF view, losing their size and position.
+        let generation = UUID()
+        documentLoadGeneration = generation
+        do {
+            let text = try await Task.detached(priority: .userInitiated) {
+                try Self.readExactUTF8(url)
+            }.value
+            guard documentLoadGeneration == generation, projectURL == root else { return }
+            let relativePath = try Self.relativePath(for: url, root: root)
+            let file = ProjectFile(
+                documentID: try StableDocumentID(rawValue: Self.documentID(for: relativePath.rawValue)),
+                path: relativePath
+            )
+            let session = try await registry.open(
+                projectRoot: root,
+                file: file,
+                initialText: text,
+                diskBaselineHash: .hashing(text)
+            )
+            guard documentLoadGeneration == generation, projectURL == root else { return }
+            let newlyRegistered = !registeredSessions.contains(where: { $0 === session })
+            if newlyRegistered {
+                registeredSessions.append(session)
+                // A clean open changes the all-open-source identity the
+                // SyncTeX check binds against: flush so a valid `idle`
+                // reply can rebind it. No edit revision bump — an open is
+                // not an edit and must never lift the final-build floor.
+                requestEmbeddedPreviewFlush()
+            }
+            let port = NativeDocumentSessionPort(session: session) { [weak self] snapshot in
+                guard let self, activeDocumentURL == url else { return }
+                documentSnapshot = snapshot
+            }
+            let appEnvironment = try await AppShell.make(documentSession: port)
+            let snapshot = await session.snapshot()
+            guard documentLoadGeneration == generation, projectURL == root else { return }
+            // Snapshot the outgoing editor before the swap — its adapter is
+            // discarded, so this is the last chance to keep its position.
+            if let outgoing = activeDocumentURL, let editor = environment?.editor {
+                editorViewStates[outgoing.standardizedFileURL] = editor.viewState
+            }
+            environment = appEnvironment
+            activeDocumentURL = url
+            if !openDocuments.contains(url) { openDocuments.append(url) }
+            if let state = editorViewStates[url.standardizedFileURL] {
+                appEnvironment.editor.applyViewState(state)
+            }
+            documentSnapshot = snapshot
+            refreshBuildTarget()
+            completion?.attach(to: appEnvironment.editor)
+            equationPreview?.setDocument(url)
+            highlighter.attach(to: appEnvironment.editor, fileExtension: url.pathExtension)
+            attachCompletion(to: appEnvironment.editor)
+            startWatcher(for: url)
+            phase = .ready
+            await restoreBuiltPreview()
+        } catch {
+            guard documentLoadGeneration == generation, projectURL == root else { return }
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Debounced auto-save: when enabled in Settings → Editor, a dirty
+    /// document is written to disk after the configured idle delay. Each new
+    /// snapshot resets the timer so saves never interrupt typing.
+    private var autosaveTask: Task<Void, Never>?
+
+    private func scheduleAutosave() {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        guard remote == nil, settings.autoSave,
+              documentSnapshot?.saveState == .dirty,
+              capabilityLease?.access == .readWrite else { return }
+        let delay = max(settings.autoSaveDelay, 1)
+        autosaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.saveLocalDocument()
+        }
+    }
+
+    /// True while document writes are queued or in flight — app
+    /// termination waits for them via `waitForPendingWrites`.
+    var hasPendingWrites: Bool { pendingWriteCount > 0 }
+
+    /// Resolves after every queued/running write finished (its session
+    /// commit included), so quit and workspace teardown never cut a save.
+    func waitForPendingWrites() async {
+        while pendingWriteCount > 0 {
+            for pending in pendingWrites.values { _ = await pending.value }
+        }
+    }
+
+    /// What one serialized session write did, plus the session snapshot
+    /// after its commit/conflict was applied.
+    private struct SessionWriteResult: Sendable {
+        enum Kind: Sendable {
+            /// The session moved on while the write queued (already clean,
+            /// conflict resolved, …) — nothing was written.
+            case skipped
+            case saved
+            case saveConflict
+            case permissionFailure(path: String)
+            case interruptedWrite(path: String)
+        }
+        let kind: Kind
+        let snapshot: DocumentSessionCore.DocumentSnapshot
+    }
+
+    /// Serializes writes to `url`: the new write awaits the previous one
+    /// (commit included), then re-reads the session — anything snapshotted
+    /// before the wait is stale. The atomic write itself runs off the main
+    /// actor; committing by written revision keeps edits that landed
+    /// mid-write from breaking the baseline, and a mid-write conflict is
+    /// still recorded through `applyTextNeutral`. `resolvesConflict`
+    /// marks a keep-mine write so its commit clears the conflict it was
+    /// issued to resolve instead of losing to it. A failed write restores
+    /// the previous `lastOwnWrite` entry — the disk never held its hash.
+    private func enqueueSessionWrite(
+        url: URL,
+        session: DocumentSessionCore.DocumentSession,
+        shouldWrite: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> Bool,
+        baseline: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash,
+        resolvesConflict: Bool = false
+    ) -> Task<SessionWriteResult, Never> {
+        let url = url.standardizedFileURL
+        let previous = pendingWrites[url]
+        pendingWriteCount += 1
+        let task = Task { @MainActor [weak self] in
+            defer { self?.pendingWriteCount -= 1 }
+            _ = await previous?.value
+            // A remote project's sync never replaces this file between the
+            // disk check below and the rename.
+            await MirrorWrites.shared.enter()
+            defer { MirrorWrites.shared.leave() }
+            var snapshot = await session.snapshot()
+            guard shouldWrite(snapshot) else {
+                return SessionWriteResult(kind: .skipped, snapshot: snapshot)
+            }
+            let text = snapshot.text
+            let expectedBaseline = baseline(snapshot)
+            let previousOwnWrite = self?.lastOwnWrite[url]
+            self?.lastOwnWrite[url] = .hashing(text)
+            let outcome = await Task.detached(priority: .userInitiated) {
+                FoundationAtomicDocumentStore().save(
+                    text: text,
+                    to: url,
+                    expectedBaselineHash: expectedBaseline
+                )
+            }.value
+            switch outcome {
+            case let .saved(document):
+                if let committed = try? await session.commitSave(
+                    writtenDiskHash: document.hash,
+                    writtenRevision: snapshot.revision,
+                    resolving: resolvesConflict ? snapshot.conflict : nil
+                ) {
+                    snapshot = committed
+                } else {
+                    snapshot = await session.snapshot()
+                }
+                // The helper falls back to disk for saved buffers.
+                self?.requestEmbeddedPreviewFlush()
+                return SessionWriteResult(kind: .saved, snapshot: snapshot)
+            case let .staleBaseline(conflict):
+                self?.lastOwnWrite[url] = previousOwnWrite
+                let observedHash = conflict.observedDisk?.hash ?? .hashing("")
+                if let conflicted = try? await session.applyTextNeutral(
+                    .recordSaveConflict(observedDiskHash: observedHash)
+                ) {
+                    snapshot = conflicted
+                } else {
+                    snapshot = await session.snapshot()
+                }
+                return SessionWriteResult(kind: .saveConflict, snapshot: snapshot)
+            case let .permissionFailure(path):
+                self?.lastOwnWrite[url] = previousOwnWrite
+                return SessionWriteResult(
+                    kind: .permissionFailure(path: path),
+                    snapshot: snapshot
+                )
+            case let .interruptedWrite(path):
+                self?.lastOwnWrite[url] = previousOwnWrite
+                return SessionWriteResult(
+                    kind: .interruptedWrite(path: path),
+                    snapshot: snapshot
+                )
+            }
+        }
+        pendingWrites[url] = task
+        return task
+    }
+
+    func save() async {
+        guard canSave else { return }
+        if remote != nil {
+            if let problem = await saveRemoteSources(build: true) {
+                showRemoteSaveFailure(problem)
+            }
+        } else {
+            await saveLocalDocument()
+        }
+    }
+
+    func saveAll() async {
+        guard !isClosing else { return }
+        if remote != nil {
+            if let problem = await saveRemoteSources(build: true) {
+                showRemoteSaveFailure(problem)
+            }
+        } else if let problem = await persistDirtySessions() {
+            phase = .failed(problem)
+        }
+    }
+
+    private func saveLocalDocument() async {
+        guard canSave,
+              let url = activeDocumentURL,
+              let snapshot = documentSnapshot,
+              let session = registeredSessions.first(where: { $0.path == snapshot.path }) else { return }
+        let generation = documentLoadGeneration
+        let result = await enqueueSessionWrite(
+            url: url,
+            session: session,
+            shouldWrite: { $0.saveState == .dirty },
+            baseline: { $0.diskBaselineHash }
+        ).value
+        // The write queued and ran off the main actor: the workspace may
+        // have switched documents or closed in between, so only publish a
+        // snapshot that still belongs to the displayed document — and
+        // never downgrade it to an older revision.
+        guard documentLoadGeneration == generation else { return }
+        if result.snapshot.path == documentSnapshot?.path,
+           result.snapshot.revision >= documentSnapshot?.revision ?? 0 {
+            documentSnapshot = result.snapshot
+        }
+        switch result.kind {
+        case .saved:
+            refreshGit()
+            // The saved file may feed the math context (\input/\usepackage).
+            equationPreview?.refreshExternalFiles()
+        case .saveConflict:
+            syncTeXState = .stale("The source changed on disk; SyncTeX locations may be stale.")
+        case .skipped:
+            break
+        case let .permissionFailure(path):
+            phase = .failed(WorkspaceOpenError.savePermissionDenied(path).localizedDescription)
+        case let .interruptedWrite(path):
+            phase = .failed(WorkspaceOpenError.saveInterrupted(path).localizedDescription)
+        }
+    }
+
+    /// Resolves an external-change conflict by adopting either the disk content
+    /// or the in-memory content. Both versions are preserved through the
+    /// session's revision history; nothing is silently dropped.
+    func resolveConflict(useDiskVersion: Bool) async {
+        guard let snapshot = documentSnapshot, snapshot.saveState == .conflicted,
+              let url = activeDocumentURL,
+              let session = registeredSessions.first(where: { $0.path == snapshot.path }) else { return }
+        let generation = documentLoadGeneration
+        do {
+            if useDiskVersion {
+                // Writes queued for this file land first so the adopted
+                // text is what the disk actually holds afterwards.
+                _ = await pendingWrites[url.standardizedFileURL]?.value
+                let diskText = try Self.readExactUTF8(url)
+                let current = await session.snapshot()
+                guard documentLoadGeneration == generation,
+                      current.saveState == .conflicted,
+                      current.path == documentSnapshot?.path else { return }
+                let updated = try await session.apply(
+                    .resolveConflict(text: diskText, diskBaselineHash: .hashing(diskText)),
+                    expectedRevision: current.revision
+                )
+                // The adopted disk content is the baseline now; the
+                // own-write record no longer describes the file.
+                lastOwnWrite[url.standardizedFileURL] = nil
+                guard documentLoadGeneration == generation,
+                      updated.path == documentSnapshot?.path,
+                      updated.revision >= documentSnapshot?.revision ?? 0 else { return }
+                documentSnapshot = updated
+                await environment?.editor.refreshFromSession()
+            } else {
+                let result = await enqueueSessionWrite(
+                    url: url,
+                    session: session,
+                    shouldWrite: { $0.saveState == .conflicted },
+                    baseline: { snapshot in
+                        snapshot.conflict.flatMap { conflict in
+                            if case let .externalModification(_, observed) = conflict { return observed }
+                            if case let .saveCollision(_, observed) = conflict { return observed }
+                            return nil
+                        } ?? snapshot.diskBaselineHash
+                    },
+                    resolvesConflict: true
+                ).value
+                guard documentLoadGeneration == generation,
+                      result.snapshot.path == documentSnapshot?.path else { return }
+                switch result.kind {
+                case .saved, .skipped:
+                    if result.snapshot.revision >= documentSnapshot?.revision ?? 0 {
+                        documentSnapshot = result.snapshot
+                    }
+                case .saveConflict, .permissionFailure, .interruptedWrite:
+                    phase = .failed("The conflicted file could not be written to disk.")
+                }
+            }
+        } catch {
+            phase = .failed("The conflict could not be resolved: \(error.localizedDescription)")
+        }
+    }
+
+    func closeDocument(_ url: URL) async {
+        guard let root = projectURL, !isClosing else { return }
+        let context = projectGeneration
+        let savingRemote = remote != nil
+        if savingRemote { isClosing = true }
+        defer { if savingRemote { isClosing = false } }
+        if savingRemote {
+            if let problem = await agent?.stopForRemoteClose() {
+                showRemoteSaveFailure(problem)
+                return
+            }
+            if let problem = await saveRemoteSources() {
+                showRemoteSaveFailure(problem)
+                return
+            }
+        }
+        guard projectGeneration == context, projectURL == root else { return }
+        stopWatcher(for: url)
+        // Writes queued for this file land before its session goes away.
+        _ = await pendingWrites[url.standardizedFileURL]?.value
+        lastOwnWrite[url.standardizedFileURL] = nil
+        if let index = registeredSessions.firstIndex(where: { session in
+            guard let path = try? Self.relativePath(for: url, root: root) else { return false }
+            return session.path == path
+        }) {
+            let session = registeredSessions.remove(at: index)
+            _ = try? await registry.close(projectRoot: root, session: session)
+        }
+        openDocuments.removeAll { $0 == url }
+        // Its unsaved override (if any) ends; TeX reads the disk again.
+        requestEmbeddedPreviewFlush()
+        editorViewStates.removeValue(forKey: url.standardizedFileURL)
+        paneLayout.remove(url)
+        if activeDocumentURL == url {
+            if let next = openDocuments.first {
+                activeDocumentURL = nil
+                await activateDocument(next)
+            } else {
+                environment = nil
+                activeDocumentURL = nil
+                documentSnapshot = nil
+                documentProject = DocumentProject()
+            }
+        }
+    }
+
+    /// Quit prepares every remote workspace before any window is torn down.
+    /// A failure in one workspace leaves all others available for retry.
+    func prepareForTermination(keepFrozen: Bool = false) async -> Bool {
+        if let closeTask { return await closeTask.value != nil }
+        guard !isClosing else { return false }
+        guard remote != nil, projectURL != nil else {
+            await waitForPendingWrites()
+            return true
+        }
+        isClosing = true
+        var succeeded = false
+        defer { if !keepFrozen || !succeeded { isClosing = false } }
+        if let problem = await agent?.stopForRemoteClose() {
+            showRemoteSaveFailure(problem)
+            return false
+        }
+        if let problem = await saveRemoteSources() {
+            showRemoteSaveFailure(problem)
+            return false
+        }
+        succeeded = true
+        terminationFrozen = keepFrozen
+        return true
+    }
+
+    func cancelTerminationPreparation() {
+        guard terminationFrozen else { return }
+        terminationFrozen = false
+        isClosing = false
+    }
+
+    @discardableResult
+    func close() async -> UUID? {
+        if let closeTask { return await closeTask.value }
+        guard !isClosing else { return nil }
+        isClosing = true
+        let task = Task { @MainActor in
+            defer { self.isClosing = false; self.closeTask = nil }
+            if self.remote != nil, self.projectURL != nil {
+                if let problem = await self.agent?.stopForRemoteClose() {
+                    self.showRemoteSaveFailure(problem)
+                    return nil as UUID?
+                }
+                if let problem = await self.saveRemoteSources() {
+                    self.showRemoteSaveFailure(problem)
+                    return nil as UUID?
+                }
+            }
+            return await self.tearDownWorkspace()
+        }
+        closeTask = task
+        return await task.value
+    }
+
+    private func tearDownWorkspace() async -> UUID {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        let generation = UUID()
+        documentLoadGeneration = generation
+        projectGeneration = UUID()
+        wordCount = 0
+        // Live compile belonged to the closing context: stop the debounce
+        // and retire live work — a running manual build keeps ownership.
+        liveCompileTask?.cancel()
+        liveCompileTask = nil
+        performLiveRequests(liveScheduler.invalidate())
+        stopEmbeddedPreview(resetContext: true)
+        // The popped-out preview renders this workspace's retained PDF —
+        // it must not outlive the project it belongs to.
+        closeDetachedPreview()
+        for url in fileWatchers.keys { stopWatcher(for: url) }
+        watchedFileStates.removeAll()
+        for task in pendingDiskChecks.values { task.cancel() }
+        pendingDiskChecks.removeAll()
+        // In-flight saves finish before their sessions are torn down, and a
+        // remote project uploads them before its mirror is let go.
+        await waitForPendingWrites()
+        lastOwnWrite.removeAll()
+        await endRemoteSession()
+        agent?.shutdown()
+        agent?.stopConfigWatcher()
+        completion?.shutdown()
+        equationPreview?.shutdown()
+        equationPreview = nil
+        highlighter.detach()
+        let brokerToClose = capabilityBroker
+        let leaseToClose = capabilityLease
+        let root = projectURL
+        let sessions = registeredSessions
+        environment = nil
+        capabilityBroker = nil
+        capabilityLease = nil
+        registeredSessions.removeAll()
+        projectURL = nil
+        projectFiles = []
+        openDocuments = []
+        editorViewStates.removeAll()
+        activeDocumentURL = nil
+        paneLayout.reset()
+        documentSnapshot = nil
+        agent = nil
+        completion = nil
+        latestBuiltPDFName = nil
+        retainedPDF = nil
+        syncTeXBinding = nil
+        // Retire in-flight SyncTeX refreshes/queries with the workspace.
+        syncTeXEpoch = UUID()
+        pinnedBuildTarget = nil
+        automaticBuildTarget = nil
+        documentProject = DocumentProject()
+        buildTargetMessage = nil
+        consoleSection = .assistant
+        outlineItems = []
+        labelItems = []
+        bibliographyItems = []
+        todoItems = []
+        gitStatus = nil
+        gitCommits = []
+        gitBranches = []
+        gitCommitMessage = ""
+        gitSuggestBusy = false
+        gitError = nil
+        gitExpandedCommits = []
+        gitCommitFiles = [:]
+        gitCommitFilesBusy = []
+        gitDiff = nil
+        bibliographyCache = nil
+        todoCache.removeAll()
+        projectLabels = []
+        citationKeys = []
+        projectLabelCache = [:]
+        resolverDiskCache = [:]
+        structureTask?.cancel()
+        structureTask = nil
+        phase = .noProject
+        if let root {
+            for session in sessions {
+                _ = try? await registry.close(projectRoot: root, session: session)
+            }
+        }
+        if let brokerToClose, let leaseToClose {
+            try? await brokerToClose.endAccess(leaseToClose)
+        }
+        return generation
+    }
+
+    /// Reveals the assistant tab in the bottom console; used by the toolbar
+    /// wand button and Edit → Send Selection to AI Assistant.
+    func revealAssistant() {
+        bottomPanelVisible = true
+        consoleSection = .assistant
+    }
+
+    /// Wand-button toggle: hides the console when the assistant tab is the
+    /// one already showing, otherwise reveals it on the assistant tab.
+    func toggleAssistant() {
+        if bottomPanelVisible && consoleSection == .assistant {
+            bottomPanelVisible = false
+        } else {
+            revealAssistant()
+        }
+    }
+
+    /// Sends the current editor selection to the assistant composer so the
+    /// user can ask about it directly (Edit → Send Selection to AI Assistant).
+    func sendSelectionToAssistant() {
+        guard let range = environment?.editor.selectedRange, range.length > 0,
+              let text = documentSnapshot?.text,
+              range.location + range.length <= (text as NSString).length else { return }
+        let selection = (text as NSString).substring(with: range)
+        revealAssistant()
+        agent?.insertIntoComposer("```\n\(selection)\n```\n")
+    }
+
+    /// Watches the editor's selection changes and mirrors the dragged range
+    /// into the assistant's selection-attachment chip — the agent always
+    /// knows what the user is pointing at, like the reference IDE's
+    /// selection-to-chat flow.
+    private func observeEditorSelection() {
+        if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) }
+        selectionObserver = nil
+        agent?.updateSelectionAttachment(nil)
+        guard let textView = environment?.editor.textView else { return }
+        selectionObserver = NotificationCenter.default.addObserver(
+            forName: NSTextView.didChangeSelectionNotification,
+            object: textView,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.syncSelectionAttachment() }
+        }
+    }
+
+    private func syncSelectionAttachment() {
+        guard let agent,
+              let range = environment?.editor.selectedRange,
+              range.length > 0,
+              let text = documentSnapshot?.text,
+              range.location + range.length <= (text as NSString).length else {
+            agent?.updateSelectionAttachment(nil)
+            return
+        }
+        let nsText = text as NSString
+        let selected = nsText.substring(with: range)
+        // One scan to the selection end: the previous substring+split pair
+        // allocated two document-sized arrays per selection change.
+        var startLine = 1
+        var endLine = 1
+        let end = range.location + range.length
+        for index in 0..<end where nsText.character(at: index) == 0x0A {
+            endLine += 1
+            if index < range.location { startLine += 1 }
+        }
+        let path = documentSnapshot?.path.rawValue ?? activeDocumentURL?.lastPathComponent ?? "document"
+        agent.updateSelectionAttachment(AgentSelectionAttachment(
+            path: path, startLine: startLine, endLine: endLine, text: selected
+        ))
+    }
+
+    /// The fire-time gates for inline completion — setting toggle, .tex
+    /// extension, project root for the subprocess cwd, and the file name
+    /// that lands in the prompt header.
+    private func completionContext() -> GhostCompletionCoordinator.Context {
+        var context = GhostCompletionCoordinator.Context()
+        context.projectRoot = projectURL
+        context.enabled = settings.aiAutocompletion
+        context.isTeX = activeDocumentURL?.pathExtension.lowercased() == "tex"
+        context.fileName = documentSnapshot?.path.rawValue
+            ?? activeDocumentURL?.lastPathComponent
+            ?? "document.tex"
+        return context
+    }
+
+    /// The live context folded into every agent prompt: which document is
+    /// open, its text, the selection, the project file list, and the most
+    /// recently built PDF preview.
+    private func agentContext() -> AgentContextSnapshot {
+        var context = AgentContextSnapshot()
+        context.projectRoot = projectURL
+        context.activePath = documentSnapshot?.path.rawValue
+        context.activeText = documentSnapshot?.text
+        if let text = documentSnapshot?.text,
+           let range = environment?.editor.selectedRange,
+           range.length > 0,
+           range.location + range.length <= (text as NSString).length {
+            context.selectionText = (text as NSString).substring(with: range)
+        }
+        if let root = projectURL {
+            context.projectFiles = projectFiles.compactMap {
+                try? Self.relativePath(for: $0, root: root).rawValue
+            }
+        }
+        if case let .succeeded(pdf, _) = buildState {
+            context.pdfData = pdf
+            context.pdfPath = latestBuiltPDFName
+        }
+        return context
+    }
+
+    // MARK: - SyncTeX
+
+    /// `sourceRelativePath` is the project-relative main the build ran
+    /// on — the SyncTeX mapper anchors recorded inputs on it, never on
+    /// the (possibly hidden `.pitex-live`) PDF folder.
+    func refreshSyncTeXBinding(pdfURL: URL, sourceRelativePath: String) async {
+        guard let root = projectURL else {
+            syncTeXState = .unavailable("SyncTeX is unavailable until a successful build produces matching metadata.")
+            return
+        }
+        let context = projectGeneration
+        let epoch = syncTeXEpoch
+        do {
+            let binding = try await syncTeXRunner.refreshBinding(
+                projectRoot: root,
+                pdfURL: pdfURL,
+                // A restored/existing PDF has no build identifier; the
+                // .synctex fingerprint still keeps stale results failing closed.
+                buildID: activeBuildID?.rawValue ?? "existing-pdf",
+                mainRelativePath: sourceRelativePath
+            )
+            // The await may have raced a build start, workspace switch or
+            // target change — this binding belongs to the older context.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root else { return }
+            syncTeXBinding = binding
+            syncTeXState = .current
+        } catch {
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root else { return }
+            syncTeXBinding = nil
+            syncTeXState = .unavailable("SyncTeX metadata could not be loaded for this build.")
+        }
+    }
+
+    /// Lazily binds SyncTeX to the PDF on disk so Cmd-click navigation works
+    /// for documents rendered before this session as well as fresh builds.
+    private func ensureSyncTeXBinding() async {
+        guard !isBuilding else { return }
+        await restoreBuiltPreview()
+    }
+
+    /// Reopen the main document's PDF, including when a chapter or .bib file
+    /// was opened first. Switching within that document keeps its preview.
+    private func restoreBuiltPreview() async {
+        guard !isBuilding, let root = projectURL, let source = buildSourceURL(),
+              let relative = try? Self.relativePath(for: source, root: root).rawValue else { return }
+        // An editing preview is session-owned (its artifacts may already be
+        // released) — it is never re-read as a project build output.
+        if let retained = retainedPDF, retained.isEmbeddedPreview, retained.sourceTarget == relative { return }
+        // The retained artifact wins for its own target — a live build's
+        // PDF hides under .pitex-live and must not fall back to the manual
+        // sibling beside the source.
+        let name: String
+        if let retained = retainedPDF, retained.sourceTarget == relative {
+            name = retained.artifactPath
+        } else if let latest = latestBuiltPDFName,
+                  latest == Self.livePDFPath(forSourcePath: relative) {
+            name = latest
+        } else {
+            name = (relative as NSString).deletingPathExtension + ".pdf"
+        }
+        if latestBuiltPDFName == name, syncTeXBinding != nil { return }
+        let pdf = root.appendingPathComponent(name)
+        guard let data = try? Data(contentsOf: pdf), data.starts(with: Data("%PDF".utf8)) else {
+            if latestBuiltPDFName != name {
+                latestBuiltPDFName = nil
+                syncTeXBinding = nil
+                buildState = .unavailable("Build the main document to create its PDF preview.")
+                syncTeXState = .unavailable("SyncTeX requires a completed build of the main document.")
+            }
+            return
+        }
+        if let retained = retainedPDF, retained.artifactPath == name {
+            guard data == retained.data else {
+                // A failed/cancelled build may have left a torn artifact at
+                // this path — it is not the retained output, and its partial
+                // metadata must not lazily bind to the last good PDF.
+                syncTeXBinding = nil
+                syncTeXState = .unavailable("SyncTeX is unavailable until a successful build produces matching metadata.")
+                return
+            }
+            // Same bytes are already retained — nothing to republish.
+            // A lazy restore after a failed/cancelled/superseded run keeps
+            // the honest status and never binds metadata that run may have
+            // overwritten; binding resumes only on an accepted success.
+            return
+        }
+        retainedPDF = RetainedPDF(data: data, artifactPath: name, sourceTarget: relative)
+        latestBuiltPDFName = name
+        buildState = .succeeded(pdf: data, log: buildLogText)
+        await refreshSyncTeXBinding(pdfURL: pdf, sourceRelativePath: relative)
+    }
+
+    func invalidateSyncTeXForBuild() {
+        invalidateSyncTeX(reason: "SyncTeX will be refreshed after the build completes.")
+    }
+
+    /// Bumping the epoch retires any in-flight refresh or query along with
+    /// the published binding — a late result from the build or preview
+    /// that just superseded this state attaches to nothing.
+    func invalidateSyncTeX(reason: String) {
+        syncTeXEpoch = UUID()
+        syncTeXBinding = nil
+        syncTeXState = .unavailable(reason)
+    }
+
+    /// Forward sync: editor selection → PDF highlight.
+    func syncForward() async {
+        guard let text = documentSnapshot?.text,
+              let editor = environment?.editor else {
+            syncTeXState = .unavailable("SyncTeX requires a completed build.")
+            return
+        }
+        let cursor = min(editor.selectedRange.location, (text as NSString).length)
+        let nsText = text as NSString
+        let line = nsText.substring(to: cursor).components(separatedBy: "\n").count
+        let lineStart = nsText.range(of: "\n", options: .backwards, range: NSRange(location: 0, length: cursor))
+        let column = lineStart.location == NSNotFound ? cursor : cursor - lineStart.location - 1
+        await syncForward(line: line, column: max(column, 0))
+    }
+
+    /// Forward sync at an explicit position — used by the editor's
+    /// Cmd-click gesture (the reference editor's Ctrl-click equivalent).
+    func syncForward(line: Int, column: Int) async {
+        await ensureSyncTeXBinding()
+        if let refusal = await embeddedPreviewSyncTeXRefusal() {
+            syncTeXState = .stale(refusal)
+            return
+        }
+        guard let binding = syncTeXBinding,
+              let url = activeDocumentURL else {
+            syncTeXState = .unavailable("SyncTeX requires a completed build.")
+            return
+        }
+        let epoch = syncTeXEpoch
+        let context = projectGeneration
+        do {
+            let match = try await syncTeXRunner.forward(
+                binding: binding,
+                sourceURL: url,
+                line: line,
+                column: column
+            )
+            // The query may have raced a build start or binding refresh —
+            // its hit belongs to the older PDF and must not highlight.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  syncTeXBinding == binding else { return }
+            NotificationCenter.default.post(
+                name: .syncTeXHighlightRequested,
+                object: self,
+                userInfo: [
+                    "page": match.pdf.page,
+                    "x": match.h,
+                    "y": match.v,
+                    "width": match.width,
+                    "height": match.height,
+                ]
+            )
+            // While detached, the destination lives in the popped-out
+            // window — restore and raise it (without stealing editor
+            // key) so the highlight is actually visible.
+            if let detached = detachedPreviewWindow {
+                if detached.isMiniaturized { detached.deminiaturize(nil) }
+                detached.orderFront(nil)
+            }
+        } catch let error as SyncTeXQueryError {
+            // A stale query's failure must not overwrite a newer
+            // binding's status.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  syncTeXBinding == binding else { return }
+            switch error {
+            case .staleResult: syncTeXState = .stale("SyncTeX results no longer match the current PDF.")
+            case .ambiguousMatch(let count): syncTeXState = .ambiguous("\(count) matches; the source is ambiguous.")
+            case .noMatch: syncTeXState = .stale("No SyncTeX location matched the cursor position.")
+            default: syncTeXState = .stale("SyncTeX output could not be parsed.")
+            }
+        } catch {
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  syncTeXBinding == binding else { return }
+            syncTeXState = .stale("SyncTeX lookup failed.")
+        }
+    }
+
+    /// Inverse sync: PDF click → editor position.
+    func syncInverse(page: Int, point: SyncTeXCore.PDFPoint) async {
+        await ensureSyncTeXBinding()
+        if let refusal = await embeddedPreviewSyncTeXRefusal() {
+            syncTeXState = .stale(refusal)
+            return
+        }
+        guard let binding = syncTeXBinding, let root = projectURL else {
+            NSLog("[SyncTeX] inverse dropped: no binding/root")
+            return
+        }
+        let epoch = syncTeXEpoch
+        let context = projectGeneration
+        do {
+            let match = try await syncTeXRunner.inverse(binding: binding, page: page, point: point)
+            // Inverse jumps mutate the editor — verify this result still
+            // belongs to the binding and workspace it was issued under.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root,
+                  syncTeXBinding == binding else { return }
+            NSLog("[SyncTeX] inverse page=\(page) x=\(point.x) y=\(point.y) -> \(match.source.path.value):\(match.source.line)")
+            let fileURL = root.appendingPathComponent(match.source.path.value).standardizedFileURL
+            let resolved = fileURL.resolvingSymlinksInPath()
+            if !projectFiles.contains(where: { $0.resolvingSymlinksInPath() == resolved }) {
+                projectFiles.append(fileURL)
+                projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+            }
+            if resolved != activeDocumentURL?.resolvingSymlinksInPath() {
+                await activateDocument(fileURL)
+            }
+            // activateDocument may have raced a workspace switch — the
+            // same path can be open under a different context, and this
+            // result must not jump in it.
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root,
+                  syncTeXBinding == binding,
+                  resolved == activeDocumentURL?.resolvingSymlinksInPath() else { return }
+            // The click may have come from the detached preview window —
+            // the target editor must come forward (de-miniaturized) to
+            // receive the jump and focus. No-op when already key.
+            present()
+            jumpTo(line: match.source.line, column: match.source.column, highlight: settings.inverseSyncHighlight)
+        } catch let error as SyncTeXQueryError {
+            NSLog("[SyncTeX] inverse error: \(error)")
+            guard syncTeXEpoch == epoch,
+                  projectGeneration == context,
+                  projectURL == root,
+                  syncTeXBinding == binding else { return }
+            switch error {
+            case .staleResult: syncTeXState = .stale("SyncTeX results no longer match the current PDF.")
+            case .ambiguousMatch(let count): syncTeXState = .ambiguous("\(count) matches; the PDF position is ambiguous.")
+            case .noMatch: break
+            default: break
+            }
+        } catch {
+            NSLog("[SyncTeX] inverse error: \(error)")
+        }
+    }
+
+    func jumpTo(line: Int, column: Int = 0, highlight: Bool = false) {
+        guard let editor = environment?.editor else { return }
+        // The live text view is authoritative — documentSnapshot trails edits
+        // made since the last flush, which would misplace the caret.
+        let nsText = editor.textView.string as NSString
+        var location = 0
+        var currentLine = 1
+        while currentLine < line {
+            let nextRange = nsText.range(of: "\n", options: [], range: NSRange(location: location, length: nsText.length - location))
+            guard nextRange.location != NSNotFound else { break }
+            location = nextRange.location + 1
+            currentLine += 1
+        }
+        var contentsEnd = location
+        nsText.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+        let target = location + min(max(column, 0), contentsEnd - location)
+        if let folds = editor.textView.layoutManager?.delegate as? FoldEngine {
+            for region in folds.regions where region.folded && region.hiddenLineRange.contains(currentLine - 1) {
+                folds.unfold(atLine: region.headerLine)
+            }
+        }
+        editor.revealSelection(NSRange(location: target, length: 0), highlight: highlight)
+    }
+
+    // MARK: - External change monitoring
+
+    private func startWatcher(for url: URL) {
+        stopWatcher(for: url)
+        let descriptor = Darwin.open(url.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .delete, .rename, .attrib],
+            queue: .main
+        )
+        source.setEventHandler { [weak self, weak source] in
+            let attributeOnly = source?.data == .attrib
+            Task { @MainActor in self?.fileChangedOnDisk(url, attributeOnly: attributeOnly) }
+        }
+        source.setCancelHandler { Darwin.close(descriptor) }
+        source.resume()
+        fileWatchers[url] = source
+        watchedFileStates[url] = WatchedFileState(path: url.path)
+    }
+
+    private func stopWatcher(for url: URL) {
+        fileWatchers.removeValue(forKey: url)?.cancel()
+        watchedFileStates[url] = nil
+    }
+
+    private func fileChangedOnDisk(_ url: URL, attributeOnly: Bool) {
+        // An attribute-only event (a read's access time, an extended attribute) for a file whose (device, inode, size, mtime, mode) is what it was at the
+        // last processed event is not a change. Processing it re-reads the file, and that read raises the next such event: an endless ~150 ms loop
+        // (each pass also re-requests an embedded-preview flush and refreshes git). Write/delete/rename events are never filtered; a failed stat is processed.
+        if attributeOnly, let known = watchedFileStates[url], WatchedFileState(path: url.path) == known { return }
+        watchedFileStates[url] = WatchedFileState(path: url.path)
+        // Coalesce write bursts (the agent's edit tool may write several
+        // times in quick succession) so the session compares against the
+        // final on-disk content once, not every intermediate state.
+        pendingDiskChecks[url]?.cancel()
+        pendingDiskChecks[url] = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            await processDiskChange(url)
+            pendingDiskChecks[url] = nil
+            refreshGit()
+        }
+        // The watcher fd is invalidated by rename/delete; re-arm it.
+        if FileManager.default.fileExists(atPath: url.path) {
+            startWatcher(for: url)
+        }
+    }
+
+    /// Applies the on-disk state of `url` to its document session. A clean
+    /// session (no unsaved edits) adopts the disk content directly so
+    /// agent-made edits surface in the editor without a conflict round-trip;
+    /// a dirty session keeps its edits and flags a conflict instead.
+    private func processDiskChange(_ url: URL) async {
+        guard let root = projectURL,
+              let session = registeredSessions.first(where: { session in
+                  guard let path = try? Self.relativePath(for: url, root: root) else { return false }
+                  return session.path == path
+              }) else { return }
+        // Any observed change of an open file (edit, replace, delete): the
+        // helper re-stats what TeX read from disk on every update. A source
+        // (`liveCompileExtensions`) is in the flush key through its content
+        // hash, so its change shows there; any other open file TeX may read
+        // (a .md) is not, so its event forces the flush.
+        requestEmbeddedPreviewFlush(force: !Self.liveCompileExtensions.contains(url.pathExtension.lowercased()))
+        // Hoisted: a trailing closure can't sit inside a guard condition.
+        let disk = try? await Task.detached(priority: .userInitiated) {
+            let text = try Self.readExactUTF8(url)
+            return (text, DiskContentHash.hashing(text))
+        }.value
+        guard let (diskText, observedHash) = disk else {
+            // Deleted or unreadable: never replace content with nothing. Flag
+            // a conflict only when unsaved in-memory edits are at stake.
+            let snapshot = await session.snapshot()
+            if snapshot.saveState != .clean, snapshot.conflict == nil,
+               let updated = try? await session.applyTextNeutral(
+                   .recordExternalChange(observedDiskHash: .hashing(""))
+               ), snapshot.path == documentSnapshot?.path {
+                documentSnapshot = updated
+            }
+            return
+        }
+        // Our own write put exactly this on disk — its session commit owns
+        // the baseline, so it is not an external change. Anything else means
+        // the disk moved past that write: drop the record so a later file
+        // matching it byte-for-byte registers as external again.
+        guard observedHash != lastOwnWrite[url.standardizedFileURL] else { return }
+        lastOwnWrite[url.standardizedFileURL] = nil
+        let snapshot = await session.snapshot()
+        guard observedHash != snapshot.diskBaselineHash, snapshot.conflict == nil else { return }
+        // "Confirm before overwriting external changes" off → adopt the disk
+        // version even over unsaved in-memory edits; on → flag a conflict.
+        let adoptDisk = snapshot.saveState == .clean || !settings.confirmOverwrite
+        if adoptDisk {
+            if let updated = try? await session.apply(
+                .resolveConflict(text: diskText, diskBaselineHash: observedHash),
+                expectedRevision: snapshot.revision
+            ), updated.path == documentSnapshot?.path {
+                documentSnapshot = updated
+                await environment?.editor.refreshFromSession()
+            }
+        } else if let updated = try? await session.applyTextNeutral(
+            .recordExternalChange(observedDiskHash: observedHash)
+        ), snapshot.path == documentSnapshot?.path {
+            documentSnapshot = updated
+        }
+        // The flush requested at entry may have run before the adoption above
+        // changed this session's hash (a non-active source raises no edit): ask
+        // again so a changed hash reaches the helper. Unchanged — it is skipped.
+        requestEmbeddedPreviewFlush()
+        // A watched non-active file's labels/citations changed on disk too —
+        // the mtime key in the structure caches picks it up on this pass.
+        scheduleStructureRefresh()
+    }
+
+    // MARK: - Agent integration
+
+    /// Persists every dirty open document so the agent's file tools observe
+    /// the same content the editor shows. Returns a user-facing problem when
+    /// a document cannot be persisted (e.g. unresolved conflict).
+    @discardableResult
+    func persistDirtySessions() async -> String? {
+        guard let root = projectURL else { return nil }
+        let generation = documentLoadGeneration
+        for session in registeredSessions {
+            let sessionSnapshot = await session.snapshot()
+            if sessionSnapshot.saveState == .conflicted {
+                return "The file \(sessionSnapshot.path.rawValue) has an unresolved external-change conflict. Resolve it before saving."
+            }
+            guard sessionSnapshot.saveState == .dirty else { continue }
+            let fileURL = root.appendingPathComponent(sessionSnapshot.path.rawValue)
+            let result = await enqueueSessionWrite(
+                url: fileURL,
+                session: session,
+                shouldWrite: { $0.saveState == .dirty },
+                baseline: { $0.diskBaselineHash }
+            ).value
+            switch result.kind {
+            case .saved, .skipped:
+                // A conflict recorded while the write was queued blocks
+                // the run the same way the pre-check above does.
+                if result.snapshot.saveState == .conflicted {
+                    return "The file \(result.snapshot.path.rawValue) has an unresolved external-change conflict. Resolve it before saving."
+                }
+            case .saveConflict:
+                return "The file \(result.snapshot.path.rawValue) changed on disk while saving. Resolve the conflict first."
+            case .permissionFailure, .interruptedWrite:
+                return "The file \(result.snapshot.path.rawValue) could not be saved to disk."
+            }
+        }
+        if let snapshot = documentSnapshot, documentLoadGeneration == generation {
+            documentSnapshot = await registeredSessions
+                .first(where: { $0.path == snapshot.path })?.snapshot() ?? snapshot
+        }
+        return nil
+    }
+
+    /// After an agent run completes: adopt its edits into any session whose
+    /// disk file changed while clean, and pick up source files the agent
+    /// created so they appear in the project outline.
+    func refreshAfterAgentActivity() async {
+        guard let root = projectURL else { return }
+        for session in registeredSessions {
+            let url = root.appendingPathComponent(session.path.rawValue)
+            await processDiskChange(url)
+        }
+        if let discovered = try? Self.discoverTexFiles(
+            root: root, selected: root, isDirectory: true
+        ) {
+            let known = Set(projectFiles)
+            let additions = discovered.filter { !known.contains($0) }
+            if !additions.isEmpty {
+                projectFiles.append(contentsOf: additions)
+                projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+            }
+        }
+        // The agent's tools (or a remote pull) may have rewritten project
+        // files no editor has open — inputs the preview engine reads from
+        // disk.
+        requestEmbeddedPreviewFlush(force: true)
+    }
+
+    // MARK: - Sidebar structure
+
+    /// Debounced like the syntax highlighter: parsing outline/labels is
+    /// O(document) and bibliography reads hit disk, so neither belongs on
+    /// the per-keystroke path.
+    private var structureTask: Task<Void, Never>?
+
+    private func scheduleStructureRefresh() {
+        structureTask?.cancel()
+        structureTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: EditorTiming.analysisDebounce)
+            guard !Task.isCancelled else { return }
+            self?.refreshStructure()
+        }
+    }
+
+    /// Rebuilds the Outline / Labels / BibTeX / TODOs sidebar data from the
+    /// active document text, the project's .bib files, and its .tex files.
+    private func refreshStructure() {
+        let snapshot = documentSnapshot
+        let root = projectURL
+        let text = snapshot?.text ?? ""
+        // The active .tex document's TODOs parse off-actor with the rest of
+        // the structure data; refreshTodos stores them under the revision key.
+        let activeTodo = activeDocumentURL.flatMap { url in
+            url.pathExtension.lowercased() == "tex"
+                ? (url, (try? Self.relativePath(for: url, root: root ?? url.deletingLastPathComponent()).rawValue)
+                    ?? url.lastPathComponent)
+                : nil
+        }
+        Task { @MainActor [weak self] in
+            let (outline, labels, count, todos) = await Task.detached(priority: .userInitiated) {
+                let starts = Self.lineStartOffsets(text as NSString)
+                return (Self.parseOutline(text, lineStarts: starts),
+                        Self.parseLabels(text, lineStarts: starts),
+                        text.split { $0 == " " || $0 == "\n" || $0 == "\t" }.count,
+                        activeTodo.map { Self.parseTodos(text, file: $0.1, url: $0.0) })
+            }.value
+            guard let self, projectURL == root,
+                  documentSnapshot?.documentID == snapshot?.documentID,
+                  documentSnapshot?.revision == snapshot?.revision else { return }
+            if outlineItems != outline { outlineItems = outline }
+            if labelItems != labels { labelItems = labels }
+            if wordCount != count { wordCount = count }
+            refreshBibliography()
+            refreshTodos(activeItems: todos)
+            refreshCompletionKeys(text: text)
+        }
+    }
+
+    /// Completion key sets: labels merge every project .tex file
+    /// (mtime-cached disk reads) with the active buffer, which may hold
+    /// unsaved edits; citations merge every project .bib file via
+    /// `bibliographyItems` with the active buffer when a .bib is open.
+    private func refreshCompletionKeys(text: String) {
+        let activeIsTex = activeDocumentURL?.pathExtension.lowercased() == "tex"
+        var labels = cachedProjectLabels()
+        if activeIsTex {
+            labels.formUnion(labelItems.map(\.name))
+        }
+        if projectLabels != labels { projectLabels = labels }
+
+        var citations = Set(bibliographyItems.map(\.key))
+        if activeDocumentURL?.pathExtension.lowercased() == "bib" {
+            citations.formUnion(Self.parseBibliographyKeys(text))
+        }
+        if citationKeys != citations { citationKeys = citations }
+    }
+
+    /// mtime-keyed per-file label cache on the same contract as
+    /// `todoCache` — a tab switch re-reads only files whose modification
+    /// date changed instead of re-parsing every project .tex file. The
+    /// active document is excluded: its in-memory buffer is the authority
+    /// for its labels.
+    private var projectLabelCache: [URL: (key: Double, labels: Set<String>)] = [:]
+
+    private func cachedProjectLabels() -> Set<String> {
+        let activePath = activeDocumentURL?.standardizedFileURL.path
+        let files = projectFiles.filter {
+            $0.pathExtension.lowercased() == "tex"
+                && $0.standardizedFileURL.path != activePath
+        }
+        var labels = Set<String>()
+        for file in files {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate?.timeIntervalSince1970) ?? 0
+            if let entry = projectLabelCache[file], entry.key == modified {
+                labels.formUnion(entry.labels)
+                continue
+            }
+            let parsed = (try? Self.readExactUTF8(file)).map {
+                Set(Self.parseLabels($0).map(\.name))
+            } ?? []
+            projectLabelCache[file] = (modified, parsed)
+            labels.formUnion(parsed)
+        }
+        let alive = Set(files)
+        projectLabelCache = projectLabelCache.filter { alive.contains($0.key) }
+        return labels
+    }
+
+    /// The editor's completion source: shared context detection plus the
+    /// project-wide key sets. Reattached per adapter because each document
+    /// activation builds a new EditorMacAdapter.
+    private func attachCompletion(to editor: EditorMacAdapter) {
+        editor.completionSource = { [weak self] text, caretUTF16Offset in
+            self?.editorCompletions(in: text, caretUTF16Offset: caretUTF16Offset)
+        }
+    }
+
+    /// Detects the caret's completion context in shared LanguageCore and
+    /// maps the project key sets into native candidates. The returned
+    /// UTF-16 range covers only the current prefix/token, so the popup
+    /// inserts the missing tail rather than re-typing the whole command.
+    /// A known context with zero matches still returns its range with an
+    /// empty list — distinct from "no context" so the adapter never falls
+    /// back to dictionary words inside a `\command`, \cite or \ref token.
+    func editorCompletions(
+        in text: String,
+        caretUTF16Offset: Int
+    ) -> (range: NSRange, candidates: [String])? {
+        guard let context = CompletionContextDetector.context(
+            in: text,
+            caretUTF16Offset: caretUTF16Offset
+        ) else { return nil }
+        let items = LanguageIndex.completions(
+            for: context,
+            labels: projectLabels,
+            citationKeys: citationKeys
+        )
+        return (
+            NSRange(
+                location: context.prefixUTF16Offset,
+                length: max(0, caretUTF16Offset - context.prefixUTF16Offset)
+            ),
+            items.map(\.text)
+        )
+    }
+
+    /// .bib items come from disk, not the editor buffer: re-parse only when
+    /// the file list or a .bib modification date changes instead of reading
+    /// every .bib on each document snapshot.
+    private var bibliographyCache: (key: [String], items: [BibliographyItem])?
+
+    private func refreshBibliography() {
+        var resolver = TeXProjectResolver()
+        resolver.diskCache = resolverDiskCache
+        if let url = activeDocumentURL, let text = documentSnapshot?.text { resolver.activeText = (url, text) }
+        let files = resolver.bibliographyFiles(main: buildSourceURL() ?? activeDocumentURL, files: projectFiles)
+        let project = resolver.documentProject(active: activeDocumentURL, main: automaticBuildTarget,
+                                               root: projectURL, files: projectFiles)
+        if documentProject != project { documentProject = project }
+        resolverDiskCache = resolver.diskCache
+        let key = files.map { file in
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate?.timeIntervalSince1970) ?? 0
+            return "\(file.path)#\(modified)"
+        }
+        if let cache = bibliographyCache, cache.key == key {
+            if bibliographyItems != cache.items { bibliographyItems = cache.items }
+            return
+        }
+        let items = Self.parseBibliography(files: files, root: projectURL)
+        bibliographyCache = (key, items)
+        if bibliographyItems != items { bibliographyItems = items }
+    }
+
+    /// The active file's todos parse from the live snapshot (keyed by
+    /// revision) while the rest keep mtime-keyed disk parses, so a typing
+    /// refresh re-reads only the file that changed.
+    private var todoCache: [URL: (key: String, items: [DocumentTodoItem])] = [:]
+
+    private func refreshTodos(activeItems: [DocumentTodoItem]? = nil) {
+        let active = activeDocumentURL
+        let revision = documentSnapshot?.revision ?? 0
+        let texFiles = projectFiles.filter { $0.pathExtension.lowercased() == "tex" }
+        var items: [DocumentTodoItem] = []
+        for file in texFiles {
+            let isActive = file == active
+            let key: String
+            if isActive {
+                key = "r\(revision)"
+            } else {
+                let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                    .contentModificationDate?.timeIntervalSince1970) ?? 0
+                key = "m\(modified)"
+            }
+            if let entry = todoCache[file], entry.key == key {
+                items.append(contentsOf: entry.items)
+                continue
+            }
+            let name = (try? Self.relativePath(for: file, root: projectURL ?? file.deletingLastPathComponent()).rawValue)
+                ?? file.lastPathComponent
+            // refreshStructure hands over the active document's parse,
+            // already computed off-actor from this same revision.
+            let parsed = (isActive ? activeItems : nil)
+                ?? (isActive ? documentSnapshot?.text : try? Self.readExactUTF8(file))
+                    .map { Self.parseTodos($0, file: name, url: file) } ?? []
+            todoCache[file] = (key, parsed)
+            items.append(contentsOf: parsed)
+        }
+        let alive = Set(texFiles)
+        todoCache = todoCache.filter { alive.contains($0.key) }
+        if todoItems != items { todoItems = items }
+    }
+
+    // MARK: - TODO sidebar
+
+    /// Sidebar `+` — inserts `% TODO: ` at the caret of the active .tex
+    /// document (through the text view so undo and the session see it), or
+    /// appends it to the build target when the active file isn't a source.
+    var canAddTodo: Bool {
+        if activeDocumentURL?.pathExtension.lowercased() == "tex" { return true }
+        return buildSourceURL()?.pathExtension.lowercased() == "tex"
+    }
+
+    func addTodo() {
+        if let textView = environment?.editor.textView,
+           activeDocumentURL?.pathExtension.lowercased() == "tex" {
+            let range = textView.selectedRange()
+            guard textView.shouldChangeText(in: range, replacementString: "% TODO: ") else { return }
+            textView.replaceCharacters(in: range, with: "% TODO: ")
+            textView.didChangeText()
+            return
+        }
+        guard let target = buildSourceURL(),
+              target.pathExtension.lowercased() == "tex" else { return }
+        Task { await appendTodoComment(to: target) }
+    }
+
+    /// Click-to-jump: activate the item's file when needed, then land the
+    /// caret on the comment's line (the inverse-SyncTeX two-step).
+    func openTodo(_ item: DocumentTodoItem) async {
+        if item.url != activeDocumentURL {
+            await activateDocument(item.url)
+        }
+        guard item.url == activeDocumentURL else { return }
+        jumpTo(line: item.line, column: 0)
+    }
+
+    func toggleTodo(_ item: DocumentTodoItem) { editTodo(item, .toggleDone) }
+    func renameTodo(_ item: DocumentTodoItem, to text: String) { editTodo(item, .rename(text)) }
+    func removeTodo(_ item: DocumentTodoItem) { editTodo(item, .delete) }
+
+    /// What a todo-row mutation does to its comment line.
+    private enum TodoLineEdit {
+        case toggleDone
+        case rename(String)
+        case delete
+    }
+
+    /// The active document is edited through the live text view so revision
+    /// tracking stays consistent; every other file goes through the disk
+    /// path, which refuses while a registered session is dirty for it.
+    private func editTodo(_ item: DocumentTodoItem, _ edit: TodoLineEdit) {
+        if item.url == activeDocumentURL {
+            guard let textView = environment?.editor.textView,
+                  let bounds = Self.todoLineBounds(textView.string as NSString, line: item.line),
+                  let replacement = Self.applyTodoEdit(edit, content: bounds.content, terminator: bounds.terminator),
+                  textView.shouldChangeText(in: bounds.range, replacementString: replacement) else { return }
+            textView.replaceCharacters(in: bounds.range, with: replacement)
+            textView.didChangeText()
+            return
+        }
+        Task { await editTodoOnDisk(item.url, line: item.line, edit: edit) }
+    }
+
+    /// Rewrites a comment line in a non-active file. A registered session
+    /// must be clean — the new bytes are then adopted through
+    /// `processDiskChange` exactly like an external edit; a dirty session
+    /// (or none matching) turns the mutation into a no-op rather than
+    /// clobbering unsaved work.
+    private func editTodoOnDisk(_ url: URL, line: Int, edit: TodoLineEdit) async {
+        guard let root = projectURL,
+              let relative = try? Self.relativePath(for: url, root: root) else { return }
+        if await !todoSessionIsClean(relative: relative) { return }
+        var saved = false
+        do {
+            // Read-check-write as one step against a remote sync commit.
+            await MirrorWrites.shared.enter()
+            defer { MirrorWrites.shared.leave() }
+            guard let diskText = try? Self.readExactUTF8(url) else { return }
+            let nsText = diskText as NSString
+            guard let bounds = Self.todoLineBounds(nsText, line: line),
+                  let replacement = Self.applyTodoEdit(edit, content: bounds.content, terminator: bounds.terminator) else { return }
+            let updated = nsText.replacingCharacters(in: bounds.range, with: replacement)
+            if case .saved = FoundationAtomicDocumentStore().save(
+                text: updated,
+                to: url,
+                expectedBaselineHash: .hashing(diskText)
+            ) { saved = true }
+        }
+        guard saved else { return }
+        await processDiskChange(url)
+        refreshTodos()
+    }
+
+    /// `addTodo`'s fallback — appends `% TODO: ` at the end of the build
+    /// target under the same session-clean rules as `editTodoOnDisk`.
+    private func appendTodoComment(to url: URL) async {
+        guard let root = projectURL,
+              let relative = try? Self.relativePath(for: url, root: root) else { return }
+        if await !todoSessionIsClean(relative: relative) { return }
+        var saved = false
+        do {
+            await MirrorWrites.shared.enter()
+            defer { MirrorWrites.shared.leave() }
+            guard let diskText = try? Self.readExactUTF8(url) else { return }
+            let separator = diskText.isEmpty || diskText.hasSuffix("\n") ? "" : "\n"
+            if case .saved = FoundationAtomicDocumentStore().save(
+                text: diskText + separator + "% TODO: \n",
+                to: url,
+                expectedBaselineHash: .hashing(diskText)
+            ) { saved = true }
+        }
+        guard saved else { return }
+        await processDiskChange(url)
+        refreshTodos()
+    }
+
+    /// True when no registered session holds unsaved edits for `relative`.
+    private func todoSessionIsClean(relative: NormalizedRelativePath) async -> Bool {
+        guard let session = registeredSessions.first(where: { $0.path == relative }) else { return true }
+        return (await session.snapshot()).saveState == .clean
+    }
+
+    /// Locates a `% TODO:`/`% DONE:` marker inside `line`: the done flag,
+    /// the keyword range (incl. colon), and the text tail after it. Any `%`
+    /// can introduce the comment, so trailing `code % TODO: x` lines count.
+    nonisolated private static func todoMarker(in line: String) -> (done: Bool, keyword: Range<String.Index>, tail: Range<String.Index>)? {
+        var index = line.startIndex
+        while index < line.endIndex, let percent = line[index...].firstIndex(of: "%") {
+            var cursor = line.index(after: percent)
+            while cursor < line.endIndex, line[cursor] == " " || line[cursor] == "\t" {
+                cursor = line.index(after: cursor)
+            }
+            for (word, done) in [("TODO:", false), ("DONE:", true)] {
+                if line[cursor...].hasPrefix(word) {
+                    let keyEnd = line.index(cursor, offsetBy: word.count)
+                    return (done, cursor..<keyEnd, keyEnd..<line.endIndex)
+                }
+            }
+            index = line.index(after: percent)
+        }
+        return nil
+    }
+
+    /// UTF-16 range of the 1-based `line` including its terminator, split
+    /// into content/terminator so a rewrite can delete or preserve it.
+    private static func todoLineBounds(
+        _ text: NSString, line: Int
+    ) -> (range: NSRange, content: String, terminator: String)? {
+        guard line >= 1 else { return nil }
+        var start = 0
+        var current = 1
+        while current < line {
+            let next = text.range(of: "\n", options: [], range: NSRange(location: start, length: text.length - start))
+            guard next.location != NSNotFound else { return nil }
+            start = next.location + 1
+            current += 1
+        }
+        var lineEnd = 0, contentsEnd = 0
+        text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: start, length: 0))
+        return (
+            NSRange(location: start, length: lineEnd - start),
+            text.substring(with: NSRange(location: start, length: contentsEnd - start)),
+            text.substring(with: NSRange(location: contentsEnd, length: lineEnd - contentsEnd))
+        )
+    }
+
+    /// Full-line replacement for an edit (content + terminator); `nil`
+    /// keeps the file untouched when the marker moved since the scan.
+    private static func applyTodoEdit(_ edit: TodoLineEdit, content: String, terminator: String) -> String? {
+        switch edit {
+        case .delete:
+            return ""
+        case .toggleDone:
+            guard let marker = todoMarker(in: content) else { return nil }
+            var line = content
+            line.replaceSubrange(marker.keyword, with: marker.done ? "TODO:" : "DONE:")
+            return line + terminator
+        case .rename(let text):
+            guard let marker = todoMarker(in: content) else { return nil }
+            var line = content
+            line.replaceSubrange(marker.tail, with: text.isEmpty ? "" : " " + text)
+            return line + terminator
+        }
+    }
+    func fileDisplayName(_ url: URL) -> String {
+        guard let root = projectURL, let path = try? Self.relativePath(for: url, root: root) else {
+            return url.lastPathComponent
+        }
+        return projectFileNames[path.rawValue] ?? url.lastPathComponent
+    }
+
+    private func rebuildProjectTree() {
+        func relative(_ url: URL) -> String {
+            guard let root = projectURL else { return url.lastPathComponent }
+            let rootPath = root.standardizedFileURL.path
+            let path = url.standardizedFileURL.path
+            let prefix = rootPath == "/" ? "/" : rootPath + "/"
+            guard path.hasPrefix(prefix) else { return url.lastPathComponent }
+            return String(path.dropFirst(prefix.count))
+        }
+        let paths = projectFiles.map(relative)
+        projectFileNames = projectFileLabels(paths)
+        projectTree = buildProjectFileTree(relativePaths: paths)
+    }
+
+    /// Re-enumerates the project tree (sidebar rescan button).
+    func rescanProject() {
+        guard let root = projectURL else { return }
+        Task { @MainActor [weak self] in
+            let discovered = try? await Task.detached(priority: .utility) {
+                try Self.discoverTexFiles(root: root, selected: root, isDirectory: true)
+            }.value
+            guard let self, projectURL == root, let discovered else { return }
+            projectFiles = discovered
+            refreshBuildTarget()
+            refreshStructure()
+            // Explicit rescan: re-stat unopened inputs too.
+            requestEmbeddedPreviewFlush(force: true)
+        }
+    }
+
+    nonisolated private static let outlineRegex = try? NSRegularExpression(
+        pattern: #"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}"#
+    )
+    nonisolated private static let labelRegex = try? NSRegularExpression(pattern: #"\\label\{([^}]*)\}"#)
+    private static let bibliographyRegex = try? NSRegularExpression(
+        pattern: #"@([A-Za-z]+)\s*\{\s*([^,\s]+)"#
+    )
+
+    /// UTF-16 offsets of every line start, built in one pass. Line numbers
+    /// are then a binary search instead of a rescan from offset 0 per match.
+    nonisolated private static func lineStartOffsets(_ text: NSString) -> [Int] {
+        var starts = [0]
+        for index in 0..<text.length where text.character(at: index) == 0x0A {
+            starts.append(index + 1)
+        }
+        return starts
+    }
+
+    /// 1-based line containing `location` — the count of '\n' strictly
+    /// before it, plus one.
+    nonisolated private static func lineNumber(at location: Int, lineStarts: [Int]) -> Int {
+        var lo = 0, hi = lineStarts.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if lineStarts[mid] <= location { lo = mid } else { hi = mid - 1 }
+        }
+        return lo + 1
+    }
+
+    nonisolated static func parseOutline(_ text: String, lineStarts suppliedStarts: [Int]? = nil) -> [DocumentOutlineItem] {
+        guard let regex = outlineRegex else { return [] }
+        let nsText = text as NSString
+        let lineStarts = suppliedStarts ?? lineStartOffsets(nsText)
+        let levels = ["part": 0, "chapter": 1, "section": 2, "subsection": 3, "subsubsection": 4, "paragraph": 5]
+        return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map { match in
+            let name = nsText.substring(with: match.range(at: 1)).lowercased()
+            let title = nsText.substring(with: match.range(at: 2))
+            return DocumentOutlineItem(
+                id: match.range.location, title: title,
+                level: levels[name] ?? 2,
+                line: lineNumber(at: match.range.location, lineStarts: lineStarts)
+            )
+        }
+    }
+
+    nonisolated static func parseLabels(_ text: String, lineStarts suppliedStarts: [Int]? = nil) -> [DocumentLabelItem] {
+        guard let regex = labelRegex else { return [] }
+        let nsText = text as NSString
+        let lineStarts = suppliedStarts ?? lineStartOffsets(nsText)
+        return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map { match in
+            DocumentLabelItem(
+                id: match.range.location, name: nsText.substring(with: match.range(at: 1)),
+                line: lineNumber(at: match.range.location, lineStarts: lineStarts)
+            )
+        }
+    }
+
+    /// `%[ \t]*(TODO|DONE):[ \t]*(…)` — one item per comment line, in file
+    /// order like the reference editor's checklist.
+    nonisolated static func parseTodos(_ text: String, file: String, url: URL) -> [DocumentTodoItem] {
+        var items: [DocumentTodoItem] = []
+        var line = 1
+        for rawLine in (text as NSString).components(separatedBy: "\n") {
+            if let marker = todoMarker(in: rawLine) {
+                let body = rawLine[marker.tail].drop(while: { $0 == " " || $0 == "\t" })
+                items.append(DocumentTodoItem(
+                    file: file, url: url, line: line, text: String(body), done: marker.done
+                ))
+            }
+            line += 1
+        }
+        return items
+    }
+
+    /// Every @entry key in a .bib text — used for the in-memory buffer's
+    /// contribution to the project citation set.
+    static func parseBibliographyKeys(_ text: String) -> Set<String> {
+        guard let regex = bibliographyRegex else { return [] }
+        let nsText = text as NSString
+        return Set(regex
+            .matches(in: text, range: NSRange(location: 0, length: nsText.length))
+            .map { nsText.substring(with: $0.range(at: 2)) })
+    }
+
+    static func parseBibliography(files: [URL], root: URL?) -> [BibliographyItem] {
+        guard let regex = bibliographyRegex else { return [] }
+        var items: [BibliographyItem] = []
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let nsText = text as NSString
+            let name = (try? relativePath(for: file, root: root ?? file.deletingLastPathComponent()).rawValue) ?? file.lastPathComponent
+            for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
+                items.append(BibliographyItem(
+                    id: "\(file.path)#\(match.range.location)", key: nsText.substring(with: match.range(at: 2)),
+                    type: nsText.substring(with: match.range(at: 1)).lowercased(),
+                    file: name
+                ))
+            }
+        }
+        return items
+    }
+
+    // MARK: - Build target & console commands
+
+    /// Toggles the build-target pin on the active document (File → Pin/Unpin).
+    func togglePinnedBuildTarget() {
+        guard let url = activeDocumentURL, url.pathExtension.lowercased() == "tex" else { return }
+        // An editing preview on screen comes back after the stop below; read before the refresh can clear the retained PDF.
+        let restartPreview = embeddedPreviewComesBack
+        pinnedBuildTarget = pinnedBuildTarget == url ? nil : url
+        refreshBuildTarget()
+        // Pin/unpin switches the build context: live work for the old
+        // target is dead, and its retained preview is not this target's.
+        performLiveRequests(liveScheduler.invalidate())
+        if restartPreview { embeddedPreview.restartAfterTargetChange = true }
+        retireEmbeddedPreviewForTargetChange()
+        retainedPDF = nil
+        syncTeXEpoch = UUID()
+        Task { await restoreBuiltPreview() }
+    }
+
+    /// Persists the console command fields per project root so each project
+    /// keeps its own build/custom commands like texspark does.
+    private func loadProjectCommands(root: URL) {
+        let key = "commands.\(root.standardizedFileURL.path)"
+        let stored = UserDefaults.standard.dictionary(forKey: key)
+        buildCommandText = stored?["build"] as? String ?? settings.defaultBuildCommand
+        customCommandText = stored?["custom"] as? String ?? settings.defaultCustomCommand
+    }
+
+    func persistCommands() {
+        guard let root = projectURL else { return }
+        UserDefaults.standard.set(
+            ["build": buildCommandText, "custom": customCommandText],
+            forKey: "commands.\(root.standardizedFileURL.path)"
+        )
+    }
+
+    /// Re-reads the active document from disk (editor toolbar reload button).
+    /// Clean sessions adopt the disk bytes; dirty sessions surface a conflict.
+    func reloadActiveDocumentFromDisk() async {
+        guard let url = activeDocumentURL else { return }
+        await processDiskChange(url)
+    }
+
+    /// Footer path label: the active document's project-relative path, like
+    /// the reference editor's bottom-left path chip.
+    var activeDocumentRelativePath: String? {
+        guard let url = activeDocumentURL, let root = projectURL else { return nil }
+        return try? Self.relativePath(for: url, root: root).rawValue
+    }
+
+    /// Re-runs the syntax highlighter after appearance changes.
+    func rehighlight() {
+        highlighter.highlightNow()
+    }
+
+    /// Runs the configured custom command (⌃⌘B) in the console's interactive
+    /// terminal so the user sees live output — the reference editor's
+    /// behaviour of running saved commands in the embedded shell.
+    func runCustomCommand() async {
+        let template = customCommandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !template.isEmpty else { return }
+        guard settings.settings.build.customShellAcknowledged else {
+            terminalSession.feed("\u{001B}[33mEnable shell commands in Settings → Compile first.\u{001B}[0m\r\n")
+            consoleSection = .terminal
+            bottomPanelVisible = true
+            return
+        }
+        terminalSession.send(substituteCommandPlaceholders(template))
+        consoleSection = .terminal
+        bottomPanelVisible = true
+    }
+
+    /// Sends a line to the interactive terminal — kept for programmatic
+    /// callers; the terminal itself already handles direct typing.
+    func runTerminalInput(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        terminalSession.send(trimmed)
+        consoleSection = .terminal
+        bottomPanelVisible = true
+    }
+
+    /// Expands {file} / {filename} / {outdir} against the current build
+    /// source. {file}/{filename} stay raw for compatibility with manual
+    /// templates (a user-quoted `"{file}"` keeps its quotes); {outdir}
+    /// becomes a single-quoted POSIX word and an already-quoted
+    /// `"{outdir}"`/`'{outdir}'` collapses to it rather than nesting.
+    /// One pass over the original template — a substituted value is
+    /// never rescanned.
+    func substituteCommandPlaceholders(_ template: String, outputDirectory: String = ".") -> String {
+        let relative = buildSourceRelativePath() ?? "main.tex"
+        let stem = (relative as NSString).deletingPathExtension
+        return BuildCommandPlaceholders.expand(
+            template, file: relative, filename: stem,
+            outdir: outputDirectory, quotePaths: false
+        )
+    }
+
+    /// Chapters and bibliography files share their owning main document.
+    func buildSourceURL() -> URL? { pinnedBuildTarget ?? automaticBuildTarget }
+
+    func refreshBuildTarget() {
+        let previousTarget = buildSourceURL()
+        var resolver = TeXProjectResolver()
+        resolver.diskCache = resolverDiskCache
+        if let url = activeDocumentURL, let text = documentSnapshot?.text {
+            resolver.activeText = (url, text)
+        }
+        do {
+            automaticBuildTarget = try resolver.resolve(active: activeDocumentURL, files: projectFiles,
+                                                        preferred: automaticBuildTarget)
+            buildTargetMessage = automaticBuildTarget == nil
+                ? "No main TeX document was found. Open the project folder or set % !TeX root in the chapter." : nil
+        } catch {
+            automaticBuildTarget = nil
+            buildTargetMessage = error.localizedDescription
+        }
+        let project = resolver.documentProject(active: activeDocumentURL, main: automaticBuildTarget,
+                                               root: projectURL, files: projectFiles)
+        if documentProject != project { documentProject = project }
+        resolverDiskCache = resolver.diskCache
+        // Only a change of the resolved target retires live work — tab
+        // switches inside the same document keep pending edits alive.
+        if buildSourceURL() != previousTarget {
+            performLiveRequests(liveScheduler.invalidate())
+            retireEmbeddedPreviewForTargetChange()
+            // A different main means the retained PDF and any SyncTeX
+            // binding/refresh belong to the previous target.
+            retainedPDF = nil
+            syncTeXBinding = nil
+            syncTeXEpoch = UUID()
+        }
+        // Equation-preview context and exact preamble start at the main file.
+        equationPreview?.setRootFile(buildSourceURL())
+    }
+
+    /// Unsaved text of an open document — the equation preview reads
+    /// included definitions from buffers before disk.
+    func openDocumentText(_ url: URL) async -> String? {
+        guard let root = projectURL, let relative = try? Self.relativePath(for: url, root: root),
+              let session = registeredSessions.first(where: { $0.path == relative }) else { return nil }
+        return await session.snapshot().text
+    }
+
+    func buildSourceRelativePath() -> String? {
+        guard let root = projectURL, let url = buildSourceURL() else { return nil }
+        return try? Self.relativePath(for: url, root: root).rawValue
+    }
+
+    /// Build → Clean: removes generated artifacts for the current target.
+    func cleanBuildArtifacts() {
+        guard let root = projectURL, let relative = buildSourceRelativePath() else { return }
+        let stem = (relative as NSString).deletingPathExtension
+        for ext in Self.generatedOutputExtensions {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent("\(stem).\(ext)"))
+        }
+        latestBuiltPDFName = nil
+        terminalSession.feed("\u{001B}[90mcleaned generated files for \(stem)\u{001B}[0m\r\n")
+        consoleSection = .terminal
+        bottomPanelVisible = true
+    }
+
+    // MARK: - Helpers
+
+    /// `discoverTexFiles`' whitelist — sources plus the figure formats the
+    /// project tree lists. Build artifacts (aux/log/out/…/synctex.gz) stay
+    /// hidden by omission; .pdf stays in because papers use PDF figures.
+    nonisolated static let projectFileExtensions: Set<String> = [
+        "tex", "bib", "md", "markdown",
+        "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff", "bmp", "webp",
+    ]
+
+    /// Text files the editor can activate — figure rows open externally.
+    nonisolated static func isSourceFile(_ url: URL) -> Bool {
+        ["tex", "bib", "md", "markdown"].contains(url.pathExtension.lowercased())
+    }
+
+    /// `.md` / `.markdown` get the live preview instead of the PDF column.
+    nonisolated static func isMarkdown(_ url: URL) -> Bool {
+        ["md", "markdown"].contains(url.pathExtension.lowercased())
+    }
+
+    var activeDocumentIsMarkdown: Bool {
+        activeDocumentURL.map(Self.isMarkdown) ?? false
+    }
+
+    nonisolated static func discoverTexFiles(
+        root: URL,
+        selected: URL,
+        isDirectory: Bool
+    ) throws -> [URL] {
+        // A single-file open treats the file's directory as the project so
+        // sibling .tex/.bib sources appear alongside it (matching how the
+        // reference editor lists project files).
+        let scanRoot = root
+        guard let enumerator = FileManager.default.enumerator(
+            at: scanRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { throw WorkspaceOpenError.unreadableProject }
+        var files: [URL] = []
+        for case let url as URL in enumerator where Self.projectFileExtensions.contains(url.pathExtension.lowercased()) {
+            files.append(url.standardizedFileURL)
+        }
+        if !isDirectory, !files.contains(selected.standardizedFileURL) {
+            files.append(selected.standardizedFileURL)
+        }
+        return files.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
+    static func relativePath(for url: URL, root: URL) throws -> NormalizedRelativePath {
+        let rootPath = root.standardizedFileURL.path
+        let filePath = url.standardizedFileURL.path
+        let prefix = rootPath == "/" ? "/" : rootPath + "/"
+        guard filePath.hasPrefix(prefix) else { throw WorkspaceOpenError.outsideProject }
+        return try NormalizedRelativePath(rawValue: String(filePath.dropFirst(prefix.count)))
+    }
+
+    nonisolated static func readExactUTF8(_ url: URL) throws -> String {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw WorkspaceOpenError.invalidUTF8
+        }
+        return text
+    }
+
+    static func documentID(for path: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in path.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "document-" + String(hash, radix: 16)
+    }
+
+    /// Monotonic uptime in milliseconds — the scheduler's caller-owned
+    /// clock. Not wall time: a clock adjustment must never move a deadline
+    /// backwards into a UInt64 underflow or fire the debounce early.
+    nonisolated static func nowMs() -> UInt64 {
+        UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+    }
+}
+
+extension Notification.Name {
+    // syncTeXHighlightRequested lives in Preview.swift next
+    // to its observer.
+    static let syncTeXInverseRequested = Notification.Name("pitex.syncTeXInverse")
+}
+
+private enum WorkspaceOpenError: LocalizedError {
+    case noTexSources
+    case unreadableProject
+    case invalidUTF8
+    case outsideProject
+    case changedWhileOpening
+    case savePermissionDenied(String)
+    case saveInterrupted(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .noTexSources: "The selected project contains no .tex source files."
+        case .unreadableProject: "The selected project could not be enumerated."
+        case .invalidUTF8: "The selected source is not valid UTF-8."
+        case .outsideProject: "The selected source is outside the project root."
+        case .changedWhileOpening: "The source changed while it was opening. Open it again to avoid losing changes."
+        case let .savePermissionDenied(path): "The source could not be saved because access was denied: \(path)"
+        case let .saveInterrupted(path): "The atomic save did not complete: \(path)"
+        }
+    }
+}
+
+struct AppCommands: Commands {
+    /// Menu commands act on the key window's workspace; with no window
+    /// focused they fall back to an empty model, so only Open stays live.
+    /// Resolve the workspace from the native key window — including
+    /// detached previews — FIRST: the focused scene can lag focus changes.
+    @FocusedObject private var focusedWorkspace: WorkspaceModel?
+    private var workspace: WorkspaceModel {
+        let key = NSApp.keyWindow
+        return WorkspaceWindows.workspace(for: key?.sheetParent ?? key)
+            ?? focusedWorkspace
+            ?? WorkspaceWindows.unfocused
+    }
+
+    var body: some Commands {
+        // Observe the resolved model so project, phase, and preview
+        // changes update command availability.
+        WorkspaceCommandContent(target: workspace)
+    }
+}
+
+/// The command body proper, observing the wrapper's resolved workspace.
+/// Item actions still resolve the key window's workspace at fire time —
+/// a stale focus snapshot must never aim ⌘W at the wrong project.
+private struct WorkspaceCommandContent: Commands {
+    @ObservedObject var target: WorkspaceModel
+    private var workspace: WorkspaceModel {
+        let key = NSApp.keyWindow
+        return WorkspaceWindows.workspace(for: key?.sheetParent ?? key) ?? target
+    }
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("command.new") { Task { await workspace.createDocument() } }
+                .keyboardShortcut("n")
+                .disabled(!workspace.hasProject)
+            Button("command.open") { workspace.presentOpenPanel() }
+                .keyboardShortcut("o")
+                .accessibilityIdentifier("pitex.command.open")
+            if !workspace.recentDocuments.isEmpty {
+                Menu("command.open_recent") {
+                    ForEach(workspace.recentDocuments, id: \.self) { url in
+                        Button(WorkspaceModel.recentTitle(for: url)) { WorkspaceWindows.route(url, from: workspace) }
+                    }
+                    Divider()
+                    Button("command.clear_recents") { workspace.clearRecents() }
+                }
+            }
+            Button("command.open_via_ssh") { workspace.presentOpenViaSSH() }
+                .accessibilityIdentifier("pitex.command.openViaSSH")
+            Divider()
+            Button("command.pin_build_target") { workspace.togglePinnedBuildTarget() }
+                .keyboardShortcut("p", modifiers: [.command])
+                .disabled(workspace.activeDocumentURL == nil)
+            Divider()
+            // Closes the project; an empty window closes itself, like VS
+            // Code. While the detached preview is key it reattaches only.
+            Button("command.close") { workspace.performCloseCommand() }
+                .keyboardShortcut("w")
+                .disabled(workspace.window == nil && workspace.detachedPreviewWindow == nil)
+            Button("command.clear_session") { Task { await workspace.close() } }
+                .disabled(!workspace.hasProject)
+        }
+        CommandGroup(replacing: .saveItem) {
+            Button("editor.save") { Task { await workspace.save() } }
+                .keyboardShortcut("s")
+                .disabled(!workspace.canSave)
+            Button("command.save_as") { Task { await workspace.saveAs() } }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(workspace.documentSnapshot == nil)
+            Button("command.save_all") { Task { await workspace.saveAll() } }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(!workspace.hasProject)
+        }
+        CommandGroup(after: .textEditing) {
+            Divider()
+            Button("command.toggle_comment") { workspace.toggleLineComment() }
+                .keyboardShortcut("/", modifiers: [.command])
+                .disabled(workspace.documentSnapshot == nil)
+            Divider()
+            Button("command.send_selection_ai") { workspace.sendSelectionToAssistant() }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(workspace.environment == nil || workspace.agent == nil)
+        }
+        CommandMenu("command.build_menu") {
+            Button("command.build") { Task { await workspace.startBuild() } }
+                .keyboardShortcut("b")
+                .disabled(!workspace.canBuild || workspace.isBuilding)
+            Button("command.cancel_build") { Task { await workspace.cancelBuild() } }
+                .keyboardShortcut(".", modifiers: [.command])
+                .disabled(!workspace.isBuilding)
+            Button("command.clean") { workspace.cleanBuildArtifacts() }
+                .disabled(!workspace.hasProject)
+            Divider()
+            Button("command.run_custom") { Task { await workspace.runCustomCommand() } }
+                .keyboardShortcut("b", modifiers: [.command, .control])
+                .disabled(!workspace.hasProject)
+            Divider()
+            Button("command.sync_forward") { Task { await workspace.syncForward() } }
+                .keyboardShortcut("j", modifiers: [.command, .shift])
+                .disabled(workspace.syncTeXBinding == nil)
+            Divider()
+            // Compiles only the equation at the caret/pointer, with the
+            // project's engine — the fast preview never runs TeX.
+            Button("command.exact_equation_preview") { workspace.equationPreview?.requestExact() }
+                .keyboardShortcut("e", modifiers: [.command, .option])
+                .disabled(workspace.equationPreview == nil)
+        }
+        CommandMenu("command.view") {
+            Button("command.toggle_inspector") { workspace.toggleInspectorPane() }
+                .keyboardShortcut("p", modifiers: [.command, .option])
+                .disabled(!workspace.hasProject || workspace.gitDiff != nil)
+            Button("command.toggle_bottom") { workspace.bottomPanelVisible.toggle() }
+                .keyboardShortcut("y", modifiers: [.command, .shift])
+                .disabled(!workspace.hasProject)
+            Button("command.toggle_sidebar") { workspace.sidebarVisible.toggle() }
+                .keyboardShortcut("t", modifiers: [.command])
+                .disabled(!workspace.hasProject)
+        }
+        CommandGroup(replacing: .appSettings) {
+            Button("command.settings") { WorkspaceWindows.presentSettings(from: workspace) }
+                .keyboardShortcut(",")
+        }
+    }
+}
+
+final class PitexAppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor private var terminationInFlight = false
+    /// LaunchServices caches the Dock/Finder icon keyed by the app bundle's
+    /// modification date — a drag-copied update preserves it, so a new icon
+    /// can stay invisible. Bump the bundle's mtime once per app version.
+    /// Let macOS render the bundle icon so its Dock appearance stays consistent.
+    private func refreshBundleIconCache() {
+        let defaults = UserDefaults.standard
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        guard defaults.string(forKey: "iconRefreshVersion") != version else { return }
+        let now = Date()
+        for url in [Bundle.main.bundleURL, Bundle.main.bundleURL.appendingPathComponent("Contents")] {
+            try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: url.path)
+        }
+        defaults.set(version, forKey: "iconRefreshVersion")
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        refreshBundleIconCache()
+        // The Pitex Agent installs itself into the app's own support folder
+        // on first launch (and refreshes its bundled skills on every launch)
+        // — no install button required.
+        Task {
+            await PiRuntimeInstaller.ensureInstalled()
+            await MainActor.run { WorkspaceWindows.live.forEach { $0.agent?.resumeIfWanted() } }
+        }
+        // Auto-update: check+install on launch when the preference allows
+        // it — same pref key the Linux/Windows shells read.
+        Task { @MainActor in
+            if SettingsStore.shared.autoInstallUpdates {
+                await UpdateChecker().autoUpdate()
+            }
+        }
+    }
+
+    /// Finder / Open With / `open -a`: each URL goes to the window whose
+    /// project contains it, else an empty window, else a new window.
+    /// Warm opens are claimed by an open scene and arrive through the
+    /// root view's `onOpenURL`; this delegate remains the fallback for
+    /// opens delivered before a scene exists (app launch).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        // Activation is cooperative — request it inside the incoming
+        // open-event handler, against the delivered user request.
+        NSApp.activate()
+        Task { @MainActor in
+            urls.forEach { WorkspaceWindows.route($0) }
+        }
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Quit must not cut an in-flight save short: while any workspace has
+    /// writes queued, termination defers until they have finished on disk.
+    @MainActor
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationInFlight else { return .terminateLater }
+        guard WorkspaceWindows.live.contains(where: { $0.hasPendingWrites || $0.remote != nil }) else {
+            return .terminateNow
+        }
+        terminationInFlight = true
+        Task { @MainActor in
+            defer { self.terminationInFlight = false }
+            var prepared: [WorkspaceModel] = []
+            for workspace in WorkspaceWindows.live {
+                if await workspace.prepareForTermination(keepFrozen: true) == false {
+                    prepared.forEach { $0.cancelTerminationPreparation() }
+                    NSApp.reply(toApplicationShouldTerminate: false)
+                    return
+                }
+                prepared.append(workspace)
+            }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Preview helpers die with their process groups now — a Task may
+        // never run once termination proceeds.
+        MainActor.assumeIsolated {
+            for workspace in WorkspaceWindows.live {
+                workspace.terminateEmbeddedPreviewNow()
+                workspace.agent?.shutdown()
+            }
+        }
+    }
+}
+
+@main
+struct PitexApp: App {
+    @NSApplicationDelegateAdaptor(PitexAppDelegate.self) private var appDelegate
+
+    var body: some Scene {
+        // One WorkspaceModel per window, so each window owns its own
+        // adapter.textView (an NSTextView can only live in one scroll view).
+        // Opens route through WorkspaceWindows: a file outside every open
+        // project gets a new window, like VS Code.
+        WindowGroup("Pitex", id: "workspace", for: WindowOpenRequest.self) { $request in
+            WorkspaceWindow(initialURL: request?.url)
+        }
+        // Value-based WindowGroups otherwise persist their open request
+        // URL and reopen it on the next launch, independently of recents.
+        .restorationBehavior(.disabled)
+        // Opens route through WorkspaceWindows: an open scene claims the
+        // event via the view-level handlesExternalEvents below, and on a
+        // cold open SwiftUI may create a scene for the delivered file.
+        .commands { AppCommands() }
+    }
+}
+
+/// A new window's initial file. The id keeps SwiftUI from reusing an older
+/// window that was opened with the same URL but now shows something else.
+struct WindowOpenRequest: Codable, Hashable {
+    var id = UUID()
+    var url: URL
+}
+
+private struct WorkspaceWindow: View {
+    let initialURL: URL?
+    @StateObject private var workspace = WorkspaceModel()
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        WorkspaceView(workspace: workspace)
+            .disabled(workspace.isClosing)
+            .frame(minWidth: 980, minHeight: 620)
+            .background(WindowReader { workspace.window = $0 })
+            .focusedSceneObject(workspace)
+            // A Finder / Open With / `open -a` event while the app runs is
+            // claimed by an already-open scene ("*" always matches), then
+            // delivered here as a URL and routed like an in-app open.
+            .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+            .onOpenURL { url in
+                // Requested inside the incoming open-event handler — the
+                // event can arrive while the app is inactive.
+                NSApp.activate()
+                Task { @MainActor in WorkspaceWindows.route(url, from: workspace) }
+            }
+            .sheet(isPresented: $workspace.showingSettings) {
+                SettingsView(store: workspace.settings, workspace: workspace)
+            }
+            .sheet(isPresented: $workspace.showingOpenViaSSH) {
+                OpenViaSSHSheet(workspace: workspace, store: workspace.settings)
+            }
+            // Coming back to a remote project's window picks up edits made
+            // on the device meanwhile.
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+                if let window = workspace.window, (note.object as? NSWindow) === window {
+                    workspace.pullRemoteIfStale()
+                }
+            }
+            .onAppear {
+                WorkspaceWindows.register(workspace, openWindow: openWindow)
+                // A window created for a routed open must come forward
+                // even if the app was backgrounded when the event arrived.
+                if initialURL != nil { workspace.present() }
+                if let url = initialURL ?? WorkspaceWindows.takePending() {
+                    Task { await workspace.open(url) }
+                }
+            }
+            .onDisappear { Task { await workspace.close() } }
+    }
+}
+
+/// Every open window's workspace, and the VS Code-style open routing.
+@MainActor
+enum WorkspaceWindows {
+    private struct Entry { weak var workspace: WorkspaceModel? }
+    private static var entries: [Entry] = []
+    private static var openWindow: OpenWindowAction?
+    /// Finder opens that arrived before the first window appeared.
+    private static var pending: [URL] = []
+    /// Menu target while no window is focused — never shown.
+    static let unfocused = WorkspaceModel()
+
+    static var live: [WorkspaceModel] { entries.compactMap { $0.workspace } }
+
+    /// The workspace that owns `window` — its own hosting window or the
+    /// detached preview window. Lets menu commands reach the right model
+    /// while a non-scene window (the detached preview) is key.
+    static func workspace(for window: NSWindow?) -> WorkspaceModel? {
+        guard let window else { return nil }
+        return live.first { $0.window === window || $0.detachedPreviewWindow === window }
+    }
+
+    /// App-menu Settings…/⌘,. The sheet lives on a scene window. A
+    /// workspace already showing its sheet is reused and fronted — one
+    /// Settings UI app-wide, and in-progress field edits are kept.
+    /// Otherwise the requested window is the owner; a resolution that
+    /// landed on the windowless `unfocused` model (no key window, e.g.
+    /// everything minimized) borrows the first live workspace. The owner
+    /// is unhidden/deminiaturized/fronted so the sheet is on screen.
+    static func presentSettings(from workspace: WorkspaceModel) {
+        let owner = live.first(where: { $0.showingSettings && $0.window != nil })
+            ?? (workspace.window != nil ? workspace : (live.first ?? workspace))
+        owner.present()
+        owner.showingSettings = true
+    }
+
+    static func register(_ workspace: WorkspaceModel, openWindow: OpenWindowAction?) {
+        entries.removeAll { $0.workspace == nil || $0.workspace === workspace }
+        entries.append(Entry(workspace: workspace))
+        if let openWindow { self.openWindow = openWindow }
+    }
+
+    static func takePending() -> URL? {
+        pending.isEmpty ? nil : pending.removeFirst()
+    }
+
+    /// The window whose project contains `url` shows it; otherwise the
+    /// requesting window if it is empty, then any empty window, then a new
+    /// window.
+    static func route(_ url: URL, from origin: WorkspaceModel? = nil) {
+        let url = url.standardizedFileURL
+        let windows = live
+        // The requesting window first; `unfocused` is not a window.
+        let candidates = (origin.map { [$0] } ?? []) + windows
+        if let owner = windows.first(where: { $0.owns(url) }) {
+            owner.reveal(url)
+        } else if let empty = candidates.first(where: { candidate in
+            candidate.acceptsNewProject && windows.contains { $0 === candidate }
+        }) {
+            // The event can arrive while the app is inactive — present()
+            // activates it and fronts the window.
+            empty.present()
+            Task { await empty.open(url) }
+        } else if let openWindow {
+            NSApp.activate()
+            openWindow(value: WindowOpenRequest(url: url))
+        } else {
+            pending.append(url)
+        }
+    }
+}
+
+/// Hold a remote window open while the forced manual save runs. Forward
+/// every other delegate callback to SwiftUI's original window delegate.
+@MainActor
+private final class WorkspaceWindowCloseDelegate: NSObject, NSWindowDelegate {
+    weak var workspace: WorkspaceModel?
+    nonisolated(unsafe) private weak var original: (any NSWindowDelegate)?
+    private weak var guardedWindow: NSWindow?
+    private var closeRequested = false
+
+    init(workspace: WorkspaceModel, window: NSWindow) {
+        self.workspace = workspace
+        self.guardedWindow = window
+        self.original = window.delegate
+    }
+
+    func restoreOriginalDelegate() {
+        guard let window = guardedWindow, window.delegate === self else { return }
+        window.delegate = original
+    }
+
+    nonisolated override func responds(to selector: Selector!) -> Bool {
+        super.responds(to: selector) || (original?.responds(to: selector) ?? false)
+    }
+
+    nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
+        original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard original?.windowShouldClose?(sender) ?? true else { return false }
+        guard let workspace, workspace.remote != nil else { return true }
+        guard !closeRequested else { return false }
+        closeRequested = true
+        Task { @MainActor in
+            defer { self.closeRequested = false }
+            guard await workspace.close() != nil else { return }
+            sender.performClose(nil)
+        }
+        return false
+    }
+}
+
+/// The detached preview is an auxiliary window: it accepts key focus
+/// while an editor window remains main.
+private final class DetachedPreviewWindow: NSWindow {
+    override var canBecomeMain: Bool { false }
+}
+
+/// Reports the detached preview window's close to its workspace — a
+/// plain NSWindow has no scene machinery to route it through.
+private final class DetachedPreviewWindowDelegate: NSObject, NSWindowDelegate {
+    weak var workspace: WorkspaceModel?
+    init(workspace: WorkspaceModel) { self.workspace = workspace }
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        workspace?.detachedPreviewDidClose(window)
+    }
+}
+
+/// Hands the hosting NSWindow to SwiftUI content once it is attached.
+private struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView { WindowReaderView(onWindow: onWindow) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class WindowReaderView: NSView {
+        let onWindow: (NSWindow) -> Void
+        init(onWindow: @escaping (NSWindow) -> Void) {
+            self.onWindow = onWindow
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { onWindow(window) }
+        }
+    }
+}

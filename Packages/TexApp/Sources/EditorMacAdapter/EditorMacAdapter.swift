@@ -1,0 +1,631 @@
+import AppPorts
+import EditorFeature
+import Foundation
+
+#if os(macOS)
+import AppKit
+
+@MainActor
+private final class SessionTextView: NSTextView {
+    var findController: EditorFindController?
+
+    override func performFindPanelAction(_ sender: Any?) { performTextFinderAction(sender) }
+
+    override func performTextFinderAction(_ sender: Any?) {
+        let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSControl)?.tag ?? 1
+        guard let action = NSTextFinder.Action(rawValue: tag), let scrollView = enclosingScrollView else { return }
+        if findController == nil { findController = EditorFindController(textView: self, scrollView: scrollView) }
+        findController?.perform(action)
+    }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(performTextFinderAction(_:)) || item.action == #selector(performFindPanelAction(_:)),
+           let action = NSTextFinder.Action(rawValue: item.tag), let findController {
+            return findController.finder.validateAction(action)
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    let sessionUndoManager = UndoManager()
+    private var pendingReveal: (range: NSRange, highlight: Bool)?
+    /// A scroll offset staged by tab-switch restoration. Deferred until the
+    /// view is mounted in a window with a sized clip view — before that,
+    /// clamping would collapse any offset back to the top.
+    private var pendingViewport: NSPoint?
+
+    /// The UTF-16 range an in-flight completion replaces. Supplied by the
+    /// adapter from the shared context detector so `\cite{a,k` completes
+    /// only `k` — NSTextView's word-boundary default would swallow `a,k`.
+    var userCompletionRange: (() -> NSRange?)?
+    var hasCustomCompletionSource: (() -> Bool)?
+
+    override func completions(forPartialWordRange charRange: NSRange,
+                              indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
+        guard hasCustomCompletionSource?() == true else {
+            return super.completions(forPartialWordRange: charRange, indexOfSelectedItem: index)
+        }
+        // The app owns these candidates. Going through super first asks the
+        // system spell server for dictionary words before consulting the
+        // delegate, delaying TeX completion when that service times out.
+        index.pointee = -1
+        return delegate?.textView?(self, completions: [], forPartialWordRange: charRange,
+                                  indexOfSelectedItem: index) ?? []
+    }
+
+    private(set) var isCompleting = false
+    var completionWillStart: (() -> Void)?
+    private var completionHandledInput = false
+
+    override func complete(_ sender: Any?) {
+        guard !isCompleting, !hasMarkedText() else { return }
+        completionWillStart?()
+        let ownerWindow = window
+        let openingEvent = ownerWindow?.currentEvent
+        let originalText = string
+        let originalSelection = selectedRange()
+        // AppKit tracks the popup synchronously. Candidate selection and
+        // Escape can emit didChangeText inside this call; they must not
+        // schedule another popup after the tracking loop returns.
+        isCompleting = true
+        completionHandledInput = false
+        defer {
+            isCompleting = false
+            completionHandledInput = false
+        }
+        super.complete(sender)
+
+        // With no selected row AppKit consumes Return to close its popup,
+        // without calling insertCompletion or doCommand. Give only that
+        // otherwise-unhandled key back to the normal text input bindings.
+        // A final completion callback counts as handled even when accepting
+        // an exact match left the string and selection unchanged.
+        guard !completionHandledInput, isEditable, !hasMarkedText(),
+              let ownerWindow, window === ownerWindow, ownerWindow.isKeyWindow,
+              ownerWindow.firstResponder === self,
+              let event = ownerWindow.currentEvent, event.type == .keyDown,
+              event !== openingEvent,
+              event.timestamp > (openingEvent?.timestamp ?? -.infinity),
+              event.windowNumber == ownerWindow.windowNumber,
+              event.keyCode == 36 || event.keyCode == 76,
+              event.modifierFlags.intersection([.shift, .command, .control, .option]).isEmpty,
+              originalSelection.length == 0, selectedRange() == originalSelection,
+              string == originalText else { return }
+        interpretKeyEvents([event])
+    }
+
+    override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange,
+                                   movement: Int, isFinal flag: Bool) {
+        if isCompleting, flag { completionHandledInput = true }
+        super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
+    }
+
+    override func doCommand(by selector: Selector) {
+        if isCompleting { completionHandledInput = true }
+        super.doCommand(by: selector)
+    }
+
+    override var rangeForUserCompletion: NSRange {
+        userCompletionRange?() ?? super.rangeForUserCompletion
+    }
+
+    override var undoManager: UndoManager? { sessionUndoManager }
+
+    func reveal(_ range: NSRange, highlight: Bool) {
+        // Explicit navigation (SyncTeX, outline, find results) always wins
+        // over a staged tab-switch viewport restore.
+        pendingViewport = nil
+        setSelectedRange(range)
+        pendingReveal = (range, highlight)
+        revealIfReady()
+    }
+
+    /// Selection is applied now (clamped to the live text); the scroll
+    /// offset waits for mount. A pending explicit reveal takes precedence
+    /// and is left untouched.
+    func applyViewState(_ state: EditorMacAdapter.ViewState) {
+        guard pendingReveal == nil else { return }
+        let count = (string as NSString).length
+        let location = min(max(state.selection.location, 0), count)
+        setSelectedRange(NSRange(location: location,
+                                 length: min(max(state.selection.length, 0), count - location)))
+        pendingViewport = state.scrollOrigin
+        restoreViewportIfReady()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        revealIfReady()
+        restoreViewportIfReady()
+    }
+
+    /// Scrolls the clip view to the remembered offset — independently of
+    /// the selection, which may sit far away. Clamped into the laid-out
+    /// document bounds: the file may have shrunk or the window grown since
+    /// the offset was captured.
+    private func restoreViewportIfReady() {
+        guard let origin = pendingViewport, window != nil,
+              let scrollView = enclosingScrollView,
+              scrollView.contentSize.width > 0, scrollView.contentSize.height > 0,
+              let textContainer else { return }
+        pendingViewport = nil
+        layoutManager?.ensureLayout(for: textContainer)
+        let maxY = max(bounds.height - scrollView.contentView.bounds.height, 0)
+        let point = NSPoint(x: 0, y: min(max(origin.y, 0), maxY))
+        scrollView.contentView.scroll(to: point)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func revealIfReady() {
+        guard let request = pendingReveal, let window,
+              let scrollView = enclosingScrollView,
+              scrollView.contentSize.width > 0, scrollView.contentSize.height > 0,
+              let textContainer else { return }
+        pendingReveal = nil
+        layoutManager?.ensureLayout(for: textContainer)
+        scrollRangeToVisible(request.range)
+        window.makeFirstResponder(self)
+        // The native find indicator must be shown after mounting and scrolling.
+        // A zero-length range clears an earlier indicator when highlighting is off.
+        var start = request.range.location
+        var end = start
+        if request.highlight {
+            (string as NSString).getLineStart(&start, end: nil, contentsEnd: &end, for: request.range)
+        }
+        showFindIndicator(for: NSRange(location: start, length: end - start))
+    }
+}
+
+@MainActor
+public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
+    public let textView: NSTextView
+    public let nativeUndoManager: UndoManager
+
+    public var text: String { textView.string }
+    public var selectedRange: NSRange { textView.selectedRange() }
+    public var hasMarkedText: Bool { textView.hasMarkedText() }
+    public var markedRange: NSRange { textView.markedRange() }
+
+    /// Called on the main actor after user-driven text changes. Used to drive
+    /// syntax highlighting and change monitors without taking ownership of text.
+    public var onTextDidChange: (@MainActor () -> Void)?
+
+    /// Called after the selection changes (cursor moves, clicks, typing).
+    /// Used for caret-driven chrome such as bracket matching.
+    public var onSelectionDidChange: (@MainActor () -> Void)?
+
+    /// Supplies candidates for the native completion popup. Called on the
+    /// main actor with the live text and caret UTF-16 offset; returns the
+    /// UTF-16 range the chosen candidate replaces plus the candidate
+    /// strings in display order. A nil result (or empty list) keeps the
+    /// popup closed — the data source stays outside this adapter.
+    public var completionSource: (@MainActor (_ text: String, _ caretUTF16Offset: Int) -> (range: NSRange, candidates: [String])?)?
+
+    private let session: any DocumentSessionPort
+    private let sessionTextView: SessionTextView
+    private var committed: DocumentSnapshot
+    private var desiredText: String
+    private var isApplyingSessionSnapshot = false
+    private var isSubmitting = false
+    private var submissionTask: Task<Void, Never>?
+    private var inputVersion: UInt64 = 0
+    private var acknowledgedInputVersion: UInt64 = 0
+    nonisolated(unsafe) private var undoObservers: [NSObjectProtocol] = []
+
+    private init(session: any DocumentSessionPort, snapshot: DocumentSnapshot) {
+        self.session = session
+        committed = snapshot
+        desiredText = snapshot.text
+
+        let nativeView = SessionTextView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+        sessionTextView = nativeView
+        textView = nativeView
+        nativeUndoManager = nativeView.sessionUndoManager
+        super.init()
+
+        nativeView.isRichText = false
+        nativeView.importsGraphics = false
+        nativeView.allowsUndo = true
+        sessionTextView.sessionUndoManager.disableUndoRegistration()
+        nativeView.string = snapshot.text
+        sessionTextView.sessionUndoManager.enableUndoRegistration()
+        nativeView.delegate = self
+        nativeView.userCompletionRange = { [weak self, weak nativeView] in
+            guard let self, let nativeView, let completionSource = self.completionSource
+            else { return nil }
+            return completionSource(nativeView.string, nativeView.selectedRange().location)?.range
+        }
+        nativeView.hasCustomCompletionSource = { [weak self] in self?.completionSource != nil }
+        nativeView.completionWillStart = { [weak self] in
+            self?.completionTriggerTimer?.invalidate()
+            self?.completionTriggerTimer = nil
+        }
+        // AppKit can change storage during Undo/Redo without notifying the
+        // text-view delegate. Synchronize after the entire native group ends.
+        for name in [Notification.Name.NSUndoManagerDidUndoChange, Notification.Name.NSUndoManagerDidRedoChange] {
+            undoObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nativeUndoManager, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.desiredText != self.textView.string else { return }
+                    self.textDidChange(Notification(name: NSText.didChangeNotification, object: self.textView))
+                }
+            })
+        }
+    }
+
+    deinit { undoObservers.forEach(NotificationCenter.default.removeObserver) }
+
+    public static func make(session: any DocumentSessionPort) async throws -> EditorMacAdapter {
+        let snapshot = await session.snapshot()
+        return EditorMacAdapter(session: session, snapshot: snapshot)
+    }
+
+    /// Joins only the native input pending at entry, including its coalesced
+    /// successor. Later typing cannot extend the captured watermark.
+    public func flushPendingChanges() async {
+        let requestedVersion = inputVersion
+        while acknowledgedInputVersion < requestedVersion, let pending = submissionTask {
+            await pending.value
+        }
+    }
+
+    private var needsRefresh = false
+
+    /// An async refresh can land while a submit is in flight — applying it
+    /// then would clobber the pending keystroke, so it is deferred until
+    /// the submit Task drains. The `isSubmitting` check runs AFTER the
+    /// snapshot fetch: a keystroke during the await starts a submit, and
+    /// the just-fetched (already stale) snapshot must not clobber it.
+    /// `desiredText != committed.text` covers the same window before the
+    /// submit Task has even started.
+    public func refreshFromSession() async {
+        let snapshot = await session.snapshot()
+        if isSubmitting || desiredText != committed.text { needsRefresh = true; return }
+        apply(snapshot)
+    }
+
+    /// Line-start table for `scrollToLine` under NSString `lineRange`
+    /// semantics (CR, CRLF and U+2028/2029 are breaks, unlike the editor's
+    /// "\n"-only line map). Rebuilt lazily; dropped on every text change —
+    /// including session applies, which bypass textDidChange.
+    private var scrollLineStarts: [Int]?
+
+    /// Scrolls so the 0-based source line sits at the viewport top — the
+    /// preview→editor half of Markdown scroll sync.
+    public func scrollToLine(_ line: Int) {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer,
+              let scrollView = textView.enclosingScrollView else { return }
+        let text = textView.string as NSString
+        if scrollLineStarts == nil { scrollLineStarts = Self.computeScrollLineStarts(text) }
+        let index = Self.scrollTargetIndex(forLine: line, starts: scrollLineStarts ?? [0])
+        layoutManager.ensureLayout(for: textContainer)
+        let point: NSPoint
+        if index < text.length {
+            let glyph = layoutManager.glyphIndexForCharacter(at: index)
+            let rect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1),
+                                                  in: textContainer)
+            point = NSPoint(x: 0, y: rect.minY + textView.textContainerOrigin.y)
+        } else {
+            point = NSPoint(x: 0, y: scrollView.documentView?.frame.maxY ?? 0)
+        }
+        scrollView.contentView.scroll(to: point)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    /// Every line's UTF-16 start under `lineRange` semantics; the walk the
+    /// old scrollToLine repeated from 0 on every preview scroll message.
+    static func computeScrollLineStarts(_ text: NSString) -> [Int] {
+        var starts = [0]
+        var index = 0
+        while index < text.length {
+            let next = NSMaxRange(text.lineRange(for: NSRange(location: index, length: 0)))
+            guard next > index else { break }
+            starts.append(next)
+            index = next
+        }
+        return starts
+    }
+
+    /// The UTF-16 offset `scrollToLine` targets for 0-based `line`: its line
+    /// start, or the last line's start when `line` runs past the end — the
+    /// old walk stopped at the same place.
+    static func scrollTargetIndex(forLine line: Int, starts: [Int]) -> Int {
+        starts[min(max(line, 0), starts.count - 1)]
+    }
+
+    /// One document's remembered editor position: caret/selection plus the
+    /// scroll offset — kept separate because a user may scroll far from the
+    /// caret, so restoring must not `scrollRangeToVisible` the selection.
+    public struct ViewState {
+        public var selection: NSRange
+        public var scrollOrigin: NSPoint
+        public init(selection: NSRange, scrollOrigin: NSPoint) {
+            self.selection = selection
+            self.scrollOrigin = scrollOrigin
+        }
+    }
+
+    /// The live editor position, for per-document retention across tab
+    /// switches. `.zero` origin when the view was never mounted.
+    public var viewState: ViewState {
+        ViewState(
+            selection: textView.selectedRange(),
+            scrollOrigin: textView.enclosingScrollView?.contentView.bounds.origin ?? .zero
+        )
+    }
+
+    /// Restores a remembered position: the selection applies immediately
+    /// (clamped to the live text); the scroll offset is staged until the
+    /// view is mounted and laid out. A pending or later explicit
+    /// `revealSelection` cancels the staged offset — navigation wins.
+    public func applyViewState(_ state: ViewState) {
+        sessionTextView.applyViewState(state)
+    }
+
+    /// A newly activated document may not be mounted by SwiftUI yet.
+    public func revealSelection(_ range: NSRange, highlight: Bool = false) {
+        let count = text.utf16.count
+        let location = min(max(range.location, 0), count)
+        sessionTextView.reveal(NSRange(location: location, length: min(max(range.length, 0), count - location)), highlight: highlight)
+    }
+
+    public func textViewDidChangeSelection(_ notification: Notification) {
+        onSelectionDidChange?()
+    }
+
+    /// The documented NSTextView hook for a custom undo manager — the
+    /// `undoManager` override alone reports the session manager to the
+    /// responder chain while internal registration still resolves the
+    /// delegate, so without this ⌘Z dispatches to a manager that never
+    /// saw the edits.
+    public func undoManager(for view: NSTextView) -> UndoManager? {
+        sessionTextView.sessionUndoManager
+    }
+
+    public func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange,
+                         replacementString: String?) -> Bool {
+        sessionTextView.findController?.finder.noteClientStringWillChange()
+        return true
+    }
+
+    public func textDidChange(_ notification: Notification) {
+        guard !isApplyingSessionSnapshot else { return }
+        // The text view bridges an NSString; a native copy keeps equality
+        // and hashing off the slow foreign path on every keystroke.
+        var text = textView.string
+        text.makeContiguousUTF8()
+        desiredText = text
+        inputVersion += 1
+        scrollLineStarts = nil
+        sessionTextView.findController?.contentDidChange()
+        onTextDidChange?()
+        scheduleCompletionTrigger()
+        submitPendingChangeIfNeeded()
+    }
+
+    /// The native completion popup's candidate query after `complete:`
+    /// resolves `rangeForUserCompletion`. The shared context detector owns
+    /// the candidate list; `words` is the fallback only when no source is
+    /// attached at all (plain native complete), never when the source
+    /// reports no context or zero matches — dictionary English must not
+    /// leak into unknown TeX prefixes.
+    public func textView(
+        _ textView: NSTextView,
+        completions words: [String],
+        forPartialWordRange charRange: NSRange,
+        indexOfSelectedItem index: UnsafeMutablePointer<Int>?
+    ) -> [String] {
+        // -1 = no pre-selected item. AppKit's default 0 provisionally
+        // inserts the first candidate's suffix as selected text, which is
+        // what re-typed \in becoming \include was. With nothing selected
+        // the popup is a passive list: typing/Backspace/Esc stay literal
+        // until the user picks a candidate.
+        index?.pointee = -1
+        let caret = min(
+            textView.selectedRange().location + textView.selectedRange().length,
+            (textView.string as NSString).length
+        )
+        guard let completionSource else { return words }
+        return completionSource(textView.string, caret)?.candidates ?? []
+    }
+
+    /// Shows the native completion popup when the caret sits in a
+    /// completable context (a `\command` prefix, `\cite{…}` or `\ref{…}`
+    /// group); a no-op elsewhere. F5/⌥⎋ reach the same popup through
+    /// NSTextView's own key bindings.
+    public func requestCompletion() {
+        presentCompletionIfContextual()
+    }
+
+    /// Debounced so the popup follows typing without re-evaluating the
+    /// context on every keystroke.
+    private var completionTriggerTimer: Timer?
+
+    private func scheduleCompletionTrigger() {
+        completionTriggerTimer?.invalidate()
+        completionTriggerTimer = nil
+        guard completionSource != nil, !sessionTextView.isCompleting else { return }
+        // complete: enters a native tracking loop. Calling it from a
+        // MainActor Task keeps that executor job on the stack while the
+        // popup is open, starving fresh tasks (including session acks).
+        // A run-loop callback leaves the concurrency executor available.
+        let timer = Timer(timeInterval: 0.2, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.completionTriggerTimer = nil
+                self.presentCompletionIfContextual()
+            }
+        }
+        completionTriggerTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func presentCompletionIfContextual() {
+        guard let completionSource, !textView.hasMarkedText() else { return }
+        let selection = textView.selectedRange()
+        guard selection.length == 0,
+              let result = completionSource(textView.string, selection.location),
+              !result.candidates.isEmpty else { return }
+        textView.complete(nil)
+    }
+
+    private func submitPendingChangeIfNeeded() {
+        guard !isSubmitting, desiredText != committed.text else { return }
+        isSubmitting = true
+        let submittedText = desiredText
+        let submittedVersion = inputVersion
+        // shouldChangeTextIn is a proposal, not a record of the final
+        // storage edit. AppKit may coalesce edits, replace multiple ranges,
+        // or restore a provisional completion before didChangeText. Replay
+        // only the change actually present in the native buffer, otherwise
+        // its acknowledgement can delete unrelated text (including newlines).
+        let edit = Self.differingRange(from: committed.text, to: submittedText)
+        var mutation = DocumentMutation(
+            baseRevision: committed.revision,
+            range: DocumentTextRange(location: edit.range.location, length: edit.range.length),
+            replacement: edit.replacement
+        )
+        let session = self.session
+
+        submissionTask = Task { @MainActor [weak self, session] in
+            guard let self else { return }
+            // commitSave/recordExternalChange/resolveConflict advance the
+            // revision without touching text — app-side code calls them
+            // before every build and agent run, so rejections on a stale
+            // base are the common path. While the session text still equals
+            // the committed text the pending edit rebases cleanly; a truly
+            // diverged session falls back to applying it, which drops the
+            // in-flight keystroke. ponytail: a 3-way rebase is the upgrade
+            // path if diverged-session conflicts ever become common.
+            var attempts = 0
+            while true {
+                do {
+                    switch try await session.submit(mutation) {
+                    case let .applied(snapshot):
+                        committed = snapshot
+                        if desiredText == submittedText, snapshot.text != submittedText {
+                            apply(snapshot)
+                        }
+                    case let .rejected(current):
+                        if current.text == committed.text, attempts < 3 {
+                            committed = current
+                            mutation = DocumentMutation(
+                                baseRevision: current.revision,
+                                range: mutation.range,
+                                replacement: mutation.replacement
+                            )
+                            attempts += 1
+                            continue
+                        }
+                        apply(current)
+                    }
+                } catch {
+                    apply(await session.snapshot())
+                }
+                break
+            }
+            acknowledgedInputVersion = submittedVersion
+            submissionTask = nil
+            isSubmitting = false
+            submitPendingChangeIfNeeded()
+            if needsRefresh, !isSubmitting {
+                needsRefresh = false
+                await refreshFromSession()
+            }
+        }
+    }
+
+    /// Applies a session snapshot by replacing only the differing middle
+    /// range: AppKit's own range tracking keeps the caret anchored, and a
+    /// live IME composition is discarded first so it cannot re-commit into
+    /// the shifted text and double its syllables.
+    private func apply(_ snapshot: DocumentSnapshot) {
+        // A refresh may have captured this snapshot before a local submit
+        // completed during its await. Never roll the buffer or base revision
+        // backwards, even when the submit has already drained.
+        guard snapshot.revision >= committed.revision else { return }
+        committed = snapshot
+        desiredText = snapshot.text
+        guard textView.string != snapshot.text else { return }
+
+        scrollLineStarts = nil
+        // The flag goes up before discarding the composition — a delegate
+        // callback out of discardMarkedText/unmarkText must not start a
+        // submit mid-apply.
+        isApplyingSessionSnapshot = true
+        if textView.hasMarkedText() {
+            textView.inputContext?.discardMarkedText()
+            textView.unmarkText()
+        }
+        let (range, replacement) = Self.differingRange(from: textView.string, to: snapshot.text)
+        let selection = textView.selectedRange()
+        sessionTextView.findController?.finder.noteClientStringWillChange()
+        // A session-applied snapshot is not a user edit — registering it
+        // would push an undo entry (and, on AppKit, reset the coalesced
+        // typing history around it).
+        sessionTextView.sessionUndoManager.disableUndoRegistration()
+        textView.textStorage?.beginEditing()
+        textView.textStorage?.replaceCharacters(in: range, with: replacement)
+        textView.textStorage?.endEditing()
+        sessionTextView.sessionUndoManager.enableUndoRegistration()
+        // Undo entries recorded against the pre-replacement text restore
+        // stale ranges after an external edit — the history restarts here.
+        sessionTextView.sessionUndoManager.removeAllActions()
+        isApplyingSessionSnapshot = false
+        textView.setSelectedRange(Self.map(selection, over: range, replacementLength: replacement.utf16.count))
+        sessionTextView.findController?.contentDidChange()
+    }
+
+    /// Common-prefix/suffix shrink of a full-text replacement, in UTF-16
+    /// units (NSTextStorage coordinates); a surrogate pair is never split.
+    static func differingRange(from old: String, to new: String) -> (range: NSRange, replacement: String) {
+        let oldUnits = Array(old.utf16)
+        let newUnits = Array(new.utf16)
+        var prefix = 0
+        while prefix < oldUnits.count, prefix < newUnits.count,
+              oldUnits[prefix] == newUnits[prefix] { prefix += 1 }
+        if prefix > 0, prefix < oldUnits.count, UTF16.isLeadSurrogate(oldUnits[prefix - 1]) {
+            prefix -= 1
+        }
+        var suffix = 0
+        while suffix < oldUnits.count - prefix, suffix < newUnits.count - prefix,
+              oldUnits[oldUnits.count - 1 - suffix] == newUnits[newUnits.count - 1 - suffix] { suffix += 1 }
+        if suffix > 0, suffix < oldUnits.count,
+           UTF16.isLeadSurrogate(oldUnits[oldUnits.count - suffix - 1]) {
+            suffix -= 1
+        }
+        let range = NSRange(location: prefix, length: oldUnits.count - prefix - suffix)
+        return (range, String(decoding: newUnits[prefix ..< newUnits.count - suffix], as: UTF16.self))
+    }
+
+    /// Maps a UTF-16 selection across a replaceCharacters edit: before the
+    /// range unchanged, past it shifted by the length delta, overlapping it
+    /// clamped onto the end of the replacement.
+    static func map(_ selection: NSRange, over edit: NSRange, replacementLength: Int) -> NSRange {
+        func map(_ offset: Int) -> Int {
+            if offset <= edit.location { return offset }
+            if offset >= NSMaxRange(edit) { return offset + replacementLength - edit.length }
+            return edit.location + replacementLength
+        }
+        let start = map(selection.location)
+        return NSRange(location: start, length: map(NSMaxRange(selection)) - start)
+    }
+}
+
+#else
+
+@MainActor
+public final class EditorMacAdapter {
+    private init() {}
+
+    public static func make(session: any DocumentSessionPort) async throws -> EditorMacAdapter {
+        throw PlatformPortError.unavailable(feature: "TextKit editor adapter", platform: "non-macOS")
+    }
+}
+#endif

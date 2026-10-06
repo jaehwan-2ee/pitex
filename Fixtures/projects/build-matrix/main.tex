@@ -1,0 +1,21 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{makeidx}
+\makeindex
+\title{G003 Build Matrix Fixture}
+\author{TexSpark}
+\begin{document}
+\maketitle
+
+\section{Deterministic content}\label{sec:content}
+This plain UTF-8 line contains café, naïve, and résumé.
+The indexed term\index{deterministic build} is stable across engines.
+See Section~\ref{sec:references} on page~\pageref{sec:references}.
+
+\section{References}\label{sec:references}
+The bibliography cites the original fixture entry~\cite{g003-fixture}.
+
+\bibliographystyle{plain}
+\bibliography{references}
+\printindex
+\end{document}

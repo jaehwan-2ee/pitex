@@ -1,0 +1,1072 @@
+{
+  "schema_version": "1.0.0",
+  "manifest_id": "p0",
+  "status": "provisional",
+  "completeness_claimed": false,
+  "entries": [
+    {
+      "parity_id": "p0.project.file.open-existing",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.project.file.create-save",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.project.file.tabs-session",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/",
+          "https://texspark.io/legal/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.project.build-target.persistence",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.project.includes.recursive-outline",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.project.external-change.diff-resolution",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/2026/08/28/v0-10-2-outline/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.native.text-input",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "TextKit physical interaction receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.editing.undo-find-replace",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "TextKit physical interaction receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.language.latex-highlighting",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.language.bibtex-highlighting",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.intelligence.command-completion",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.intelligence.cross-file-symbols",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.intelligence.folding-matching",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.navigation.minimap",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.editor.outline.three-level-numbering",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/2026/08/28/v0-10-2-outline/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-portable-contract",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.build.engine.template-selection",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.build.command.login-shell",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.build.pipeline.multi-pass",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/2026/08/13/chaining-multi-pass-build/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.build.execution.cancel-clean",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.build.log.streaming",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.build.diagnostics.issue-navigation",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.build.output.last-successful-pdf",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.pdf.preview.render-navigation",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "PDFKit and SyncTeX physical interaction receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.pdf.synctex.forward-search",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/",
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "PDFKit and SyncTeX physical interaction receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.pdf.synctex.inverse-search",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/",
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "PDFKit and SyncTeX physical interaction receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.pdf.synctex.cross-file",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "PDFKit and SyncTeX physical interaction receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.pdf.preview.scroll-preservation",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/2026/08/13/chaining-multi-pass-build/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "portable contract, fixture, or integration receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "PDFKit and SyncTeX physical interaction receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.ai.models.selection",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "provider contract and failure-matrix receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-auth",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "physical Mac assistant sign-in lifecycle receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.ai.chat.streaming",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "provider contract and failure-matrix receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-auth",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "physical Mac assistant sign-in lifecycle receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.ai.context.current-file",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "provider contract and failure-matrix receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-auth",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "physical Mac assistant sign-in lifecycle receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.ai.edit.selection-application",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "provider contract and failure-matrix receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-auth",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "physical Mac assistant sign-in lifecycle receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.ai.history.local",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/legal/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "linux-integration",
+          "phase": "linux-p0",
+          "artifact_kind": "provider contract and failure-matrix receipt",
+          "environment": "canonical-linux",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-auth",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "physical Mac assistant sign-in lifecycle receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.macos.integration.finder-document-open",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "final-mac-filesystem",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-min",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-filesystem",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.macos.integration.menus-shortcuts",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-min",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.macos.integration.panels-layout",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/",
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-min",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-native",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.macos.integration.accessibility",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/features/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "final-mac-accessibility",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-min",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-accessibility",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.macos.integration.file-permissions",
+      "taxonomy": "active-parity",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/legal/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "planned",
+      "planned_evidence": [
+        {
+          "category": "final-mac-filesystem",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-min",
+          "status": "planned"
+        },
+        {
+          "category": "final-mac-filesystem",
+          "phase": "final-mac-e2e",
+          "artifact_kind": "two-boundary native behavior receipt",
+          "environment": "physical-mac-latest",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "parity_id": "p0.macos.updater.in-app-automatic",
+      "taxonomy": "excluded-approved",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/documentation/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "not-applicable",
+      "planned_evidence": []
+    },
+    {
+      "parity_id": "p0.identity.brand.marks",
+      "taxonomy": "out-of-domain",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "not-applicable",
+      "planned_evidence": []
+    },
+    {
+      "parity_id": "p0.identity.brand.assets",
+      "taxonomy": "out-of-domain",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "not-applicable",
+      "planned_evidence": []
+    },
+    {
+      "parity_id": "p0.commercial.pricing.purchase",
+      "taxonomy": "out-of-domain",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "not-applicable",
+      "planned_evidence": []
+    },
+    {
+      "parity_id": "p0.commercial.trial.licensing",
+      "taxonomy": "out-of-domain",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/legal/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "not-applicable",
+      "planned_evidence": []
+    },
+    {
+      "parity_id": "p0.distribution.public.release",
+      "taxonomy": "out-of-domain",
+      "provisional": true,
+      "provenance": {
+        "source_urls": [
+          "https://texspark.io/download/"
+        ],
+        "observed_date": "2026-08-30",
+        "method": "public-web",
+        "status": "provisional"
+      },
+      "disposition": "not-applicable",
+      "planned_evidence": []
+    }
+  ]
+}

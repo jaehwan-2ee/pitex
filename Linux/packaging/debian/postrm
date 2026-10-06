@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+
+# Unload the AppArmor profile on remove/purge (the deb's WebKit sandbox
+# profile on Ubuntu 24.04). Only when AppArmor is usable and the profile is
+# present/loaded; never fatal. On plain `remove` dpkg keeps the conffile,
+# so a subsequent reinstall/reload still works.
+case "$1" in
+    purge|remove)
+        if command -v apparmor_parser >/dev/null 2>&1 \
+            && { command -v aa-enabled >/dev/null 2>&1 && aa-enabled --quiet 2>/dev/null \
+                 || [ -d /sys/kernel/security/apparmor ]; } \
+            && grep -qs '^pitex ' /sys/kernel/security/apparmor/profiles 2>/dev/null; then
+            apparmor_parser -R /etc/apparmor.d/pitex 2>/dev/null || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

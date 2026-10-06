@@ -1,0 +1,73 @@
+{
+  "policyVersion": 1,
+  "status": "quarantined",
+  "root": "ReferenceEvidence/",
+  "purpose": "Raw reference captures and their provenance records only",
+  "rawCaptureKinds": [
+    "screenshot",
+    "video",
+    "audio",
+    "log",
+    "reference-download",
+    "extracted-asset",
+    "metadata-dump",
+    "other-reference-capture"
+  ],
+  "requiredProvenance": {
+    "algorithm": "sha256",
+    "hashRequiredForEveryCapture": true,
+    "fields": [
+      "captureId",
+      "referenceIdentity",
+      "sourceLocator",
+      "capturedAt",
+      "timezone",
+      "environment",
+      "method",
+      "observer",
+      "reviewer",
+      "sha256"
+    ],
+    "history": "append-only",
+    "corrections": "supersession-only"
+  },
+  "prohibitedUses": [
+    "product-source",
+    "product-resource",
+    "product-target-membership",
+    "test-fixture",
+    "generated-test-expectation",
+    "package-input",
+    "build-input",
+    "distributable-archive",
+    "release-bundle",
+    "copied-identity",
+    "copied-implementation"
+  ],
+  "archiveRules": {
+    "excludeFromProductArchives": true,
+    "excludeFromDistributableArchives": true,
+    "excludeFromWorkspaceBundles": true,
+    "allowDedicatedEvidenceArchive": true,
+    "dedicatedEvidenceArchiveRequiresManifestAndHashes": true
+  },
+  "permittedExports": [
+    "independently-authored-behavioral-record",
+    "provenance-hash",
+    "redacted-evidence-index-entry"
+  ],
+  "exportConditions": {
+    "rawCaptureExportToProductTree": false,
+    "secretScanRequired": true,
+    "referenceContaminationScanRequired": true,
+    "provenanceHashVerificationRequired": true
+  },
+  "enforcement": {
+    "mode": "fail-closed",
+    "missingProvenance": "reject",
+    "hashMismatch": "reject",
+    "prohibitedMembership": "reject",
+    "unknownCaptureKind": "reject",
+    "policyViolationBlocksArtifact": true
+  }
+}

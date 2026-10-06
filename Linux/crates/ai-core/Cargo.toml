@@ -1,0 +1,9 @@
+[package]
+name = "ai-core"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+tex-domain = { path = "../tex-domain" }
+document-session-core = { path = "../document-session-core" }

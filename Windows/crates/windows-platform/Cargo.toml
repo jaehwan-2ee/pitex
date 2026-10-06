@@ -1,0 +1,8 @@
+[package]
+name = "windows-platform"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+app-ports = { path = "../../../Linux/crates/app-ports" }
+uuid.workspace = true

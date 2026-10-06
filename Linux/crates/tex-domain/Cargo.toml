@@ -1,0 +1,8 @@
+[package]
+name = "tex-domain"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

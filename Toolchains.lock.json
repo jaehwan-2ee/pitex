@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "platform": "ubuntu-24.04-x86_64",
+  "node": "24.15.0",
+  "npm": "12.0.2",
+  "swift": "6.3.3-release",
+  "texLive": "2023-debian",
+  "xelatex": "0.999995",
+  "syncTeXLibrary": "1.21",
+  "syncTeXCLI": "1.5",
+  "macReleaseTarget": {
+    "architecture": "arm64",
+    "minimumMacOS": "15.0",
+    "xcode": "final-transition-user-runner"
+  }
+}

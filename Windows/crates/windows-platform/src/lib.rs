@@ -1,0 +1,789 @@
+//! Windows platform adapters — the counterpart of `linux-platform`, wired to
+//! the same `app-ports` contracts. File capabilities are bookmark bytes like
+//! the Linux/macOS brokers; access checks consult file metadata (the read-only
+//! attribute) since NTFS ACL evaluation needs no extra crate for the app's
+//! purposes. Process termination uses `taskkill /T`, document opening uses
+//! `ShellExecuteW`, and default-editor registration writes `HKCU\Software\Classes`.
+
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
+
+/// `pitex.exe` is a GUI-subsystem app — a console child spawned without
+/// `CREATE_NO_WINDOW` pops a console window per call. The child still gets
+/// a hidden console, and GUI children (explorer) simply ignore it.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+use app_ports::{
+    FileAccessLease, FileCapability, FileCapabilityAccess, LogLevel, LogRecord, PDFCoordinateSpace,
+    PDFPoint, PlatformPortError, ProcessRequest, ProcessResult,
+};
+
+// ─── File capability broker ────────────────────────────────────────────────
+
+/// Mirrors `MacFileCapabilityBroker`/`LinuxFileCapabilityBroker`: a capability
+/// is issued for an absolute path plus the requested access, serialized as
+/// bytes. `begin_access` re-resolves the path and reports `staleCapability`
+/// when the recorded path no longer resolves (mirroring
+/// `bookmarkDataIsStale`).
+pub struct WindowsFileCapabilityBroker {
+    active: Mutex<BTreeMap<Uuid, (PathBuf, FileCapabilityAccess)>>,
+}
+impl Default for WindowsFileCapabilityBroker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl WindowsFileCapabilityBroker {
+    pub fn new() -> Self {
+        Self {
+            active: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// Read access requires the path to exist; write access additionally
+    /// requires the read-only attribute to be clear for files. Windows
+    /// uses the directory read-only flag for Explorer customizations;
+    /// actual writes still go through the filesystem's ACL checks.
+    fn check_access(path: &Path, access: FileCapabilityAccess) -> bool {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        match access {
+            FileCapabilityAccess::ReadOnly => true,
+            FileCapabilityAccess::ReadWrite => meta.is_dir() || !meta.permissions().readonly(),
+        }
+    }
+}
+
+impl app_ports::FileCapabilityBroker for WindowsFileCapabilityBroker {
+    fn issue_capability(
+        &self,
+        url: &Path,
+        access: FileCapabilityAccess,
+    ) -> Result<FileCapability, PlatformPortError> {
+        let exists = url.exists();
+        if !exists || !Self::check_access(url, access) {
+            return Err(PlatformPortError::AccessDenied(url.to_path_buf()));
+        }
+        let canonical = url
+            .canonicalize()
+            .map_err(|_| PlatformPortError::AccessDenied(url.to_path_buf()))?;
+        // bookmark = "pitex-cap\0<access>\0<canonical path as UTF-8>" — UTF-8
+        // round-trips every valid Windows path and needs no unsafe OsStr
+        // decoding (unlike the Unix raw-byte form).
+        let mut bookmark = b"pitex-cap\0".to_vec();
+        bookmark.push(match access {
+            FileCapabilityAccess::ReadOnly => b'r',
+            FileCapabilityAccess::ReadWrite => b'w',
+        });
+        bookmark.push(0);
+        bookmark.extend_from_slice(canonical.to_string_lossy().as_bytes());
+        Ok(FileCapability { bookmark, access })
+    }
+
+    fn begin_access(
+        &self,
+        capability: &FileCapability,
+    ) -> Result<FileAccessLease, PlatformPortError> {
+        if capability.bookmark.is_empty() {
+            return Err(PlatformPortError::InvalidCapability);
+        }
+        let resolved: PathBuf = {
+            let marker = b"pitex-cap\0";
+            if capability.bookmark.len() <= marker.len() + 1
+                || !capability.bookmark.starts_with(marker)
+                || capability.bookmark[marker.len() + 1] != 0
+            {
+                return Err(PlatformPortError::InvalidCapability);
+            }
+            let path_bytes = &capability.bookmark[marker.len() + 2..];
+            let text = std::str::from_utf8(path_bytes)
+                .map_err(|_| PlatformPortError::InvalidCapability)?;
+            PathBuf::from(text)
+        };
+        // A bookmark resolves to a canonical path; if the file vanished or the
+        // canonical path changed underneath us, the capability is stale.
+        let canonical = resolved
+            .canonicalize()
+            .map_err(|_| PlatformPortError::StaleCapability(resolved.clone()))?;
+        if canonical != resolved {
+            return Err(PlatformPortError::StaleCapability(resolved));
+        }
+        if !Self::check_access(&resolved, capability.access) {
+            return Err(PlatformPortError::AccessDenied(resolved));
+        }
+        let lease = FileAccessLease {
+            id: Uuid::new_v4(),
+            url: resolved.clone(),
+            access: capability.access,
+        };
+        self.active
+            .lock()
+            .unwrap()
+            .insert(lease.id, (resolved, capability.access));
+        Ok(lease)
+    }
+
+    fn end_access(&self, lease: FileAccessLease) -> Result<(), PlatformPortError> {
+        match self.active.lock().unwrap().remove(&lease.id) {
+            Some(_) => Ok(()),
+            None => Err(PlatformPortError::InvalidCapability),
+        }
+    }
+}
+
+// ─── Process executor ──────────────────────────────────────────────────────
+
+/// Mirrors `MacProcessExecutor`: one running process per request id, output
+/// captured through temp files, `terminate` maps to `taskkill /T`.
+pub struct WindowsProcessExecutor {
+    running: Mutex<BTreeMap<Uuid, Arc<RunningProcess>>>,
+}
+struct RunningProcess {
+    child: Mutex<std::process::Child>,
+    /// Captured at spawn so `terminate` never has to lock `child` (which
+    /// `execute` holds across `wait()` for the process's whole lifetime).
+    /// `taskkill` targets the pid tree, matching the Linux process-group
+    /// semantics of the port.
+    pid: u32,
+}
+impl Default for WindowsProcessExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl WindowsProcessExecutor {
+    pub fn new() -> Self {
+        Self {
+            running: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+impl app_ports::ProcessExecuting for WindowsProcessExecutor {
+    fn execute(&self, request: &ProcessRequest) -> Result<ProcessResult, PlatformPortError> {
+        {
+            let running = self.running.lock().unwrap();
+            if running.contains_key(&request.id) {
+                return Err(PlatformPortError::OperationInProgress(format!(
+                    "process {}",
+                    request.id
+                )));
+            }
+        }
+        let executable = &request.executable;
+        if !executable.is_file() {
+            return Err(PlatformPortError::ProcessLaunchFailed {
+                executable: executable.clone(),
+                reason: "The executable does not exist or is not executable.".to_string(),
+            });
+        }
+
+        let temporary_directory =
+            std::env::temp_dir().join(format!("texapp-process-{}", request.id.as_simple()));
+        std::fs::create_dir_all(&temporary_directory).map_err(|e| {
+            PlatformPortError::ProcessLaunchFailed {
+                executable: executable.clone(),
+                reason: e.to_string(),
+            }
+        })?;
+        let output_path = temporary_directory.join("stdout");
+        let error_path = temporary_directory.join("stderr");
+        let (output_file, error_file) = match (
+            std::fs::File::create(&output_path),
+            std::fs::File::create(&error_path),
+        ) {
+            (Ok(o), Ok(e)) => (o, e),
+            _ => {
+                let _ = std::fs::remove_dir_all(&temporary_directory);
+                return Err(PlatformPortError::ProcessLaunchFailed {
+                    executable: executable.clone(),
+                    reason: "Could not create process output files.".to_string(),
+                });
+            }
+        };
+
+        let mut command = std::process::Command::new(executable);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command.args(&request.arguments);
+        if request.environment.is_empty() {
+            command.envs(std::env::vars());
+        } else {
+            command.env_clear();
+            command.envs(request.environment.iter());
+        }
+        if let Some(dir) = &request.working_directory {
+            command.current_dir(dir);
+        }
+        command.stdout(std::process::Stdio::from(output_file));
+        command.stderr(std::process::Stdio::from(error_file));
+        if request.standard_input.is_some() {
+            command.stdin(std::process::Stdio::piped());
+        } else {
+            command.stdin(std::process::Stdio::null());
+        }
+
+        let mut child = match command.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&temporary_directory);
+                return Err(PlatformPortError::ProcessLaunchFailed {
+                    executable: executable.clone(),
+                    reason: e.to_string(),
+                });
+            }
+        };
+        if let Some(input) = &request.standard_input {
+            if let Some(mut stdin) = child.stdin.take() {
+                if stdin.write_all(input).is_err() {
+                    let _ = child.kill();
+                }
+                drop(stdin);
+            }
+        }
+        let pid = child.id();
+        let running = Arc::new(RunningProcess {
+            child: Mutex::new(child),
+            pid,
+        });
+        self.running
+            .lock()
+            .unwrap()
+            .insert(request.id, running.clone());
+
+        let status = running.child.lock().unwrap().wait();
+        self.running.lock().unwrap().remove(&request.id);
+
+        let termination_status = match status {
+            Ok(s) => s.code().unwrap_or(1),
+            Err(_) => 1,
+        };
+        let standard_output = std::fs::read(&output_path).unwrap_or_default();
+        let standard_error = std::fs::read(&error_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&temporary_directory);
+        Ok(ProcessResult {
+            termination_status,
+            standard_output,
+            standard_error,
+        })
+    }
+
+    fn terminate(&self, id: Uuid) -> Result<(), PlatformPortError> {
+        let running = self.running.lock().unwrap();
+        match running.get(&id) {
+            Some(process) => {
+                // Kill the captured pid's whole tree — the `SIGTERM` analogue.
+                // `taskkill` is detached so it never touches `child`'s mutex.
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &process.pid.to_string(), "/T", "/F"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+                Ok(())
+            }
+            None => Err(PlatformPortError::InvalidCapability),
+        }
+    }
+}
+
+// ─── Workspace opener ──────────────────────────────────────────────────────
+
+pub struct WindowsWorkspaceOpener;
+impl app_ports::WorkspaceOpening for WindowsWorkspaceOpener {
+    fn open_document(&self, url: &Path) -> Result<(), PlatformPortError> {
+        // Native association opening keeps spaces, Unicode and cmd
+        // metacharacters in project paths literal.
+        shell_open(url.as_os_str()).map_err(|_| PlatformPortError::AccessDenied(url.to_path_buf()))
+    }
+    fn reveal_in_file_manager(&self, urls: &[PathBuf]) -> Result<(), PlatformPortError> {
+        if urls.is_empty() {
+            return Err(PlatformPortError::InvalidCapability);
+        }
+        // `explorer /select,<path>` selects the file — the counterpart of
+        // activateFileViewerSelecting/ShowItems. It takes one path; with
+        // several, open the shared parent instead.
+        let (program, args) = if urls.len() == 1 {
+            (
+                "explorer".to_string(),
+                vec![format!("/select,{}", urls[0].to_string_lossy())],
+            )
+        } else {
+            let parent = urls[0].parent().unwrap_or(&urls[0]).to_path_buf();
+            (
+                "explorer".to_string(),
+                vec![parent.to_string_lossy().into_owned()],
+            )
+        };
+        spawn_reaped(
+            std::process::Command::new(program)
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        )
+        .map_err(|_| PlatformPortError::AccessDenied(urls[0].clone()))?;
+        Ok(())
+    }
+}
+
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        window: *mut std::ffi::c_void,
+        operation: *const u16,
+        target: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show_command: i32,
+    ) -> isize;
+}
+
+fn shell_target(value: &std::ffi::OsStr) -> Result<Vec<u16>, ()> {
+    let mut wide: Vec<u16> = value.encode_wide().collect();
+    if wide.contains(&0) {
+        return Err(());
+    }
+    // Canonical Windows paths use the verbatim prefix, which the shell
+    // association resolver does not understand. Normalize only that
+    // prefix, retaining every other UTF-16 code unit unchanged.
+    let prefix: Vec<u16> = "\\\\?\\".encode_utf16().collect();
+    if wide.starts_with(&prefix) {
+        let unc: Vec<u16> = "UNC\\".encode_utf16().collect();
+        wide.drain(..prefix.len());
+        if wide.starts_with(&unc) {
+            wide.splice(..unc.len(), "\\\\".encode_utf16());
+        }
+    }
+    wide.push(0);
+    Ok(wide)
+}
+
+fn shell_open(target: &std::ffi::OsStr) -> Result<(), ()> {
+    let wide = shell_target(target)?;
+    let operation: Vec<u16> = "open\0".encode_utf16().collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result > 32 {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+/// Spawn a detached child and reap it on a background thread — a dropped
+/// `std::process::Child` leaves the handle open until exit.
+fn spawn_reaped(command: &mut std::process::Command) -> std::io::Result<()> {
+    command.creation_flags(CREATE_NO_WINDOW);
+    let mut child = command.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+// ─── Default-editor registration ───────────────────────────────────────────
+
+/// `DefaultEditorRegistration` — the Windows counterpart of
+/// `LSSetDefaultRoleHandlerForContentType`/`xdg-mime`: the app claims its
+/// declared extensions under `HKCU\Software\Classes` with a ProgID whose
+/// `shell\open\command` points at the running executable. Per-user classes
+/// need no elevation.
+pub struct WindowsDefaultEditorRegistration;
+impl WindowsDefaultEditorRegistration {
+    /// Declared extensions — the counterpart of the desktop entry's MimeType
+    /// list / the bundle's document types.
+    const DECLARED_EXTENSIONS: &'static [&'static str] = &[".tex", ".bib"];
+    /// Claimed only by the Markdown tab's button, mirroring Linux's
+    /// separate `text/markdown` claim — the TeX button leaves them alone.
+    const MARKDOWN_EXTENSIONS: &'static [&'static str] = &[".md", ".markdown"];
+
+    /// Registers the app as the default handler for every declared type.
+    pub fn register_as_default() -> Result<(), PlatformPortError> {
+        Self::register(Self::DECLARED_EXTENSIONS)?;
+        Self::resolve_user_choice(Self::DECLARED_EXTENSIONS)
+    }
+
+    /// "Use for .md Files" — the default handler for Markdown only.
+    pub fn register_markdown_as_default() -> Result<(), PlatformPortError> {
+        Self::register(Self::MARKDOWN_EXTENSIONS)?;
+        Self::resolve_user_choice(Self::MARKDOWN_EXTENSIONS)
+    }
+
+    fn resolve_user_choice(extensions: &[&str]) -> Result<(), PlatformPortError> {
+        // Windows 8+ honors `FileExts\<ext>\UserChoice` over the class
+        // default, and its hash can't be written without the OS's secret
+        // algorithm. When the user already chose another app, the
+        // class registration stays inert, so land them on the page where
+        // the choice can be changed. With no UserChoice the class default
+        // applies immediately and the detour is unnecessary.
+        if extensions.iter().any(|e| Self::claimed_elsewhere(e)) {
+            shell_open(std::ffi::OsStr::new("ms-settings:defaultapps"))
+                .map_err(|_| PlatformPortError::InvalidCapability)?;
+        }
+        Ok(())
+    }
+
+    fn register(extensions: &[&str]) -> Result<(), PlatformPortError> {
+        let exe = std::env::current_exe().map_err(|_| PlatformPortError::InvalidCapability)?;
+        let command = format!("\"{}\" \"%1\"", exe.to_string_lossy());
+        for extension in extensions {
+            let progid = format!("Pitex{extension}");
+            // HKCU\Software\Classes\.tex -> Pitex.tex
+            Self::reg_add(&format!("HKCU\\Software\\Classes\\{extension}"), &progid)?;
+            // OpenWithProgids keeps Pitex listed as a candidate in Settings
+            // and Open With even while a UserChoice pins another app.
+            Self::reg_add_named(
+                &format!("HKCU\\Software\\Classes\\{extension}\\OpenWithProgids"),
+                &progid,
+            )?;
+            // ProgID friendly name + open command.
+            Self::reg_add(
+                &format!("HKCU\\Software\\Classes\\{progid}"),
+                &format!("Pitex {extension} Document"),
+            )?;
+            Self::reg_add(
+                &format!("HKCU\\Software\\Classes\\{progid}\\DefaultIcon"),
+                &format!("\"{}\",0", exe.to_string_lossy()),
+            )?;
+            Self::reg_add(
+                &format!("HKCU\\Software\\Classes\\{progid}\\shell\\open\\command"),
+                &command,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// True when `UserChoice` already pins the extension to a different
+    /// ProgID — the hash-protected value our registration can't override.
+    fn claimed_elsewhere(extension: &str) -> bool {
+        let key = format!(
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{extension}\\UserChoice"
+        );
+        let output = std::process::Command::new("reg")
+            .args(["query", key.as_str(), "/v", "ProgId"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout);
+                Self::user_choice_is_other(&text, extension)
+            }
+            _ => false,
+        }
+    }
+
+    fn user_choice_is_other(output: &str, extension: &str) -> bool {
+        let expected = format!("Pitex{extension}");
+        output
+            .lines()
+            .find_map(|line| {
+                let mut columns = line.split_whitespace();
+                if !columns.next()?.eq_ignore_ascii_case("ProgId")
+                    || !columns.next()?.eq_ignore_ascii_case("REG_SZ")
+                {
+                    return None;
+                }
+                columns
+                    .next()
+                    .map(|value| !value.eq_ignore_ascii_case(&expected))
+            })
+            .unwrap_or(false)
+    }
+
+    /// `/ve` writes the key's (Default) value — the only slot this
+    /// registration needs.
+    fn reg_add(key: &str, data: &str) -> Result<(), PlatformPortError> {
+        Self::reg_write(&["add", key, "/ve", "/d", data, "/f"])
+    }
+
+    /// Writes an empty named value — `OpenWithProgids` takes one value per
+    /// candidate ProgID, named for the ProgID with empty data.
+    fn reg_add_named(key: &str, name: &str) -> Result<(), PlatformPortError> {
+        Self::reg_write(&["add", key, "/v", name, "/t", "REG_SZ", "/d", "", "/f"])
+    }
+
+    fn reg_write(arguments: &[&str]) -> Result<(), PlatformPortError> {
+        let output = std::process::Command::new("reg")
+            .args(arguments)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .output()
+            .map_err(|error| PlatformPortError::ProcessLaunchFailed {
+                executable: PathBuf::from("reg.exe"),
+                reason: error.to_string(),
+            })?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(PlatformPortError::ProcessLaunchFailed {
+                executable: PathBuf::from("reg.exe"),
+                reason: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod windows_platform_tests {
+    use super::*;
+    use app_ports::FileCapabilityBroker;
+
+    #[test]
+    fn shell_targets_preserve_unicode_and_metacharacters_without_command_parsing() {
+        for (target, expected) in [
+            (
+                r"C:\논문 & 100%\draft (1).pdf",
+                r"C:\논문 & 100%\draft (1).pdf",
+            ),
+            (r"\\?\C:\논문\draft.pdf", r"C:\논문\draft.pdf"),
+            (r"\\?\UNC\server\논문\draft.pdf", r"\\server\논문\draft.pdf"),
+            ("ms-settings:defaultapps", "ms-settings:defaultapps"),
+        ] {
+            let wide = shell_target(std::ffi::OsStr::new(target)).unwrap();
+            assert_eq!(wide.last(), Some(&0));
+            assert_eq!(
+                String::from_utf16(&wide[..wide.len() - 1]).unwrap(),
+                expected
+            );
+        }
+        assert!(shell_target(std::ffi::OsStr::new("draft\0other.pdf")).is_err());
+    }
+
+    #[test]
+    fn user_choice_requires_the_exact_case_insensitive_progid() {
+        for extension in [".tex", ".bib", ".md", ".markdown"] {
+            assert!(!WindowsDefaultEditorRegistration::user_choice_is_other(
+                &format!("HKCU\\FileExts\\{extension}\\UserChoice\r\n    ProgId    REG_SZ    PITEX{extension}\r\n"), extension,
+            ));
+            for other in ["Other.Editor", "PitexOld.Editor"] {
+                assert!(WindowsDefaultEditorRegistration::user_choice_is_other(
+                    &format!("    ProgId    REG_SZ    {other}\r\n"),
+                    extension,
+                ));
+            }
+        }
+        assert!(!WindowsDefaultEditorRegistration::user_choice_is_other(
+            "", ".tex"
+        ));
+    }
+
+    #[test]
+    fn registry_failures_are_reported() {
+        assert!(matches!(
+            WindowsDefaultEditorRegistration::reg_write(&["__pitex_invalid_command__"]),
+            Err(PlatformPortError::ProcessLaunchFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn directory_readonly_attribute_does_not_disable_project_editing() {
+        let root = std::env::temp_dir().join(format!("pitex-file-cap-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                for path in [self.0.join("main.tex"), self.0.clone()] {
+                    if let Ok(metadata) = std::fs::metadata(&path) {
+                        let mut permissions = metadata.permissions();
+                        permissions.set_readonly(false);
+                        let _ = std::fs::set_permissions(path, permissions);
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let file = root.join("main.tex");
+        std::fs::write(&file, "text").unwrap();
+        for path in [&root, &file] {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+        let broker = WindowsFileCapabilityBroker::new();
+        let capability = broker
+            .issue_capability(&root, FileCapabilityAccess::ReadWrite)
+            .unwrap();
+        let lease = broker.begin_access(&capability).unwrap();
+        assert_eq!(lease.access, FileCapabilityAccess::ReadWrite);
+        broker.end_access(lease).unwrap();
+        assert!(matches!(
+            broker.issue_capability(&file, FileCapabilityAccess::ReadWrite),
+            Err(PlatformPortError::AccessDenied(_))
+        ));
+        assert!(broker
+            .issue_capability(&file, FileCapabilityAccess::ReadOnly)
+            .is_ok());
+    }
+}
+
+// ─── Logger ────────────────────────────────────────────────────────────────
+
+/// OSLog equivalent: level-prefixed lines to stderr with sorted metadata.
+/// Identical to the Linux implementation — stderr is platform-neutral.
+pub struct WindowsApplicationLogger {
+    pub subsystem: String,
+    pub category: String,
+}
+impl app_ports::ApplicationLogging for WindowsApplicationLogger {
+    fn log(&self, record: &LogRecord) -> Result<(), PlatformPortError> {
+        let metadata = record
+            .metadata
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let rendered = if metadata.is_empty() {
+            record.message.clone()
+        } else {
+            format!("{} {}", record.message, metadata)
+        };
+        let level = match record.level {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Notice => "notice",
+            LogLevel::Error => "error",
+            LogLevel::Fault => "fault",
+        };
+        eprintln!(
+            "[{}:{}:{}] {}",
+            self.subsystem, self.category, level, rendered
+        );
+        Ok(())
+    }
+}
+
+// ─── PDF coordinate converter ──────────────────────────────────────────────
+
+/// Identical math to `MacPDFCoordinateConverter` — coordinate spaces are
+/// platform-neutral.
+pub struct WindowsPDFCoordinateConverter;
+impl app_ports::PDFCoordinateConverting for WindowsPDFCoordinateConverter {
+    fn convert(
+        &self,
+        point: PDFPoint,
+        from: PDFCoordinateSpace,
+        to: PDFCoordinateSpace,
+    ) -> Result<PDFPoint, PlatformPortError> {
+        let source_page = match from {
+            PDFCoordinateSpace::PdfBottomLeft { page, .. }
+            | PDFCoordinateSpace::ViewTopLeft { page, .. } => page,
+        };
+        let destination_page = match to {
+            PDFCoordinateSpace::PdfBottomLeft { page, .. }
+            | PDFCoordinateSpace::ViewTopLeft { page, .. } => page,
+        };
+        if source_page != destination_page {
+            return Err(PlatformPortError::InvalidCapability);
+        }
+        let source_rect = match from {
+            PDFCoordinateSpace::PdfBottomLeft { media_box, .. }
+            | PDFCoordinateSpace::ViewTopLeft {
+                bounds: media_box, ..
+            } => media_box,
+        };
+        let destination_rect = match to {
+            PDFCoordinateSpace::PdfBottomLeft { media_box, .. }
+            | PDFCoordinateSpace::ViewTopLeft {
+                bounds: media_box, ..
+            } => media_box,
+        };
+        if !(source_rect.width > 0.0 && source_rect.height > 0.0)
+            || !(destination_rect.width > 0.0 && destination_rect.height > 0.0)
+        {
+            return Err(PlatformPortError::InvalidCapability);
+        }
+        let unit = to_unit_bottom_left(point, from);
+        Ok(from_unit_bottom_left(unit, to))
+    }
+}
+fn to_unit_bottom_left(point: PDFPoint, space: PDFCoordinateSpace) -> PDFPoint {
+    match space {
+        PDFCoordinateSpace::PdfBottomLeft { media_box: b, .. } => PDFPoint {
+            x: (point.x - b.origin.x) / b.width,
+            y: (point.y - b.origin.y) / b.height,
+        },
+        PDFCoordinateSpace::ViewTopLeft { bounds: b, .. } => PDFPoint {
+            x: (point.x - b.origin.x) / b.width,
+            y: 1.0 - ((point.y - b.origin.y) / b.height),
+        },
+    }
+}
+fn from_unit_bottom_left(point: PDFPoint, space: PDFCoordinateSpace) -> PDFPoint {
+    match space {
+        PDFCoordinateSpace::PdfBottomLeft { media_box: b, .. } => PDFPoint {
+            x: b.origin.x + point.x * b.width,
+            y: b.origin.y + point.y * b.height,
+        },
+        PDFCoordinateSpace::ViewTopLeft { bounds: b, .. } => PDFPoint {
+            x: b.origin.x + point.x * b.width,
+            y: b.origin.y + (1.0 - point.y) * b.height,
+        },
+    }
+}
+
+// ─── Clock / UUID ──────────────────────────────────────────────────────────
+
+pub struct SystemWallClock;
+impl app_ports::WallClock for SystemWallClock {
+    fn now_milliseconds(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+}
+
+pub struct SystemUuidGenerator;
+impl app_ports::UuidGenerating for SystemUuidGenerator {
+    fn make_uuid(&self) -> Uuid {
+        Uuid::new_v4()
+    }
+}
+
+// ─── Environment bundle ────────────────────────────────────────────────────
+
+/// The `AppEnvironment` equivalent: the Windows adapter bundle the shell
+/// wires into feature states — same shape as `LinuxEnvironment`.
+pub struct WindowsEnvironment {
+    pub files: WindowsFileCapabilityBroker,
+    pub processes: WindowsProcessExecutor,
+    pub pdf_coordinates: WindowsPDFCoordinateConverter,
+    pub workspace: WindowsWorkspaceOpener,
+    pub clock: SystemWallClock,
+    pub uuids: SystemUuidGenerator,
+    pub logger: WindowsApplicationLogger,
+}
+impl WindowsEnvironment {
+    pub fn make(logging_subsystem: &str) -> Self {
+        Self {
+            files: WindowsFileCapabilityBroker::new(),
+            processes: WindowsProcessExecutor::new(),
+            pdf_coordinates: WindowsPDFCoordinateConverter,
+            workspace: WindowsWorkspaceOpener,
+            clock: SystemWallClock,
+            uuids: SystemUuidGenerator,
+            logger: WindowsApplicationLogger {
+                subsystem: logging_subsystem.to_string(),
+                category: "application".to_string(),
+            },
+        }
+    }
+}
