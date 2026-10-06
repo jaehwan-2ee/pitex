@@ -39,6 +39,8 @@ jobs:
       - run: node Tools/generate-sbom.mjs
       - run: node Tools/verify-release-surface.mjs
       - run: bash Tools/check-audit-linkage-paths.sh
+      - run: ruby Tools/verify-workflow-yaml.rb
+      - run: bash Tools/check-nightly-publish.sh
       - name: History gate (forbid junk/local-path adds)
         # Per-commit scan of ADDED paths. PRs check base..head; pushes check
         # before..sha (skipped when before is all zeros, e.g. a new branch).
