@@ -1,0 +1,35 @@
+.github/release-notes/v1.0.1.md
+  s_f4a0596f3fc0bb::t_bde362dc1b5fd7 1-21
+Docs/installation/README.md
+  s_f4a0596f3fc0bb::t_0ee9d00caef6b2 46-47,62,67
+Linux/Cargo.lock
+  s_f4a0596f3fc0bb::t_390ba7885d463a 966
+Linux/crates/pitex/Cargo.toml
+  s_f4a0596f3fc0bb::t_0322644298a442 3
+Mac/Config/Info.plist
+  s_f4a0596f3fc0bb::t_4293169530b45e 20,22
+README.md
+  s_f4a0596f3fc0bb::t_dc764e8388f075 1,111-112,114
+Windows/Cargo.lock
+  s_f4a0596f3fc0bb::t_0b37f662050cd2 1091
+Windows/README.md
+  s_f4a0596f3fc0bb::t_2faa68a9d8ae6b 86
+Windows/crates/pitex-windows/Cargo.toml
+  s_f4a0596f3fc0bb::t_31e033d947c610 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1177ab9b138f05265bbe3e68cd2c83e3ca9d4ce3",
+  "prompts": {},
+  "sessions": {
+    "s_f4a0596f3fc0bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2d87f6d-c72a-4c4b-b71d-5ff86518371b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
