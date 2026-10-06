@@ -1,0 +1,25 @@
+.github/workflows/nightly.yml
+  s_370564b84f631d::t_5d30d82afb9621 48-55,62-67,135-136,143,158,164,169,174-180,191-197
+.github/workflows/release.yml
+  s_370564b84f631d::t_ba0302ac671bce 839-848,853
+Tools/check-nightly-gate.sh
+  s_370564b84f631d::t_34b72090fe403e 38-44
+Tools/check-nightly-publish.sh
+  s_370564b84f631d::t_1e76d576e4ba93 3,14,18,20,60-61,67,69-77,83-85,87-89,91,94,97-99,101-103,105-107,109-110,112,115-117,120,122,125-127,138-139,158,160,184-189,191,207-216,219,243-244,248-261,263-264,268-275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8fb1e8a05bec0066a4b304337bca1e76cd39768d",
+  "prompts": {},
+  "sessions": {
+    "s_370564b84f631d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_370564b84f631d",
+        "model": "unknown"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
