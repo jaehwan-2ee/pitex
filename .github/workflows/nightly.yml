@@ -75,6 +75,10 @@ jobs:
     name: Build nightly artifacts
     needs: gate
     if: ${{ needs.gate.outputs.version != '' }}
+    # A called workflow's jobs may not request more than the caller grants;
+    # release.yml's tag-only publish job declares contents: write.
+    permissions:
+      contents: write
     uses: ./.github/workflows/release.yml
     with:
       channel: nightly
