@@ -40,7 +40,9 @@ use crate::pdf::{PdfInfo, PdfRenderer};
 use crate::settings::{AppearanceColorRole, AppearanceSettings, Preferences, SettingsStore, Theme};
 use git_core::GitChange;
 
-pub const APP_ID: &str = "dev.pitex.app";
+pub fn app_id() -> &'static str {
+    crate::identity::current().app_id
+}
 
 /// Widget name + accessible label — the GTK equivalent of SwiftUI's
 /// `accessibilityIdentifier`/`accessibilityLabel`. Labels resolve through
@@ -384,7 +386,7 @@ impl AppState {
             build_ui_pending: Cell::new(false),
             git_panel_was_visible: Cell::new(false),
             assistant_was_visible: Cell::new(false),
-            env: PlatformEnvironment::make("dev.pitex.app"),
+            env: PlatformEnvironment::make(crate::identity::current().app_id),
             app_version,
             active_session: None,
             rendered_structure_revision: Cell::new(0),
@@ -787,7 +789,8 @@ impl AppState {
         if changed {
             let scheme_dir = dirs::cache_dir()
                 .unwrap_or_else(std::env::temp_dir)
-                .join("pitex/schemes");
+                .join(crate::identity::current().xdg_dir_name)
+                .join("schemes");
             let _ = std::fs::create_dir_all(&scheme_dir);
             if std::fs::write(scheme_dir.join("pitex-theme.xml"), &scheme_xml).is_err() {
                 return;
@@ -2508,7 +2511,7 @@ impl AppState {
                     .project_url
                     .as_ref()
                     .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                    .unwrap_or_else(|| tr(self.language, "app.name"));
+                    .unwrap_or_else(|| crate::identity::current().display_name.to_string());
                 window.set_title(Some(&title));
                 if let Some(title_widget) = ui.window_title.borrow().as_ref() {
                     title_widget.set_title(&title);
@@ -5309,7 +5312,7 @@ pub fn run(app_version: &str) -> i32 {
         flags |= gio::ApplicationFlags::NON_UNIQUE;
     }
     let app = adw::Application::builder()
-        .application_id(APP_ID)
+        .application_id(app_id())
         .flags(flags)
         .build();
     app.connect_shutdown(|_| {
@@ -5469,7 +5472,7 @@ fn build_chrome(
     let header = adw::HeaderBar::new();
     // WindowTitle's subtitle line carries the remote status (macOS shows
     // the same text in the title bar accessory).
-    let window_title = adw::WindowTitle::new(&tr(lang, "app.name"), "");
+    let window_title = adw::WindowTitle::new(crate::identity::current().display_name, "");
     header.set_title_widget(Some(&window_title));
     ui.window_title.replace(Some(window_title.clone()));
 

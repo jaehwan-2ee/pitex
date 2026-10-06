@@ -40,7 +40,7 @@ let package = Package(
             dependencies: ["TexDomain", "DocumentSessionCore"]
         ),
         .target(name: "GitCore"),
-        .target(name: "RemoteCore", dependencies: ["BuildCore"]),
+        .target(name: "RemoteCore", dependencies: ["BuildCore", "TexDomain"]),
         .target(name: "ParityKit", dependencies: ["TexDomain"]),
         .testTarget(
             name: "TexCoreTests",

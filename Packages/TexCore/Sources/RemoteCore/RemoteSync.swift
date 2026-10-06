@@ -1,4 +1,5 @@
 import Foundation
+import TexDomain
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -45,11 +46,11 @@ public struct RemoteMirror: Sendable, Hashable {
     var workURL: URL { directory.appendingPathComponent("work", isDirectory: true) }
     var stagingURL: URL { workURL.appendingPathComponent("staging", isDirectory: true) }
 
-    /// `~/Library/Application Support/Pitex/Remote` on macOS.
+    /// `~/Library/Application Support/<App name>/Remote` on macOS.
     public static var defaultStore: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("Pitex/Remote", isDirectory: true)
+        return base.appendingPathComponent("\(AppIdentity.current.appFolderName)/Remote", isDirectory: true)
     }
 
     /// The mirror for `project`, created (with its metadata) on first use.

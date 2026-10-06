@@ -5,6 +5,7 @@ import Foundation
 import LanguageCore
 import ProjectCore
 import ProjectFeature
+import RemoteCore
 import SettingsFeature
 import TexDomain
 
@@ -101,7 +102,7 @@ actor StreamingBuildExecutor: BuildProcessExecuting {
         let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
         let directory = try files.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("Pitex/tex-tools/\(architecture)-\(size)-\(modified)", isDirectory: true)
+            .appendingPathComponent("\(AppIdentity.current.appFolderName)/tex-tools/\(architecture)-\(size)-\(modified)", isDirectory: true)
         let destination = directory.appendingPathComponent("biber")
         if !files.isExecutableFile(atPath: destination.path) {
             try files.createDirectory(at: directory, withIntermediateDirectories: true)

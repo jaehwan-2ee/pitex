@@ -355,7 +355,9 @@ impl app_ports::WorkspaceOpening for LinuxWorkspaceOpener {
 pub struct LinuxDefaultEditorRegistration;
 impl LinuxDefaultEditorRegistration {
     /// Desktop-file ID under which the declared types are claimed.
-    const DESKTOP_ID: &'static str = "dev.pitex.app.desktop";
+    fn desktop_id() -> &'static str {
+        app_ports::identity::current().linux_desktop_id
+    }
     /// Declared content types — the desktop entry's MimeType list, matching
     /// the bundle's document type declarations.
     const DECLARED_TYPES: &'static [&'static str] =
@@ -377,7 +379,7 @@ impl LinuxDefaultEditorRegistration {
         Self::ensure_desktop_entry().map_err(|_| PlatformPortError::InvalidCapability)?;
         for mime in Self::DECLARED_TYPES.iter().filter(|mime| wanted(mime)) {
             let _ = std::process::Command::new("xdg-mime")
-                .args(["default", Self::DESKTOP_ID, mime])
+                .args(["default", Self::desktop_id(), mime])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -410,11 +412,13 @@ impl LinuxDefaultEditorRegistration {
             .replace('$', "\\$")
             .replace('%', "%%");
         let entry = format!(
-            "[Desktop Entry]\nType=Application\nName=Pitex\nComment=LaTeX environment\n\
-             Exec=\"{exec_path}\" %u\nIcon=dev.pitex.app\nTerminal=false\n\
+            "[Desktop Entry]\nType=Application\nName={name}\nComment=LaTeX environment\n\
+             Exec=\"{exec_path}\" %u\nIcon={icon}\nTerminal=false\n\
              Categories=Development;TextEditor;\nStartupNotify=true\nMimeType={mime}\n",
+            name = app_ports::identity::current().linux_desktop_name,
+            icon = app_ports::identity::current().linux_icon_name,
         );
-        std::fs::write(applications.join(Self::DESKTOP_ID), entry)
+        std::fs::write(applications.join(Self::desktop_id()), entry)
     }
 
     /// Resolves an existing entry across the XDG applications directories —
@@ -430,7 +434,7 @@ impl LinuxDefaultEditorRegistration {
             scan.push(PathBuf::from(d).join("applications"));
         }
         scan.into_iter()
-            .map(|d| d.join(Self::DESKTOP_ID))
+            .map(|d| d.join(Self::desktop_id()))
             .find(|p| p.is_file())
     }
 }

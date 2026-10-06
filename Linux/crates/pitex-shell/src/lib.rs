@@ -10,6 +10,7 @@ pub mod agent;
 pub mod app_ui;
 pub mod compat;
 pub mod completion;
+pub use app_ports::identity;
 #[cfg(feature = "equation-preview")]
 pub mod equation_preview;
 pub mod embedded_preview;

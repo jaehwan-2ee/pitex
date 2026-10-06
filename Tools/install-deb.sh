@@ -11,21 +11,26 @@ if [ ! -f "$1" ] || [ ! -r "$1" ]; then
     exit 1
 fi
 
+PITEX_DEB_PACKAGE=$(dpkg-deb --field "$1" Package)
+case "$PITEX_DEB_PACKAGE" in
+    pitex|pitex-nightly) ;;
+    *)
+        printf 'The package is not a Pitex package (Package: %s).\n' "$PITEX_DEB_PACKAGE" >&2
+        exit 1
+        ;;
+esac
+
 # Do not use TMPDIR: it can point inside a private home folder.
-staging=$(mktemp -d /tmp/pitex-install.XXXXXXXXXX)
+staging=$(mktemp -d "/tmp/$PITEX_DEB_PACKAGE-install.XXXXXXXXXX")
 trap 'rm -rf -- "$staging"' 0
 trap 'exit 130' INT
 trap 'exit 143' HUP TERM
-cp -- "$1" "$staging/pitex.deb"
-if [ "$(dpkg-deb --field "$staging/pitex.deb" Package)" != pitex ]; then
-    printf 'The package is not a Pitex package.\n' >&2
-    exit 1
-fi
-chmod 644 "$staging/pitex.deb"
+cp -- "$1" "$staging/$PITEX_DEB_PACKAGE.deb"
+chmod 644 "$staging/$PITEX_DEB_PACKAGE.deb"
 chmod 755 "$staging"
 
 if [ "$(id -u)" -eq 0 ]; then
-    apt install -- "$staging/pitex.deb"
+    apt install -- "$staging/$PITEX_DEB_PACKAGE.deb"
 else
-    sudo apt install -- "$staging/pitex.deb"
+    sudo apt install -- "$staging/$PITEX_DEB_PACKAGE.deb"
 fi

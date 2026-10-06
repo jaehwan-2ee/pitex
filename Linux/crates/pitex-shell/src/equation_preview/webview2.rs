@@ -291,7 +291,7 @@ impl Inner {
             self.fail();
             return;
         };
-        let dir = dir.join("pitex").join("EquationWebView2");
+        let dir = dir.join(crate::identity::current().xdg_dir_name).join("EquationWebView2");
         if std::fs::create_dir_all(&dir).is_err() {
             self.fail();
             return;

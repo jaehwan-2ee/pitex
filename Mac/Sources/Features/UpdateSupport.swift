@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import RemoteCore
 
 /// Self-update — checks GitHub Releases, downloads the macOS DMG, replaces
 /// the installed app, and relaunches. Mirrors the Rust `update` module used
@@ -30,13 +31,10 @@ final class UpdateChecker: ObservableObject {
         let url: URL
     }
 
-    private static let releaseAPI =
-        URL(string: "https://api.github.com/repos/jaehwan-2ee/pitex/releases/latest")!
-    private static let assetSuffix = "macos-arm64.dmg"
-    /// The signed bundle identifier — built from components so the
-    /// accessibility contract's unlocalized-key scan doesn't mistake the
-    /// literal for a `Localizable.strings` key.
-    private static let bundleIdentifier = ["app", "pitex", "desktop"].joined(separator: ".")
+    private static let assetSuffix = AppIdentity.current.assetSuffix
+    /// The signed bundle identifier — read from the running bundle; stable
+    /// resolves to `app.pitex.desktop` and nightly to `app.pitex.desktop.nightly`.
+    private static let bundleIdentifier = AppIdentity.current.bundleIdentifier
 
     var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
@@ -97,7 +95,7 @@ final class UpdateChecker: ObservableObject {
     // MARK: - release lookup
 
     private func latestRelease() async throws -> (tag: String, asset: ReleaseAsset) {
-        var request = URLRequest(url: Self.releaseAPI, timeoutInterval: 20)
+        var request = URLRequest(url: AppIdentity.current.releaseAPI, timeoutInterval: 20)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("pitex-update", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -106,11 +104,21 @@ final class UpdateChecker: ObservableObject {
                           userInfo: [NSLocalizedDescriptionKey: "Release lookup failed"])
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = json["tag_name"] as? String,
               let assets = json["assets"] as? [[String: Any]]
         else {
             throw NSError(domain: "PitexUpdate", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Bad release response"])
+        }
+        let tag: String
+        if AppIdentity.current.isNightly {
+            let manifest = try await nightlyManifest(in: assets)
+            tag = manifest
+        } else {
+            guard let t = json["tag_name"] as? String else {
+                throw NSError(domain: "PitexUpdate", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "Bad release response"])
+            }
+            tag = t
         }
         for asset in assets {
             if let name = asset["name"] as? String, name.hasSuffix(Self.assetSuffix),
@@ -120,6 +128,28 @@ final class UpdateChecker: ObservableObject {
         }
         throw NSError(domain: "PitexUpdate", code: 3,
                       userInfo: [NSLocalizedDescriptionKey: "No macOS asset in the latest release"])
+    }
+
+    private func nightlyManifest(in assets: [[String: Any]]) async throws -> String {
+        guard let manifestAsset = assets.first(where: {
+            ($0["name"] as? String) == "nightly.json"
+        }),
+        let raw = manifestAsset["browser_download_url"] as? String,
+        let url = URL(string: raw) else {
+            throw NSError(domain: "PitexUpdate", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "No nightly manifest in the release"])
+        }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("pitex-update", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let version = json["version"] as? String else {
+            throw NSError(domain: "PitexUpdate", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Bad nightly manifest"])
+        }
+        return version
     }
 
     /// `v1.0.3` vs `1.0.2` — numeric component compare, same rule as the
@@ -184,22 +214,23 @@ final class UpdateChecker: ObservableObject {
     /// `/Applications/Pitex.app` *and* a Caskroom cellar exists — a stray
     /// DMG copy next to a brew install must not route through `brew`.
     private var isBrewManaged: Bool {
-        guard Bundle.main.bundleURL.path == "/Applications/Pitex.app" else { return false }
-        return ["/opt/homebrew/Caskroom/pitex", "/usr/local/Caskroom/pitex"]
+        guard Bundle.main.bundleURL.path == "/Applications/\(AppIdentity.current.appName).app" else { return false }
+        let cask = AppIdentity.current.brewCaskName
+        return ["/opt/homebrew/Caskroom/\(cask)", "/usr/local/Caskroom/\(cask)"]
             .contains { FileManager.default.fileExists(atPath: $0) }
     }
 
     func brewUpgrade(_ brew: String, bundle: URL, tag: String) async throws {
         // Automatic refresh is throttled (or disabled). A stale tap makes
         // `brew upgrade` exit successfully without changing the app.
-        let log = FileManager.default.temporaryDirectory.appendingPathComponent("pitex-brew-\(UUID().uuidString).log")
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("\(AppIdentity.current.tempPrefix)-brew-\(UUID().uuidString).log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
         let output = try FileHandle(forWritingTo: log)
         defer {
             try? output.close()
             try? FileManager.default.removeItem(at: log)
         }
-        for arguments in [["update"], ["upgrade", "--cask", "pitex"]] {
+        for arguments in [["update"], ["upgrade", "--cask", AppIdentity.current.brewCaskName]] {
             let status = try await Self.run(brew, arguments, output: output)
             guard status == 0 else {
                 let message = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
@@ -230,7 +261,7 @@ final class UpdateChecker: ObservableObject {
         phase = .installing
         detail = String(localized: "settings.updates.installing")
         let mount = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("pitex-update-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(AppIdentity.current.tempPrefix)-update-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
         defer { _ = try? Self.runSync("/usr/bin/hdiutil", ["detach", "-quiet", mount.path]) }
         let attach = try await Self.run(
@@ -240,10 +271,10 @@ final class UpdateChecker: ObservableObject {
             throw NSError(domain: "PitexUpdate", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "Could not mount the downloaded image"])
         }
-        let source = mount.appendingPathComponent("Pitex.app", isDirectory: true)
+        let source = mount.appendingPathComponent("\(AppIdentity.current.appName).app", isDirectory: true)
         guard FileManager.default.fileExists(atPath: source.path) else {
             throw NSError(domain: "PitexUpdate", code: 5,
-                          userInfo: [NSLocalizedDescriptionKey: "The downloaded image has no Pitex.app"])
+                          userInfo: [NSLocalizedDescriptionKey: "The downloaded image has no \(AppIdentity.current.appName).app"])
         }
         try verifyInstalledBundle(source, tag: tag)
         do {
@@ -261,7 +292,7 @@ final class UpdateChecker: ObservableObject {
     func replaceBundle(at destination: URL, with source: URL) throws {
         let files = FileManager.default
         let staged = destination.deletingLastPathComponent()
-            .appendingPathComponent(".pitex-update-\(UUID().uuidString).app")
+            .appendingPathComponent(".\(AppIdentity.current.tempPrefix)-update-\(UUID().uuidString).app")
         defer { try? files.removeItem(at: staged) }
         // Finish the copy before replacing the old app, so a copy failure
         // (permissions, disk space) cannot delete the installed version.

@@ -506,14 +506,20 @@ impl EquationPreviewHost {
     fn cleanup_workspace(&self, token: String) {
         let workers = self.exact_workers.clone();
         if workers.get() == 0 {
-            ExactEquationRenderer::remove_workspace_artifacts(&token);
+            ExactEquationRenderer::remove_workspace_artifacts(
+                crate::identity::current().temp_prefix,
+                &token,
+            );
             return;
         }
         glib::spawn_future_local(async move {
             while workers.get() != 0 {
                 glib::timeout_future(Duration::from_millis(20)).await;
             }
-            ExactEquationRenderer::remove_workspace_artifacts(&token);
+            ExactEquationRenderer::remove_workspace_artifacts(
+                crate::identity::current().temp_prefix,
+                &token,
+            );
         });
     }
 
@@ -958,7 +964,13 @@ impl EquationPreviewHost {
         // The same TeX-aware PATH the real build resolves through — a bare
         // process PATH misses /usr/local/texlive on desktop launches.
         let environment = build_core::augmented_environment(&HashMap::new());
-        let renderer = ExactEquationRenderer::new(profile, directory, environment, token);
+        let renderer = ExactEquationRenderer::new(
+            profile,
+            directory,
+            environment,
+            crate::identity::current().temp_prefix,
+            token,
+        );
         let weak = self.self_weak.borrow().clone();
         let workers = self.exact_workers.clone();
         workers.set(workers.get() + 1);
@@ -1615,7 +1627,10 @@ mod tests {
             "\\newwrite\\proofFile\n\\immediate\\openout\\proofFile=first-started.txt\n\\immediate\\write\\proofFile{started}\n\\immediate\\closeout\\proofFile\n\\def\\proofSpin{\\proofSpin}\\proofSpin\n").unwrap();
         host.request_exact();
         let token = host.workspace_token().unwrap();
-        let workspace = ExactEquationRenderer::workspace_root(&token);
+        let workspace = ExactEquationRenderer::workspace_root(
+            crate::identity::current().temp_prefix,
+            &token,
+        );
         let marker = |name: &str| -> Option<PathBuf> {
             std::fs::read_dir(&workspace).ok()?.flatten().map(|entry| entry.path())
                 .find(|path| path.join(name).is_file())

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pitex Nightly
+Comment=LaTeX environment (nightly preview)
+Exec=pitex-nightly %F
+Icon=dev.pitex.app.nightly
+Terminal=false
+Categories=Development;TextEditor;
+StartupNotify=true
+MimeType=text/x-tex;text/x-bib;text/markdown;

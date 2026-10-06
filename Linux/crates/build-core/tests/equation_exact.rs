@@ -115,12 +115,13 @@ fn renderer(token: &str, main_directory: PathBuf) -> ExactEquationRenderer {
         },
         main_directory,
         HashMap::new(),
+        "pitex",
         token.to_string(),
     )
 }
 
 fn workspace_contents(token: &str) -> Vec<String> {
-    let root = ExactEquationRenderer::workspace_root(token);
+    let root = ExactEquationRenderer::workspace_root("pitex", token);
     std::fs::read_dir(&root)
         .map(|entries| {
             let mut names: Vec<String> = entries
@@ -174,8 +175,8 @@ fn renders_with_project_preamble_and_cleans_up() {
     assert_eq!(&pdf2[..5], b"%PDF-");
     assert_ne!(pdf, pdf2);
     assert_eq!(workspace_contents(&token), Vec::<String>::new());
-    ExactEquationRenderer::remove_workspace_artifacts(&token);
-    assert!(!ExactEquationRenderer::workspace_root(&token).exists());
+    ExactEquationRenderer::remove_workspace_artifacts("pitex", &token);
+    assert!(!ExactEquationRenderer::workspace_root("pitex", &token).exists());
     let mut project_files: Vec<String> = std::fs::read_dir(&project)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -205,7 +206,7 @@ fn unknown_macro_fails_without_output() {
         other => panic!("expected a compile failure, got {other:?}"),
     }
     assert_eq!(workspace_contents(&token), Vec::<String>::new());
-    ExactEquationRenderer::remove_workspace_artifacts(&token);
+    ExactEquationRenderer::remove_workspace_artifacts("pitex", &token);
 }
 
 /// Shell escape stays off when the project has it off, even if the document
@@ -237,7 +238,7 @@ fn disabled_shell_escape_is_enforced() {
     );
     r.render(&document, None).expect("disabled shell escape must still compile the equation");
     assert!(!Path::new(&marker).exists());
-    ExactEquationRenderer::remove_workspace_artifacts(&token);
+    ExactEquationRenderer::remove_workspace_artifacts("pitex", &token);
 }
 
 #[test]
@@ -263,5 +264,5 @@ fn cancellation_stops_the_engine_and_cleans_up() {
         other => panic!("expected cancellation, got {other:?}"),
     }
     assert_eq!(workspace_contents(&token), Vec::<String>::new());
-    ExactEquationRenderer::remove_workspace_artifacts(&token);
+    ExactEquationRenderer::remove_workspace_artifacts("pitex", &token);
 }

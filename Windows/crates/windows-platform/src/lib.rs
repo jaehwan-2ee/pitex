@@ -22,6 +22,7 @@ use app_ports::{
     FileAccessLease, FileCapability, FileCapabilityAccess, LogLevel, LogRecord, PDFCoordinateSpace,
     PDFPoint, PlatformPortError, ProcessRequest, ProcessResult,
 };
+use app_ports::identity;
 
 // ─── File capability broker ────────────────────────────────────────────────
 
@@ -441,8 +442,8 @@ impl WindowsDefaultEditorRegistration {
         let exe = std::env::current_exe().map_err(|_| PlatformPortError::InvalidCapability)?;
         let command = format!("\"{}\" \"%1\"", exe.to_string_lossy());
         for extension in extensions {
-            let progid = format!("Pitex{extension}");
-            // HKCU\Software\Classes\.tex -> Pitex.tex
+            let progid = format!("{}{extension}", identity::current().windows_progid_prefix);
+            // HKCU\Software\Classes\.tex -> Pitex.tex (or PitexNightly.tex)
             Self::reg_add(&format!("HKCU\\Software\\Classes\\{extension}"), &progid)?;
             // OpenWithProgids keeps Pitex listed as a candidate in Settings
             // and Open With even while a UserChoice pins another app.
@@ -453,7 +454,7 @@ impl WindowsDefaultEditorRegistration {
             // ProgID friendly name + open command.
             Self::reg_add(
                 &format!("HKCU\\Software\\Classes\\{progid}"),
-                &format!("Pitex {extension} Document"),
+                &format!("{} {extension} Document", identity::current().display_name),
             )?;
             Self::reg_add(
                 &format!("HKCU\\Software\\Classes\\{progid}\\DefaultIcon"),
@@ -489,7 +490,7 @@ impl WindowsDefaultEditorRegistration {
     }
 
     fn user_choice_is_other(output: &str, extension: &str) -> bool {
-        let expected = format!("Pitex{extension}");
+        let expected = format!("{}{extension}", identity::current().windows_progid_prefix);
         output
             .lines()
             .find_map(|line| {

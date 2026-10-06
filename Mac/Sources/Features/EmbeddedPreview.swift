@@ -2,6 +2,7 @@ import BuildFeature
 import Darwin
 import DocumentSessionCore
 import Foundation
+import RemoteCore
 
 // Embedded editing preview — the macOS client of the `pitex-preview` helper
 // (TeXpresso-derived checkpointing XeTeX engine + Pitex XDV→PDF writer; see
@@ -121,7 +122,7 @@ final class EmbeddedPreviewSession: @unchecked Sendable {
     /// mode 0700). Directories of Pitex processes that no longer run go.
     static func prepareSessionRoot() throws -> URL {
         let files = FileManager.default
-        let root = files.temporaryDirectory.appendingPathComponent("pitex-preview", isDirectory: true)
+        let root = files.temporaryDirectory.appendingPathComponent("\(AppIdentity.current.tempPrefix)-preview", isDirectory: true)
         try files.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         _ = chmod(root.path, 0o700)
         for name in (try? files.contentsOfDirectory(atPath: root.path)) ?? [] {
@@ -646,8 +647,8 @@ extension WorkspaceModel {
         let directory = sessionRoot.appendingPathComponent("\(getpid())-\(id)", isDirectory: true)
         try files.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let cache = (try? files.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
-            .map { $0.appendingPathComponent("Pitex/preview-engine", isDirectory: true) }
-            ?? files.temporaryDirectory.appendingPathComponent("pitex-preview-engine-cache", isDirectory: true)
+            .map { $0.appendingPathComponent("\(AppIdentity.current.appFolderName)/preview-engine", isDirectory: true) }
+            ?? files.temporaryDirectory.appendingPathComponent("\(AppIdentity.current.tempPrefix)-preview-engine-cache", isDirectory: true)
         try? files.createDirectory(at: cache, withIntermediateDirectories: true)
         let sink = EmbeddedPreviewEventSink(workspace: self, session: id)
         do {
@@ -851,7 +852,7 @@ extension WorkspaceModel {
     /// `$TMPDIR/Pitex Editing Previews/` until the system purges it.
     static func exportEmbeddedPreviewCopy(_ data: Data, named name: String) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Pitex Editing Previews", isDirectory: true)
+            .appendingPathComponent("\(AppIdentity.current.appFolderName) Editing Previews", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
