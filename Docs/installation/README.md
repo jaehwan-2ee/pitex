@@ -43,8 +43,8 @@ Download `install-pitex-deb.sh` and the package for your Ubuntu version from the
 Use the installer from the folder that contains the downloads:
 
 ```sh
-sh ./install-pitex-deb.sh ./Pitex-v1.0.0-ubuntu24.04-amd64.deb   # Ubuntu 24.04+
-sh ./install-pitex-deb.sh ./Pitex-v1.0.0-ubuntu22.04-amd64.deb   # Ubuntu 22.04
+sh ./install-pitex-deb.sh ./Pitex-v1.0.1-ubuntu24.04-amd64.deb   # Ubuntu 24.04+
+sh ./install-pitex-deb.sh ./Pitex-v1.0.1-ubuntu22.04-amd64.deb   # Ubuntu 22.04
 ```
 
 APT also installs the necessary GTK libraries.
@@ -59,12 +59,12 @@ Direct APT installation is also possible if the `_apt` user can read the package
 
 ### Windows
 
-Download `Pitex-v1.0.0-windows-amd64-setup.exe` for the per-user installer.
+Download `Pitex-v1.0.1-windows-amd64-setup.exe` for the per-user installer.
 It installs into `%LOCALAPPDATA%\Programs\Pitex`.
 It adds shortcuts.
 It supports application updates without administrator access.
 
-For a portable installation, extract `Pitex-v1.0.0-windows-amd64.zip` and run
+For a portable installation, extract `Pitex-v1.0.1-windows-amd64.zip` and run
 `pitex\bin\pitex.exe`. Both packages include the embedded ConPTY terminal,
 Markdown and equation previews, and the Windows editing-preview helper.
 
