@@ -1,0 +1,1559 @@
+.gitattributes
+  s_f4a0596f3fc0bb::t_d20539863465fe 1-5
+.github/ISSUE_TEMPLATE/bug_report.yml
+  s_f4a0596f3fc0bb::t_8969caa60877a1 1-43
+.github/ISSUE_TEMPLATE/feature_request.yml
+  s_f4a0596f3fc0bb::t_0d28c3f325f4b8 1-29
+.github/PULL_REQUEST_TEMPLATE.md
+  s_f4a0596f3fc0bb::t_33a71d08f9e4d3 1-18
+.github/release-notes/v1.0.0.md
+  s_f4a0596f3fc0bb::t_a98ab5cf18b46b 1-24
+.github/workflows/ci.yml
+  s_f4a0596f3fc0bb::t_4e754f0ac76e63 1-695
+.github/workflows/ibus-compat.yml
+  s_f4a0596f3fc0bb::t_4abf44babb33bd 1-76
+.github/workflows/input-audit.yml
+  s_f4a0596f3fc0bb::t_299fabfa9ef87d 1-144
+.github/workflows/release.yml
+  s_f4a0596f3fc0bb::t_04fb628fd965b7 1-711
+.gitignore
+  s_f4a0596f3fc0bb::t_bd1df2e1ede760 1-55
+Assets/equation-preview/renderer-config.js
+  s_f4a0596f3fc0bb::t_1bcbd8075f2ad0 1-62
+Assets/equation-preview/renderer.css
+  s_f4a0596f3fc0bb::t_534d6e56f8b1c7 1-59
+Assets/equation-preview/renderer.html
+  s_f4a0596f3fc0bb::t_a116b245b1e97a 1-20
+Assets/equation-preview/renderer.js
+  s_f4a0596f3fc0bb::t_c4edf9adb8af7d 1-218
+Assets/equation-preview/vendor/VERSIONS
+  s_f4a0596f3fc0bb::t_af647e06d1eb1a 1-61
+Assets/equation-preview/vendor/manifest.json
+  s_f4a0596f3fc0bb::t_6c74dd6d08bddc 1-70
+Assets/equation-preview/vendor/mathjax/LICENSE
+  s_f4a0596f3fc0bb::t_8f6298201c6477 1-202
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/action.js
+  s_f4a0596f3fc0bb::t_206756e1e82c71 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/ams.js
+  s_f4a0596f3fc0bb::t_4b7cf4b4c7339a 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/amscd.js
+  s_f4a0596f3fc0bb::t_dc2c46a85f1d7b 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/autoload.js
+  s_f4a0596f3fc0bb::t_0bb8809a91567c 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bbm.js
+  s_f4a0596f3fc0bb::t_95ae213860d1c9 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bboldx.js
+  s_f4a0596f3fc0bb::t_30161f3e3c2977 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bbox.js
+  s_f4a0596f3fc0bb::t_265fcc19e27a00 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/begingroup.js
+  s_f4a0596f3fc0bb::t_26c3468d8e37b3 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/boldsymbol.js
+  s_f4a0596f3fc0bb::t_6cbd96e65e9549 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/braket.js
+  s_f4a0596f3fc0bb::t_8679a626f426cf 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/bussproofs.js
+  s_f4a0596f3fc0bb::t_9a1f2979bb46c3 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/cancel.js
+  s_f4a0596f3fc0bb::t_fed18b3411769f 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/cases.js
+  s_f4a0596f3fc0bb::t_c5ee992bea8433 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/centernot.js
+  s_f4a0596f3fc0bb::t_7a051987133ba7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/color.js
+  s_f4a0596f3fc0bb::t_ba09c9af172097 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/colortbl.js
+  s_f4a0596f3fc0bb::t_cb3989fdc6c357 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/colorv2.js
+  s_f4a0596f3fc0bb::t_9030cdbecd25ce 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/configmacros.js
+  s_f4a0596f3fc0bb::t_59e105d0327f65 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/dsfont.js
+  s_f4a0596f3fc0bb::t_ab73f5db249697 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/empheq.js
+  s_f4a0596f3fc0bb::t_8307aec9b03014 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/enclose.js
+  s_f4a0596f3fc0bb::t_a571186b52c480 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/extpfeil.js
+  s_f4a0596f3fc0bb::t_568f1362bf63ee 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/fontsizev3.js
+  s_f4a0596f3fc0bb::t_252fa6ef788bce 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/gensymb.js
+  s_f4a0596f3fc0bb::t_9d8242d745192f 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/html.js
+  s_f4a0596f3fc0bb::t_86b2529799ccb0 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/mathtools.js
+  s_f4a0596f3fc0bb::t_c5a4153fb95e24 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/mhchem.js
+  s_f4a0596f3fc0bb::t_fcae700669b7e7 1-34
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/newcommand.js
+  s_f4a0596f3fc0bb::t_85793b2bdc6f84 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/noerrors.js
+  s_f4a0596f3fc0bb::t_49f529576e05fb 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/noundefined.js
+  s_f4a0596f3fc0bb::t_b3a89b76191ba3 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/physics.js
+  s_f4a0596f3fc0bb::t_eceeaccc3d62fb 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/require.js
+  s_f4a0596f3fc0bb::t_6fb57db13390d7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/setoptions.js
+  s_f4a0596f3fc0bb::t_f4f9508cd93cf7 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/tagformat.js
+  s_f4a0596f3fc0bb::t_96afd9cd819c3d 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/texhtml.js
+  s_f4a0596f3fc0bb::t_8bae14538a8321 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/textcomp.js
+  s_f4a0596f3fc0bb::t_3efbefe7c12d16 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/textmacros.js
+  s_f4a0596f3fc0bb::t_e029fcf72ca950 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/unicode.js
+  s_f4a0596f3fc0bb::t_48688cc26c73c4 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/units.js
+  s_f4a0596f3fc0bb::t_8490c8d0cd7c2c 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/upgreek.js
+  s_f4a0596f3fc0bb::t_de0fd3c2c9c2b3 1
+Assets/equation-preview/vendor/mathjax/input/tex/extensions/verb.js
+  s_f4a0596f3fc0bb::t_11999b5184d04d 1
+Assets/equation-preview/vendor/mathjax/mathjax-tex-font/OFL-1.1.txt
+  s_f4a0596f3fc0bb::t_c4350371937d5f 1-43
+Assets/equation-preview/vendor/mathjax/mathjax-tex-font/package.json
+  s_f4a0596f3fc0bb::t_f9c4e8c0aa0309 1-88
+Assets/equation-preview/vendor/mathjax/mathjax-tex-font/svg.js
+  s_f4a0596f3fc0bb::t_0796752fdfaa49 1
+Assets/equation-preview/vendor/mathjax/tex-svg-nofont.js
+  s_f4a0596f3fc0bb::t_6045a6af94bfec 1
+Assets/equation-preview/vendor/mathjax/ui/safe.js
+  s_f4a0596f3fc0bb::t_c3e0f72bbd8ab0 1
+Assets/markdown-preview/preview.css
+  s_f4a0596f3fc0bb::t_26542184efc0dd 1-160
+Assets/markdown-preview/preview.js
+  s_f4a0596f3fc0bb::t_addc02b51162a9 1-165
+Assets/markdown-preview/template.html
+  s_f4a0596f3fc0bb::t_978e3662e5d7d4 1-16
+Assets/markdown-preview/vendor/VERSIONS
+  s_f4a0596f3fc0bb::t_88d8cacf980160 1-9
+Assets/markdown-preview/vendor/katex/LICENSE
+  s_f4a0596f3fc0bb::t_d8aa4746b601ab 1-21
+Assets/markdown-preview/vendor/katex/katex.min.css
+  s_f4a0596f3fc0bb::t_e137f4952c27f5 1
+Assets/markdown-preview/vendor/katex/katex.min.js
+  s_f4a0596f3fc0bb::t_23c7f52667a89f 1
+Assets/markdown-preview/vendor/markdown-it-texmath/license.txt
+  s_f4a0596f3fc0bb::t_728caaa576a3b4 1-21
+Assets/markdown-preview/vendor/markdown-it-texmath/texmath.css
+  s_f4a0596f3fc0bb::t_3c988ca45cf7ec 1-19
+Assets/markdown-preview/vendor/markdown-it-texmath/texmath.js
+  s_f4a0596f3fc0bb::t_c72aaf8954c7fc 1-368
+Assets/markdown-preview/vendor/markdown-it/LICENSE
+  s_f4a0596f3fc0bb::t_2a5999cd03e345 1-22
+Assets/markdown-preview/vendor/markdown-it/markdown-it.min.js
+  s_f4a0596f3fc0bb::t_0e3dccb16f7917 1-14
+Assets/pitex.svg
+  s_f4a0596f3fc0bb::t_7cb9356aa6faaa 1-15
+Development/README.md
+  s_f4a0596f3fc0bb::t_b51cc18afdb0f2 1-300
+Development/check-external-open.md
+  s_f4a0596f3fc0bb::t_c53761acbfee8c 1-50
+Docs/README.md
+  s_f4a0596f3fc0bb::t_68e31581d67e7d 1-33
+Docs/architecture/README.md
+  s_f4a0596f3fc0bb::t_33823ed331e85f 1-55
+Docs/features/equation-preview/README.md
+  s_f4a0596f3fc0bb::t_83a4f1b6ce6f65 1-91
+Docs/features/inline-autocompletion/README.md
+  s_f4a0596f3fc0bb::t_c6beed14206a06 1-13
+Docs/features/live-compile/README.md
+  s_f4a0596f3fc0bb::t_f6f8fe1ae214f8 1-159
+Docs/features/markdown-preview/README.md
+  s_f4a0596f3fc0bb::t_4ea00f1dc4d53f 1-33
+Docs/features/pi-ai-assistant/README.md
+  s_f4a0596f3fc0bb::t_5ee081e02a3933 1-25
+Docs/features/projects-through-ssh/GIT_WORKFLOW.md
+  s_f4a0596f3fc0bb::t_bd82893cc1d37c 1-194
+Docs/features/projects-through-ssh/README.md
+  s_f4a0596f3fc0bb::t_50cfa1103fa6a6 1-62
+Docs/features/references-citations-and-tasks/README.md
+  s_f4a0596f3fc0bb::t_93de9a07e5dd93 1-10
+Docs/features/symbols-table/README.md
+  s_f4a0596f3fc0bb::t_4aa41961d5922d 1-8
+Docs/features/workspace-sidebar/README.md
+  s_f4a0596f3fc0bb::t_5ea9114aecd6fa 1-20
+Docs/installation/README.md
+  s_f4a0596f3fc0bb::t_659f009bd5b227 1-126
+Docs/reference/README.md
+  s_f4a0596f3fc0bb::t_2ff7713d9c276c 1-20
+Fixtures/baselines/README.md
+  s_f4a0596f3fc0bb::t_a02d5d1f7f7395 1-5
+Fixtures/baselines/v1.4.2/Linux/crates/language-core/src/lib.rs.txt
+  s_f4a0596f3fc0bb::t_24d2b8ea2382f3 1-1543
+Fixtures/baselines/v1.4.2/Linux/crates/pitex-shell/src/app_ui.rs.txt
+  s_f4a0596f3fc0bb::t_907d38fbc21fc3 1-5127
+Fixtures/baselines/v1.4.2/Mac/Sources/Features/SyntaxHighlighting.swift.txt
+  s_f4a0596f3fc0bb::t_9482c4211efd4d 1-106
+Fixtures/baselines/v1.4.2/Packages/TexCore/Sources/LanguageCore/LanguageCore.swift.txt
+  s_f4a0596f3fc0bb::t_38dad6532e527d 1-254
+Fixtures/baselines/v1.5.0/Mac/Sources/Features/EditorContainerView.swift.txt
+  s_f4a0596f3fc0bb::t_c6440167cf8b54 1-1110
+Fixtures/baselines/v1.5.0/Packages/TexCore/Sources/LanguageCore/CompletionContext.swift.txt
+  s_f4a0596f3fc0bb::t_4f14fa3af085d9 1-171
+Fixtures/baselines/v1.8.1/Mac/Sources/Features/EditorFolding.swift.txt
+  s_f4a0596f3fc0bb::t_3b3bf8ddfe1ebf 1-611
+Fixtures/equation-preview/syntax.json
+  s_f4a0596f3fc0bb::t_2c703cfcec1f88 1-701
+Fixtures/expected/accessibility-identifiers.json
+  s_f4a0596f3fc0bb::t_cf4027f11b29b5 1-232
+Fixtures/expected/project-graph.json
+  s_f4a0596f3fc0bb::t_ffccb0b8b8a876 1-15
+Fixtures/expected/remote-scripts/commitUpload.sh
+  s_f4a0596f3fc0bb::t_4c46262e794ea7 1
+Fixtures/expected/remote-scripts/hashTree.sh
+  s_f4a0596f3fc0bb::t_64eaf2a6e3d2fc 1
+Fixtures/expected/remote-scripts/listDirectory.sh
+  s_f4a0596f3fc0bb::t_5ab5792206cb5f 1
+Fixtures/expected/remote-scripts/loginExec.sh
+  s_f4a0596f3fc0bb::t_99a11cdfe12794 1
+Fixtures/expected/remote-scripts/makeDirectories.sh
+  s_f4a0596f3fc0bb::t_d6c1a0786671ef 1
+Fixtures/expected/remote-scripts/probe.sh
+  s_f4a0596f3fc0bb::t_0df5ab63d5b093 1
+Fixtures/expected/remote-scripts/tarOut.sh
+  s_f4a0596f3fc0bb::t_c8636c766d5919 1
+Fixtures/expected/session-reopen.json
+  s_f4a0596f3fc0bb::t_b96d72c8b6c70b 1-69
+Fixtures/process/child-tree.sh
+  s_f4a0596f3fc0bb::t_dc303474a2af3a 1-26
+Fixtures/process/emit-log.sh
+  s_f4a0596f3fc0bb::t_5026fbc9682c31 1-14
+Fixtures/projects/build-matrix/main.tex
+  s_f4a0596f3fc0bb::t_c675b6cd9a9582 1-21
+Fixtures/projects/build-matrix/references.bib
+  s_f4a0596f3fc0bb::t_f4097ae2cb9247 1-6
+Fixtures/projects/large/main.tex
+  s_f4a0596f3fc0bb::t_dfe1ccb0bb72a9 1-5607
+Fixtures/projects/multifile/main.tex
+  s_f4a0596f3fc0bb::t_96ce2de2615a15 1-9
+Fixtures/projects/multifile/sections/details.tex
+  s_f4a0596f3fc0bb::t_1b856890f32cc8 1-2
+Fixtures/projects/multifile/sections/intro.tex
+  s_f4a0596f3fc0bb::t_33c8b3988aec55 1-2
+Fixtures/projects/small/main.tex
+  s_f4a0596f3fc0bb::t_bf888a873db075 1-8
+Fixtures/projects/startup-preview/main.pdf
+  s_f4a0596f3fc0bb::t_fdc77962a08a80 1-28
+Fixtures/synctex/forward-output.txt
+  s_f4a0596f3fc0bb::t_fa0da7f0d73406 1-41
+Fixtures/synctex/inverse-output.txt
+  s_f4a0596f3fc0bb::t_7acdd0a4b53ce7 1-41
+LICENSE
+  s_f4a0596f3fc0bb::t_49ec8b4b8b4af2 1-661
+Linux/Cargo.lock
+  s_f4a0596f3fc0bb::t_7edb9fb81f93af 1-1994
+Linux/Cargo.toml
+  s_f4a0596f3fc0bb::t_cdd6d2f4a574df 1-50
+Linux/README.md
+  s_f4a0596f3fc0bb::t_bde82141e9f532 1-94
+Linux/crates/ai-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_84d6237d8e1053 1-9
+Linux/crates/ai-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_21505283deaca9 1-612
+Linux/crates/app-ports/Cargo.toml
+  s_f4a0596f3fc0bb::t_f92b510463ad4f 1-14
+Linux/crates/app-ports/src/lib.rs
+  s_f4a0596f3fc0bb::t_7f145e8cbc3692 1-249
+Linux/crates/build-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_5df652c2bd2fbe 1-22
+Linux/crates/build-core/src/equation_exact.rs
+  s_f4a0596f3fc0bb::t_d1a865355194d2 1-478
+Linux/crates/build-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_16eac8ec9b2359 1-3249
+Linux/crates/build-core/src/windows_job.rs
+  s_f4a0596f3fc0bb::t_5128316409a246 1-151
+Linux/crates/build-core/tests/command_environment.rs
+  s_f4a0596f3fc0bb::t_b023751b10c8f1 1-27
+Linux/crates/build-core/tests/equation_exact.rs
+  s_f4a0596f3fc0bb::t_8c895604afe2ba 1-267
+Linux/crates/build-core/tests/orchestrator.rs
+  s_f4a0596f3fc0bb::t_9551f89b59abcb 1-1170
+Linux/crates/build-core/tests/runner.rs
+  s_f4a0596f3fc0bb::t_fa9dd5f0cba559 1-392
+Linux/crates/build-core/tests/windows_job.rs
+  s_f4a0596f3fc0bb::t_e252c42bb6c033 1-292
+Linux/crates/build-feature/Cargo.toml
+  s_f4a0596f3fc0bb::t_87884410690ff1 1-10
+Linux/crates/build-feature/src/lib.rs
+  s_f4a0596f3fc0bb::t_1bc1ffa995515d 1-281
+Linux/crates/build-feature/src/live.rs
+  s_f4a0596f3fc0bb::t_77fa864f790181 1-676
+Linux/crates/document-session-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_d22ebfb24a76e5 1-14
+Linux/crates/document-session-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_ba3816cdacf899 1-785
+Linux/crates/document-session-core/tests/session.rs
+  s_f4a0596f3fc0bb::t_7de04843fa1387 1-371
+Linux/crates/editor-feature/Cargo.toml
+  s_f4a0596f3fc0bb::t_ac3960ebe34b48 1-11
+Linux/crates/editor-feature/src/equation_preview.rs
+  s_f4a0596f3fc0bb::t_898ab14fa3db32 1-1513
+Linux/crates/editor-feature/src/fold.rs
+  s_f4a0596f3fc0bb::t_b9856f48f67b44 1-294
+Linux/crates/editor-feature/src/lib.rs
+  s_f4a0596f3fc0bb::t_1faac2d7f167c3 1-307
+Linux/crates/editor-feature/tests/equation_preview.rs
+  s_f4a0596f3fc0bb::t_846c1a3f75a499 1-980
+Linux/crates/git-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_e18e76f73cb16b 1-6
+Linux/crates/git-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_03fe86463fd4b0 1-1464
+Linux/crates/gtk-editor-adapter/Cargo.toml
+  s_f4a0596f3fc0bb::t_950bc8ae49c4b7 1-13
+Linux/crates/gtk-editor-adapter/src/lib.rs
+  s_f4a0596f3fc0bb::t_7c3d084535b47d 1-478
+Linux/crates/language-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_c7b33f9eda1616 1-13
+Linux/crates/language-core/src/completion.rs
+  s_f4a0596f3fc0bb::t_7dfecdf7501dc7 1-270
+Linux/crates/language-core/src/equation_preview.rs
+  s_f4a0596f3fc0bb::t_219d9ecbb5d566 1-1474
+Linux/crates/language-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_bb0d1a44b8abba 1-1537
+Linux/crates/language-core/src/symbols.rs
+  s_f4a0596f3fc0bb::t_9f2863da3a7888 1-491
+Linux/crates/language-core/tests/completion.rs
+  s_f4a0596f3fc0bb::t_d52bcafd228e6d 1-226
+Linux/crates/language-core/tests/equation_preview_syntax.rs
+  s_f4a0596f3fc0bb::t_5071bdef827fe5 1-212
+Linux/crates/language-core/tests/language.rs
+  s_f4a0596f3fc0bb::t_8d23f1dea2befd 1-477
+Linux/crates/linux-platform/Cargo.toml
+  s_f4a0596f3fc0bb::t_3923f34c9b78ba 1-13
+Linux/crates/linux-platform/src/lib.rs
+  s_f4a0596f3fc0bb::t_d1ee74284faf98 1-580
+Linux/crates/parity-kit/Cargo.toml
+  s_f4a0596f3fc0bb::t_c461860e2a4bfa 1-9
+Linux/crates/parity-kit/src/lib.rs
+  s_f4a0596f3fc0bb::t_04a542bd6066a2 1-391
+Linux/crates/pdf-feature/Cargo.toml
+  s_f4a0596f3fc0bb::t_dfa98264003dba 1-10
+Linux/crates/pdf-feature/src/lib.rs
+  s_f4a0596f3fc0bb::t_5e6290e293ba20 1-186
+Linux/crates/pitex-shell/Cargo.toml
+  s_f4a0596f3fc0bb::t_b2dc412c9fa9f1 1-78
+Linux/crates/pitex-shell/build.rs
+  s_f4a0596f3fc0bb::t_c9534fd8e82927 1-131
+Linux/crates/pitex-shell/examples/term_smoke.rs
+  s_f4a0596f3fc0bb::t_6108ff991b0254 1-37
+Linux/crates/pitex-shell/src/agent.rs
+  s_f4a0596f3fc0bb::t_928bb6386d0c86 1-3592
+Linux/crates/pitex-shell/src/app_ui.rs
+  s_f4a0596f3fc0bb::t_90ee76c294fa1e 1-7662
+Linux/crates/pitex-shell/src/compat.rs
+  s_f4a0596f3fc0bb::t_60be8ab6ed25fa 1-707
+Linux/crates/pitex-shell/src/completion.rs
+  s_f4a0596f3fc0bb::t_e54ebe4d69050e 1-262
+Linux/crates/pitex-shell/src/embedded_preview.rs
+  s_f4a0596f3fc0bb::t_62df2553ca9618 1-1383
+Linux/crates/pitex-shell/src/equation_preview.rs
+  s_f4a0596f3fc0bb::t_3bad10717fd222 1-1884
+Linux/crates/pitex-shell/src/equation_preview/webview2.rs
+  s_f4a0596f3fc0bb::t_743baffc5ec995 1-769
+Linux/crates/pitex-shell/src/fold.rs
+  s_f4a0596f3fc0bb::t_9d19a30dfd7261 1-452
+Linux/crates/pitex-shell/src/ghost_completion.rs
+  s_f4a0596f3fc0bb::t_6d57a7e86e8327 1-765
+Linux/crates/pitex-shell/src/git.rs
+  s_f4a0596f3fc0bb::t_7bc5f821e8bc73 1-1327
+Linux/crates/pitex-shell/src/git_diff.rs
+  s_f4a0596f3fc0bb::t_4ddff1db28fa85 1-631
+Linux/crates/pitex-shell/src/git_list.rs
+  s_f4a0596f3fc0bb::t_4c8f1c0162c2ff 1-157
+Linux/crates/pitex-shell/src/l10n.rs
+  s_f4a0596f3fc0bb::t_bdcc639e556dbb 1-252
+Linux/crates/pitex-shell/src/lib.rs
+  s_f4a0596f3fc0bb::t_d3fb024d6ad826 1-45
+Linux/crates/pitex-shell/src/markdown_preview.rs
+  s_f4a0596f3fc0bb::t_ff97c3c932fd14 1-805
+Linux/crates/pitex-shell/src/markdown_preview/webkit6.rs
+  s_f4a0596f3fc0bb::t_9859c9283bb39d 1-129
+Linux/crates/pitex-shell/src/markdown_preview/webview2.rs
+  s_f4a0596f3fc0bb::t_3603cd23eaf136 1-567
+Linux/crates/pitex-shell/src/model.rs
+  s_f4a0596f3fc0bb::t_fd729e1c0fb665 1-5438
+Linux/crates/pitex-shell/src/panes.rs
+  s_f4a0596f3fc0bb::t_c7f3d16ea8492f 1-3604
+Linux/crates/pitex-shell/src/pdf.rs
+  s_f4a0596f3fc0bb::t_1403853e72340a 1-294
+Linux/crates/pitex-shell/src/remote.rs
+  s_f4a0596f3fc0bb::t_ec3e961ca9c593 1-229
+Linux/crates/pitex-shell/src/search.rs
+  s_f4a0596f3fc0bb::t_07da34ba31efca 1-123
+Linux/crates/pitex-shell/src/settings.rs
+  s_f4a0596f3fc0bb::t_4cfd5a4758c405 1-1151
+Linux/crates/pitex-shell/src/ssh_ui.rs
+  s_f4a0596f3fc0bb::t_eeea1503dbf673 1-1053
+Linux/crates/pitex-shell/src/synctex.rs
+  s_f4a0596f3fc0bb::t_52b03e5eac9de9 1-1090
+Linux/crates/pitex-shell/src/terminal.rs
+  s_f4a0596f3fc0bb::t_be1c51f95d7d8b 1-1452
+Linux/crates/pitex-shell/src/ubuntu_preview_tests.rs
+  s_f4a0596f3fc0bb::t_2e8cc75b121676 1-239
+Linux/crates/pitex-shell/src/update.rs
+  s_f4a0596f3fc0bb::t_71b5fc7bdc71f5 1-570
+Linux/crates/pitex-shell/src/window_ipc.rs
+  s_f4a0596f3fc0bb::t_f78df3122d44e0 1-493
+Linux/crates/pitex-shell/tests/accessibility_contract.rs
+  s_f4a0596f3fc0bb::t_d75c070ecbba2e 1-199
+Linux/crates/pitex-shell/tests/bibliography_cache.rs
+  s_f4a0596f3fc0bb::t_7303a334c3448c 1-102
+Linux/crates/pitex-shell/tests/cursor_unhide.rs
+  s_f4a0596f3fc0bb::t_8a7dbcf311fca8 1-33
+Linux/crates/pitex-shell/tests/editor_rebase.rs
+  s_f4a0596f3fc0bb::t_d8a15edf4c111d 1-159
+Linux/crates/pitex-shell/tests/embedded_preview.rs
+  s_f4a0596f3fc0bb::t_7541e7d8a1a222 1-564
+Linux/crates/pitex-shell/tests/ime.rs
+  s_f4a0596f3fc0bb::t_9096b7d3e2b10c 1-86
+Linux/crates/pitex-shell/tests/live_compile.rs
+  s_f4a0596f3fc0bb::t_312a40de54a7a9 1-1003
+Linux/crates/pitex-shell/tests/native.rs
+  s_f4a0596f3fc0bb::t_e6cb8e05186a20 1-207
+Linux/crates/pitex-shell/tests/remote_live.rs
+  s_f4a0596f3fc0bb::t_fb32f4ace53337 1-662
+Linux/crates/pitex-shell/tests/startup_policy.rs
+  s_f4a0596f3fc0bb::t_478997f6118b54 1-144
+Linux/crates/pitex-shell/tests/support/agent_update_settings.rs
+  s_f4a0596f3fc0bb::t_d685b212a0c525 1-147
+Linux/crates/pitex-shell/tests/support/parity_shots.rs
+  s_f4a0596f3fc0bb::t_de9fbb158397c4 1-297
+Linux/crates/pitex-shell/tests/tex_project_resolver.rs
+  s_f4a0596f3fc0bb::t_356a85de64008c 1-303
+Linux/crates/pitex-shell/tests/thinking_levels.rs
+  s_f4a0596f3fc0bb::t_ad9f18c3987e85 1-144
+Linux/crates/pitex-shell/tests/workspace_discovery.rs
+  s_f4a0596f3fc0bb::t_bc476a9153a342 1-247
+Linux/crates/pitex-shell/tests/workspace_todos.rs
+  s_f4a0596f3fc0bb::t_e917db6d690540 1-133
+Linux/crates/pitex/Cargo.toml
+  s_f4a0596f3fc0bb::t_ded60465a03218 1-214
+Linux/crates/pitex/build.rs
+  s_f4a0596f3fc0bb::t_f5f03fae9bf7c0 1-6
+Linux/crates/pitex/src/ibus_compat.rs
+  s_f4a0596f3fc0bb::t_5ac3d7a08e0b1b 1-241
+Linux/crates/pitex/src/main.rs
+  s_f4a0596f3fc0bb::t_484427d989acfe 1-8
+Linux/crates/project-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_419f903ddf530c 1-9
+Linux/crates/project-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_1b035d475b90e0 1-805
+Linux/crates/project-core/tests/workspace.rs
+  s_f4a0596f3fc0bb::t_cad0863c29ee0f 1-292
+Linux/crates/project-feature/Cargo.toml
+  s_f4a0596f3fc0bb::t_9e3a0caadcc241 1-10
+Linux/crates/project-feature/src/lib.rs
+  s_f4a0596f3fc0bb::t_45d7a273977493 1-394
+Linux/crates/remote-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_c5a153bd6b29b2 1-15
+Linux/crates/remote-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_9b44ae98468878 1-3622
+Linux/crates/remote-core/tests/remote_core.rs
+  s_f4a0596f3fc0bb::t_56a70add717ee5 1-1401
+Linux/crates/settings-feature/Cargo.toml
+  s_f4a0596f3fc0bb::t_6920c3a28ac6be 1-15
+Linux/crates/settings-feature/src/lib.rs
+  s_f4a0596f3fc0bb::t_f8a1fe7e8f43ac 1-258
+Linux/crates/settings-feature/tests/architecture.rs
+  s_f4a0596f3fc0bb::t_424b5b33b5323e 1-46
+Linux/crates/synctex-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_1e06ff6b441299 1-11
+Linux/crates/synctex-core/src/anchors.rs
+  s_f4a0596f3fc0bb::t_26ce8460e12c6e 1-51
+Linux/crates/synctex-core/src/cli_workspace.rs
+  s_f4a0596f3fc0bb::t_dfaa304be5fe96 1-369
+Linux/crates/synctex-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_7ce10b55d3759a 1-724
+Linux/crates/synctex-core/tests/synctex.rs
+  s_f4a0596f3fc0bb::t_eedc64fcd8e285 1-447
+Linux/crates/terminal-core/Cargo.toml
+  s_f4a0596f3fc0bb::t_531ffc45acb9a6 1-23
+Linux/crates/terminal-core/src/input.rs
+  s_f4a0596f3fc0bb::t_cc8b9dba987d45 1-441
+Linux/crates/terminal-core/src/lib.rs
+  s_f4a0596f3fc0bb::t_540e4728900072 1-27
+Linux/crates/terminal-core/src/session.rs
+  s_f4a0596f3fc0bb::t_95fc21a81e9b65 1-253
+Linux/crates/terminal-core/tests/terminal.rs
+  s_f4a0596f3fc0bb::t_4d55316e60c8a3 1-179
+Linux/crates/tex-domain/Cargo.toml
+  s_f4a0596f3fc0bb::t_2cb6d6dcbf694b 1-8
+Linux/crates/tex-domain/src/lib.rs
+  s_f4a0596f3fc0bb::t_e7a119cbfd3ddc 1-326
+Linux/crates/tex-domain/tests/domain.rs
+  s_f4a0596f3fc0bb::t_07a8783a245f76 1-153
+Linux/packaging/apparmor/pitex
+  s_f4a0596f3fc0bb::t_0d8fb9e23dba4b 1-12
+Linux/packaging/debian/postinst
+  s_f4a0596f3fc0bb::t_43c7e7428138fe 1-27
+Linux/packaging/debian/postrm
+  s_f4a0596f3fc0bb::t_8acf69719ccd92 1-28
+Linux/packaging/dev.pitex.app.desktop
+  s_f4a0596f3fc0bb::t_5128865b1c20dd 1-10
+Mac/Config/Base.xcconfig
+  s_f4a0596f3fc0bb::t_d5d07447aa9420 1-27
+Mac/Config/Info.plist
+  s_f4a0596f3fc0bb::t_3b599fface0917 1-202
+Mac/Config/Pitex.entitlements
+  s_f4a0596f3fc0bb::t_26755fe82746ca 1-6
+Mac/Pitex.xcodeproj/project.pbxproj
+  s_f4a0596f3fc0bb::t_16be536b236b2b 1-549
+Mac/Pitex.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+  s_f4a0596f3fc0bb::t_2fc0d219b214d6 1-24
+Mac/Pitex.xcodeproj/xcshareddata/xcschemes/Pitex.xcscheme
+  s_f4a0596f3fc0bb::t_f1c17a8d7e89e5 1-76
+Mac/Resources/Assets.xcassets/Contents.json
+  s_f4a0596f3fc0bb::t_10cefe699a4cd3 1-6
+Mac/Resources/PitexAgent/NOTICE-PROVENANCE.json
+  s_f4a0596f3fc0bb::t_13b13bfcbcc417 1-26
+Mac/Resources/PitexAgent/SKILL-PROVENANCE.json
+  s_f4a0596f3fc0bb::t_096f02f73d79cb 1-76
+Mac/Resources/PitexAgent/THIRD-PARTY-NOTICES.md
+  s_f4a0596f3fc0bb::t_56b613586d5799 1-26
+Mac/Resources/PitexAgent/licenses/pi-MIT.txt
+  s_f4a0596f3fc0bb::t_9f20b1ed7e893e 1-21
+Mac/Resources/PitexAgent/skills/citation-management/LICENSE.md
+  s_f4a0596f3fc0bb::t_da00d5f2a6bb1f 1-21
+Mac/Resources/PitexAgent/skills/citation-management/SKILL.md
+  s_f4a0596f3fc0bb::t_7456d9ed31418e 1-42
+Mac/Resources/PitexAgent/skills/citation-management/assets/bibtex_template.bib
+  s_f4a0596f3fc0bb::t_aafcc49d4289a3 1-265
+Mac/Resources/PitexAgent/skills/citation-management/assets/citation_checklist.md
+  s_f4a0596f3fc0bb::t_9c68a838c6c4ca 1-385
+Mac/Resources/PitexAgent/skills/citation-management/references/api_contracts.md
+  s_f4a0596f3fc0bb::t_c9f9667d6d0109 1-55
+Mac/Resources/PitexAgent/skills/citation-management/references/best_practices.md
+  s_f4a0596f3fc0bb::t_aa5030a6903107 1-91
+Mac/Resources/PitexAgent/skills/citation-management/references/bibtex_formatting.md
+  s_f4a0596f3fc0bb::t_cab43eb5246f06 1-908
+Mac/Resources/PitexAgent/skills/citation-management/references/citation_validation.md
+  s_f4a0596f3fc0bb::t_ba9754bc45964b 1-832
+Mac/Resources/PitexAgent/skills/citation-management/references/core_workflow.md
+  s_f4a0596f3fc0bb::t_8c7d025eebd383 1-564
+Mac/Resources/PitexAgent/skills/citation-management/references/example_workflows.md
+  s_f4a0596f3fc0bb::t_1a66231daeb620 1-126
+Mac/Resources/PitexAgent/skills/citation-management/references/google_scholar_search.md
+  s_f4a0596f3fc0bb::t_8a7d34e1b43ba6 1-727
+Mac/Resources/PitexAgent/skills/citation-management/references/metadata_extraction.md
+  s_f4a0596f3fc0bb::t_94d70cf7d41523 1-893
+Mac/Resources/PitexAgent/skills/citation-management/references/pubmed_search.md
+  s_f4a0596f3fc0bb::t_ac4371e3ade0e3 1-855
+Mac/Resources/PitexAgent/skills/citation-management/references/script_reference.md
+  s_f4a0596f3fc0bb::t_16bac2fb46f17d 1-254
+Mac/Resources/PitexAgent/skills/citation-management/references/search_strategies.md
+  s_f4a0596f3fc0bb::t_7c224e3e610935 1-73
+Mac/Resources/PitexAgent/skills/citation-management/scripts/_common.py
+  s_f4a0596f3fc0bb::t_cf23a66b3d2160 1-331
+Mac/Resources/PitexAgent/skills/citation-management/scripts/doi_metadata.mjs
+  s_f4a0596f3fc0bb::t_7a5129b44f42ae 1-66
+Mac/Resources/PitexAgent/skills/citation-management/scripts/doi_to_bibtex.py
+  s_f4a0596f3fc0bb::t_7453045ee32756 1-212
+Mac/Resources/PitexAgent/skills/citation-management/scripts/extract_metadata.py
+  s_f4a0596f3fc0bb::t_46a22424df3a3c 1-744
+Mac/Resources/PitexAgent/skills/citation-management/scripts/format_bibtex.py
+  s_f4a0596f3fc0bb::t_8bfc52b7abc828 1-356
+Mac/Resources/PitexAgent/skills/citation-management/scripts/search_google_scholar.py
+  s_f4a0596f3fc0bb::t_298f41b7901844 1-266
+Mac/Resources/PitexAgent/skills/citation-management/scripts/search_openalex.py
+  s_f4a0596f3fc0bb::t_cb80e2a7d0defe 1-325
+Mac/Resources/PitexAgent/skills/citation-management/scripts/search_pubmed.py
+  s_f4a0596f3fc0bb::t_0e5b2f2b5e58bc 1-434
+Mac/Resources/PitexAgent/skills/citation-management/scripts/validate_citations.py
+  s_f4a0596f3fc0bb::t_35d27943fb7e31 1-713
+Mac/Resources/PitexAgent/skills/humanizer/LICENSE.md
+  s_f4a0596f3fc0bb::t_d9151461d8e26d 1-21
+Mac/Resources/PitexAgent/skills/humanizer/SKILL.md
+  s_f4a0596f3fc0bb::t_4b7783ea697882 1-374
+Mac/Resources/PitexAgent/skills/latex-compile/SKILL.md
+  s_f4a0596f3fc0bb::t_f4474330f0d422 1-36
+Mac/Resources/PitexAgent/skills/latex-compile/scripts/compile_latex.py
+  s_f4a0596f3fc0bb::t_05f8955fd90735 1-486
+Mac/Resources/PitexAgent/skills/latex-compile/scripts/detect_tectonic.py
+  s_f4a0596f3fc0bb::t_503161401f8b05 1-122
+Mac/Resources/PitexAgent/skills/latex-compile/scripts/detect_texlive.py
+  s_f4a0596f3fc0bb::t_9114a05d216ef0 1-191
+Mac/Resources/PitexAgent/skills/latex-doctor/SKILL.md
+  s_f4a0596f3fc0bb::t_edae2752e95c48 1-38
+Mac/Resources/PitexAgent/skills/latex-doctor/scripts/detect_tectonic.py
+  s_f4a0596f3fc0bb::t_56237e4394b70b 1-122
+Mac/Resources/PitexAgent/skills/latex-doctor/scripts/detect_texlive.py
+  s_f4a0596f3fc0bb::t_aecf00995ac5e4 1-191
+Mac/Resources/PitexAgent/skills/latex-doctor/scripts/latex_doctor.py
+  s_f4a0596f3fc0bb::t_a7bc3dee1deb8d 1-197
+Mac/Resources/PitexAgent/skills/scientific-writing/LICENSE.md
+  s_f4a0596f3fc0bb::t_6e7dd9e92cb0e0 1-21
+Mac/Resources/PitexAgent/skills/scientific-writing/SKILL.md
+  s_f4a0596f3fc0bb::t_98ee421478f30b 1-39
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/REPORT_FORMATTING_GUIDE.md
+  s_f4a0596f3fc0bb::t_0f7c18b295358a 1-60
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/authorship_template.json
+  s_f4a0596f3fc0bb::t_aab3ccd5df3e6b 1-56
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/claim_evidence_template.csv
+  s_f4a0596f3fc0bb::t_727239173f74d1 1-2
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/consistency_manifest_template.json
+  s_f4a0596f3fc0bb::t_2d1dcc75fe4c83 1-43
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/manuscript_manifest_template.json
+  s_f4a0596f3fc0bb::t_772746a0564f97 1-37
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/manuscript_scaffold.md
+  s_f4a0596f3fc0bb::t_855934ae3779f7 1-65
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/reporting_coverage_template.json
+  s_f4a0596f3fc0bb::t_b5e513a625d4b4 1-6
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/reporting_guidelines.json
+  s_f4a0596f3fc0bb::t_e37dc2aab72913 1-529
+Mac/Resources/PitexAgent/skills/scientific-writing/assets/source_manifest_template.json
+  s_f4a0596f3fc0bb::t_2850829318e4da 1-27
+Mac/Resources/PitexAgent/skills/scientific-writing/references/authorship_ai_confidentiality.md
+  s_f4a0596f3fc0bb::t_8c1300de7a1fa6 1-118
+Mac/Resources/PitexAgent/skills/scientific-writing/references/citation_styles.md
+  s_f4a0596f3fc0bb::t_7ca4df8db2aa97 1-94
+Mac/Resources/PitexAgent/skills/scientific-writing/references/cli_reference.md
+  s_f4a0596f3fc0bb::t_2122f193941393 1-120
+Mac/Resources/PitexAgent/skills/scientific-writing/references/evidence_workflow.md
+  s_f4a0596f3fc0bb::t_671699d2ea0025 1-110
+Mac/Resources/PitexAgent/skills/scientific-writing/references/figures_tables.md
+  s_f4a0596f3fc0bb::t_7b86a76893f861 1-94
+Mac/Resources/PitexAgent/skills/scientific-writing/references/imrad_structure.md
+  s_f4a0596f3fc0bb::t_dc5eae058183df 1-114
+Mac/Resources/PitexAgent/skills/scientific-writing/references/journal_policies.md
+  s_f4a0596f3fc0bb::t_38c123eaf3610c 1-62
+Mac/Resources/PitexAgent/skills/scientific-writing/references/professional_report_formatting.md
+  s_f4a0596f3fc0bb::t_272d3aee6d879b 1-82
+Mac/Resources/PitexAgent/skills/scientific-writing/references/reporting_guidelines.md
+  s_f4a0596f3fc0bb::t_f396514c3da020 1-107
+Mac/Resources/PitexAgent/skills/scientific-writing/references/research_integrity_open_science.md
+  s_f4a0596f3fc0bb::t_9aa232ed2c0713 1-97
+Mac/Resources/PitexAgent/skills/scientific-writing/references/source_ledger.md
+  s_f4a0596f3fc0bb::t_9716dcd20e2ad9 1-286
+Mac/Resources/PitexAgent/skills/scientific-writing/references/writing_principles.md
+  s_f4a0596f3fc0bb::t_99ab37c8461d13 1-97
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/_common.py
+  s_f4a0596f3fc0bb::t_65a1205276ae7f 1-251
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/audit_claims.py
+  s_f4a0596f3fc0bb::t_6ae11925655789 1-272
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/check_consistency.py
+  s_f4a0596f3fc0bb::t_6d918aaf85339c 1-408
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/check_references.py
+  s_f4a0596f3fc0bb::t_e5e3172c7ce5e9 1-219
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/lint_manuscript.py
+  s_f4a0596f3fc0bb::t_427dcc625f5703 1-171
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/scaffold_manuscript.py
+  s_f4a0596f3fc0bb::t_e1b7445a6a2704 1-143
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/select_reporting_guidelines.py
+  s_f4a0596f3fc0bb::t_bf1dd22c4e4749 1-214
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/validate_authorship.py
+  s_f4a0596f3fc0bb::t_89d79aaed2550d 1-324
+Mac/Resources/PitexAgent/skills/scientific-writing/scripts/validate_manifest.py
+  s_f4a0596f3fc0bb::t_45f0cd578bfa1e 1-460
+Mac/Resources/PitexAgent/skills/scispace/SKILL.md
+  s_f4a0596f3fc0bb::t_aadc5bc4a92c12 1-27
+Mac/Resources/PitexAgent/skills/scispace/scripts/scispace_search.py
+  s_f4a0596f3fc0bb::t_d8b18db3ef79b7 1-83
+Mac/Resources/PitexAgent/skills/submission-preflight/SKILL.md
+  s_f4a0596f3fc0bb::t_fbc96a16e7ba46 1-29
+Mac/Resources/PitexAgent/skills/submission-preflight/scripts/preflight.mjs
+  s_f4a0596f3fc0bb::t_bf8b13a01aea28 1-131
+Mac/Resources/PitexAgent/skills/texlive-runtime-installer/SKILL.md
+  s_f4a0596f3fc0bb::t_8510e15d8cc47e 1-48
+Mac/Resources/PitexAgent/skills/texlive-runtime-installer/scripts/detect_texlive.py
+  s_f4a0596f3fc0bb::t_5f20fdb56a52c8 1-191
+Mac/Resources/PitexAgent/skills/texlive-runtime-installer/scripts/install_texlive.py
+  s_f4a0596f3fc0bb::t_c4d142d255efd0 1-194
+Mac/Resources/PitexIcon.icon/icon.json
+  s_f4a0596f3fc0bb::t_135b364238d5fb 1-11
+Mac/Resources/en.lproj/Localizable.strings
+  s_f4a0596f3fc0bb::t_beb6d819df39b9 1-504
+Mac/Resources/es.lproj/Localizable.strings
+  s_f4a0596f3fc0bb::t_2ad6a43a035b86 1-504
+Mac/Resources/ja.lproj/Localizable.strings
+  s_f4a0596f3fc0bb::t_93d0db961b2df2 1-505
+Mac/Resources/ko.lproj/Localizable.strings
+  s_f4a0596f3fc0bb::t_3ec031a841e139 1-505
+Mac/Resources/markdown-preview.html
+  s_f4a0596f3fc0bb::t_2ae4e112abdb57 1-743
+Mac/Resources/ru.lproj/Localizable.strings
+  s_f4a0596f3fc0bb::t_51c2aa54c9c34b 1-504
+Mac/Resources/vi.lproj/Localizable.strings
+  s_f4a0596f3fc0bb::t_6773b3bbf47bdd 1-504
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  s_f4a0596f3fc0bb::t_cf5a7aa31cdee5 1-504
+Mac/Sources/AppShell/PitexApp.swift
+  s_f4a0596f3fc0bb::t_d638bc7e70bd79 1-3227
+Mac/Sources/Features/AgentCoordinator.swift
+  s_f4a0596f3fc0bb::t_588e3549c56469 1-1124
+Mac/Sources/Features/AgentPanel.swift
+  s_f4a0596f3fc0bb::t_38ac4af7cddd7b 1-562
+Mac/Sources/Features/AppearanceTheme.swift
+  s_f4a0596f3fc0bb::t_6ddfab05a63b91 1-433
+Mac/Sources/Features/BottomConsoleView.swift
+  s_f4a0596f3fc0bb::t_5864d0542cc4f4 1-292
+Mac/Sources/Features/BuildSupport.swift
+  s_f4a0596f3fc0bb::t_c925f7de50005b 1-1058
+Mac/Sources/Features/EditorContainerView.swift
+  s_f4a0596f3fc0bb::t_e3218ab3546993 1-1302
+Mac/Sources/Features/EditorFolding.swift
+  s_f4a0596f3fc0bb::t_372d3a1f20a408 1-616
+Mac/Sources/Features/EmbeddedPreview.swift
+  s_f4a0596f3fc0bb::t_ef626ed157a943 1-862
+Mac/Sources/Features/EquationPreview.swift
+  s_f4a0596f3fc0bb::t_3fba33d3db8233 1-1114
+Mac/Sources/Features/GitIntegrationView.swift
+  s_f4a0596f3fc0bb::t_bd4d556ad78089 1-1533
+Mac/Sources/Features/PiAgentProcess.swift
+  s_f4a0596f3fc0bb::t_aa3361d3c42e3b 1-536
+Mac/Sources/Features/PiAuthStore.swift
+  s_f4a0596f3fc0bb::t_d0b107f5d9f4f7 1-91
+Mac/Sources/Features/PiRPC.swift
+  s_f4a0596f3fc0bb::t_ca6a706b6676ba 1-173
+Mac/Sources/Features/Preview.swift
+  s_f4a0596f3fc0bb::t_e5fb3877d93092 1-1080
+Mac/Sources/Features/ProjectSidebarView.swift
+  s_f4a0596f3fc0bb::t_b30c52ab38b98b 1-475
+Mac/Sources/Features/RemoteSupport.swift
+  s_f4a0596f3fc0bb::t_96b7a3de245ff9 1-373
+Mac/Sources/Features/SSHViews.swift
+  s_f4a0596f3fc0bb::t_b07f9f00198d72 1-495
+Mac/Sources/Features/SettingsView.swift
+  s_f4a0596f3fc0bb::t_45d8088048a2b7 1-1650
+Mac/Sources/Features/SubscriptionUsage.swift
+  s_f4a0596f3fc0bb::t_fcb57e911ba4f3 1-194
+Mac/Sources/Features/SyncTeXSupport.swift
+  s_f4a0596f3fc0bb::t_de7c7bdc382582 1-401
+Mac/Sources/Features/SyntaxHighlighting.swift
+  s_f4a0596f3fc0bb::t_29dc2e268ed67a 1-194
+Mac/Sources/Features/UpdateSupport.swift
+  s_f4a0596f3fc0bb::t_0ea22d746b2a7f 1-325
+Mac/Sources/Features/WorkspaceView.swift
+  s_f4a0596f3fc0bb::t_cfe4c1d51f99b4 1-873
+Packages/TexApp/Package.resolved
+  s_f4a0596f3fc0bb::t_0a269bc915f3c4 1-24
+Packages/TexApp/Package.swift
+  s_f4a0596f3fc0bb::t_60a29c4dd5fed5 1-104
+Packages/TexApp/Sources/AppPorts/AppPorts.swift
+  s_f4a0596f3fc0bb::t_d0ae075dfd9c3d 1-196
+Packages/TexApp/Sources/AppShell/AppShell.swift
+  s_f4a0596f3fc0bb::t_67735fe6ff8771 1-68
+Packages/TexApp/Sources/BuildFeature/BuildCommandPlaceholders.swift
+  s_f4a0596f3fc0bb::t_92917bbf860aa4 1-69
+Packages/TexApp/Sources/BuildFeature/BuildFeature.swift
+  s_f4a0596f3fc0bb::t_66898d661c78c7 1-181
+Packages/TexApp/Sources/BuildFeature/EmbeddedPreviewLedger.swift
+  s_f4a0596f3fc0bb::t_bb5f6f9dee26ef 1-150
+Packages/TexApp/Sources/BuildFeature/EmbeddedPreviewPaths.swift
+  s_f4a0596f3fc0bb::t_52d4845a42b88d 1-81
+Packages/TexApp/Sources/BuildFeature/EmbeddedPreviewWriter.swift
+  s_f4a0596f3fc0bb::t_f6f8f6ad59deec 1-228
+Packages/TexApp/Sources/BuildFeature/LiveCompileScheduler.swift
+  s_f4a0596f3fc0bb::t_4bb287b064db05 1-316
+Packages/TexApp/Sources/EditorFeature/EditorFeature.swift
+  s_f4a0596f3fc0bb::t_e940ebe9969f97 1-208
+Packages/TexApp/Sources/EditorFeature/EquationPreviewEngine.swift
+  s_f4a0596f3fc0bb::t_72286c331cc560 1-752
+Packages/TexApp/Sources/EditorFeature/EquationPreviewTypes.swift
+  s_f4a0596f3fc0bb::t_5b68748b6fe4b5 1-228
+Packages/TexApp/Sources/EditorMacAdapter/EditorFindController.swift
+  s_f4a0596f3fc0bb::t_c848639b50813b 1-208
+Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift
+  s_f4a0596f3fc0bb::t_243cb710b51764 1-631
+Packages/TexApp/Sources/MacPlatform/MacPlatform.swift
+  s_f4a0596f3fc0bb::t_fb347b67c6fc26 1-350
+Packages/TexApp/Sources/MacPlatform/TerminalShellView.swift
+  s_f4a0596f3fc0bb::t_f1a2e06a0b3022 1-171
+Packages/TexApp/Sources/PDFFeature/PDFFeature.swift
+  s_f4a0596f3fc0bb::t_d167a350bc6453 1-154
+Packages/TexApp/Sources/ProjectFeature/ProjectFeature.swift
+  s_f4a0596f3fc0bb::t_933e732c526240 1-270
+Packages/TexApp/Sources/SettingsFeature/SettingsFeature.swift
+  s_f4a0596f3fc0bb::t_09af3c86cbaa04 1-233
+Packages/TexApp/Tests/TexAppTests/AccessibilityContractTests.swift
+  s_f4a0596f3fc0bb::t_043992f33d0138 1-114
+Packages/TexApp/Tests/TexAppTests/ArchitectureTests.swift
+  s_f4a0596f3fc0bb::t_e856ab7f38f57e 1-62
+Packages/TexApp/Tests/TexAppTests/BuildCommandPlaceholdersTests.swift
+  s_f4a0596f3fc0bb::t_953ee188194e90 1-116
+Packages/TexApp/Tests/TexAppTests/EditorAITransactionTests.swift
+  s_f4a0596f3fc0bb::t_7597a7a708eb87 1-113
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterLayoutTests.swift
+  s_f4a0596f3fc0bb::t_efa7ade726da1b 1-409
+Packages/TexApp/Tests/TexAppTests/EditorMacAdapterMutationTests.swift
+  s_f4a0596f3fc0bb::t_4c8d73c1adb1e3 1-469
+Packages/TexApp/Tests/TexAppTests/EmbeddedPreviewLedgerTests.swift
+  s_f4a0596f3fc0bb::t_2d890a2d0dc39a 1-118
+Packages/TexApp/Tests/TexAppTests/EmbeddedPreviewPathsTests.swift
+  s_f4a0596f3fc0bb::t_c48e4aae2a785b 1-112
+Packages/TexApp/Tests/TexAppTests/EmbeddedPreviewWriterTests.swift
+  s_f4a0596f3fc0bb::t_6f991f314a5dc2 1-197
+Packages/TexApp/Tests/TexAppTests/EquationPreviewEngineTests.swift
+  s_f4a0596f3fc0bb::t_eb292de6d5def9 1-742
+Packages/TexApp/Tests/TexAppTests/FeatureStateTests.swift
+  s_f4a0596f3fc0bb::t_9ab62ed3fe9752 1-166
+Packages/TexApp/Tests/TexAppTests/LiveCompileSchedulerTests.swift
+  s_f4a0596f3fc0bb::t_e9fcf0498be23c 1-313
+Packages/TexApp/Tests/TexAppTests/MacAdapterSourceTests.swift
+  s_f4a0596f3fc0bb::t_ee2cb12a011b58 1-109
+Packages/TexCore/Package.swift
+  s_f4a0596f3fc0bb::t_348b18aa429049 1-62
+Packages/TexCore/Sources/AICore/AICore.swift
+  s_f4a0596f3fc0bb::t_edac1e2aa4d282 1-132
+Packages/TexCore/Sources/AICore/RevisionBoundEdit.swift
+  s_f4a0596f3fc0bb::t_75360ad729ad69 1-272
+Packages/TexCore/Sources/BuildCore/BuildCore.swift
+  s_f4a0596f3fc0bb::t_9d11bf2600c7f9 1-168
+Packages/TexCore/Sources/BuildCore/BuildLogParser.swift
+  s_f4a0596f3fc0bb::t_250a2c364f702e 1-324
+Packages/TexCore/Sources/BuildCore/BuildOrchestrator.swift
+  s_f4a0596f3fc0bb::t_cdc3a8144f0f18 1-752
+Packages/TexCore/Sources/BuildCore/EquationExactRenderer.swift
+  s_f4a0596f3fc0bb::t_022c4b0a24ba8b 1-282
+Packages/TexCore/Sources/BuildCore/ProcessRunner.swift
+  s_f4a0596f3fc0bb::t_5a677e9d2f9024 1-470
+Packages/TexCore/Sources/DocumentSessionCore/DocumentPersistence.swift
+  s_f4a0596f3fc0bb::t_1bc2b2ff1a61fe 1-222
+Packages/TexCore/Sources/DocumentSessionCore/DocumentSessionCore.swift
+  s_f4a0596f3fc0bb::t_38ef7c103daf4b 1-269
+Packages/TexCore/Sources/DocumentSessionCore/DocumentSessionRegistry.swift
+  s_f4a0596f3fc0bb::t_1692c1d6b9d90f 1-130
+Packages/TexCore/Sources/GitCore/GitRepositoryReader.swift
+  s_f4a0596f3fc0bb::t_36c0e62b4e7942 1-94
+Packages/TexCore/Sources/GitCore/GitSupport.swift
+  s_f4a0596f3fc0bb::t_61368e0bb195df 1-774
+Packages/TexCore/Sources/LanguageCore/CompletionContext.swift
+  s_f4a0596f3fc0bb::t_a9710c919986a8 1-173
+Packages/TexCore/Sources/LanguageCore/EquationPreviewContext.swift
+  s_f4a0596f3fc0bb::t_0e2fea5446848e 1-249
+Packages/TexCore/Sources/LanguageCore/EquationPreviewSyntax.swift
+  s_f4a0596f3fc0bb::t_b7be55b0c00fd9 1-814
+Packages/TexCore/Sources/LanguageCore/LanguageCore.swift
+  s_f4a0596f3fc0bb::t_2cf384fe968874 1-258
+Packages/TexCore/Sources/LanguageCore/LanguageIndex.swift
+  s_f4a0596f3fc0bb::t_ea4577478f46bb 1-647
+Packages/TexCore/Sources/LanguageCore/Symbols.swift
+  s_f4a0596f3fc0bb::t_93ea3763a8b28c 1-297
+Packages/TexCore/Sources/ParityKit/ParityKit.swift
+  s_f4a0596f3fc0bb::t_3eca36445a682d 1-173
+Packages/TexCore/Sources/ProjectCore/ProjectCore.swift
+  s_f4a0596f3fc0bb::t_2b304e8edeb97c 1-159
+Packages/TexCore/Sources/ProjectCore/ProjectWorkspace.swift
+  s_f4a0596f3fc0bb::t_2d42b16538781e 1-349
+Packages/TexCore/Sources/RemoteCore/ProcessPipe.swift
+  s_f4a0596f3fc0bb::t_b65046457e2a0b 1-183
+Packages/TexCore/Sources/RemoteCore/RemoteBuildExecutor.swift
+  s_f4a0596f3fc0bb::t_9d3654f1971e1d 1-232
+Packages/TexCore/Sources/RemoteCore/RemoteSync.swift
+  s_f4a0596f3fc0bb::t_85401ffa7cd323 1-997
+Packages/TexCore/Sources/RemoteCore/SHA256.swift
+  s_f4a0596f3fc0bb::t_1a24306ee3b836 1-64
+Packages/TexCore/Sources/RemoteCore/SSHClient.swift
+  s_f4a0596f3fc0bb::t_7e63bdab488170 1-258
+Packages/TexCore/Sources/RemoteCore/SSHConfig.swift
+  s_f4a0596f3fc0bb::t_252a5f170ab681 1-195
+Packages/TexCore/Sources/SyncTeXCore/SyncTeXCore.swift
+  s_f4a0596f3fc0bb::t_6b9d7ecc4b9f21 1-155
+Packages/TexCore/Sources/SyncTeXCore/SyncTeXQueryParser.swift
+  s_f4a0596f3fc0bb::t_6b52cdd2fc0596 1-274
+Packages/TexCore/Sources/SyncTeXCore/SyncTeXSourceMapper.swift
+  s_f4a0596f3fc0bb::t_36785a80b14d78 1-95
+Packages/TexCore/Sources/TexDomain/MarkdownLinkPolicy.swift
+  s_f4a0596f3fc0bb::t_bafd7f2649b820 1-65
+Packages/TexCore/Sources/TexDomain/TexDomain.swift
+  s_f4a0596f3fc0bb::t_7b316826fe83ea 1-137
+Packages/TexCore/Tests/TexCoreTests/ArchitectureTests.swift
+  s_f4a0596f3fc0bb::t_266a2cf4706a75 1-161
+Packages/TexCore/Tests/TexCoreTests/BuildOrchestratorTests.swift
+  s_f4a0596f3fc0bb::t_ffa56834064d53 1-652
+Packages/TexCore/Tests/TexCoreTests/CompletionContextTests.swift
+  s_f4a0596f3fc0bb::t_07470b0ba588c4 1-133
+Packages/TexCore/Tests/TexCoreTests/DiskContentHashTests.swift
+  s_f4a0596f3fc0bb::t_377547be5f0382 1-55
+Packages/TexCore/Tests/TexCoreTests/DocumentSessionPersistenceTests.swift
+  s_f4a0596f3fc0bb::t_14abae42e87e39 1-483
+Packages/TexCore/Tests/TexCoreTests/EquationExactRendererTests.swift
+  s_f4a0596f3fc0bb::t_bdcc2b64ab7380 1-140
+Packages/TexCore/Tests/TexCoreTests/EquationPreviewSyntaxTests.swift
+  s_f4a0596f3fc0bb::t_28b2891a1dc5f9 1-153
+Packages/TexCore/Tests/TexCoreTests/GitRepositoryReaderTests.swift
+  s_f4a0596f3fc0bb::t_2c4d1d0386e94c 1-359
+Packages/TexCore/Tests/TexCoreTests/GitSupportTests.swift
+  s_f4a0596f3fc0bb::t_8c14fa7bedbb40 1-337
+Packages/TexCore/Tests/TexCoreTests/LanguageIndexTests.swift
+  s_f4a0596f3fc0bb::t_c4beb10ee64be8 1-138
+Packages/TexCore/Tests/TexCoreTests/LargeFixtureTests.swift
+  s_f4a0596f3fc0bb::t_d34e44ec06ade3 1-87
+Packages/TexCore/Tests/TexCoreTests/MarkdownLinkPolicyTests.swift
+  s_f4a0596f3fc0bb::t_ac2e1a9193350e 1-121
+Packages/TexCore/Tests/TexCoreTests/ProcessRunnerTests.swift
+  s_f4a0596f3fc0bb::t_641d6d3050259c 1-280
+Packages/TexCore/Tests/TexCoreTests/ProjectWorkspaceTests.swift
+  s_f4a0596f3fc0bb::t_607e026e183de9 1-214
+Packages/TexCore/Tests/TexCoreTests/RemoteCoreTests.swift
+  s_f4a0596f3fc0bb::t_baeb5c0fef32c9 1-930
+Packages/TexCore/Tests/TexCoreTests/RemoteProcessPipeTests.swift
+  s_f4a0596f3fc0bb::t_38807548761f18 1-84
+Packages/TexCore/Tests/TexCoreTests/RevisionBoundEditTests.swift
+  s_f4a0596f3fc0bb::t_e59128f1039bc7 1-237
+Packages/TexCore/Tests/TexCoreTests/SymbolsTests.swift
+  s_f4a0596f3fc0bb::t_03f8a113e7c6b2 1-34
+Packages/TexCore/Tests/TexCoreTests/SyncTeXQueryTests.swift
+  s_f4a0596f3fc0bb::t_46dfc5119b3b1e 1-326
+Packages/TexCore/Tests/TexCoreTests/SyncTeXSourceMapperTests.swift
+  s_f4a0596f3fc0bb::t_817f447b49025d 1-186
+Packages/TexCore/Tests/TexCoreTests/UnicodeCoordinateTests.swift
+  s_f4a0596f3fc0bb::t_d1c4cf4d6f4b6a 1-82
+Parity/evidence-index.json
+  s_f4a0596f3fc0bb::t_1e1b5a31b8417a 1-1072
+Parity/manifest.yaml
+  s_f4a0596f3fc0bb::t_dfd01d248b83a7 1-283
+Parity/observations/ledger.jsonl
+  s_f4a0596f3fc0bb::t_f6dab4a7885c3f 1-8
+Parity/schema/evidence.schema.json
+  s_f4a0596f3fc0bb::t_0e385352c24f0a 1-116
+Parity/schema/manifest.schema.json
+  s_f4a0596f3fc0bb::t_9240b5ada3b3c4 1-107
+PreviewEngine/COMPATIBILITY.md
+  s_f4a0596f3fc0bb::t_0634b316778042 1-214
+PreviewEngine/Cargo.lock
+  s_f4a0596f3fc0bb::t_864ee702b21e36 1-125
+PreviewEngine/Cargo.toml
+  s_f4a0596f3fc0bb::t_a5868da5cf01ef 1-30
+PreviewEngine/Makefile
+  s_f4a0596f3fc0bb::t_605f9246dab2fc 1-48
+PreviewEngine/PROTOCOL.md
+  s_f4a0596f3fc0bb::t_7d494ba351cb7b 1-155
+PreviewEngine/PROVENANCE.md
+  s_f4a0596f3fc0bb::t_18a0ca10d1dc74 1-247
+PreviewEngine/Windows/.gitignore
+  s_f4a0596f3fc0bb::t_390e9eccbf577f 1
+PreviewEngine/Windows/Cargo.lock
+  s_f4a0596f3fc0bb::t_8a83ce6ab3eaf8 1-176
+PreviewEngine/Windows/Cargo.toml
+  s_f4a0596f3fc0bb::t_c4d5b72f9e2bd4 1-24
+PreviewEngine/Windows/README.md
+  s_f4a0596f3fc0bb::t_6c2e3b9f32004c 1-79
+PreviewEngine/Windows/THIRD-PARTY-NOTICES.txt
+  s_f4a0596f3fc0bb::t_8a88238979f5d4 1-377
+PreviewEngine/Windows/rust-toolchain.toml
+  s_f4a0596f3fc0bb::t_33f4548537f21c 1-3
+PreviewEngine/Windows/src/main.rs
+  s_f4a0596f3fc0bb::t_ceda1682d9ab58 1-646
+PreviewEngine/Windows/src/process_tree.rs
+  s_f4a0596f3fc0bb::t_b8146c116a2b0c 1-183
+PreviewEngine/Windows/src/synctex.rs
+  s_f4a0596f3fc0bb::t_5e35b2fec75272 1-422
+PreviewEngine/Windows/tests/protocol.rs
+  s_f4a0596f3fc0bb::t_8286afe9a5bb9a 1-565
+PreviewEngine/build.rs
+  s_f4a0596f3fc0bb::t_45e6cb5e3eb050 1-216
+PreviewEngine/compatibility/pdftex-vocabulary-report.json
+  s_f4a0596f3fc0bb::t_553be944bdeaa0 1-5089
+PreviewEngine/compatibility/pdftex-vocabulary.json
+  s_f4a0596f3fc0bb::t_22d0f83069631f 1-2326
+PreviewEngine/driver/engine_tex.h
+  s_f4a0596f3fc0bb::t_35c09969ebb185 1-90
+PreviewEngine/driver/fonts.h
+  s_f4a0596f3fc0bb::t_0a997973b99a33 1-101
+PreviewEngine/driver/images.h
+  s_f4a0596f3fc0bb::t_14df22dcddca0c 1-24
+PreviewEngine/driver/json.h
+  s_f4a0596f3fc0bb::t_5f5218c00cc797 1-34
+PreviewEngine/driver/myabort.h
+  s_f4a0596f3fc0bb::t_5fcc01d86ae787 1-39
+PreviewEngine/driver/pdfw.h
+  s_f4a0596f3fc0bb::t_a1812f67a18980 1-43
+PreviewEngine/driver/sprotocol.h
+  s_f4a0596f3fc0bb::t_6870e63a139704 1-223
+PreviewEngine/driver/state.h
+  s_f4a0596f3fc0bb::t_b07d2c302ea6bb 1-103
+PreviewEngine/driver/tbuf.h
+  s_f4a0596f3fc0bb::t_11296d5c0cf32d 1-25
+PreviewEngine/driver/xdv.h
+  s_f4a0596f3fc0bb::t_7cf84e4e14049b 1-44
+PreviewEngine/driver/xdv2pdf.h
+  s_f4a0596f3fc0bb::t_94335212a21092 1-47
+PreviewEngine/licenses/C2Rust-BSD-3-Clause.txt
+  s_f4a0596f3fc0bb::t_27356d10d851da 1-16
+PreviewEngine/licenses/Rust-APACHE.txt
+  s_f4a0596f3fc0bb::t_f1168ebf7ef8b0 1-176
+PreviewEngine/licenses/Rust-MIT.txt
+  s_f4a0596f3fc0bb::t_6b9df3187e9592 1-25
+PreviewEngine/licenses/Rust-aho-corasick-1.1.5-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_4b6d50eb193a9b 1-21
+PreviewEngine/licenses/Rust-jpeg-decoder-0.3.2-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_7641410aebaee6 1-21
+PreviewEngine/licenses/Rust-memchr-2.8.3-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_2c71c0d268fbde 1-21
+PreviewEngine/licenses/Rust-proc-macro2-LICENSE-APACHE.txt
+  s_f4a0596f3fc0bb::t_d5efa28bc73f38 1-176
+PreviewEngine/licenses/Rust-proc-macro2-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_a70acd1f6abb64 1-23
+PreviewEngine/licenses/Rust-quote-LICENSE-APACHE.txt
+  s_f4a0596f3fc0bb::t_4da32551eb7b16 1-176
+PreviewEngine/licenses/Rust-quote-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_84945f5f65acab 1-23
+PreviewEngine/licenses/Rust-regex-1.13.1-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_900d8877031e6e 1-25
+PreviewEngine/licenses/Rust-regex-automata-0.4.18-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_002ac4d301917c 1-25
+PreviewEngine/licenses/Rust-regex-syntax-0.8.11-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_b8a6a195ad837f 1-25
+PreviewEngine/licenses/Rust-standard-library-COPYRIGHT.html
+  s_f4a0596f3fc0bb::t_6c21d0731ef7ac 1-29630
+PreviewEngine/licenses/Rust-syn-LICENSE-APACHE.txt
+  s_f4a0596f3fc0bb::t_96cef7b51b5e18 1-176
+PreviewEngine/licenses/Rust-syn-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_5dcca5fec0677e 1-23
+PreviewEngine/licenses/Rust-unicode-ident-LICENSE-APACHE.txt
+  s_f4a0596f3fc0bb::t_8cbe7bff39bfd6 1-176
+PreviewEngine/licenses/Rust-unicode-ident-LICENSE-MIT.txt
+  s_f4a0596f3fc0bb::t_055b5fde156e28 1-23
+PreviewEngine/licenses/Rust-unicode-ident-LICENSE-UNICODE.txt
+  s_f4a0596f3fc0bb::t_57bdbd74d4ae2d 1-39
+PreviewEngine/licenses/THIRD-PARTY.md
+  s_f4a0596f3fc0bb::t_dd987109fc57e6 1-115
+PreviewEngine/licenses/TeXpresso-LICENSE.txt
+  s_f4a0596f3fc0bb::t_4af6225da2b04e 1-21
+PreviewEngine/licenses/Tectonic-MIT.txt
+  s_f4a0596f3fc0bb::t_d6554232fabe57 1-25
+PreviewEngine/licenses/XeTeX-SIL-MIT.txt
+  s_f4a0596f3fc0bb::t_6662f12f94fbc8 1-33
+PreviewEngine/migration.json
+  s_f4a0596f3fc0bb::t_81f52d0918e19b 1-610
+PreviewEngine/provenance.json
+  s_f4a0596f3fc0bb::t_777c42639816be 1-2425
+PreviewEngine/rust-toolchain.toml
+  s_f4a0596f3fc0bb::t_b7023a3dae24f1 1-4
+PreviewEngine/shared/imginfo.h
+  s_f4a0596f3fc0bb::t_18d007a513d95d 1-23
+PreviewEngine/shared/pdfread.h
+  s_f4a0596f3fc0bb::t_47f13f70443107 1-83
+PreviewEngine/shared/pitex_buf.h
+  s_f4a0596f3fc0bb::t_bc8b55e1204c07 1-69
+PreviewEngine/src/bin/pitex-preview-xetex.rs
+  s_f4a0596f3fc0bb::t_0794b688667870 1-116
+PreviewEngine/src/bin/pitex-preview.rs
+  s_f4a0596f3fc0bb::t_3aa0b9a2ef05d4 1-77
+PreviewEngine/src/bin/selftest.rs
+  s_f4a0596f3fc0bb::t_2f651467b069b4 1-75
+PreviewEngine/src/linux/driver/engine_tex.rs
+  s_f4a0596f3fc0bb::t_eec12c477b88f0 1-2532
+PreviewEngine/src/linux/driver/fonts.rs
+  s_f4a0596f3fc0bb::t_56401c938aa08d 1-2275
+PreviewEngine/src/linux/driver/fs.rs
+  s_f4a0596f3fc0bb::t_62b5d7ece065ad 1-312
+PreviewEngine/src/linux/driver/images.rs
+  s_f4a0596f3fc0bb::t_b9742aa5533dba 1-1798
+PreviewEngine/src/linux/driver/json.rs
+  s_f4a0596f3fc0bb::t_74ebb704ba6004 1-715
+PreviewEngine/src/linux/driver/main.rs
+  s_f4a0596f3fc0bb::t_b78d7d828dc12e 1-7173
+PreviewEngine/src/linux/driver/myabort.rs
+  s_f4a0596f3fc0bb::t_911b6f6936542d 1-110
+PreviewEngine/src/linux/driver/pdfw.rs
+  s_f4a0596f3fc0bb::t_7c43a61917ae42 1-819
+PreviewEngine/src/linux/driver/sprotocol.rs
+  s_f4a0596f3fc0bb::t_e551308fd5231e 1-1306
+PreviewEngine/src/linux/driver/state.rs
+  s_f4a0596f3fc0bb::t_0e070819ae1593 1-434
+PreviewEngine/src/linux/driver/tbuf.rs
+  s_f4a0596f3fc0bb::t_1f9f1a9b6afda8 1-190
+PreviewEngine/src/linux/driver/xdv.rs
+  s_f4a0596f3fc0bb::t_b5e7c7450ae8f9 1-487
+PreviewEngine/src/linux/driver/xdv2pdf.rs
+  s_f4a0596f3fc0bb::t_db2a71a922818a 1-6550
+PreviewEngine/src/linux/shared/imginfo.rs
+  s_f4a0596f3fc0bb::t_372ffa5ef6429d 1-462
+PreviewEngine/src/linux/shared/pdfread.rs
+  s_f4a0596f3fc0bb::t_86772f0db80639 1-2727
+PreviewEngine/src/linux/shared/pitex_buf.rs
+  s_f4a0596f3fc0bb::t_82877cad31fba5 1-335
+PreviewEngine/src/linux/tools/selftest.rs
+  s_f4a0596f3fc0bb::t_ace7c491de0ca7 1-1330
+PreviewEngine/src/linux/xetex/common/texlive_provider.rs
+  s_f4a0596f3fc0bb::t_bd7c81b9fd63cf 1-737
+PreviewEngine/src/linux/xetex/common/utils.rs
+  s_f4a0596f3fc0bb::t_235c66518d9863 1-344
+PreviewEngine/src/linux/xetex/engine/xetex_engine_interface.rs
+  s_f4a0596f3fc0bb::t_87ce4ecb5b94f7 1-141
+PreviewEngine/src/linux/xetex/engine/xetex_errors.rs
+  s_f4a0596f3fc0bb::t_caf6b2f1b3de7f 1-211
+PreviewEngine/src/linux/xetex/engine/xetex_ext.rs
+  s_f4a0596f3fc0bb::t_8cab3355450899 1-3411
+PreviewEngine/src/linux/xetex/engine/xetex_ini.rs
+  s_f4a0596f3fc0bb::t_1940422821e527 1-10839
+PreviewEngine/src/linux/xetex/engine/xetex_io.rs
+  s_f4a0596f3fc0bb::t_d6f7fcccc00c29 1-1473
+PreviewEngine/src/linux/xetex/engine/xetex_linebreak.rs
+  s_f4a0596f3fc0bb::t_f18d3c3a5d2c7d 1-4569
+PreviewEngine/src/linux/xetex/engine/xetex_macos.rs
+  s_f4a0596f3fc0bb::t_f9c674df22e8bc 1-34
+PreviewEngine/src/linux/xetex/engine/xetex_math.rs
+  s_f4a0596f3fc0bb::t_50d9e2607349a8 1-6359
+PreviewEngine/src/linux/xetex/engine/xetex_output.rs
+  s_f4a0596f3fc0bb::t_73fceae884f3f8 1-962
+PreviewEngine/src/linux/xetex/engine/xetex_pagebuilder.rs
+  s_f4a0596f3fc0bb::t_4d5c78dd13c4fd 1-1239
+PreviewEngine/src/linux/xetex/engine/xetex_pic.rs
+  s_f4a0596f3fc0bb::t_551d13d4ff484a 1-1099
+PreviewEngine/src/linux/xetex/engine/xetex_scaledmath.rs
+  s_f4a0596f3fc0bb::t_4c210d6621cd63 1-485
+PreviewEngine/src/linux/xetex/engine/xetex_shipout.rs
+  s_f4a0596f3fc0bb::t_efdf4c6f0918eb 1-3323
+PreviewEngine/src/linux/xetex/engine/xetex_stringpool.rs
+  s_f4a0596f3fc0bb::t_11e4e3bdc54274 1-284
+PreviewEngine/src/linux/xetex/engine/xetex_synctex.rs
+  s_f4a0596f3fc0bb::t_f2ba58442bc4bc 1-1463
+PreviewEngine/src/linux/xetex/engine/xetex_texmfmp.rs
+  s_f4a0596f3fc0bb::t_17da74f00926cb 1-879
+PreviewEngine/src/linux/xetex/engine/xetex_xetex0.rs
+  s_f4a0596f3fc0bb::t_6dfd45f12f074c 1-28574
+PreviewEngine/src/linux/xetex/main/fork.rs
+  s_f4a0596f3fc0bb::t_f6a006163cd861 1-384
+PreviewEngine/src/linux/xetex/main/formats.rs
+  s_f4a0596f3fc0bb::t_7111bc772cd95c 1-133
+PreviewEngine/src/linux/xetex/main/main.rs
+  s_f4a0596f3fc0bb::t_0f58df9ef5c5da 1-2001
+PreviewEngine/src/linux/xetex/main/texpresso_protocol.rs
+  s_f4a0596f3fc0bb::t_15c176b4868fef 1-645
+PreviewEngine/src/linux/xetex/main/zlib_md5.rs
+  s_f4a0596f3fc0bb::t_dfa203b265524a 1-1553
+PreviewEngine/src/macos/driver/engine_tex.rs
+  s_f4a0596f3fc0bb::t_c5bcdd0b2d0bcc 1-2511
+PreviewEngine/src/macos/driver/fonts.rs
+  s_f4a0596f3fc0bb::t_2dad18e532c525 1-2248
+PreviewEngine/src/macos/driver/fs.rs
+  s_f4a0596f3fc0bb::t_e9cc8872b26a40 1-318
+PreviewEngine/src/macos/driver/images.rs
+  s_f4a0596f3fc0bb::t_0a867f8b3f46cb 1-1781
+PreviewEngine/src/macos/driver/json.rs
+  s_f4a0596f3fc0bb::t_6eb51c29ac268c 1-693
+PreviewEngine/src/macos/driver/main.rs
+  s_f4a0596f3fc0bb::t_fbf274089d38d1 1-4053
+PreviewEngine/src/macos/driver/myabort.rs
+  s_f4a0596f3fc0bb::t_288cf5960fe31d 1-113
+PreviewEngine/src/macos/driver/pdfw.rs
+  s_f4a0596f3fc0bb::t_03cea3c02ccf71 1-818
+PreviewEngine/src/macos/driver/sprotocol.rs
+  s_f4a0596f3fc0bb::t_1c9c2fc383a984 1-1263
+PreviewEngine/src/macos/driver/state.rs
+  s_f4a0596f3fc0bb::t_07f3ef8dcd2a98 1-455
+PreviewEngine/src/macos/driver/tbuf.rs
+  s_f4a0596f3fc0bb::t_19ee7a21cafbef 1-194
+PreviewEngine/src/macos/driver/xdv.rs
+  s_f4a0596f3fc0bb::t_383a0b131b61e8 1-468
+PreviewEngine/src/macos/driver/xdv2pdf.rs
+  s_f4a0596f3fc0bb::t_f8fa62568b87f9 1-6359
+PreviewEngine/src/macos/shared/imginfo.rs
+  s_f4a0596f3fc0bb::t_b2281e4368fa67 1-461
+PreviewEngine/src/macos/shared/pdfread.rs
+  s_f4a0596f3fc0bb::t_b2ded980a6ebd7 1-2682
+PreviewEngine/src/macos/shared/pitex_buf.rs
+  s_f4a0596f3fc0bb::t_c1ceaecde6ea96 1-357
+PreviewEngine/src/macos/tools/selftest.rs
+  s_f4a0596f3fc0bb::t_fa72b131aa37d0 1-1333
+PreviewEngine/src/macos/xetex/common/texlive_provider.rs
+  s_f4a0596f3fc0bb::t_5a21665fc27940 1-730
+PreviewEngine/src/macos/xetex/common/utils.rs
+  s_f4a0596f3fc0bb::t_a7167ecf703e56 1-336
+PreviewEngine/src/macos/xetex/engine/xetex_engine_interface.rs
+  s_f4a0596f3fc0bb::t_c761dd0f9e3722 1-118
+PreviewEngine/src/macos/xetex/engine/xetex_errors.rs
+  s_f4a0596f3fc0bb::t_ea1bb2852a790c 1-205
+PreviewEngine/src/macos/xetex/engine/xetex_ext.rs
+  s_f4a0596f3fc0bb::t_e8227b04974738 1-3793
+PreviewEngine/src/macos/xetex/engine/xetex_ini.rs
+  s_f4a0596f3fc0bb::t_3cd66399fda8fe 1-10727
+PreviewEngine/src/macos/xetex/engine/xetex_io.rs
+  s_f4a0596f3fc0bb::t_fa055748415a43 1-1443
+PreviewEngine/src/macos/xetex/engine/xetex_linebreak.rs
+  s_f4a0596f3fc0bb::t_4ff2349591652d 1-4607
+PreviewEngine/src/macos/xetex/engine/xetex_macos.rs
+  s_f4a0596f3fc0bb::t_362b84a9138c36 1-1512
+PreviewEngine/src/macos/xetex/engine/xetex_math.rs
+  s_f4a0596f3fc0bb::t_781519986c7347 1-5961
+PreviewEngine/src/macos/xetex/engine/xetex_output.rs
+  s_f4a0596f3fc0bb::t_bae624e6914070 1-962
+PreviewEngine/src/macos/xetex/engine/xetex_pagebuilder.rs
+  s_f4a0596f3fc0bb::t_dc22c2db334376 1-1199
+PreviewEngine/src/macos/xetex/engine/xetex_pic.rs
+  s_f4a0596f3fc0bb::t_2be1d8741577b4 1-1076
+PreviewEngine/src/macos/xetex/engine/xetex_scaledmath.rs
+  s_f4a0596f3fc0bb::t_1f02140ab80c7d 1-500
+PreviewEngine/src/macos/xetex/engine/xetex_shipout.rs
+  s_f4a0596f3fc0bb::t_e001c905f9fb1e 1-3228
+PreviewEngine/src/macos/xetex/engine/xetex_stringpool.rs
+  s_f4a0596f3fc0bb::t_17fcb44b6ec6d2 1-249
+PreviewEngine/src/macos/xetex/engine/xetex_synctex.rs
+  s_f4a0596f3fc0bb::t_0cd79a7e14da3b 1-1376
+PreviewEngine/src/macos/xetex/engine/xetex_texmfmp.rs
+  s_f4a0596f3fc0bb::t_234575518b0c1c 1-819
+PreviewEngine/src/macos/xetex/engine/xetex_xetex0.rs
+  s_f4a0596f3fc0bb::t_4b7b4a011f0985 1-27115
+PreviewEngine/src/macos/xetex/main/fork.rs
+  s_f4a0596f3fc0bb::t_4c8c679299250b 1-335
+PreviewEngine/src/macos/xetex/main/formats.rs
+  s_f4a0596f3fc0bb::t_5ff7456538d71c 1-131
+PreviewEngine/src/macos/xetex/main/main.rs
+  s_f4a0596f3fc0bb::t_a840c45b903e49 1-1936
+PreviewEngine/src/macos/xetex/main/texpresso_protocol.rs
+  s_f4a0596f3fc0bb::t_b6678853efd245 1-616
+PreviewEngine/src/macos/xetex/main/zlib_md5.rs
+  s_f4a0596f3fc0bb::t_1250ab0ddb644b 1-1337
+PreviewEngine/src/shared/backend_definitions.rs
+  s_f4a0596f3fc0bb::t_83f69a0e6312dc 1-165
+PreviewEngine/src/shared/backend_options.rs
+  s_f4a0596f3fc0bb::t_437f3da262d9be 1-347
+PreviewEngine/src/shared/bibliography_control.rs
+  s_f4a0596f3fc0bb::t_f87263befbc8cf 1-1069
+PreviewEngine/src/shared/bibliography_icu.rs
+  s_f4a0596f3fc0bb::t_7720a399066557 1-530
+PreviewEngine/src/shared/bibtex_style.rs
+  s_f4a0596f3fc0bb::t_cabe7ce99d271d 1-918
+PreviewEngine/src/shared/bitmap_fonts.rs
+  s_f4a0596f3fc0bb::t_ef6e5c27de2812 1-366
+PreviewEngine/src/shared/bitmap_pk.rs
+  s_f4a0596f3fc0bb::t_f3ff190e4c38e0 1-386
+PreviewEngine/src/shared/embedded_aux.rs
+  s_f4a0596f3fc0bb::t_9fd79771ff8c21 1-2050
+PreviewEngine/src/shared/engine_fonts.rs
+  s_f4a0596f3fc0bb::t_9a3f8761adc6b7 1-524
+PreviewEngine/src/shared/engine_strings.rs
+  s_f4a0596f3fc0bb::t_1183b37895d648 1-146
+PreviewEngine/src/shared/font_definitions.rs
+  s_f4a0596f3fc0bb::t_f3fd8373f9bcbe 1-82
+PreviewEngine/src/shared/font_freetype.rs
+  s_f4a0596f3fc0bb::t_7a63cfca5d1eb4 1-768
+PreviewEngine/src/shared/font_layout.rs
+  s_f4a0596f3fc0bb::t_35a362665b43b5 1-1026
+PreviewEngine/src/shared/font_macos.rs
+  s_f4a0596f3fc0bb::t_7c05e7dddb4a52 1-179
+PreviewEngine/src/shared/font_output.rs
+  s_f4a0596f3fc0bb::t_9673de47a9723d 1-296
+PreviewEngine/src/shared/fontconfig_names.rs
+  s_f4a0596f3fc0bb::t_edd6fe5882479d 1-491
+PreviewEngine/src/shared/opentype_math.rs
+  s_f4a0596f3fc0bb::t_9be2792982815a 1-369
+PreviewEngine/src/shared/opentype_math_tests.rs
+  s_f4a0596f3fc0bb::t_5c15690fbd3ce2 1-327
+PreviewEngine/src/shared/pdf_definitions.rs
+  s_f4a0596f3fc0bb::t_eca02f96eee443 1-33
+PreviewEngine/src/shared/pdf_document.rs
+  s_f4a0596f3fc0bb::t_5c05c558eee5fc 1-1475
+PreviewEngine/src/shared/pdf_inclusion.rs
+  s_f4a0596f3fc0bb::t_a17a165551906d 1-248
+PreviewEngine/src/shared/pdf_metadata.rs
+  s_f4a0596f3fc0bb::t_46fd96f08ff472 1-184
+PreviewEngine/src/shared/pdf_objects.rs
+  s_f4a0596f3fc0bb::t_6ae2682316ee35 1-184
+PreviewEngine/src/shared/pdf_threads.rs
+  s_f4a0596f3fc0bb::t_11ac3a1c7be9b6 1-452
+PreviewEngine/src/shared/png_highcolor.rs
+  s_f4a0596f3fc0bb::t_acc6422f247331 1-171
+PreviewEngine/src/shared/postscript.rs
+  s_f4a0596f3fc0bb::t_f55a1eab92535a 1-2197
+PreviewEngine/src/shared/postscript_color.rs
+  s_f4a0596f3fc0bb::t_e7defa4d3660e3 1-1177
+PreviewEngine/src/shared/postscript_fonts.rs
+  s_f4a0596f3fc0bb::t_e494d91959042e 1-268
+PreviewEngine/src/shared/postscript_images.rs
+  s_f4a0596f3fc0bb::t_b9f12f3ef82709 1-1132
+PreviewEngine/src/shared/postscript_pdf.rs
+  s_f4a0596f3fc0bb::t_8e11073659b832 1-57
+PreviewEngine/src/shared/postscript_shading.rs
+  s_f4a0596f3fc0bb::t_39c224ca0b25ea 1-272
+PreviewEngine/src/shared/postscript_vm.rs
+  s_f4a0596f3fc0bb::t_35f6fc0e85b69b 1-545
+PreviewEngine/src/shared/preview_diagnostics.rs
+  s_f4a0596f3fc0bb::t_b57c6bd1c00980 1-12
+PreviewEngine/src/shared/string_definitions.rs
+  s_f4a0596f3fc0bb::t_25cb77c64fad2c 1-7
+PreviewEngine/tools/audit-linkage.sh
+  s_f4a0596f3fc0bb::t_0d1e2cdd2bd442 1-96
+PreviewEngine/xetex/common/include/common.h
+  s_f4a0596f3fc0bb::t_149fb6b1dce23e 1-73
+PreviewEngine/xetex/common/include/providers.h
+  s_f4a0596f3fc0bb::t_26e7c345339458 1-59
+PreviewEngine/xetex/engine/xetex-XeTeXOTMath.h
+  s_f4a0596f3fc0bb::t_23160aa7041cd6 1-67
+PreviewEngine/xetex/engine/xetex-constants.h
+  s_f4a0596f3fc0bb::t_1c803b71f48cae 1-403
+PreviewEngine/xetex/engine/xetex-core.h
+  s_f4a0596f3fc0bb::t_255a9a53fc4353 1-60
+PreviewEngine/xetex/engine/xetex-ext.h
+  s_f4a0596f3fc0bb::t_b7219fa7454da4 1-200
+PreviewEngine/xetex/engine/xetex-io.h
+  s_f4a0596f3fc0bb::t_25a39974aab47e 1-39
+PreviewEngine/xetex/engine/xetex-stringpool.h
+  s_f4a0596f3fc0bb::t_c0bed98d8a8699 1-27
+PreviewEngine/xetex/engine/xetex-swap.h
+  s_f4a0596f3fc0bb::t_0a333369b48657 1-85
+PreviewEngine/xetex/engine/xetex-synctex.h
+  s_f4a0596f3fc0bb::t_6914ac2da193ff 1-125
+PreviewEngine/xetex/engine/xetex-xetexd.h
+  s_f4a0596f3fc0bb::t_ed3250034e20be 1-1208
+PreviewEngine/xetex/engine/xetex_bindings.h
+  s_f4a0596f3fc0bb::t_18a54306b1803a 1-35
+PreviewEngine/xetex/engine/xetex_format.h
+  s_f4a0596f3fc0bb::t_7917a31690d436 1-1347
+PreviewEngine/xetex/include/tectonic_bridge_core.h
+  s_f4a0596f3fc0bb::t_261b8fe7209465 1-268
+PreviewEngine/xetex/include/tectonic_bridge_core_generated.h
+  s_f4a0596f3fc0bb::t_82325cfc807dda 1-328
+PreviewEngine/xetex/include/tectonic_bridge_flate.h
+  s_f4a0596f3fc0bb::t_e91c596d94dafc 1-105
+PreviewEngine/xetex/layout/pitex_font_freetype.h
+  s_f4a0596f3fc0bb::t_4ce17f0d3835b9 1-50
+PreviewEngine/xetex/layout/tectonic_xetex_layout.h
+  s_f4a0596f3fc0bb::t_1a0bbbb93b25cd 1-211
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst.cpp
+  s_f4a0596f3fc0bb::t_8f7123b36cb691 1-99
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst.h
+  s_f4a0596f3fc0bb::t_3409d1ce28bb9f 1-148
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst_Mac.cpp
+  s_f4a0596f3fc0bb::t_f119a797ffa261 1-59
+PreviewEngine/xetex/layout/xetex-XeTeXFontInst_Mac.h
+  s_f4a0596f3fc0bb::t_25c85f0c0bbd77 1-64
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr.cpp
+  s_f4a0596f3fc0bb::t_6cebe14f2b816a 1-671
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr.h
+  s_f4a0596f3fc0bb::t_f72a82de91a011 1-187
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_FC.cpp
+  s_f4a0596f3fc0bb::t_482dd5e268e7bd 1-133
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_FC.h
+  s_f4a0596f3fc0bb::t_8d083c4021df8f 1-64
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_Mac.h
+  s_f4a0596f3fc0bb::t_4e8e55b738a984 1-75
+PreviewEngine/xetex/layout/xetex-XeTeXFontMgr_Mac.mm
+  s_f4a0596f3fc0bb::t_a27fa84aca2473 1-250
+PreviewEngine/xetex/layout/xetex-XeTeXLayoutInterface.cpp
+  s_f4a0596f3fc0bb::t_6dbe79ba242160 1-104
+PreviewEngine/xetex/main/formats.h
+  s_f4a0596f3fc0bb::t_2707b17ac3a247 1-17
+PreviewEngine/xetex/main/picohash.h
+  s_f4a0596f3fc0bb::t_694bde24ccf256 1-794
+PreviewEngine/xetex/main/texpresso_protocol.h
+  s_f4a0596f3fc0bb::t_97301f6bc0670d 1-105
+README.md
+  s_f4a0596f3fc0bb::t_bb5a72d2167dfa 1-152
+ReferenceEvidence/policy.json
+  s_f4a0596f3fc0bb::t_e1a7dc59554a6e 1-73
+Toolchains.lock.json
+  s_f4a0596f3fc0bb::t_56e37755eacec4 1-16
+Tools/IBusCompatProbe/.gitignore
+  s_f4a0596f3fc0bb::t_c31f16e982a30b 1
+Tools/IBusCompatProbe/Cargo.lock
+  s_f4a0596f3fc0bb::t_b6cf9b4595ae3e 1-502
+Tools/IBusCompatProbe/Cargo.toml
+  s_f4a0596f3fc0bb::t_39c40f1deef67d 1-15
+Tools/IBusCompatProbe/src/lib.rs
+  s_f4a0596f3fc0bb::t_d1a27a80dcb902 1-12
+Tools/Native/Cargo.lock
+  s_f4a0596f3fc0bb::t_96624d4cbced1f 1-254
+Tools/Native/Cargo.toml
+  s_f4a0596f3fc0bb::t_9456c92a42c0cb 1-13
+Tools/Native/build.rs
+  s_f4a0596f3fc0bb::t_cbabe2ebd9e0f2 1-47
+Tools/Native/src/bin/check-git-performance.rs
+  s_f4a0596f3fc0bb::t_b2b56d31a55163 1-66
+Tools/Native/src/bin/check-ime-completion.rs
+  s_f4a0596f3fc0bb::t_fd0ee335c23e2e 1-78
+Tools/Native/src/bin/check-lexer-performance.rs
+  s_f4a0596f3fc0bb::t_1c3408c6a6145f 1-407
+Tools/Native/src/bin/check-optimization-profiles.rs
+  s_f4a0596f3fc0bb::t_e1b5231d13dc2f 1-99
+Tools/Native/src/bin/check-updates.rs
+  s_f4a0596f3fc0bb::t_7c6564ec337d52 1-159
+Tools/Native/src/bin/preview-audit-pdftex-vocabulary.rs
+  s_f4a0596f3fc0bb::t_62b3111bd2832c 1-503
+Tools/Native/src/bin/preview-provenance.rs
+  s_f4a0596f3fc0bb::t_a8f014570148f2 1-711
+Tools/Native/src/bin/preview-regress-auxiliary.rs
+  s_f4a0596f3fc0bb::t_109f644938bdd0 1-141
+Tools/Native/src/bin/preview-regress-backend-options.rs
+  s_f4a0596f3fc0bb::t_5e79be87fae977 1-346
+Tools/Native/src/bin/preview-regress-bibliography-controls.rs
+  s_f4a0596f3fc0bb::t_00770467830941 1-470
+Tools/Native/src/bin/preview-regress-bibtex-style.rs
+  s_f4a0596f3fc0bb::t_137d68b4915e34 1-97
+Tools/Native/src/bin/preview-regress-bitmap-fonts.rs
+  s_f4a0596f3fc0bb::t_23c51cd941b209 1-291
+Tools/Native/src/bin/preview-regress-core-controls.rs
+  s_f4a0596f3fc0bb::t_0b85ddb4d4feb4 1-51
+Tools/Native/src/bin/preview-regress-deleted-file.rs
+  s_f4a0596f3fc0bb::t_1a886a6c7b3857 1-139
+Tools/Native/src/bin/preview-regress-engine-primitives.rs
+  s_f4a0596f3fc0bb::t_20e57683de75c7 1-510
+Tools/Native/src/bin/preview-regress-engine-queries.rs
+  s_f4a0596f3fc0bb::t_cd853734308d1d 1-286
+Tools/Native/src/bin/preview-regress-engine-strings.rs
+  s_f4a0596f3fc0bb::t_70c0e442582d13 1-294
+Tools/Native/src/bin/preview-regress-font-discovery.rs
+  s_f4a0596f3fc0bb::t_4db70e8d8d7cd7 1-135
+Tools/Native/src/bin/preview-regress-font-layout.rs
+  s_f4a0596f3fc0bb::t_052d2c319a934a 1-130
+Tools/Native/src/bin/preview-regress-font-typography.rs
+  s_f4a0596f3fc0bb::t_d0dc295c2e0609 1-420
+Tools/Native/src/bin/preview-regress-live-updates.rs
+  s_f4a0596f3fc0bb::t_84e00078b51f49 1-324
+Tools/Native/src/bin/preview-regress-opentype-math.rs
+  s_f4a0596f3fc0bb::t_ea51fc5aeceff7 1-115
+Tools/Native/src/bin/preview-regress-pdf-features.rs
+  s_f4a0596f3fc0bb::t_8f970f40b94fd6 1-507
+Tools/Native/src/bin/preview-regress-pdf-policy.rs
+  s_f4a0596f3fc0bb::t_df3fb4cf5477f3 1-347
+Tools/Native/src/bin/preview-regress-pdf-structures.rs
+  s_f4a0596f3fc0bb::t_6ac1b224038497 1-314
+Tools/Native/src/bin/preview-regress-pdftex-semantics.rs
+  s_f4a0596f3fc0bb::t_e96a3e32cbcb9a 1-382
+Tools/Native/src/bin/preview-regress-postscript-color.rs
+  s_f4a0596f3fc0bb::t_13dd0935486634 1-311
+Tools/Native/src/bin/preview-regress-postscript-vm.rs
+  s_f4a0596f3fc0bb::t_f8e6f4160b9c59 1-188
+Tools/Native/src/bin/preview-regress-postscript.rs
+  s_f4a0596f3fc0bb::t_e0a2bde961d4ab 1-262
+Tools/Native/src/bin/preview-regress-tex-compat.rs
+  s_f4a0596f3fc0bb::t_45691e495fe93a 1-347
+Tools/Native/src/lib.rs
+  s_f4a0596f3fc0bb::t_cbdce96242d292 1-244
+Tools/Native/src/preview_regression.rs
+  s_f4a0596f3fc0bb::t_973325d926a3ac 1-368
+Tools/audit-ibus-capslock.py
+  s_f4a0596f3fc0bb::t_6c9ad5b8ef9731 1-194
+Tools/build-markdown-preview.mjs
+  s_f4a0596f3fc0bb::t_63bbe78564ca1d 1-84
+Tools/bundle-preview-engine-macos.sh
+  s_f4a0596f3fc0bb::t_a29abc7139e5f6 1-352
+Tools/check-assistant-font.swift
+  s_f4a0596f3fc0bb::t_3ee4e86f1eace2 1-295
+Tools/check-bundle-source-record.sh
+  s_f4a0596f3fc0bb::t_ee397ede5610b7 1-85
+Tools/check-bundled-skills.mjs
+  s_f4a0596f3fc0bb::t_2e284e22702f1b 1-71
+Tools/check-deb-install.sh
+  s_f4a0596f3fc0bb::t_79aaf0b4f57fa2 1-101
+Tools/check-document-layout.py
+  s_f4a0596f3fc0bb::t_05bbd6aedf708a 1-456
+Tools/check-editor-chrome.swift
+  s_f4a0596f3fc0bb::t_c8d27906a52474 1-386
+Tools/check-editor-performance.swift
+  s_f4a0596f3fc0bb::t_3693f9de87746d 1-341
+Tools/check-embedded-preview-macos.py
+  s_f4a0596f3fc0bb::t_0ef4cde87e22f5 1-1570
+Tools/check-equation-preview-macos.py
+  s_f4a0596f3fc0bb::t_23e92ca36335aa 1-2490
+Tools/check-external-open.py
+  s_f4a0596f3fc0bb::t_878dce7900112c 1-695
+Tools/check-find-bar.py
+  s_f4a0596f3fc0bb::t_1128765a1e1d16 1-195
+Tools/check-fold-layout.swift
+  s_f4a0596f3fc0bb::t_aff667e6e73156 1-425
+Tools/check-highlighting-performance.swift
+  s_f4a0596f3fc0bb::t_5d39e867f5ba81 1-387
+Tools/check-linkage-audit.mjs
+  s_f4a0596f3fc0bb::t_005ad135dfc5cc 1-42
+Tools/check-macos-release.swift
+  s_f4a0596f3fc0bb::t_82bf547006b622 1-324
+Tools/check-macos-synctex.py
+  s_f4a0596f3fc0bb::t_a77fa5b5d1fa93 1-299
+Tools/check-markdown-preview.mjs
+  s_f4a0596f3fc0bb::t_a51d76ca76a9a6 1-140
+Tools/check-multifile-project.py
+  s_f4a0596f3fc0bb::t_1fe1bc9dea13ec 1-182
+Tools/check-native-completion.py
+  s_f4a0596f3fc0bb::t_d4df5993a7a2f3 1-781
+Tools/check-pdfjs-perf.py
+  s_f4a0596f3fc0bb::t_0af3fcc720c9ea 1-1241
+Tools/check-pi-reasoning.swift
+  s_f4a0596f3fc0bb::t_bc9fe0954872d7 1-343
+Tools/check-pi-runtime.swift
+  s_f4a0596f3fc0bb::t_d5d40fd05c98dc 1-410
+Tools/check-pi-settings.swift
+  s_f4a0596f3fc0bb::t_498c08d666385f 1-359
+Tools/check-project-tree-ui.swift
+  s_f4a0596f3fc0bb::t_29467277ac9645 1-346
+Tools/check-remote-autosave.swift
+  s_f4a0596f3fc0bb::t_10dcb9df7e3a7d 1-579
+Tools/check-settings-menu.py
+  s_f4a0596f3fc0bb::t_b6fe581163ed26 1-496
+Tools/check-sidebar-ui.py
+  s_f4a0596f3fc0bb::t_b3e20e64e672c1 1-600
+Tools/check-workspace-navigation.py
+  s_f4a0596f3fc0bb::t_f69b9950c14544 1-546
+Tools/collect-linux-evidence.mjs
+  s_f4a0596f3fc0bb::t_b401a49c6c03b9 1-63
+Tools/create-source-bundle.mjs
+  s_f4a0596f3fc0bb::t_02cad49cb88ab8 1-74
+Tools/fetch-equation-preview-assets.mjs
+  s_f4a0596f3fc0bb::t_79f7452966e645 1-189
+Tools/generate-sbom.mjs
+  s_f4a0596f3fc0bb::t_d159c4c40a3934 1-169
+Tools/install-deb.sh
+  s_f4a0596f3fc0bb::t_fa53360843158b 1-31
+Tools/run-synctex-fixture.mjs
+  s_f4a0596f3fc0bb::t_eaff884be40734 1-216
+Tools/run-tex-fixtures.mjs
+  s_f4a0596f3fc0bb::t_096fc6c34d6c0b 1-200
+Tools/rust-target-dag.json
+  s_f4a0596f3fc0bb::t_b79d91598dd43a 1-189
+Tools/setup-webview2-runtime.ps1
+  s_f4a0596f3fc0bb::t_3d4702767a5406 1-55
+Tools/target-dag.json
+  s_f4a0596f3fc0bb::t_12b52228e036fe 1-162
+Tools/tex-build-matrix.json
+  s_f4a0596f3fc0bb::t_8cb9d01ddfc676 1-102
+Tools/update-p0-evidence.mjs
+  s_f4a0596f3fc0bb::t_e58f62b27488db 1-60
+Tools/validate-parity.mjs
+  s_f4a0596f3fc0bb::t_f527effd496372 1-288
+Tools/validate-xcodeproj.mjs
+  s_f4a0596f3fc0bb::t_bbcc2f30ad0536 1-206
+Tools/verify-linux.mjs
+  s_f4a0596f3fc0bb::t_39f584c0ead83a 1-145
+Tools/verify-release-surface.mjs
+  s_f4a0596f3fc0bb::t_e4ae12c7e8fc33 1-105
+Tools/verify-rust-dag.mjs
+  s_f4a0596f3fc0bb::t_803139c0624790 1-212
+Tools/verify-target-dag.mjs
+  s_f4a0596f3fc0bb::t_3ce6cead1d0d7c 1-193
+Windows/Cargo.lock
+  s_f4a0596f3fc0bb::t_7360d8c8066982 1-2192
+Windows/Cargo.toml
+  s_f4a0596f3fc0bb::t_6338e0dda0e3bf 1-23
+Windows/FEATURE-PARITY.md
+  s_f4a0596f3fc0bb::t_b868ea28ddd721 1-38
+Windows/README.md
+  s_f4a0596f3fc0bb::t_9d5fea2203fff1 1-115
+Windows/build.sh
+  s_f4a0596f3fc0bb::t_559e7422164591 1-156
+Windows/crates/pitex-windows/Cargo.toml
+  s_f4a0596f3fc0bb::t_346d044963ed00 1-17
+Windows/crates/pitex-windows/build.rs
+  s_f4a0596f3fc0bb::t_90990ecac33d0d 1-20
+Windows/crates/pitex-windows/src/main.rs
+  s_f4a0596f3fc0bb::t_19da13995fa75f 1-170
+Windows/crates/windows-platform/Cargo.toml
+  s_f4a0596f3fc0bb::t_b5bdabc1df63fd 1-8
+Windows/crates/windows-platform/src/lib.rs
+  s_f4a0596f3fc0bb::t_ada789b2e315ad 1-789
+Windows/pitex.nsi
+  s_f4a0596f3fc0bb::t_278f93e2ca129a 1-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2c707541eb3bed9946e0419e38ac18f4d0eca029",
+  "prompts": {},
+  "sessions": {
+    "s_f4a0596f3fc0bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2d87f6d-c72a-4c4b-b71d-5ff86518371b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
