@@ -1,0 +1,23 @@
+PreviewEngine/provenance.json
+  s_f4a0596f3fc0bb::t_00bd91739ae899 1925
+PreviewEngine/tools/audit-linkage.sh
+  s_f4a0596f3fc0bb::t_390e294f70b86d 57,59-64,68-69,72-74,76
+Tools/check-audit-linkage-paths.sh
+  s_f4a0596f3fc0bb::t_1e79f4b58736c2 1-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "038db2baacc8db1b2cce5ef4ce1c751ae3698905",
+  "prompts": {},
+  "sessions": {
+    "s_f4a0596f3fc0bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2d87f6d-c72a-4c4b-b71d-5ff86518371b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
