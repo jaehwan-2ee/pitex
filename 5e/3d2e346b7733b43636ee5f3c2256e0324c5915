@@ -1,0 +1,38 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 136,300-302,406-408,2167,2180-2216,2218,2220,2235,2243,2250,3581,3621,4270-4282
+Linux/crates/pitex-shell/src/embedded_preview.rs
+  h_bcbc8ae9e599aa 548,1182-1190
+Linux/crates/pitex-shell/src/model.rs
+  h_bcbc8ae9e599aa 262,582
+Linux/crates/pitex-shell/src/panes.rs
+  h_bcbc8ae9e599aa 1489,1512-1584
+Linux/crates/pitex-shell/src/pdf.rs
+  h_bcbc8ae9e599aa 19-29,46-47,71-73,185-211,283,297-298,300,329-334,344-346
+Linux/crates/pitex-shell/src/ubuntu_preview_tests.rs
+  h_bcbc8ae9e599aa 231-281,288
+Linux/crates/pitex-shell/tests/embedded_preview.rs
+  h_bcbc8ae9e599aa 237
+Mac/Sources/Features/EmbeddedPreview.swift
+  h_bcbc8ae9e599aa 412
+PreviewEngine/Cargo.toml
+  h_bcbc8ae9e599aa 28-30
+PreviewEngine/Makefile
+  h_bcbc8ae9e599aa 12
+PreviewEngine/Windows/Cargo.toml
+  h_bcbc8ae9e599aa 23-25
+PreviewEngine/build.rs
+  h_bcbc8ae9e599aa 106
+PreviewEngine/provenance.json
+  h_bcbc8ae9e599aa 51,57,87,135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e3d2e346b7733b43636ee5f3c2256e0324c5915",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
