@@ -9,7 +9,7 @@
 BUILD_DIR ?= $(if $(TMPDIR),$(TMPDIR),/tmp)/pitex-preview-engine-build
 CARGO ?= cargo
 PKG_CONFIG ?= pkg-config
-OPT ?= -O2 -g
+OPT ?= -O3 -g
 
 ifeq ($(shell uname),Darwin)
 BREW ?= $(shell command -v brew >/dev/null 2>&1 && brew --prefix)

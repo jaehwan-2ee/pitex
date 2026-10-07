@@ -16,6 +16,17 @@ type CairoSurface = c_void;
 type GError = c_void;
 type GBytes = c_void;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SelectionRect { pub x1: f64, pub y1: f64, pub x2: f64, pub y2: f64 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SelectionRegion { pub x: c_int, pub y: c_int, pub width: c_int, pub height: c_int }
+
+#[derive(Debug, Default)]
+pub struct SelectedText { pub text: String, pub regions: Vec<SelectionRegion> }
+
 #[link(name = "poppler-glib")]
 extern "C" {
     // `poppler_document_new_from_bytes(GBytes*, const char*, GError**)` — the
@@ -32,6 +43,8 @@ extern "C" {
     fn poppler_page_get_size(page: *mut PopplerPage, width: *mut c_double, height: *mut c_double);
     fn poppler_page_render(page: *mut PopplerPage, cairo: *mut Cairo);
     fn poppler_page_get_text(page: *mut PopplerPage) -> *mut c_char;
+    fn poppler_page_get_selected_text(page: *mut PopplerPage, style: c_int, selection: *mut SelectionRect) -> *mut c_char;
+    fn poppler_page_get_selected_region(page: *mut PopplerPage, scale: f64, style: c_int, selection: *mut SelectionRect) -> *mut c_void;
 }
 #[link(name = "gobject-2.0")]
 extern "C" {
@@ -55,6 +68,9 @@ extern "C" {
     fn cairo_image_surface_get_data(surface: *mut CairoSurface) -> *mut u8;
     fn cairo_image_surface_get_stride(surface: *mut CairoSurface) -> c_int;
     fn cairo_surface_flush(surface: *mut CairoSurface);
+    fn cairo_region_num_rectangles(region: *mut c_void) -> c_int;
+    fn cairo_region_get_rectangle(region: *mut c_void, index: c_int, rectangle: *mut SelectionRegion);
+    fn cairo_region_destroy(region: *mut c_void);
 }
 
 const CAIRO_FORMAT_ARGB32: c_int = 0;
@@ -166,6 +182,33 @@ impl PdfDocument {
         Some((pixels, width, height, stride))
     }
 
+    /// Poppler's glyph selection follows reading order, including reverse drags.
+    /// Coordinates and returned regions use top-left PDF points.
+    pub fn select_text(&self, index: usize, mut selection: SelectionRect) -> SelectedText {
+        let mut result = SelectedText::default();
+        if index >= self.page_count { return result; }
+        let page = unsafe { poppler_document_get_page(self.raw, index as c_int) };
+        if page.is_null() { return result; }
+        unsafe {
+            let text = poppler_page_get_selected_text(page, 0, &mut selection); // POPPLER_SELECTION_GLYPH
+            if !text.is_null() {
+                result.text = std::ffi::CStr::from_ptr(text).to_string_lossy().into_owned();
+                g_free(text.cast());
+            }
+            let region = poppler_page_get_selected_region(page, 1.0, 0, &mut selection);
+            if !region.is_null() {
+                for index in 0..cairo_region_num_rectangles(region) {
+                    let mut rectangle = SelectionRegion::default();
+                    cairo_region_get_rectangle(region, index, &mut rectangle);
+                    result.regions.push(rectangle);
+                }
+                cairo_region_destroy(region);
+            }
+            g_object_unref(page);
+        }
+        result
+    }
+
     /// All pages' text concatenated — PDFKit `document.string` equivalent.
     pub fn text(&self) -> String {
         let mut out = String::new();
@@ -237,6 +280,7 @@ pub struct RenderedPage {
 enum RenderRequest {
     Load(u64, Arc<[u8]>),
     Render { hash: u64, key: u64, page: usize, scale: f64 },
+    Select { hash: u64, key: u64, id: u64, page: usize, rectangle: SelectionRect },
 }
 pub struct PdfRenderer { sender: Sender<RenderRequest> }
 impl PdfRenderer {
@@ -250,10 +294,10 @@ impl PdfRenderer {
                 let mut request = match pending.take().or_else(|| receiver.recv().ok()) {
                     Some(request) => request, None => break,
                 };
-                // Collapse consecutive zoom/page requests, preserving load boundaries.
-                if matches!(request, RenderRequest::Render { .. }) {
+                // Collapse motion/zoom bursts without crossing request kinds or loads.
+                if !matches!(request, RenderRequest::Load(..)) {
                     while let Ok(next) = receiver.try_recv() {
-                        if matches!(next, RenderRequest::Load(..)) { pending = Some(next); break; }
+                        if std::mem::discriminant(&next) != std::mem::discriminant(&request) { pending = Some(next); break; }
                         request = next;
                     }
                 }
@@ -282,6 +326,12 @@ impl PdfRenderer {
                             let _ = sink.send(crate::model::WorkspaceMessage::PdfRendered { key, raster });
                         }
                     }
+                    RenderRequest::Select { hash, key, id, page, rectangle } => {
+                        let Some((current, pdf)) = &document else { continue };
+                        if hash != *current { continue; }
+                        let selection = pdf.select_text(page, rectangle);
+                        let _ = sink.send(crate::model::WorkspaceMessage::PdfSelected { key, id, selection });
+                    }
                 }
             }
         });
@@ -290,5 +340,8 @@ impl PdfRenderer {
     pub fn load(&self, hash: u64, data: Arc<[u8]>) { let _ = self.sender.send(RenderRequest::Load(hash, data)); }
     pub fn render(&self, hash: u64, key: u64, page: usize, scale: f64) {
         let _ = self.sender.send(RenderRequest::Render { hash, key, page, scale });
+    }
+    pub fn select(&self, hash: u64, key: u64, id: u64, page: usize, rectangle: SelectionRect) {
+        let _ = self.sender.send(RenderRequest::Select { hash, key, id, page, rectangle });
     }
 }

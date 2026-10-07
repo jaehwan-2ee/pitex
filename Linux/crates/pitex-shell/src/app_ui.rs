@@ -133,6 +133,7 @@ pub struct UiHandles {
     pub pdf_name_label: RefCell<Option<gtk4::Label>>,
     pub pdf_picture: RefCell<Option<gtk4::Picture>>,
     pub pdf_highlight: RefCell<Option<gtk4::DrawingArea>>,
+    pub pdf_selection_overlay: RefCell<Option<gtk4::DrawingArea>>,
     pub pdf_scroll: RefCell<Option<gtk4::ScrolledWindow>>,
     pub pdf_empty: RefCell<Option<adw::StatusPage>>,
     pub pdf_page_label: RefCell<Option<gtk4::Label>>,
@@ -296,6 +297,9 @@ pub struct AppState {
     pub watchers: Vec<gio::FileMonitor>,
     pub pdf: Option<PdfInfo>,
     pdf_renderer: PdfRenderer,
+    pub pdf_selection: crate::pdf::SelectedText,
+    pub pdf_selection_start: Option<(f64, f64)>,
+    pdf_selection_id: u64,
     pub pdf_page: usize,
     pub pdf_scale: f64,
     /// `pi` config dir monitor — restarts the agent when auth/models/
@@ -399,6 +403,9 @@ impl AppState {
             watchers: Vec::new(),
             pdf: None,
             pdf_renderer: PdfRenderer::new(tx.clone()),
+            pdf_selection: crate::pdf::SelectedText::default(),
+            pdf_selection_start: None,
+            pdf_selection_id: 0,
             pdf_page: 0,
             pdf_scale: 1.5,
             agent_config_monitor: None,
@@ -2157,18 +2164,7 @@ impl AppState {
         if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() { return; }
         let Some(doc) = &self.pdf else { return };
         let Some((w_pt, h_pt)) = doc.page_size(self.pdf_page) else { return };
-        // The Picture uses ContentFit::Contain inside the scroller; compute
-        // the displayed rect from the texture's natural aspect.
-        let alloc_w = picture.width() as f64;
-        let alloc_h = picture.height() as f64;
-        if alloc_w <= 0.0 || alloc_h <= 0.0 {
-            return;
-        }
-        let scale = (alloc_w / w_pt).min(alloc_h / h_pt);
-        let disp_w = w_pt * scale;
-        let disp_h = h_pt * scale;
-        let ox = (alloc_w - disp_w) / 2.0;
-        let oy = (alloc_h - disp_h) / 2.0;
+        let Some((scale, ox, oy)) = self.pdf_transform(picture.width(), picture.height()) else { return };
         let px = (x - ox) / scale;
         let py = (y - oy) / scale;
         if px < 0.0 || py < 0.0 || px > w_pt || py > h_pt {
@@ -2181,9 +2177,47 @@ impl AppState {
         }
     }
 
+    /// Picture's Contain transform, shared by SyncTeX and text selection.
+    pub fn pdf_transform(&self, width: i32, height: i32) -> Option<(f64, f64, f64)> {
+        let (w, h) = self.pdf.as_ref()?.page_size(self.pdf_page)?;
+        if width <= 0 || height <= 0 || w <= 0.0 || h <= 0.0 { return None; }
+        let scale = (width as f64 / w).min(height as f64 / h);
+        Some((scale, (width as f64 - w * scale) / 2.0, (height as f64 - h * scale) / 2.0))
+    }
+
+    pub fn clear_pdf_selection(&mut self) {
+        self.pdf_selection_id += 1;
+        self.pdf_selection_start = None;
+        self.pdf_selection = crate::pdf::SelectedText::default();
+        UI.with(|ui| {
+            if let Some(area) = ui.pdf_selection_overlay.borrow().as_ref() { area.queue_draw(); }
+        });
+    }
+
+    pub fn pdf_selection_begin(&mut self, picture: &gtk4::Picture, x: f64, y: f64) -> bool {
+        self.clear_pdf_selection();
+        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() { return false; }
+        let Some((scale, ox, oy)) = self.pdf_transform(picture.width(), picture.height()) else { return false };
+        let (x, y) = ((x - ox) / scale, (y - oy) / scale);
+        let Some((w, h)) = self.pdf.as_ref().and_then(|pdf| pdf.page_size(self.pdf_page)) else { return false };
+        if x < 0.0 || y < 0.0 || x > w || y > h { return false; }
+        self.pdf_selection_start = Some((x, y));
+        true
+    }
+
+    pub fn pdf_selection_update(&mut self, picture: &gtk4::Picture, x: f64, y: f64) {
+        let Some((x1, y1)) = self.pdf_selection_start else { return };
+        let Some((scale, ox, oy)) = self.pdf_transform(picture.width(), picture.height()) else { return };
+        let Some((w, h)) = self.pdf.as_ref().and_then(|pdf| pdf.page_size(self.pdf_page)) else { return };
+        self.pdf_selection_id += 1;
+        self.pdf_renderer.select(self.pdf_hash, self.rendered_pdf_key.get(), self.pdf_selection_id, self.pdf_page,
+            crate::pdf::SelectionRect { x1, y1, x2: ((x - ox) / scale).clamp(0.0, w), y2: ((y - oy) / scale).clamp(0.0, h) });
+    }
+
     /// Re-render the current page into the picture widget.
-    fn render_pdf_page(&self) {
+    fn render_pdf_page(&mut self) {
         let Some(doc) = &self.pdf else { return };
+        let page_count = doc.page_count();
         let scale = if self.pdf_auto_fit { self.pdf_fit_scale() } else { self.pdf_scale };
         // Skip the raster when nothing changed — `refresh_pdf_ui` calls
         // this on every keystroke.
@@ -2198,6 +2232,7 @@ impl AppState {
         if key == self.rendered_pdf_key.get() {
             return;
         }
+        self.clear_pdf_selection();
         self.rendered_pdf_key.set(key);
         self.pdf_renderer.render(self.pdf_hash, key, self.pdf_page, scale);
         UI.with(|ui| {
@@ -2205,14 +2240,14 @@ impl AppState {
                 label.set_text(&format!(
                     "{} / {}",
                     self.pdf_page + 1,
-                    doc.page_count()
+                    page_count
                 ));
             }
             if let Some(b) = ui.pdf_prev_button.borrow().as_ref() {
                 b.set_sensitive(self.pdf_page > 0);
             }
             if let Some(b) = ui.pdf_next_button.borrow().as_ref() {
-                b.set_sensitive(self.pdf_page + 1 < doc.page_count());
+                b.set_sensitive(self.pdf_page + 1 < page_count);
             }
         });
     }
@@ -3543,6 +3578,7 @@ impl AppState {
                     });
                 }
                 if self.pdf_hash != retained.hash {
+                    self.clear_pdf_selection();
                     self.pdf = None;
                     self.pdf_hash = retained.hash;
                     self.rendered_pdf_key.set(0);
@@ -3582,6 +3618,7 @@ impl AppState {
                 self.render_pdf_page();
             }
             None => {
+                self.clear_pdf_selection();
                 if self.pdf_hash != 0 {
                     self.pdf = None;
                     self.pdf_hash = 0;
@@ -4228,6 +4265,19 @@ impl AppState {
                             }
                         }));
                     }
+                }
+            }
+            WorkspaceMessage::PdfSelected { key, id, selection } => {
+                if key == self.rendered_pdf_key.get() && id == self.pdf_selection_id {
+                    self.pdf_selection = selection;
+                    UI.with(|ui| {
+                        if let Some(area) = ui.pdf_selection_overlay.borrow().as_ref() {
+                            if !self.pdf_selection.text.is_empty() {
+                                area.display().primary_clipboard().set_text(&self.pdf_selection.text);
+                            }
+                            area.queue_draw();
+                        }
+                    });
                 }
             }
             WorkspaceMessage::BuildEvent { build, event } => {

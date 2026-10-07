@@ -228,12 +228,63 @@ fn local_unsaved_edits_render_through_embedded_preview() {
         });
         last_hash = Some(pdf.hash);
     }
+
+    // Real X11 input covers gesture arbitration, reading order, highlights and copy.
+    let id = Command::new("xdotool")
+        .args(["search", "--onlyvisible", "--pid", &std::process::id().to_string()])
+        .output().unwrap();
+    assert!(id.status.success());
+    let id = String::from_utf8(id.stdout).unwrap().lines().next().unwrap().to_owned();
+    let (picture, scroll) = UI.with(|ui| (
+        ui.pdf_picture.borrow().as_ref().unwrap().clone(),
+        ui.pdf_scroll.borrow().as_ref().unwrap().clone(),
+    ));
+    let origin = picture.compute_point(&window, &gtk4::graphene::Point::new(0.0, 0.0)).unwrap();
+    let (scale, ox, oy) = state.borrow().pdf_transform(picture.width(), picture.height()).unwrap();
+    let (width, height) = state.borrow().pdf.as_ref().unwrap().page_size(0).unwrap();
+    let start = ((origin.x() as f64 + ox + 20.0) as i32, (origin.y() as f64 + oy + 20.0) as i32);
+    let end = ((origin.x() as f64 + ox + width * scale - 20.0) as i32,
+        (origin.y() as f64 + (oy + height * scale).min(scroll.height() as f64) - 20.0) as i32);
+    for (start, end) in [(start, end), (end, start)] {
+        assert!(Command::new("xdotool").args([
+            "mousemove", "--window", &id, &start.0.to_string(), &start.1.to_string(),
+            "mousedown", "1",
+        ]).status().unwrap().success());
+        drive_until("PDF receives mouse press", || state.borrow().pdf_selection_start.is_some());
+        assert!(Command::new("xdotool").args([
+            "mousemove", "--window", &id, &end.0.to_string(), &end.1.to_string(), "mouseup", "1",
+        ]).status().unwrap().success());
+        drive_until("mouse drag selects actual PDF text", || {
+            let state = state.borrow();
+            state.pdf_selection_start.is_none()
+                && state.pdf_selection.text.contains("Second unsaved marker.")
+                && !state.pdf_selection.regions.is_empty()
+        });
+        assert!(state.borrow().pdf_selection.text.contains("Seed text."));
+        assert!(Command::new("xdotool").args(["windowfocus", "--sync", &id, "key", "ctrl+c"]).status().unwrap().success());
+        let copied = Rc::new(RefCell::new(None));
+        // Let GTK dispatch Ctrl+C before reading its clipboard.
+        for _ in 0..100 { if !glib::MainContext::default().pending() { break; } glib::MainContext::default().iteration(false); }
+        picture.clipboard().read_text_async(None::<&gio::Cancellable>, {
+            let copied = copied.clone();
+            move |result| { *copied.borrow_mut() = Some(result); }
+        });
+        drive_until("Ctrl+C copies selected text", || copied.borrow().is_some());
+        let copied = copied.borrow_mut().take().unwrap().unwrap().unwrap();
+        assert_eq!(copied.as_str(), state.borrow().pdf_selection.text);
+    }
+    state.borrow_mut().pdf_zoom(1.15);
+    assert!(state.borrow().pdf_selection.text.is_empty(), "zoom invalidates old selection coordinates");
+    drive_until("zoomed PDF rendered", || {
+        let state = state.borrow();
+        state.displayed_pdf_key.get() == state.rendered_pdf_key.get()
+    });
     state.borrow_mut().model.stop_embedded();
     state.borrow_mut().shutdown_agent();
     window.close();
     finished.store(true, Ordering::Release);
     std::fs::remove_dir_all(root).unwrap();
     eprintln!(
-        "PASS: real GTK backend picker and two unsaved embedded PDF generations; disk unchanged"
+        "PASS: real GTK backend picker, two unsaved PDF generations, forward/reverse mouse selection and clipboard; disk unchanged"
     );
 }

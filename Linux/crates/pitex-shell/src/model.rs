@@ -259,6 +259,7 @@ pub enum WorkspaceMessage {
     SaveFinished { path: NormalizedRelativePath, result: SaveResult },
     PdfLoaded { hash: u64, info: Option<crate::pdf::PdfInfo> },
     PdfRendered { key: u64, raster: crate::pdf::RenderedPage },
+    PdfSelected { key: u64, id: u64, selection: crate::pdf::SelectedText },
     /// Streamed log/issue output — stamped with the owning build so a
     /// superseded run cannot write into a newer run's console.
     BuildEvent { build: BuildID, event: BuildEvent },
@@ -578,6 +579,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::SaveFinished { path, result } => write!(f, "SaveFinished({}, {result:?})", path.raw_value()),
             Self::PdfLoaded { .. } => write!(f, "PdfLoaded"),
             Self::PdfRendered { .. } => write!(f, "PdfRendered"),
+            Self::PdfSelected { .. } => write!(f, "PdfSelected"),
             Self::BuildEvent { .. } => write!(f, "BuildEvent"),
             Self::BuildFinished { .. } => write!(f, "BuildFinished"),
             Self::ForwardResult { .. } => write!(f, "ForwardResult"),
