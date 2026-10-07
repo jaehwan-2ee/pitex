@@ -488,14 +488,14 @@ struct StepDelay: ExpressibleByFloatLiteral {
             // AppKit closes the bare-backslash popup before redispatching
             // the typed key. Allow the production 200ms debounce to show
             // the automatically filtered popup before testing liveness.
-            (0.4, {
+            gated(0.4, "\\in", visible: true) {
                 literal("\\in", "prefix delivered before automatic popup check")
                 requirePopup("fresh heartbeat after prefix edit")
                 Task { @MainActor in
                     requirePopup("heartbeat execution")
                     heartbeat += 1
                 }
-            }),
+            },
             gated(0.9, "\\in", visible: true) {
                 require(lastCandidates?.contains("\\include") == true
                         && lastCandidates?.contains("\\input") == true,
@@ -559,7 +559,7 @@ struct StepDelay: ExpressibleByFloatLiteral {
             }),
             // F: actual native manual binding, then Down+Return accepts.
             (0.05, { key(96, chars: "\u{F708}", mods: [.function]) }),
-            (0.2, { requirePopup("manual F5"); key(down.code, chars: down.chars) }),
+            gated(0.2, "\\doc", visible: true) { requirePopup("manual F5"); key(down.code, chars: down.chars) },
             (0.1, { key(ret.code, chars: ret.chars) }),
             (0.4, {
                 literal("\\documentclass", "Down+Return must accept")
@@ -709,7 +709,7 @@ struct StepDelay: ExpressibleByFloatLiteral {
             // Ordinary delimiters typed through an unselected automatic
             // popup must be inserted literally, never accept its first row.
             (0.05, { type("\n\\in") }),
-            (0.4, { requirePopup("before literal Return"); key(ret.code, chars: ret.chars) }),
+            gated(0.4, "\\in", visible: true) { requirePopup("before literal Return"); key(ret.code, chars: ret.chars) },
             (0.1, {
                 literal("\\in\n", "unselected Return")
                 requireClosed("unselected Return")
@@ -721,7 +721,7 @@ struct StepDelay: ExpressibleByFloatLiteral {
                 require(CompleteRecorder.calls == callsAfterDismiss, "literal Return must not reopen")
             }),
             (0.05, { type("\\in") }),
-            (0.4, { requirePopup("before literal space"); type(" ") }),
+            gated(0.4, "\\in", visible: true) { requirePopup("before literal space"); type(" ") },
             (0.1, {
                 literal("\\in ", "unselected space")
                 requireClosed("unselected space")
@@ -733,7 +733,7 @@ struct StepDelay: ExpressibleByFloatLiteral {
                 require(CompleteRecorder.calls == callsAfterDismiss, "literal space must not reopen")
             }),
             (0.05, { type("\n\\in") }),
-            (0.4, { requirePopup("before literal brace"); type("{") }),
+            gated(0.4, "\\in", visible: true) { requirePopup("before literal brace"); type("{") },
             (0.1, {
                 literal("\\in{", "unselected brace")
                 requireClosed("unselected brace")
