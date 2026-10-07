@@ -26,5 +26,6 @@ path = "src/bin/selftest.rs"
 
 [profile.release]
 opt-level = 2
+lto = "thin"
 debug = 2
 panic = "abort"

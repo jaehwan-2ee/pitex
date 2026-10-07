@@ -21,4 +21,5 @@ path = "src/main.rs"
 
 [profile.release]
 opt-level = 2
+lto = "thin"
 panic = "abort"

@@ -103,7 +103,7 @@ fn main() {
     ];
     flags.extend(
         env::var("PITEX_PREVIEW_NATIVE_OPT")
-            .unwrap_or_else(|_| "-O2 -g".into())
+            .unwrap_or_else(|_| "-O3 -g".into())
             .split_whitespace()
             .map(str::to_owned),
     );

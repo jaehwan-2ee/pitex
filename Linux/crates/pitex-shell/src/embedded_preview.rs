@@ -545,7 +545,7 @@ impl Default for EmbeddedPreview {
 pub const SUPPORTED: bool = cfg!(all(any(unix, windows), feature = "embedded-preview"));
 
 /// Coalescing window before a burst of edits is streamed.
-pub const COALESCE_MS: u64 = 100;
+pub const COALESCE_MS: u64 = 16;
 /// Retry interval while an IME composition is open.
 pub const COMPOSING_RETRY_MS: u64 = 150;
 
@@ -1178,6 +1178,15 @@ mod tests {
     }
 
     const MAIN: &[(&str, u64)] = &[("/p/main.tex", 7)];
+
+    #[test]
+    fn continuous_edits_flush_within_one_frame_but_wait_for_ime_commit() {
+        let mut ep = EmbeddedPreview::default();
+        ep.note_edit(100);
+        ep.note_edit(115);
+        assert_eq!(ep.poll_delay(116, false), Some(0), "typing cannot extend the window");
+        assert_eq!(ep.poll_delay(116, true), Some(COMPOSING_RETRY_MS), "don't compile partial IME text");
+    }
 
     #[test]
     fn equal_unforced_key_sends_nothing() {

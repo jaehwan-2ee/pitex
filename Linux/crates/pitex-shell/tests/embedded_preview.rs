@@ -234,7 +234,7 @@ fn late_prebuild_updates_never_cover_final() {
     assert!(fx.model.displaying_editing_preview(), "initial preview is shown");
 
     fx.edit("% typed before Build\n");
-    // Build before the 100 ms coalescing window elapsed.
+    // Build before the coalescing window elapsed.
     fx.model.start_build(&fx.store, "en");
     fx.build_finished();
     assert!(fx.showing_final(), "final PDF replaces the preview");

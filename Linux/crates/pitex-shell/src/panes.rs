@@ -1486,7 +1486,7 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     ui.pdf_page_label.replace(Some(page_label.clone()));
     root.append(&nav);
 
-    // Page surface: picture inside a scrolled window; click = inverse sync.
+    // Page surface: native Poppler text selection over the rendered picture.
     let scroll = gtk4::ScrolledWindow::new();
     scroll.set_vexpand(true);
     a11y(&scroll, "pitex.preview", "preview.title");
@@ -1509,6 +1509,79 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     picture.set_can_shrink(true);
     a11y(&picture, "pitex.pdf", "preview.title");
     overlay.set_child(Some(&picture));
+    overlay.set_cursor_from_name(Some("text"));
+    let selection = gtk4::DrawingArea::new();
+    selection.set_can_target(false);
+    selection.set_draw_func({
+        let state = Rc::downgrade(state);
+        move |_, cr, width, height| {
+            let Some(state) = state.upgrade() else { return };
+            let Ok(state) = state.try_borrow() else { return };
+            let Some((scale, ox, oy)) = state.pdf_transform(width, height) else { return };
+            cr.set_source_rgba(0.2, 0.45, 0.9, 0.3);
+            for region in &state.pdf_selection.regions {
+                cr.rectangle(ox + region.x as f64 * scale, oy + region.y as f64 * scale,
+                    region.width as f64 * scale, region.height as f64 * scale);
+            }
+            let _ = cr.fill();
+        }
+    });
+    overlay.add_overlay(&selection);
+    ui.pdf_selection_overlay.replace(Some(selection));
+    let drag = gtk4::GestureDrag::new();
+    drag.set_button(gtk4::gdk::BUTTON_PRIMARY);
+    drag.connect_drag_begin({
+        let state = Rc::downgrade(state);
+        move |gesture, x, y| {
+            if gesture.current_event_state().contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+                gesture.set_state(gtk4::EventSequenceState::Denied);
+                return;
+            }
+            let Some(state) = state.upgrade() else { return };
+            let Ok(picture) = gesture.widget().downcast::<gtk4::Picture>() else { return };
+            if state.borrow_mut().pdf_selection_begin(&picture, x, y) {
+                gesture.set_state(gtk4::EventSequenceState::Claimed);
+                gesture.widget().grab_focus();
+            }
+        }
+    });
+    let update_selection = {
+        let state = Rc::downgrade(state);
+        move |gesture: &gtk4::GestureDrag, dx: f64, dy: f64| {
+            let Some((x, y)) = gesture.start_point() else { return };
+            let Some(state) = state.upgrade() else { return };
+            let Ok(picture) = gesture.widget().downcast::<gtk4::Picture>() else { return };
+            state.borrow_mut().pdf_selection_update(&picture, x + dx, y + dy);
+        }
+    };
+    drag.connect_drag_update(update_selection.clone());
+    drag.connect_drag_end({
+        let state = Rc::downgrade(state);
+        move |gesture, dx, dy| {
+            update_selection(gesture, dx, dy);
+            if let Some(state) = state.upgrade() { state.borrow_mut().pdf_selection_start = None; }
+        }
+    });
+    picture.add_controller(drag);
+    let copy = gtk4::EventControllerKey::new();
+    copy.connect_key_pressed({
+        let state = Rc::downgrade(state);
+        move |controller, key, _, modifiers| {
+            if modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK)
+                && matches!(key, gtk4::gdk::Key::c | gtk4::gdk::Key::C) {
+                if let Some(state) = state.upgrade() {
+                    let state = state.borrow();
+                    if !state.pdf_selection.text.is_empty() {
+                        controller.widget().clipboard().set_text(&state.pdf_selection.text);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                }
+            }
+            gtk4::glib::Propagation::Proceed
+        }
+    });
+    picture.set_focusable(true);
+    picture.add_controller(copy);
     // Highlight rectangle drawn on top after forward sync.
     let highlight = gtk4::DrawingArea::new();
     highlight.set_draw_func(|_, cr, w, h| {
