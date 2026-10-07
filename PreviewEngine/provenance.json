@@ -48,7 +48,7 @@
    "license_in_file": "none-in-file",
    "origin": "pitex",
    "path": "Cargo.toml",
-   "sha256": "11c7f208a6d1a9924d20e37eaa7db70b224a0f9f6e6ea4213d9eb81058480809"
+   "sha256": "df0e418ec7602145e7e1a5764e1afe7bb1100a8ad8ac0abfbc053bbfc7a19089"
   },
   {
    "license_in_file": "none-in-file",
@@ -84,7 +84,7 @@
    "license_in_file": "none-in-file",
    "origin": "pitex",
    "path": "Windows/Cargo.toml",
-   "sha256": "8a9901aa1368c526613407c942e6ef83034d887b0947c9398fa417395c1d98f0"
+   "sha256": "3ac514b45c9b52eb9180453ce47da2d2a82cf2cb9fdf6499ef904cba6acc64b8"
   },
   {
    "license_in_file": "n/a (documentation)",
