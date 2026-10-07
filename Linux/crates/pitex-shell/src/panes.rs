@@ -1532,13 +1532,13 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     drag.set_button(gtk4::gdk::BUTTON_PRIMARY);
     drag.connect_drag_begin({
         let state = Rc::downgrade(state);
-        let picture = picture.clone();
         move |gesture, x, y| {
             if gesture.current_event_state().contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
                 gesture.set_state(gtk4::EventSequenceState::Denied);
                 return;
             }
             let Some(state) = state.upgrade() else { return };
+            let Ok(picture) = gesture.widget().downcast::<gtk4::Picture>() else { return };
             if state.borrow_mut().pdf_selection_begin(&picture, x, y) {
                 gesture.set_state(gtk4::EventSequenceState::Claimed);
                 gesture.widget().grab_focus();
@@ -1547,10 +1547,10 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
     });
     let update_selection = {
         let state = Rc::downgrade(state);
-        let picture = picture.clone();
         move |gesture: &gtk4::GestureDrag, dx: f64, dy: f64| {
             let Some((x, y)) = gesture.start_point() else { return };
             let Some(state) = state.upgrade() else { return };
+            let Ok(picture) = gesture.widget().downcast::<gtk4::Picture>() else { return };
             state.borrow_mut().pdf_selection_update(&picture, x + dx, y + dy);
         }
     };
