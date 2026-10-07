@@ -1,0 +1,14 @@
+Tools/check-nightly-gate.sh
+  h_bcbc8ae9e599aa 18-20,132,149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "faaa14e64676c22723a7c00ee837c47a0f430063",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
