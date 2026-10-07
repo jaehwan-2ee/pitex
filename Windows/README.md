@@ -83,7 +83,7 @@ asks for it in settings).
 (`Pitex-*-windows-amd64-setup.exe`) from the same bundle:
 
 ```sh
-makensis -DVERSION=1.0.1 -DOUTFILE=Pitex-setup.exe pitex.nsi   # from Windows/
+makensis -DVERSION=1.0.2 -DOUTFILE=Pitex-setup.exe pitex.nsi   # from Windows/
 ```
 
 It installs to `%LOCALAPPDATA%\Programs\Pitex` (no admin rights), adds

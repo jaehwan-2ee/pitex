@@ -1,4 +1,4 @@
-# Pitex 1.0.1
+# Pitex 1.0.2
 
 Pitex is a native LaTeX application for macOS, Linux, and Windows.
 It has a text editor, PDF preview, project builds, and a Pi AI assistant.
@@ -108,10 +108,10 @@ Run the command for your Ubuntu version:
 
 | Ubuntu version | Command |
 |---|---|
-| 24.04 | `sh ./install-pitex-deb.sh ./Pitex-v1.0.1-ubuntu24.04-amd64.deb` |
-| 22.04 | `sh ./install-pitex-deb.sh ./Pitex-v1.0.1-ubuntu22.04-amd64.deb` |
+| 24.04 | `sh ./install-pitex-deb.sh ./Pitex-v1.0.2-ubuntu24.04-amd64.deb` |
+| 22.04 | `sh ./install-pitex-deb.sh ./Pitex-v1.0.2-ubuntu22.04-amd64.deb` |
 
-For Windows, run `Pitex-v1.0.1-windows-amd64-setup.exe`.
+For Windows, run `Pitex-v1.0.2-windows-amd64-setup.exe`.
 For a portable installation, extract the ZIP and run `pitex\bin\pitex.exe`.
 
 [Full installation instructions](Docs/installation/README.md#download-and-installation)

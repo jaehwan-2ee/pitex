@@ -15,6 +15,9 @@ export GITHUB_REPOSITORY="jaehwan-2ee/pitex"
 export PUBLISH_INPUT="true"
 export PATH="$work/bin:$PATH"
 
+base_version=$(sed -n 's/^version = "\([0-9.]*\)"$/\1/p' Linux/crates/pitex/Cargo.toml | head -1)
+nightly_prefix="${base_version%.*}.$((${base_version##*.} + 1))-nightly."
+
 mkdir -p "$work/bin"
 
 cat > "$work/bin/git" <<'EOF'
@@ -126,7 +129,7 @@ echo "$out"
 echo "=== successful CI run for this SHA ==="
 out=$(run_gate success)
 version=$(gate_output version)
-[[ "$version" =~ ^1\.0\.2-nightly\.[0-9]{12}$ ]] || { echo "FAIL: unexpected version format: $version" >&2; exit 1; }
+[[ "$version" == "$nightly_prefix"* && "${version#"$nightly_prefix"}" =~ ^[0-9]{12}$ ]] || { echo "FAIL: unexpected version format: $version" >&2; exit 1; }
 [ "$(gate_output sha)" = "$PITEX_TEST_SHA" ] || { echo "FAIL: sha output mismatch" >&2; exit 1; }
 echo "$out"
 echo "version: $version"
@@ -143,7 +146,7 @@ echo "=== nightly tag already at SHA, force=true ==="
 export INPUT_FORCE="true"
 out=$(run_gate success)
 version=$(gate_output version)
-[[ "$version" =~ ^1\.0\.2-nightly\.[0-9]{12}$ ]] || { echo "FAIL: unexpected forced version: $version" >&2; exit 1; }
+[[ "$version" == "$nightly_prefix"* && "${version#"$nightly_prefix"}" =~ ^[0-9]{12}$ ]] || { echo "FAIL: unexpected forced version: $version" >&2; exit 1; }
 echo "$out"
 echo "version: $version"
 
