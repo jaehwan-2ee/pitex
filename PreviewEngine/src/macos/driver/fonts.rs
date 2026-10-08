@@ -1502,6 +1502,11 @@ unsafe extern "C" fn load_map(mut fc: *mut font_cache) {
 }
 unsafe fn pitex_map_entry_free(entry:map_entry) {free(entry.tfm.cast());free(entry.psname.cast());free(entry.fontfile.cast());free(entry.encfile.cast());}
 unsafe fn pitex_parse_map_text(fc:*mut font_cache,text:*mut ::core::ffi::c_char,mode:u8) {
+    // Rebuilt for each map update so replacements/removals stay current. Avoid
+    // scanning every prior entry for every line of the default pdftex.map.
+    let mut indices: std::collections::HashMap<Vec<u8>, i32> = (0..(*fc).nmap)
+        .map(|i| (std::ffi::CStr::from_ptr((*(*fc).map.offset(i as isize)).tfm).to_bytes().to_vec(), i))
+        .collect();
     let mut line: *mut ::core::ffi::c_char = text;
     while !line.is_null() && *line as ::core::ffi::c_int != 0 {
         let mut nl: *mut ::core::ffi::c_char = strchr(line, '\n' as i32);
@@ -1590,14 +1595,18 @@ unsafe fn pitex_parse_map_text(fc:*mut font_cache,text:*mut ::core::ffi::c_char,
                     m.psname = strdup(tok);
                 }
             }
-            let existing=(0..(*fc).nmap).find(|i|strcmp((*(*fc).map.offset(*i as isize)).tfm,m.tfm)==0);
+            let existing=indices.get(std::ffi::CStr::from_ptr(m.tfm).to_bytes()).copied();
             if let Some(index)=existing {
                 if mode!=b'=' && mode!=b'-' {(*fc).duplicate_maps=(*fc).duplicate_maps.saturating_add(1);}
                 if mode==b'=' || mode==b'-' {
                     let previous=(*fc).map.offset(index as isize);
                     free((*previous).tfm.cast());free((*previous).psname.cast());free((*previous).fontfile.cast());free((*previous).encfile.cast());
                     if mode==b'=' { *previous=m; }
-                    else { std::ptr::copy(previous.add(1),previous,((*fc).nmap-index-1) as usize);(*fc).nmap-=1;pitex_map_entry_free(m); }
+                    else {
+                        indices.remove(std::ffi::CStr::from_ptr(m.tfm).to_bytes());
+                        for position in indices.values_mut() { if *position > index { *position -= 1; } }
+                        std::ptr::copy(previous.add(1),previous,((*fc).nmap-index-1) as usize);(*fc).nmap-=1;pitex_map_entry_free(m);
+                    }
                 } else { pitex_map_entry_free(m); }
                 line=if !nl.is_null() {nl.add(1)} else {std::ptr::null_mut()};
                 continue;
@@ -1619,6 +1628,7 @@ unsafe fn pitex_parse_map_text(fc:*mut font_cache,text:*mut ::core::ffi::c_char,
                 }
             }
             let fresh3 = (*fc).nmap;
+            indices.insert(std::ffi::CStr::from_ptr(m.tfm).to_bytes().to_vec(), fresh3);
             (*fc).nmap = (*fc).nmap + 1;
             *(*fc).map.offset(fresh3 as isize) = m;
         }
@@ -1630,6 +1640,9 @@ unsafe fn pitex_parse_map_text(fc:*mut font_cache,text:*mut ::core::ffi::c_char,
     }
     free(text as *mut ::core::ffi::c_void);
 }
+#[cfg(test)]
+#[path = "../../shared/font_map_tests.rs"]
+mod font_map_tests;
 #[no_mangle]
 pub unsafe extern "C" fn font_map_reset(fc:*mut font_cache) {
     for i in 0..(*fc).nmap {pitex_map_entry_free(*(*fc).map.offset(i as isize));}

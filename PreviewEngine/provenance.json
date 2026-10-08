@@ -438,7 +438,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/fonts.rs",
-   "sha256": "65fc2c201f36089e52bd6d3a006552607f0d3fa7b20c275ef00a7b0650faf317",
+   "sha256": "0146d1a270f94557dcb1d1ad04302019e7b14f406625fbd5419da37246b6fccd",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -1047,7 +1047,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/fonts.rs",
-   "sha256": "67a78af094363faf32a9ead6f44cab471e1420dae5367613236a0a36e7be4dff",
+   "sha256": "be3f1dac3969a8474d2accbc52f5d7f0d250ad885b9f3c001afdd1788e1986c3",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -1767,6 +1767,12 @@
    "upstream_license": "MIT/X11 (SIL International)",
    "upstream_path": "src/engine/layout/xetex-XeTeXFontInst_Mac.cpp",
    "upstream_sha256": "4e3e0e5b52d70c075769922c8480e449daaf039a56534d67c6128cd1094a7e81"
+  },
+  {
+   "license_in_file": "AGPL-3.0-or-later (Pitex)",
+   "origin": "pitex",
+   "path": "src/shared/font_map_tests.rs",
+   "sha256": "1c22473b8736b3a93b228086f78213f3dd9c053da2e1ed52cc2fef2e008d31b2"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
