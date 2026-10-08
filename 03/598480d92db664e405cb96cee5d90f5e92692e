@@ -1,0 +1,20 @@
+PreviewEngine/provenance.json
+  h_bcbc8ae9e599aa 441,1050,1771-1776
+PreviewEngine/src/linux/driver/fonts.rs
+  h_bcbc8ae9e599aa 1509-1513,1614,1621-1625,1647,1659-1661
+PreviewEngine/src/macos/driver/fonts.rs
+  h_bcbc8ae9e599aa 1505-1509,1598,1605-1609,1631,1643-1645
+PreviewEngine/src/shared/font_map_tests.rs
+  h_bcbc8ae9e599aa 1-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "03598480d92db664e405cb96cee5d90f5e92692e",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
