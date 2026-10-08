@@ -1,0 +1,30 @@
+.github/release-notes/v1.0.3.md
+  h_bcbc8ae9e599aa 1-31
+Docs/installation/README.md
+  h_bcbc8ae9e599aa 46-47,62,67
+Linux/Cargo.lock
+  h_bcbc8ae9e599aa 966
+Linux/crates/pitex/Cargo.toml
+  h_bcbc8ae9e599aa 3
+Mac/Config/Info.plist
+  h_bcbc8ae9e599aa 20,22
+README.md
+  h_bcbc8ae9e599aa 1,111-112,114
+Windows/Cargo.lock
+  h_bcbc8ae9e599aa 1091
+Windows/README.md
+  h_bcbc8ae9e599aa 86
+Windows/crates/pitex-windows/Cargo.toml
+  h_bcbc8ae9e599aa 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1fa502eb09f5b851e3befc739144cf66fd16ea7",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
