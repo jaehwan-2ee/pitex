@@ -89,8 +89,23 @@ enum LaunchFlag {
         let cmdNItems = commandKeyItems("n")
         require(cmdNItems.count == 1 && cmdNItems[0].menu === newDocSubmenu,
                 "⌘N must appear exactly once — inside the New Document submenu")
-        require(!pressCommandKey("n", keyCode: 45),
-                "⌘N without a project must not be claimed")
+        // A disabled ⌘N item can still consume the key event — the
+        // contract is that nothing happens, not that the press returns
+        // unclaimed. Fire the real key path, settle, and compare state.
+        let windowsBefore = NSApp.windows.count
+        let liveBefore = WorkspaceWindows.live.count
+        let claimedN = pressCommandKey("n", keyCode: 45)
+        try? await Task.sleep(for: .milliseconds(300))
+        print("[diag] ⌘N no-project claimed=\(claimedN) "
+                + "phase=\(workspace.phase) active=\(String(describing: workspace.activeDocumentURL))")
+        if case .noProject = workspace.phase {} else {
+            require(false, "⌘N without a project must not change the workspace phase")
+        }
+        require(workspace.projectURL == nil && workspace.activeDocumentURL == nil
+                && workspace.environment == nil,
+                "⌘N without a project must not create a document")
+        require(NSApp.windows.count == windowsBefore && WorkspaceWindows.live.count == liveBefore,
+                "⌘N without a project must not open a window or workspace — \(diagnostics())")
         stage("New Document submenu: three formats, disabled without a project, single ⌘N")
 
         // Menu structure: exactly one ⌘, item in the whole tree, and it
