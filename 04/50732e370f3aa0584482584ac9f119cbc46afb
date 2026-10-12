@@ -1,0 +1,18 @@
+Mac/Sources/AppShell/PitexApp.swift
+  h_bcbc8ae9e599aa 2861-2862
+Mac/Sources/Features/WorkspaceView.swift
+  h_bcbc8ae9e599aa 13-16,26,37,41,225
+Tools/check-settings-menu.py
+  h_bcbc8ae9e599aa 74-77,84-88,263-264,268-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0450732e370f3aa0584482584ac9f119cbc46afb",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
