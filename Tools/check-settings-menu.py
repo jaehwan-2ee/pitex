@@ -71,16 +71,21 @@ enum LaunchFlag {
         stage("one empty window")
 
         // File → New Document is a submenu offering LaTeX, BibTeX and
-        // Markdown — disabled while there is no project. ⌘N lives on the
-        // LaTeX item inside it, exactly once in the whole menu tree.
+        // Markdown — its items disabled while there is no project. ⌘N
+        // lives on the LaTeX item inside it, exactly once in the menu
+        // tree. (The submenu's NSMenuItem is a container and reports
+        // enabled on macOS — the contract lives on the leaf items.)
         updateMenus()
         let (newDocItem, newDocSubmenu) = newDocumentSubmenu()
         require(newDocItem != nil && newDocSubmenu != nil,
                 "the File menu must carry a New Document submenu — \(diagnostics())")
         require(newDocSubmenu!.items.count == 3,
                 "New Document must offer three formats — \(newDocSubmenu!.items.map(\.title))")
-        require(newDocItem!.isEnabled == false,
-                "New Document must stay disabled without a project")
+        print("[diag] new-document parent enabled=\(newDocItem!.isEnabled) "
+                + "leaves=\(newDocSubmenu!.items.map { "\($0.title):\($0.isEnabled)" }.joined(separator: ","))")
+        require(newDocSubmenu!.items.allSatisfy { !$0.isEnabled },
+                "all three format items must be disabled without a project "
+                + "— leaves=\(newDocSubmenu!.items.map { "\($0.title):\($0.isEnabled)" }.joined(separator: ","))")
         let cmdNItems = commandKeyItems("n")
         require(cmdNItems.count == 1 && cmdNItems[0].menu === newDocSubmenu,
                 "⌘N must appear exactly once — inside the New Document submenu")
@@ -255,10 +260,13 @@ enum LaunchFlag {
         // The BibTeX/Markdown items dispatch real file creation too —
         // ordered items[1]/items[2] inside the submenu.
         updateMenus()
-        guard let submenu = newDocumentSubmenu().submenu else {
+        let newDocPair = newDocumentSubmenu()
+        guard let submenu = newDocPair.submenu else {
             require(false, "the File menu lost its New Document submenu")
             fatalError("unreachable")
         }
+        print("[diag] new-document parent enabled=\(newDocPair.item?.isEnabled ?? false) "
+                + "leaves=\(submenu.items.map { "\($0.title):\($0.isEnabled)" }.joined(separator: ","))")
         require(submenu.items.count == 3 && submenu.items.allSatisfy { $0.isEnabled },
                 "all three format items must be enabled with a project — \(submenu.items.map(\.title))")
         submenu.performActionForItem(at: 1)

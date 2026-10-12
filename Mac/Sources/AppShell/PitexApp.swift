@@ -2858,10 +2858,10 @@ private struct WorkspaceCommandContent: Commands {
             // submenu takes no shortcut so the key equivalent registers
             // once. `workspace` resolves the key window's model when the
             // item fires, not when this body is built.
-            NewDocumentMenu(latexShortcut: KeyboardShortcut("n")) { format in
+            NewDocumentMenu(latexShortcut: KeyboardShortcut("n"),
+                            creationEnabled: workspace.hasProject) { format in
                 Task { await workspace.createDocument(format) }
             }
-            .disabled(!workspace.hasProject)
             Button("command.open") { workspace.presentOpenPanel() }
                 .keyboardShortcut("o")
                 .accessibilityIdentifier("pitex.command.open")

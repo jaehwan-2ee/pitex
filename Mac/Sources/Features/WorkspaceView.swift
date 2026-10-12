@@ -10,6 +10,10 @@ struct NewDocumentMenu: View {
     /// ⌘N belongs to the app File menu alone — the toolbar's copy takes
     /// no shortcut so the key equivalent registers exactly once.
     var latexShortcut: KeyboardShortcut? = nil
+    /// Whether document creation is available — carried to each leaf
+    /// item: a submenu's NSMenuItem stays enabled as a container on
+    /// macOS, so the without-a-project contract must live on the leaves.
+    var creationEnabled: Bool = true
     let onCreate: (NewDocumentFormat) -> Void
 
     var body: some View {
@@ -19,6 +23,7 @@ struct NewDocumentMenu: View {
             formatItem(.markdown)
         }
         .accessibilityIdentifier("pitex.command.new")
+        .disabled(!creationEnabled)
     }
 
     @ViewBuilder private func formatItem(
@@ -29,9 +34,11 @@ struct NewDocumentMenu: View {
             Button(format.titleKey) { onCreate(format) }
                 .keyboardShortcut(shortcut)
                 .accessibilityIdentifier(format.menuIdentifier)
+                .disabled(!creationEnabled)
         } else {
             Button(format.titleKey) { onCreate(format) }
                 .accessibilityIdentifier(format.menuIdentifier)
+                .disabled(!creationEnabled)
         }
     }
 }
@@ -215,7 +222,7 @@ struct WorkspaceView: View {
             }
 
             Menu {
-                NewDocumentMenu { format in
+                NewDocumentMenu(creationEnabled: workspace.hasProject) { format in
                     Task { await workspace.createDocument(format) }
                 }
                 Button("command.open") { workspace.presentOpenPanel() }
