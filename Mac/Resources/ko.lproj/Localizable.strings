@@ -167,6 +167,9 @@
 "console.custom_run_help" = "커스텀 명령 실행 (⌃⌘B)";
 
 "command.new" = "새 문서";
+"command.new_latex" = "LaTeX 문서";
+"command.new_bibtex" = "BibTeX 문서";
+"command.new_markdown" = "Markdown 문서";
 "command.open_recent" = "최근 항목 열기";
 "command.clear_recents" = "메뉴 지우기";
 "command.pin_build_target" = "빌드 대상으로 고정";

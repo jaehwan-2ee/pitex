@@ -2,6 +2,47 @@ import AppKit
 import LanguageCore
 import SwiftUI
 
+/// The File → New Document submenu, shared by the app's File commands
+/// and the editor toolbar's "+" menu. `onCreate` runs when an item
+/// fires so the File commands can re-resolve the key window's workspace
+/// instead of pinning a model while the menu is built.
+struct NewDocumentMenu: View {
+    /// ⌘N belongs to the app File menu alone — the toolbar's copy takes
+    /// no shortcut so the key equivalent registers exactly once.
+    var latexShortcut: KeyboardShortcut? = nil
+    /// Whether document creation is available — carried to each leaf
+    /// item: a submenu's NSMenuItem stays enabled as a container on
+    /// macOS, so the without-a-project contract must live on the leaves.
+    var creationEnabled: Bool = true
+    let onCreate: (NewDocumentFormat) -> Void
+
+    var body: some View {
+        Menu("command.new") {
+            formatItem(.latex, shortcut: latexShortcut)
+            formatItem(.bibtex)
+            formatItem(.markdown)
+        }
+        .accessibilityIdentifier("pitex.command.new")
+        .disabled(!creationEnabled)
+    }
+
+    @ViewBuilder private func formatItem(
+        _ format: NewDocumentFormat,
+        shortcut: KeyboardShortcut? = nil
+    ) -> some View {
+        if let shortcut {
+            Button(format.titleKey) { onCreate(format) }
+                .keyboardShortcut(shortcut)
+                .accessibilityIdentifier(format.menuIdentifier)
+                .disabled(!creationEnabled)
+        } else {
+            Button(format.titleKey) { onCreate(format) }
+                .accessibilityIdentifier(format.menuIdentifier)
+                .disabled(!creationEnabled)
+        }
+    }
+}
+
 struct WorkspaceView: View {
     @ObservedObject var workspace: WorkspaceModel
     /// When true the PDF/AI inspector sits in the left column and the
@@ -181,7 +222,9 @@ struct WorkspaceView: View {
             }
 
             Menu {
-                Button("command.new") { Task { await workspace.createDocument() } }
+                NewDocumentMenu(creationEnabled: workspace.hasProject) { format in
+                    Task { await workspace.createDocument(format) }
+                }
                 Button("command.open") { workspace.presentOpenPanel() }
                 if !workspace.recentDocuments.isEmpty {
                     Divider()

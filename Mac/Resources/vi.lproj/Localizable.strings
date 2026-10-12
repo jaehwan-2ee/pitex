@@ -167,6 +167,9 @@
 "console.custom_run_help" = "Chạy lệnh tùy chỉnh (⌃⌘B)";
 
 "command.new" = "Tài liệu mới";
+"command.new_latex" = "Tài liệu LaTeX";
+"command.new_bibtex" = "Tài liệu BibTeX";
+"command.new_markdown" = "Tài liệu Markdown";
 "command.open_recent" = "Mở gần đây";
 "command.clear_recents" = "Xóa menu";
 "command.pin_build_target" = "Ghim làm mục tiêu biên dịch";

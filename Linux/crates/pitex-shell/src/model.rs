@@ -149,6 +149,53 @@ pub enum SidebarSection {
     BibTeX,
 }
 
+/// `NewDocumentFormat` — the File → New Document formats: the three text
+/// types the editor activates directly. `untitled` names each new file
+/// per extension; only LaTeX starts from a template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewDocumentFormat {
+    Latex,
+    Bibtex,
+    Markdown,
+}
+impl NewDocumentFormat {
+    pub const ALL: [Self; 3] = [Self::Latex, Self::Bibtex, Self::Markdown];
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Latex => "tex",
+            Self::Bibtex => "bib",
+            Self::Markdown => "md",
+        }
+    }
+    /// `win.` action name for this format's menu item — `newdoc` keeps
+    /// the Ctrl+N binding, so it stays the LaTeX case.
+    pub fn action_name(self) -> &'static str {
+        match self {
+            Self::Latex => "newdoc",
+            Self::Bibtex => "newbib",
+            Self::Markdown => "newmd",
+        }
+    }
+    /// Shared `.strings` key for the menu label.
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Latex => "command.new_latex",
+            Self::Bibtex => "command.new_bibtex",
+            Self::Markdown => "command.new_markdown",
+        }
+    }
+    /// Initial file contents — the .tex template is byte-identical to
+    /// what `create_document` has always written.
+    pub fn initial_text(self) -> &'static str {
+        match self {
+            Self::Latex => {
+                "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n"
+            }
+            Self::Bibtex | Self::Markdown => "",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DocumentOutlineItem {
     pub title: String,
@@ -2261,25 +2308,23 @@ impl WorkspaceModel {
         self.phase = WorkspacePhase::NoProject;
     }
 
-    /// File → New inside the open project.
-    pub fn create_document(&mut self, sink: Sender<WorkspaceMessage>) {
+    /// File → New inside the open project — `untitled.<ext>` in the
+    /// format's own sequence, so .bib/.md don't share the .tex counter.
+    pub fn create_document(&mut self, format: NewDocumentFormat, sink: Sender<WorkspaceMessage>) {
         let Some(root) = self.project_url.clone() else { return };
         // Name choice and write as one step against a remote sync commit —
         // the ticket ends with the write so `activate_document` can take
         // its own later.
         let written = {
             let _write_gate = remote_core::MirrorWrites::shared().ticket();
+            let ext = format.extension();
             let mut index = 1;
-            let mut url = root.join("untitled.tex");
+            let mut url = root.join(format!("untitled.{ext}"));
             while url.exists() {
                 index += 1;
-                url = root.join(format!("untitled-{index}.tex"));
+                url = root.join(format!("untitled-{index}.{ext}"));
             }
-            std::fs::write(
-                &url,
-                "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n",
-            )
-            .map(|()| url)
+            std::fs::write(&url, format.initial_text()).map(|()| url)
         };
         match written {
             Ok(url) => {

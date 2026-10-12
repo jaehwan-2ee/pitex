@@ -168,6 +168,9 @@
 "console.custom_run_help" = "Запустить пользовательскую команду (⌃⌘B)";
 
 "command.new" = "Новый документ";
+"command.new_latex" = "Документ LaTeX";
+"command.new_bibtex" = "Документ BibTeX";
+"command.new_markdown" = "Документ Markdown";
 "command.open_recent" = "Открыть недавний";
 "command.clear_recents" = "Очистить меню";
 "command.pin_build_target" = "Закрепить как цель сборки";

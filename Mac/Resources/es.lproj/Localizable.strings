@@ -168,6 +168,9 @@
 "console.custom_run_help" = "Ejecutar comando personalizado (⌃⌘B)";
 
 "command.new" = "Nuevo documento";
+"command.new_latex" = "Documento LaTeX";
+"command.new_bibtex" = "Documento BibTeX";
+"command.new_markdown" = "Documento Markdown";
 "command.open_recent" = "Abrir reciente";
 "command.clear_recents" = "Borrar menú";
 "command.pin_build_target" = "Fijar como objetivo de compilación";

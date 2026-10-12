@@ -70,6 +70,44 @@ enum LaunchFlag {
         require(!workspace.hasProject, "the launch window must be empty")
         stage("one empty window")
 
+        // File → New Document is a submenu offering LaTeX, BibTeX and
+        // Markdown — its items disabled while there is no project. ⌘N
+        // lives on the LaTeX item inside it, exactly once in the menu
+        // tree. (The submenu's NSMenuItem is a container and reports
+        // enabled on macOS — the contract lives on the leaf items.)
+        updateMenus()
+        let (newDocItem, newDocSubmenu) = newDocumentSubmenu()
+        require(newDocItem != nil && newDocSubmenu != nil,
+                "the File menu must carry a New Document submenu — \(diagnostics())")
+        require(newDocSubmenu!.items.count == 3,
+                "New Document must offer three formats — \(newDocSubmenu!.items.map(\.title))")
+        print("[diag] new-document parent enabled=\(newDocItem!.isEnabled) "
+                + "leaves=\(newDocSubmenu!.items.map { "\($0.title):\($0.isEnabled)" }.joined(separator: ","))")
+        require(newDocSubmenu!.items.allSatisfy { !$0.isEnabled },
+                "all three format items must be disabled without a project "
+                + "— leaves=\(newDocSubmenu!.items.map { "\($0.title):\($0.isEnabled)" }.joined(separator: ","))")
+        let cmdNItems = commandKeyItems("n")
+        require(cmdNItems.count == 1 && cmdNItems[0].menu === newDocSubmenu,
+                "⌘N must appear exactly once — inside the New Document submenu")
+        // A disabled ⌘N item can still consume the key event — the
+        // contract is that nothing happens, not that the press returns
+        // unclaimed. Fire the real key path, settle, and compare state.
+        let windowsBefore = NSApp.windows.count
+        let liveBefore = WorkspaceWindows.live.count
+        let claimedN = pressCommandKey("n", keyCode: 45)
+        try? await Task.sleep(for: .milliseconds(300))
+        print("[diag] ⌘N no-project claimed=\(claimedN) "
+                + "phase=\(workspace.phase) active=\(String(describing: workspace.activeDocumentURL))")
+        if case .noProject = workspace.phase {} else {
+            require(false, "⌘N without a project must not change the workspace phase")
+        }
+        require(workspace.projectURL == nil && workspace.activeDocumentURL == nil
+                && workspace.environment == nil,
+                "⌘N without a project must not create a document")
+        require(NSApp.windows.count == windowsBefore && WorkspaceWindows.live.count == liveBefore,
+                "⌘N without a project must not open a window or workspace — \(diagnostics())")
+        stage("New Document submenu: three formats, disabled without a project, single ⌘N")
+
         // Menu structure: exactly one ⌘, item in the whole tree, and it
         // lives in the first (application) menu — not File or Help.
         updateMenus()
@@ -195,6 +233,83 @@ enum LaunchFlag {
         require(sheetedWindows.count == 1,
                 "exactly one settings sheet may exist app-wide — \(diagnostics())")
         print("PASS settings-menu: one ⌘, item, real dispatch, dedup and owner restore")
+
+        // ── File → New Document formats ─────────────────────────
+        // The settings suite leaves A's sheet attached and its preview
+        // detached+key — settle both before the window can take focus.
+        workspaceA.showingSettings = false
+        require(await until { attachedSheet(workspaceA) == nil },
+                "A's sheet must dismiss before the New Document checks")
+        workspaceA.attachPreview()
+        require(await until { workspaceA.detachedPreviewWindow == nil },
+                "A's detached preview must reattach before the New Document checks")
+        // ⌘N stays the quick TeX path — it writes untitled.tex into A's
+        // project root and activates it, then untitled-2.tex without
+        // overwriting. The submenu's own items create the other formats.
+        windowA.makeKeyAndOrderFront(nil)
+        require(await until { NSApp.keyWindow === windowA },
+                "A's window must be key for the New Document checks")
+        let rootA = workspaceA.projectURL!
+        let texPath = rootA.appendingPathComponent("untitled.tex")
+        require(pressCommandKey("n", keyCode: 45),
+                "⌘N was not claimed by the File menu")
+        require(await until {
+            workspaceA.activeDocumentURL?.standardizedFileURL == texPath.standardizedFileURL
+                && FileManager.default.fileExists(atPath: texPath.path)
+        }, "⌘N must create and activate untitled.tex — \(diagnostics())")
+        require((try? String(contentsOf: texPath, encoding: .utf8))
+                == "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n",
+                "untitled.tex must keep the article template")
+        stage("⌘N created untitled.tex")
+        require(pressCommandKey("n", keyCode: 45), "the second ⌘N was not claimed")
+        require(await until {
+            workspaceA.activeDocumentURL?.lastPathComponent == "untitled-2.tex"
+                && FileManager.default.fileExists(
+                    atPath: rootA.appendingPathComponent("untitled-2.tex").path)
+        }, "the second ⌘N must create and activate untitled-2.tex")
+        require((try? String(contentsOf: texPath, encoding: .utf8))
+                == "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n",
+                "the second ⌘N must not overwrite untitled.tex")
+        stage("second ⌘N created untitled-2.tex without overwriting")
+
+        // The BibTeX/Markdown items dispatch real file creation too —
+        // ordered items[1]/items[2] inside the submenu.
+        updateMenus()
+        let newDocPair = newDocumentSubmenu()
+        guard let submenu = newDocPair.submenu else {
+            require(false, "the File menu lost its New Document submenu")
+            fatalError("unreachable")
+        }
+        print("[diag] new-document parent enabled=\(newDocPair.item?.isEnabled ?? false) "
+                + "leaves=\(submenu.items.map { "\($0.title):\($0.isEnabled)" }.joined(separator: ","))")
+        require(submenu.items.count == 3 && submenu.items.allSatisfy { $0.isEnabled },
+                "all three format items must be enabled with a project — \(submenu.items.map(\.title))")
+        submenu.performActionForItem(at: 1)
+        let bibPath = rootA.appendingPathComponent("untitled.bib")
+        require(await until {
+            workspaceA.activeDocumentURL?.standardizedFileURL == bibPath.standardizedFileURL
+        }, "the BibTeX item must create and activate untitled.bib")
+        require((try? String(contentsOf: bibPath, encoding: .utf8)) == ""
+                && workspaceA.documentSnapshot?.text == "",
+                "a new .bib must be empty")
+        // Document changes rebuild the command menus — re-query the live
+        // submenu rather than reusing the instance BibTeX came from.
+        updateMenus()
+        guard let submenu = newDocumentSubmenu().submenu else {
+            require(false, "the File menu lost its New Document submenu")
+            fatalError("unreachable")
+        }
+        submenu.performActionForItem(at: 2)
+        let mdPath = rootA.appendingPathComponent("untitled.md")
+        require(await until {
+            workspaceA.activeDocumentURL?.standardizedFileURL == mdPath.standardizedFileURL
+        }, "the Markdown item must create and activate untitled.md")
+        require((try? String(contentsOf: mdPath, encoding: .utf8)) == "",
+                "a new .md must be empty")
+        require(workspaceA.activeDocumentIsMarkdown,
+                "a new .md must take the Markdown document path")
+        stage("BibTeX and Markdown items created empty untitled.bib/.md")
+        print("PASS new-document: submenu dispatch, ⌘N shortcut, template kept, per-format naming")
         print("CHECK_COMPLETE")
         fflush(nil)
         exit(0)
@@ -370,6 +485,59 @@ enum LaunchFlag {
             isARepeat: false, keyCode: 43) else { return false }
         let claimed = NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
         print("[diag] keyEquivalent claimed=\(claimed)")
+        return claimed
+    }
+
+    /// The File → New Document submenu — found by the ⌘N item it hosts,
+    /// so the check does not depend on the bundle's display language.
+    static func newDocumentSubmenu() -> (item: NSMenuItem?, submenu: NSMenu?) {
+        guard let mainMenu = NSApp.mainMenu else { return (nil, nil) }
+        for top in mainMenu.items {
+            guard let fileMenu = top.submenu else { continue }
+            for item in fileMenu.items {
+                guard let submenu = item.submenu else { continue }
+                if submenu.items.contains(where: {
+                    $0.keyEquivalent == "n"
+                        && $0.keyEquivalentModifierMask.intersection([.command, .shift, .option, .control]) == [.command]
+                }) {
+                    return (item, submenu)
+                }
+            }
+        }
+        return (nil, nil)
+    }
+
+    /// Every leaf item in the live menu tree carrying the plain-⌘ key
+    /// equivalent — used to prove a shortcut registers exactly once.
+    static func commandKeyItems(_ key: String) -> [(item: NSMenuItem, menu: NSMenu)] {
+        var found: [(NSMenuItem, NSMenu)] = []
+        func walk(_ menu: NSMenu) {
+            for item in menu.items {
+                if let submenu = item.submenu { walk(submenu); continue }
+                guard item.keyEquivalent == key,
+                      item.keyEquivalentModifierMask.intersection([.command, .shift, .option, .control]) == [.command]
+                else { continue }
+                found.append((item, menu))
+            }
+        }
+        if let menu = NSApp.mainMenu { walk(menu) }
+        return found
+    }
+
+    /// Real ⌘<key> delivery through the menu's key-equivalent path —
+    /// the same dispatch as `pressSettingsShortcut(via: "keyEvent")`.
+    @discardableResult
+    static func pressCommandKey(_ characters: String, keyCode: UInt16) -> Bool {
+        updateMenus()
+        let windowNumber = NSApp.keyWindow?.windowNumber
+            ?? WorkspaceWindows.live.compactMap { $0.window }.first?.windowNumber ?? 0
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: [.command], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: windowNumber, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters,
+            isARepeat: false, keyCode: keyCode) else { return false }
+        let claimed = NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+        print("[diag] keyEquivalent '\(characters)' claimed=\(claimed)")
         return claimed
     }
 

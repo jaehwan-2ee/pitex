@@ -39,6 +39,44 @@ enum WorkspaceSyncTeXState: Equatable {
     case ambiguous(String)
 }
 
+/// The File → New Document formats — the three text types the editor
+/// activates directly. `untitled` names each new file per extension;
+/// only LaTeX starts from a template.
+enum NewDocumentFormat {
+    case latex, bibtex, markdown
+
+    var fileExtension: String {
+        switch self {
+        case .latex: "tex"
+        case .bibtex: "bib"
+        case .markdown: "md"
+        }
+    }
+    /// Initial file contents — the .tex template is byte-identical to
+    /// what `createDocument` has always written.
+    var initialText: String {
+        switch self {
+        case .latex: "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n"
+        case .bibtex, .markdown: ""
+        }
+    }
+    /// Shared `.strings` key for the menu label.
+    var titleKey: LocalizedStringKey {
+        switch self {
+        case .latex: "command.new_latex"
+        case .bibtex: "command.new_bibtex"
+        case .markdown: "command.new_markdown"
+        }
+    }
+    var menuIdentifier: String {
+        switch self {
+        case .latex: "pitex.command.new.latex"
+        case .bibtex: "pitex.command.new.bibtex"
+        case .markdown: "pitex.command.new.markdown"
+        }
+    }
+}
+
 /// What a content change, an atomic replace, a touch or a chmod moves — and what an access-time or extended-attribute update does NOT:
 /// (device, inode, size, mtime in ns, mode). A read of the watched file raises an attribute event whose tuple is unchanged.
 private struct WatchedFileState: Equatable {
@@ -674,21 +712,22 @@ final class WorkspaceModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Self.recentsKey)
     }
 
-    /// File → New: creates an empty .tex file inside the open project and
-    /// opens it. Without a project this is a no-op.
-    func createDocument() async {
+    /// File → New: creates an untitled document inside the open project
+    /// and opens it — `untitled.<ext>` in the format's own sequence, so
+    /// .bib/.md don't share the .tex counter. Without a project this is a
+    /// no-op.
+    func createDocument(_ format: NewDocumentFormat = .latex) async {
         guard !isClosing, let root = projectURL else { return }
         // Name choice and write as one step against a remote sync commit.
         await MirrorWrites.shared.enter()
         var index = 1
-        var url = root.appendingPathComponent("untitled.tex")
+        var url = root.appendingPathComponent("untitled.\(format.fileExtension)")
         while FileManager.default.fileExists(atPath: url.path) {
             index += 1
-            url = root.appendingPathComponent("untitled-\(index).tex")
+            url = root.appendingPathComponent("untitled-\(index).\(format.fileExtension)")
         }
         let written = Result {
-            try "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n"
-                .write(to: url, atomically: true, encoding: .utf8)
+            try format.initialText.write(to: url, atomically: true, encoding: .utf8)
         }
         MirrorWrites.shared.leave()
         do {
@@ -2815,9 +2854,14 @@ private struct WorkspaceCommandContent: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("command.new") { Task { await workspace.createDocument() } }
-                .keyboardShortcut("n")
-                .disabled(!workspace.hasProject)
+            // ⌘N lives only in this File-menu copy — the toolbar's shared
+            // submenu takes no shortcut so the key equivalent registers
+            // once. `workspace` resolves the key window's model when the
+            // item fires, not when this body is built.
+            NewDocumentMenu(latexShortcut: KeyboardShortcut("n"),
+                            creationEnabled: workspace.hasProject) { format in
+                Task { await workspace.createDocument(format) }
+            }
             Button("command.open") { workspace.presentOpenPanel() }
                 .keyboardShortcut("o")
                 .accessibilityIdentifier("pitex.command.open")
