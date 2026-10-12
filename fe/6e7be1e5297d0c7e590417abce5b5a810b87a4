@@ -1,0 +1,14 @@
+Tools/check-settings-menu.py
+  h_bcbc8ae9e599aa 92-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe6e7be1e5297d0c7e590417abce5b5a810b87a4",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
