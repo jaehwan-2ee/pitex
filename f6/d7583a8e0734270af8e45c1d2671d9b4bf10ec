@@ -1,0 +1,40 @@
+Linux/crates/pitex-shell/src/app_ui.rs
+  h_bcbc8ae9e599aa 36,1743-1745,1747,2560-2563,6432-6444,6476-6479,6862-6876,6888-6890
+Linux/crates/pitex-shell/src/model.rs
+  h_bcbc8ae9e599aa 152-198,2311-2313,2320,2322,2325,2327
+Linux/crates/pitex-shell/tests/new_document_formats.rs
+  h_bcbc8ae9e599aa 1-204
+Mac/Resources/en.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 170-172
+Mac/Resources/es.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 171-173
+Mac/Resources/ja.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 170-172
+Mac/Resources/ko.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 170-172
+Mac/Resources/ru.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 171-173
+Mac/Resources/vi.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 170-172
+Mac/Resources/zh-Hans.lproj/Localizable.strings
+  h_bcbc8ae9e599aa 171-173
+Mac/Sources/AppShell/PitexApp.swift
+  h_bcbc8ae9e599aa 42-79,715-719,724,727,730,2857-2864
+Mac/Sources/Features/WorkspaceView.swift
+  h_bcbc8ae9e599aa 5-38,218-220
+Tools/check-settings-menu.py
+  h_bcbc8ae9e599aa 73-90,216-289,468-520
+Tools/check-workspace-navigation.py
+  h_bcbc8ae9e599aa 66-75,472-514
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6d7583a8e0734270af8e45c1d2671d9b4bf10ec",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
