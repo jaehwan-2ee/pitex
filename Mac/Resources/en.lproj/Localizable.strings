@@ -167,6 +167,9 @@
 "console.custom_run_help" = "Run custom command (⌃⌘B)";
 
 "command.new" = "New Document";
+"command.new_latex" = "LaTeX Document";
+"command.new_bibtex" = "BibTeX Document";
+"command.new_markdown" = "Markdown Document";
 "command.open_recent" = "Open Recent";
 "command.clear_recents" = "Clear Menu";
 "command.pin_build_target" = "Pin as Build Target";

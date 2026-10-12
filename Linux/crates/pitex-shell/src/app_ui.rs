@@ -33,7 +33,7 @@ use crate::ghost_completion::{CompletionContext, GhostCompletionCoordinator};
 use crate::l10n::{resolve_language, tr, tr1};
 use crate::markdown_preview::MarkdownPreview;
 use crate::model::{
-    ConsoleSection, DocumentTodoItem, SidebarSection, TodoLineEdit,
+    ConsoleSection, DocumentTodoItem, NewDocumentFormat, SidebarSection, TodoLineEdit,
     WorkspaceBuildState, WorkspaceMessage, WorkspaceModel, WorkspacePhase, WorkspaceSyncTeXState,
 };
 use crate::pdf::{PdfInfo, PdfRenderer};
@@ -1740,11 +1740,11 @@ impl AppState {
         });
     }
 
-    /// File → New Document: creates `untitled.tex` at the project root and
-    /// activates it — matches `createDocument()` (no save panel).
-    pub fn create_document_action(&mut self) {
+    /// File → New Document: creates `untitled.<ext>` at the project root
+    /// and activates it — matches `createDocument(_:)` (no save panel).
+    pub fn create_document_action(&mut self, format: NewDocumentFormat) {
         if let Some(tx) = self.tx.clone() {
-            self.model.create_document(tx);
+            self.model.create_document(format, tx);
         }
         self.refresh_after_document_change();
     }
@@ -2557,7 +2557,10 @@ impl AppState {
             // model's `recent_documents` like the macOS File menu submenu.
             if let Some(add) = ui.add_menu_button.borrow().as_ref() {
                 let menu = gio::Menu::new();
-                menu.append(Some(&tr(self.language, "command.new")), Some("win.newdoc"));
+                menu.append_submenu(
+                    Some(&tr(self.language, "command.new")),
+                    &new_document_submenu(self.language),
+                );
                 menu.append(Some(&tr(self.language, "command.open")), Some("win.open"));
                 if !self.model.recent_documents.is_empty() {
                     let recents = gio::Menu::new();
@@ -6426,6 +6429,19 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
     root.upcast()
 }
 
+/// The "New Document" submenu — one builder for the "+" menu's initial
+/// model and every `refresh_phase` rebuild, so both keep every format.
+pub fn new_document_submenu(lang: &str) -> gio::Menu {
+    let menu = gio::Menu::new();
+    for format in NewDocumentFormat::ALL {
+        menu.append(
+            Some(&tr(lang, format.label_key())),
+            Some(&format!("win.{}", format.action_name())),
+        );
+    }
+    menu
+}
+
 fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget {
     let lang = state.borrow().language;
     let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -6457,7 +6473,10 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     // "+" menu: the File-menu equivalent — new / open / pin / close; the
     // Open Recent section is rebuilt in `refresh_phase` from the model.
     let add_menu = gio::Menu::new();
-    add_menu.append(Some(&tr(lang, "command.new")), Some("win.newdoc"));
+    add_menu.append_submenu(
+        Some(&tr(lang, "command.new")),
+        &new_document_submenu(lang),
+    );
     add_menu.append(Some(&tr(lang, "command.open")), Some("win.open"));
     let add = gtk4::MenuButton::new();
     add.set_icon_name("list-add-symbolic");
@@ -6840,10 +6859,21 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     ui.footer.replace(Some(footer.clone()));
     root.append(&footer);
 
-    // Window actions for menus.
-    let state2 = state.clone();
-    let newdoc = gio::SimpleAction::new("newdoc", None);
-    newdoc.connect_activate(move |_, _| state2.borrow_mut().create_document_action());
+    // Window actions for menus: `newdoc` keeps its Ctrl+N binding and
+    // stays the LaTeX case; the submenu adds one plain action per format
+    // so unparameterized shortcut activation still lands on .tex.
+    let format_actions: Vec<gio::SimpleAction> = NewDocumentFormat::ALL
+        .iter()
+        .map(|format| {
+            let action = gio::SimpleAction::new(format.action_name(), None);
+            let st = state.clone();
+            let format = *format;
+            action.connect_activate(move |_, _| {
+                st.borrow_mut().create_document_action(format)
+            });
+            action
+        })
+        .collect();
     let state3 = state.clone();
     let open_action = gio::SimpleAction::new("open", None);
     open_action.connect_activate(move |_, _| state3.borrow().present_open(None));
@@ -6855,7 +6885,9 @@ fn build_editor_column(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::W
     saveall.connect_activate(move |_, _| state5.borrow_mut().save_all_action());
     UI.with(|ui| {
         if let Some(w) = ui.window.borrow().as_ref() {
-            w.add_action(&newdoc);
+            for action in &format_actions {
+                w.add_action(action);
+            }
             w.add_action(&open_action);
             w.add_action(&saveas);
             w.add_action(&saveall);

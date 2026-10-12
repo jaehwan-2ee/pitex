@@ -168,6 +168,9 @@
 "console.custom_run_help" = "运行自定义命令（⌃⌘B）";
 
 "command.new" = "新建文档";
+"command.new_latex" = "LaTeX 文档";
+"command.new_bibtex" = "BibTeX 文档";
+"command.new_markdown" = "Markdown 文档";
 "command.open_recent" = "打开最近项目";
 "command.clear_recents" = "清除菜单";
 "command.pin_build_target" = "固定为构建目标";

@@ -63,6 +63,16 @@ import SyncTeXCore
         }
         keys.forEach { defaults.removeObject(forKey: $0) }
         let workspace = WorkspaceModel()
+        // File → New with no project is a no-op — the File menu disables
+        // the submenu, and the model guards the same condition.
+        await workspace.createDocument(.bibtex)
+        await workspace.createDocument(.latex)
+        require(workspace.projectURL == nil && workspace.activeDocumentURL == nil,
+                "createDocument without a project must do nothing")
+        if case .noProject = workspace.phase {} else {
+            require(false, "createDocument without a project must keep .noProject")
+        }
+        print("PASS new document: no-project calls are no-ops")
         require(!workspace.settings.inverseSyncHighlight && !workspace.settings.forwardSyncHighlight,
                 "Both highlight preferences must default to off")
         for (inverse, forward) in [(true, false), (false, true), (true, true), (false, false)] {
@@ -458,6 +468,49 @@ import SyncTeXCore
                 "A closed detached window must drop its view and delegate")
         require(descendants(host).contains { $0 is PDFView },
                 "The inline preview must remount after the detached window closes")
+
+        // ── File → New Document formats ─────────────────────────
+        // The submenu's three formats write untitled.<ext> at the project
+        // root and activate through the same path as a sidebar click —
+        // .bib/.md start empty, .tex keeps its article template, and the
+        // per-extension counters never overwrite an existing file.
+        let projectRoot = workspace.projectURL!
+        await workspace.createDocument(.bibtex)
+        let bibURL = projectRoot.appendingPathComponent("untitled.bib")
+        require(canon(workspace.activeDocumentURL!) == canon(bibURL),
+                "New BibTeX must create and activate untitled.bib")
+        require((try? String(contentsOf: bibURL, encoding: .utf8)) == ""
+                && workspace.documentSnapshot?.text == "",
+                "A new .bib must be empty on disk and in the session")
+        require(canon(workspace.buildSourceURL()!) == canon(main),
+                "A new .bib must not become the TeX build target")
+        await workspace.createDocument(.markdown)
+        let mdURL = projectRoot.appendingPathComponent("untitled.md")
+        require(canon(workspace.activeDocumentURL!) == canon(mdURL)
+                && workspace.activeDocumentIsMarkdown,
+                "New Markdown must create and activate untitled.md")
+        require((try? String(contentsOf: mdURL, encoding: .utf8)) == "",
+                "A new .md must be empty")
+        require(canon(workspace.buildSourceURL()!) == canon(main),
+                "A new .md must not become the TeX build target")
+        await workspace.createDocument(.latex)
+        let texURL = projectRoot.appendingPathComponent("untitled.tex")
+        require(canon(workspace.activeDocumentURL!) == canon(texURL),
+                "New LaTeX must create and activate untitled.tex")
+        require((try? String(contentsOf: texURL, encoding: .utf8))
+                == "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n",
+                "A new .tex must keep the article template")
+        require(canon(workspace.buildSourceURL()!) == canon(texURL),
+                "The new .tex is a main and becomes the build target")
+        // Per-extension counters: a second .bib is untitled-2.bib — the
+        // existing files are never overwritten.
+        await workspace.createDocument(.bibtex)
+        let bib2URL = projectRoot.appendingPathComponent("untitled-2.bib")
+        require(canon(workspace.activeDocumentURL!) == canon(bib2URL),
+                "Second BibTeX must create untitled-2.bib")
+        require((try? String(contentsOf: bibURL, encoding: .utf8)) == "",
+                "untitled.bib must survive the second creation")
+        print("PASS new document formats: tex/bib/md create+activate, template kept, empty drafts, per-extension naming")
 
         // Closing the owning workspace closes and releases the window.
         workspace.detachPreview()
