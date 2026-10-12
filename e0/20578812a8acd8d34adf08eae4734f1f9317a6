@@ -1,0 +1,14 @@
+.github/release-notes/v1.0.4.md
+  h_bcbc8ae9e599aa 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e020578812a8acd8d34adf08eae4734f1f9317a6",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
