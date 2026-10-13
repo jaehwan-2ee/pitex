@@ -1,0 +1,23 @@
+Mac/Sources/Features/PiAgentProcess.swift
+  s_4e6e6c38cb0704::t_5e628da00cfa8a 295-297
+Linux/crates/pitex-shell/src/agent.rs
+  s_4e6e6c38cb0704::t_5e628da00cfa8a 2706-2709
+Linux/crates/build-core/tests/runner.rs
+  s_4e6e6c38cb0704::t_5e628da00cfa8a 304-309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "591a6119584c2b2fd0385a0710f24ad577ef8986",
+  "prompts": {},
+  "sessions": {
+    "s_4e6e6c38cb0704": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a133b7-1740-7c61-9fbc-b76c87688193",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
