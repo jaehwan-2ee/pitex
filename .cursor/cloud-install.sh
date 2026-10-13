@@ -16,6 +16,8 @@ NODE_PREFIX=/usr/local/lib/nodejs
 
 sudo apt-get update
 sudo apt-get install -y \
+  -o Dpkg::Options::=--force-confdef \
+  -o Dpkg::Options::=--force-confold \
   build-essential pkg-config libssl-dev \
   libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
   libvte-2.91-gtk4-dev libpoppler-glib-dev libwebkitgtk-6.0-dev \
