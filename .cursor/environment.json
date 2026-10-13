@@ -1,0 +1,4 @@
+{
+  "name": "pitex",
+  "install": "bash .cursor/cloud-install.sh"
+}
