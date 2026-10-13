@@ -295,24 +295,19 @@ fn cancellation_terminates_entire_descendant_process_group() {
 }
 
 fn process_can_execute(pid: i32) -> bool {
-    let exists = unsafe {
-        libc::kill(pid, 0) == 0
-            || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-    };
-    if !exists {
-        return false;
-    }
     // A non-reaping container PID 1 leaves killed descendants as zombies.
     // kill(pid, 0) still succeeds for them, but they cannot execute again.
     // Every other state (including stopped processes) remains a failure.
     #[cfg(target_os = "linux")]
     if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         let state = stat.rsplit_once(')').and_then(|(_, fields)| fields.split_whitespace().next());
-        if matches!(state, Some("Z" | "X")) {
-            return false;
-        }
+        return !matches!(state, Some("Z" | "X"));
     }
-    true
+    // Check existence after /proc: the process may have been reaped during the read.
+    unsafe {
+        libc::kill(pid, 0) == 0
+            || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
 }
 
 #[test]
