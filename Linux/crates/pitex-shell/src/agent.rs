@@ -2703,6 +2703,10 @@ pub mod pi_installer {
             for file in ["bun.lock", "bun.lockb", "package-lock.json", "package.json"] {
                 let _ = std::fs::remove_file(runtime.join(file));
             }
+            // Pi 1.0.2 imports an export removed by newer pi-codemode releases.
+            std::fs::write(runtime.join("package.json"),
+                r#"{"overrides":{"@earendil-works/pi-coding-agent@1.0.2":{"@earendil-works/pi-codemode":"1.0.2"}}}"#)
+                .map_err(|e| e.to_string())?;
             let result = match run_install(executable, arguments, &tools.environment, &runtime, 300) {
                 Ok(result) => result,
                 Err(error) => {

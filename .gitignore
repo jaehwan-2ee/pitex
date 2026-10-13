@@ -23,14 +23,15 @@ paseo.json
 .claude.json
 .devin/
 .agents/
-.cursor/
+.cursor/*
+!.cursor/environment.json
+!.cursor/cloud-install.sh
 .codegraph/
 .codex/
 .aider*
 .continue/
 .windsurf/
 CLAUDE.md
-AGENTS.md
 
 # Local toolchain / IDE state
 .vscode/
