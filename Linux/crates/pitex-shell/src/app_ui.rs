@@ -135,6 +135,11 @@ pub struct UiHandles {
     pub pdf_highlight: RefCell<Option<gtk4::DrawingArea>>,
     pub pdf_selection_overlay: RefCell<Option<gtk4::DrawingArea>>,
     pub pdf_scroll: RefCell<Option<gtk4::ScrolledWindow>>,
+    /// Continuous page column inside `pdf_scroll` (PDFView single-page continuous).
+    pub pdf_pages: RefCell<Option<gtk4::Box>>,
+    pub pdf_page_pictures: RefCell<Vec<gtk4::Picture>>,
+    pub pdf_page_overlays: RefCell<Vec<gtk4::Overlay>>,
+    pub pdf_page_selections: RefCell<Vec<gtk4::DrawingArea>>,
     pub pdf_empty: RefCell<Option<adw::StatusPage>>,
     pub pdf_page_label: RefCell<Option<gtk4::Label>>,
     pub pdf_prev_button: RefCell<Option<gtk4::Button>>,
@@ -226,6 +231,14 @@ impl RemoteSaveAction {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PdfPointerDrag {
+    Idle,
+    Undecided,
+    Select,
+    Pan,
+}
+
 /// Shared application state. Model callbacks queue effects for the GTK main loop.
 pub struct AppState {
     pub model: WorkspaceModel,
@@ -288,9 +301,12 @@ pub struct AppState {
     pub rendered_files_revision: Cell<u64>,
     /// Last `refresh_tabs` identity key — tab chips rebuild only on a bump.
     pub rendered_tabs_key: Cell<u64>,
-    /// Last `render_pdf_page` key — the raster skips while doc/page/scale match.
+    /// Last requested key for the current page — the raster skips while it
+    /// matches `displayed_pdf_key`. Per-page keys live in `pdf_page_keys`.
     pub rendered_pdf_key: Cell<u64>,
     displayed_pdf_key: Cell<u64>,
+    pdf_page_keys: RefCell<Vec<u64>>,
+    pdf_page_shown: RefCell<Vec<u64>>,
     pending_pdf_highlight: Option<(i64, f64, f64, f64, f64)>,
     /// Debounce for external-change coalescing (0.35s).
     pub disk_pending: RefCell<HashMap<PathBuf, glib::SourceId>>,
@@ -300,6 +316,16 @@ pub struct AppState {
     pub pdf_selection: crate::pdf::SelectedText,
     pub pdf_selection_start: Option<(f64, f64)>,
     pdf_selection_id: u64,
+    pub(crate) pdf_selection_page: usize,
+    pdf_pointer_drag: PdfPointerDrag,
+    pdf_drag_scroll_origin: (f64, f64),
+    /// Scale/page-count/hash of the laid-out column. A mismatch re-renders
+    /// without moving the scroll offset unless the scale itself changed.
+    pdf_layout_scale_bits: Cell<u64>,
+    pdf_layout_pages: Cell<usize>,
+    pdf_layout_hash: Cell<u64>,
+    /// Scroll offset applied once the column's adjustment knows its new upper.
+    pdf_scroll_anchor: Cell<Option<f64>>,
     pub pdf_page: usize,
     pub pdf_scale: f64,
     /// `pi` config dir monitor — restarts the agent when auth/models/
@@ -353,6 +379,16 @@ pub struct AppState {
     remote_save_building: bool,
 }
 
+fn pdf_render_key(hash: u64, page: usize, scale: f64) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash.hash(&mut hasher);
+    page.hash(&mut hasher);
+    scale.to_bits().hash(&mut hasher);
+    let key = hasher.finish();
+    if key == 0 { 1 } else { key }
+}
+
 impl AppState {
     fn new(store: SettingsStore, tx: Sender<WorkspaceMessage>, app_version: String) -> Self {
         let mut model = WorkspaceModel::new();
@@ -396,6 +432,8 @@ impl AppState {
             rendered_structure_revision: Cell::new(0),
             rendered_pdf_key: Cell::new(0),
             displayed_pdf_key: Cell::new(0),
+            pdf_page_keys: RefCell::new(Vec::new()),
+            pdf_page_shown: RefCell::new(Vec::new()),
             pending_pdf_highlight: None,
             rendered_files_revision: Cell::new(0),
             rendered_tabs_key: Cell::new(0),
@@ -406,6 +444,13 @@ impl AppState {
             pdf_selection: crate::pdf::SelectedText::default(),
             pdf_selection_start: None,
             pdf_selection_id: 0,
+            pdf_selection_page: 0,
+            pdf_pointer_drag: PdfPointerDrag::Idle,
+            pdf_drag_scroll_origin: (0.0, 0.0),
+            pdf_layout_scale_bits: Cell::new(0),
+            pdf_layout_pages: Cell::new(0),
+            pdf_layout_hash: Cell::new(0),
+            pdf_scroll_anchor: Cell::new(None),
             pdf_page: 0,
             pdf_scale: 1.5,
             agent_config_monitor: None,
@@ -2112,16 +2157,14 @@ impl AppState {
 
     pub fn pdf_prev_page(&mut self) {
         if self.pdf_page > 0 {
-            self.pdf_page -= 1;
-            self.render_pdf_page();
+            self.scroll_pdf_to_page(self.pdf_page - 1);
         }
     }
 
     pub fn pdf_next_page(&mut self) {
         if let Some(doc) = &self.pdf {
             if self.pdf_page + 1 < doc.page_count() {
-                self.pdf_page += 1;
-                self.render_pdf_page();
+                self.scroll_pdf_to_page(self.pdf_page + 1);
             }
         }
     }
@@ -2132,15 +2175,23 @@ impl AppState {
         self.render_pdf_page();
     }
 
-    /// Scale that fits the page width inside the preview scroller.
+    /// Scale that fits the widest page inside the preview scroller.
+    /// One scale for the whole column, like PDFView `autoScales`, so
+    /// scrolling does not re-fit on every page.
     fn pdf_fit_scale(&self) -> f64 {
         let Some(doc) = &self.pdf else { return self.pdf_scale };
-        let Some((w_pt, _)) = doc.page_size(self.pdf_page) else { return self.pdf_scale };
+        let width_pt = (0..doc.page_count())
+            .filter_map(|i| doc.page_size(i))
+            .map(|(w, _)| w)
+            .fold(0.0_f64, f64::max);
+        if width_pt <= 0.0 {
+            return self.pdf_scale;
+        }
         let viewport = UI.with(|ui| {
             ui.pdf_scroll.borrow().as_ref().map(|s| s.width()).unwrap_or(0)
         });
         if viewport > 0 {
-            ((viewport as f64 - 16.0) / w_pt).clamp(0.2, 6.0)
+            ((viewport as f64 - 16.0) / width_pt).clamp(0.2, 6.0)
         } else {
             self.pdf_scale
         }
@@ -2157,14 +2208,15 @@ impl AppState {
             self.pdf_scale = fit;
             self.render_pdf_page();
         }
+        self.apply_pdf_scroll_anchor();
     }
 
     /// Click on the PDF → inverse SyncTeX (widget px → PDF points).
-    pub fn pdf_click(&mut self, picture: &gtk4::Picture, x: f64, y: f64) {
-        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() { return; }
+    pub fn pdf_click(&mut self, page: usize, picture: &gtk4::Picture, x: f64, y: f64) {
+        if !self.pdf_page_is_shown(page) { return; }
         let Some(doc) = &self.pdf else { return };
-        let Some((w_pt, h_pt)) = doc.page_size(self.pdf_page) else { return };
-        let Some((scale, ox, oy)) = self.pdf_transform(picture.width(), picture.height()) else { return };
+        let Some((w_pt, h_pt)) = doc.page_size(page) else { return };
+        let Some((scale, ox, oy)) = self.pdf_transform_for(page, picture.width(), picture.height()) else { return };
         let px = (x - ox) / scale;
         let py = (y - oy) / scale;
         if px < 0.0 || py < 0.0 || px > w_pt || py > h_pt {
@@ -2173,13 +2225,17 @@ impl AppState {
         // `synctex edit` wants top-left origin points — widget coords are
         // already top-left, so pass them through unflipped.
         if let Ok(point) = synctex_core::PDFPoint::new(px, py) {
-            self.model.sync_inverse(self.pdf_page as i64 + 1, point);
+            self.model.sync_inverse(page as i64 + 1, point);
         }
     }
 
     /// Picture's Contain transform, shared by SyncTeX and text selection.
     pub fn pdf_transform(&self, width: i32, height: i32) -> Option<(f64, f64, f64)> {
-        let (w, h) = self.pdf.as_ref()?.page_size(self.pdf_page)?;
+        self.pdf_transform_for(self.pdf_page, width, height)
+    }
+
+    pub(crate) fn pdf_transform_for(&self, page: usize, width: i32, height: i32) -> Option<(f64, f64, f64)> {
+        let (w, h) = self.pdf.as_ref()?.page_size(page)?;
         if width <= 0 || height <= 0 || w <= 0.0 || h <= 0.0 { return None; }
         let scale = (width as f64 / w).min(height as f64 / h);
         Some((scale, (width as f64 - w * scale) / 2.0, (height as f64 - h * scale) / 2.0))
@@ -2190,58 +2246,352 @@ impl AppState {
         self.pdf_selection_start = None;
         self.pdf_selection = crate::pdf::SelectedText::default();
         UI.with(|ui| {
-            if let Some(area) = ui.pdf_selection_overlay.borrow().as_ref() { area.queue_draw(); }
+            for area in ui.pdf_page_selections.borrow().iter() {
+                area.queue_draw();
+            }
         });
     }
 
-    pub fn pdf_selection_begin(&mut self, picture: &gtk4::Picture, x: f64, y: f64) -> bool {
+    pub fn pdf_selection_begin(&mut self, page: usize, picture: &gtk4::Picture, x: f64, y: f64) -> bool {
         self.clear_pdf_selection();
-        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() { return false; }
-        let Some((scale, ox, oy)) = self.pdf_transform(picture.width(), picture.height()) else { return false };
+        if !self.pdf_page_is_shown(page) { return false; }
+        let Some((scale, ox, oy)) = self.pdf_transform_for(page, picture.width(), picture.height()) else { return false };
         let (x, y) = ((x - ox) / scale, (y - oy) / scale);
-        let Some((w, h)) = self.pdf.as_ref().and_then(|pdf| pdf.page_size(self.pdf_page)) else { return false };
+        let Some((w, h)) = self.pdf.as_ref().and_then(|pdf| pdf.page_size(page)) else { return false };
         if x < 0.0 || y < 0.0 || x > w || y > h { return false; }
+        self.pdf_selection_page = page;
         self.pdf_selection_start = Some((x, y));
         true
     }
 
-    pub fn pdf_selection_update(&mut self, picture: &gtk4::Picture, x: f64, y: f64) {
+    pub fn pdf_selection_update(&mut self, page: usize, picture: &gtk4::Picture, x: f64, y: f64) {
         let Some((x1, y1)) = self.pdf_selection_start else { return };
-        let Some((scale, ox, oy)) = self.pdf_transform(picture.width(), picture.height()) else { return };
-        let Some((w, h)) = self.pdf.as_ref().and_then(|pdf| pdf.page_size(self.pdf_page)) else { return };
+        if self.pdf_selection_page != page { return; }
+        let Some((scale, ox, oy)) = self.pdf_transform_for(page, picture.width(), picture.height()) else { return };
+        let Some((w, h)) = self.pdf.as_ref().and_then(|pdf| pdf.page_size(page)) else { return };
+        let key = self.pdf_page_keys.borrow().get(page).copied().unwrap_or(0);
         self.pdf_selection_id += 1;
-        self.pdf_renderer.select(self.pdf_hash, self.rendered_pdf_key.get(), self.pdf_selection_id, self.pdf_page,
+        self.pdf_renderer.select(self.pdf_hash, key, self.pdf_selection_id, page,
             crate::pdf::SelectionRect { x1, y1, x2: ((x - ox) / scale).clamp(0.0, w), y2: ((y - oy) / scale).clamp(0.0, h) });
     }
 
-    /// Re-render the current page into the picture widget.
-    fn render_pdf_page(&mut self) {
-        let Some(doc) = &self.pdf else { return };
-        let page_count = doc.page_count();
-        let scale = if self.pdf_auto_fit { self.pdf_fit_scale() } else { self.pdf_scale };
-        // Skip the raster when nothing changed — `refresh_pdf_ui` calls
-        // this on every keystroke.
-        let key = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            self.pdf_hash.hash(&mut h);
-            self.pdf_page.hash(&mut h);
-            scale.to_bits().hash(&mut h);
-            h.finish()
-        };
-        if key == self.rendered_pdf_key.get() {
-            return;
+    /// Primary-button drag on a page. A mostly vertical drag pans the
+    /// continuous column (the page follows the pointer). Any sideways
+    /// movement stays text selection, matching PDFView's drag.
+    pub fn pdf_pointer_drag_begin(&mut self, page: usize, picture: &gtk4::Picture, x: f64, y: f64) -> bool {
+        if self.pdf.is_none() { return false; }
+        self.pdf_pointer_drag = PdfPointerDrag::Undecided;
+        self.pdf_drag_scroll_origin = self.pdf_scroll_offsets();
+        let _ = self.pdf_selection_begin(page, picture, x, y);
+        true
+    }
+
+    pub fn pdf_pointer_drag_update(&mut self, page: usize, picture: &gtk4::Picture, x: f64, y: f64, dx: f64, dy: f64) {
+        if self.pdf_pointer_drag == PdfPointerDrag::Idle { return; }
+        if self.pdf_pointer_drag == PdfPointerDrag::Undecided {
+            match crate::pdf::pdf_drag_is_page_pan(dx, dy, self.pdf_can_drag_scroll()) {
+                None => return,
+                Some(true) => {
+                    self.pdf_pointer_drag = PdfPointerDrag::Pan;
+                    self.clear_pdf_selection();
+                    self.set_pdf_drag_cursor(true);
+                }
+                Some(false) => self.pdf_pointer_drag = PdfPointerDrag::Select,
+            }
         }
-        self.clear_pdf_selection();
-        self.rendered_pdf_key.set(key);
-        self.pdf_renderer.render(self.pdf_hash, key, self.pdf_page, scale);
+        match self.pdf_pointer_drag {
+            PdfPointerDrag::Pan => {
+                self.apply_pdf_drag_pan(dx, dy);
+                self.on_pdf_scrolled();
+            }
+            PdfPointerDrag::Select => self.pdf_selection_update(page, picture, x, y),
+            PdfPointerDrag::Undecided | PdfPointerDrag::Idle => {}
+        }
+    }
+
+    pub fn pdf_pointer_drag_end(&mut self, page: usize, picture: &gtk4::Picture, x: f64, y: f64, _dx: f64, _dy: f64) {
+        if self.pdf_pointer_drag != PdfPointerDrag::Pan {
+            self.pdf_pointer_drag = PdfPointerDrag::Select;
+            self.pdf_selection_update(page, picture, x, y);
+        }
+        self.pdf_pointer_drag = PdfPointerDrag::Idle;
+        self.pdf_selection_start = None;
+        self.set_pdf_drag_cursor(false);
+    }
+
+    /// Scroll offset the column should adopt once its allocation matches the
+    /// page size requests. Until then the adjustment upper is still the viewport.
+    pub fn apply_pdf_scroll_anchor(&mut self) {
+        let Some(y) = self.pdf_scroll_anchor.get() else { return };
+        let applied = UI.with(|ui| {
+            let Some(scroll) = ui.pdf_scroll.borrow().clone() else { return true };
+            let Some(pages) = ui.pdf_pages.borrow().clone() else { return true };
+            let requested = {
+                let pictures = ui.pdf_page_pictures.borrow();
+                let gaps = pictures.len().saturating_sub(1) as i32 * crate::pdf::PDF_PAGE_GAP as i32;
+                pictures.iter().map(|p| p.size_request().1.max(0)).sum::<i32>() + gaps
+            };
+            if requested > 0 && pages.height() + 4 < requested {
+                return false;
+            }
+            let adj = scroll.vadjustment();
+            let max = (adj.upper() - adj.page_size()).max(adj.lower());
+            adj.set_value(y.clamp(adj.lower(), max));
+            true
+        });
+        if applied {
+            self.pdf_scroll_anchor.set(None);
+            self.on_pdf_scrolled();
+        }
+    }
+
+    /// User scroll (wheel, scrollbar, or drag) — the page indicator follows
+    /// the top edge and nearby pages render.
+    pub fn on_pdf_scrolled(&mut self) {
+        let Some(spans) = self.pdf_spans() else { return };
+        let (value, viewport) = self.pdf_viewport_origin();
+        let page = crate::pdf::pdf_page_at_viewport(&spans, value, viewport);
+        if page != self.pdf_page {
+            self.pdf_page = page;
+            self.bind_pdf_page_handles(page);
+        }
+        self.update_pdf_nav_chrome();
+        self.render_visible_pdf_pages(&spans);
+    }
+
+    /// Lay out the continuous column and rasterize whatever the viewport shows.
+    /// `refresh_pdf_ui` calls this on every keystroke, so an unchanged
+    /// document does not rebuild widgets or re-request rasters.
+    fn render_pdf_page(&mut self) {
+        let Some(page_count) = self.pdf.as_ref().map(|d| d.page_count()) else { return };
+        if page_count == 0 { return; }
+        if self.pdf_page >= page_count {
+            self.pdf_page = page_count - 1;
+        }
+        let scale = if self.pdf_auto_fit { self.pdf_fit_scale() } else { self.pdf_scale };
+        let Some(spans) = self.pdf_spans_at(scale) else { return };
+        let rebuilt = self.ensure_pdf_page_widgets(page_count);
+        let sizes_changed = self.apply_pdf_page_sizes(&spans);
+        let hash_changed = self.pdf_layout_hash.get() != self.pdf_hash;
+        let scale_changed = self.pdf_layout_scale_bits.get() != scale.to_bits();
+        let count_changed = self.pdf_layout_pages.get() != page_count;
+        if hash_changed || sizes_changed || scale_changed || rebuilt {
+            if scale_changed && self.pdf_layout_scale_bits.get() != 0 && self.pdf_layout_pages.get() == page_count {
+                if let Some(old) = self.pdf_spans_at(f64::from_bits(self.pdf_layout_scale_bits.get())) {
+                    self.retarget_pdf_scroll(&old, &spans);
+                }
+            } else if count_changed && self.pdf_layout_pages.get() != 0 {
+                self.pdf_scroll_anchor.set(Some(spans[self.pdf_page].y));
+            }
+            self.invalidate_pdf_page_rasters();
+            if scale_changed {
+                self.clear_pdf_selection();
+            }
+        }
+        self.pdf_layout_hash.set(self.pdf_hash);
+        self.pdf_layout_scale_bits.set(scale.to_bits());
+        self.pdf_layout_pages.set(page_count);
+        self.bind_pdf_page_handles(self.pdf_page);
+        self.update_pdf_nav_chrome();
+        self.render_visible_pdf_pages(&spans);
+    }
+
+    fn scroll_pdf_to_page(&mut self, page: usize) {
+        let Some(count) = self.pdf.as_ref().map(|d| d.page_count()) else { return };
+        if page >= count { return; }
+        self.pdf_page = page;
+        self.render_pdf_page();
+        if let Some(spans) = self.pdf_spans() {
+            if let Some(span) = spans.get(page) {
+                self.pdf_scroll_anchor.set(Some(span.y));
+            }
+        }
+        self.apply_pdf_scroll_anchor();
+        self.bind_pdf_page_handles(page);
+        self.update_pdf_nav_chrome();
+    }
+
+    fn pdf_spans_at(&self, scale: f64) -> Option<Vec<crate::pdf::PdfPageSpan>> {
+        let doc = self.pdf.as_ref()?;
+        if scale <= 0.0 || doc.page_count() == 0 { return None; }
+        let sizes: Vec<(f64, f64)> = (0..doc.page_count())
+            .map(|i| doc.page_size(i).unwrap_or((612.0, 792.0)))
+            .collect();
+        Some(crate::pdf::pdf_page_spans(&sizes, scale, crate::pdf::PDF_PAGE_GAP))
+    }
+
+    fn pdf_spans(&self) -> Option<Vec<crate::pdf::PdfPageSpan>> {
+        let bits = self.pdf_layout_scale_bits.get();
+        if bits == 0 { return None; }
+        self.pdf_spans_at(f64::from_bits(bits))
+    }
+
+    fn pdf_scroll_offsets(&self) -> (f64, f64) {
+        UI.with(|ui| {
+            ui.pdf_scroll.borrow().as_ref()
+                .map(|s| (s.hadjustment().value(), s.vadjustment().value()))
+                .unwrap_or((0.0, 0.0))
+        })
+    }
+
+    fn pdf_viewport_origin(&self) -> (f64, f64) {
+        UI.with(|ui| {
+            ui.pdf_scroll.borrow().as_ref()
+                .map(|s| (s.vadjustment().value(), s.vadjustment().page_size().max(s.height() as f64)))
+                .unwrap_or((0.0, 0.0))
+        })
+    }
+
+    fn pdf_can_drag_scroll(&self) -> bool {
+        UI.with(|ui| {
+            ui.pdf_scroll.borrow().as_ref().map(|s| {
+                let v = s.vadjustment();
+                let h = s.hadjustment();
+                (v.upper() - v.page_size()) > v.lower() + 1.0
+                    || (h.upper() - h.page_size()) > h.lower() + 1.0
+            }).unwrap_or(false)
+        })
+    }
+
+    fn apply_pdf_drag_pan(&mut self, dx: f64, dy: f64) {
+        let (ox, oy) = self.pdf_drag_scroll_origin;
+        UI.with(|ui| {
+            let Some(scroll) = ui.pdf_scroll.borrow().clone() else { return };
+            let h = scroll.hadjustment();
+            let v = scroll.vadjustment();
+            h.set_value(crate::pdf::pdf_drag_offset(ox, dx, h.lower(), h.upper(), h.page_size()));
+            v.set_value(crate::pdf::pdf_drag_offset(oy, dy, v.lower(), v.upper(), v.page_size()));
+        });
+    }
+
+    fn set_pdf_drag_cursor(&self, grabbing: bool) {
+        let name = if grabbing { "grabbing" } else { "text" };
+        UI.with(|ui| {
+            if let Some(pages) = ui.pdf_pages.borrow().as_ref() {
+                pages.set_cursor_from_name(Some(name));
+            }
+            for picture in ui.pdf_page_pictures.borrow().iter() {
+                picture.set_cursor_from_name(Some(name));
+            }
+        });
+    }
+
+    fn retarget_pdf_scroll(&mut self, old: &[crate::pdf::PdfPageSpan], new: &[crate::pdf::PdfPageSpan]) {
+        if old.is_empty() || new.is_empty() { return; }
+        let (y, viewport) = self.pdf_viewport_origin();
+        let page = crate::pdf::pdf_page_at_viewport(old, y, viewport).min(new.len() - 1);
+        let from = &old[page.min(old.len() - 1)];
+        let rel = if from.height > 0.0 {
+            ((y - from.y) / from.height).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self.pdf_scroll_anchor.set(Some(new[page].y + rel * new[page].height));
+    }
+
+    fn ensure_pdf_page_widgets(&mut self, count: usize) -> bool {
+        let existing = UI.with(|ui| ui.pdf_page_pictures.borrow().len());
+        if existing == count { return false; }
+        self.clear_pdf_page_widgets();
+        for page in 0..count {
+            let (overlay, picture, selection) = crate::panes::mount_pdf_page(page);
+            UI.with(|ui| {
+                if let Some(box_) = ui.pdf_pages.borrow().as_ref() {
+                    box_.append(&overlay);
+                }
+                ui.pdf_page_pictures.borrow_mut().push(picture);
+                ui.pdf_page_overlays.borrow_mut().push(overlay);
+                ui.pdf_page_selections.borrow_mut().push(selection);
+            });
+        }
+        *self.pdf_page_keys.borrow_mut() = vec![0; count];
+        *self.pdf_page_shown.borrow_mut() = vec![0; count];
+        true
+    }
+
+    fn clear_pdf_page_widgets(&mut self) {
+        UI.with(|ui| {
+            if let Some(hl) = ui.pdf_highlight.borrow().as_ref() {
+                if hl.parent().is_some() {
+                    hl.unparent();
+                }
+            }
+            if let Some(box_) = ui.pdf_pages.borrow().as_ref() {
+                while let Some(child) = box_.first_child() {
+                    box_.remove(&child);
+                }
+            }
+            ui.pdf_page_pictures.borrow_mut().clear();
+            ui.pdf_page_overlays.borrow_mut().clear();
+            ui.pdf_page_selections.borrow_mut().clear();
+            ui.pdf_picture.replace(None);
+            ui.pdf_selection_overlay.replace(None);
+        });
+        self.pdf_page_keys.borrow_mut().clear();
+        self.pdf_page_shown.borrow_mut().clear();
+        self.rendered_pdf_key.set(0);
+        self.displayed_pdf_key.set(0);
+    }
+
+    fn apply_pdf_page_sizes(&mut self, spans: &[crate::pdf::PdfPageSpan]) -> bool {
+        let mut changed = false;
+        UI.with(|ui| {
+            let pictures = ui.pdf_page_pictures.borrow();
+            let overlays = ui.pdf_page_overlays.borrow();
+            for (span, (picture, overlay)) in spans.iter().zip(pictures.iter().zip(overlays.iter())) {
+                let w = span.width.round() as i32;
+                let h = span.height.round() as i32;
+                if picture.size_request() != (w, h) {
+                    picture.set_size_request(w, h);
+                    overlay.set_size_request(w, h);
+                    changed = true;
+                }
+            }
+        });
+        changed
+    }
+
+    fn invalidate_pdf_page_rasters(&mut self) {
+        let n = self.pdf_page_keys.borrow().len();
+        *self.pdf_page_keys.borrow_mut() = vec![0; n];
+        *self.pdf_page_shown.borrow_mut() = vec![0; n];
+        self.rendered_pdf_key.set(0);
+        self.displayed_pdf_key.set(0);
+    }
+
+    fn bind_pdf_page_handles(&self, page: usize) {
+        UI.with(|ui| {
+            if let Some(pic) = ui.pdf_page_pictures.borrow().get(page).cloned() {
+                ui.pdf_picture.replace(Some(pic));
+            }
+            if let Some(area) = ui.pdf_page_selections.borrow().get(page).cloned() {
+                ui.pdf_selection_overlay.replace(Some(area));
+            }
+        });
+    }
+
+    fn attach_pdf_highlight(&self, page: usize) {
+        UI.with(|ui| {
+            let (Some(hl), Some(overlay)) = (
+                ui.pdf_highlight.borrow().clone(),
+                ui.pdf_page_overlays.borrow().get(page).cloned(),
+            ) else { return };
+            let overlay_widget = overlay.clone().upcast::<gtk4::Widget>();
+            let parent_is_overlay = hl.parent().is_some_and(|parent| parent == overlay_widget);
+            if !parent_is_overlay {
+                if hl.parent().is_some() {
+                    hl.unparent();
+                }
+                overlay.add_overlay(&hl);
+            }
+        });
+    }
+
+    fn update_pdf_nav_chrome(&self) {
+        let page_count = self.pdf.as_ref().map(|d| d.page_count()).unwrap_or(0);
         UI.with(|ui| {
             if let Some(label) = ui.pdf_page_label.borrow().as_ref() {
-                label.set_text(&format!(
-                    "{} / {}",
-                    self.pdf_page + 1,
-                    page_count
-                ));
+                label.set_text(&format!("{} / {}", self.pdf_page + 1, page_count));
             }
             if let Some(b) = ui.pdf_prev_button.borrow().as_ref() {
                 b.set_sensitive(self.pdf_page > 0);
@@ -2250,6 +2600,45 @@ impl AppState {
                 b.set_sensitive(self.pdf_page + 1 < page_count);
             }
         });
+    }
+
+    fn render_visible_pdf_pages(&mut self, spans: &[crate::pdf::PdfPageSpan]) {
+        if spans.is_empty() || self.pdf_page_keys.borrow().len() != spans.len() { return; }
+        let scale = f64::from_bits(self.pdf_layout_scale_bits.get());
+        if scale <= 0.0 { return; }
+        let (scroll_y, viewport_h) = self.pdf_viewport_origin();
+        let (mut first, mut last) = crate::pdf::pdf_pages_intersecting(spans, scroll_y, scroll_y + viewport_h.max(1.0));
+        first = first.saturating_sub(1);
+        last = (last + 1).min(spans.len() - 1);
+        if let Some(y) = self.pdf_scroll_anchor.get() {
+            let page = crate::pdf::pdf_page_at_viewport(spans, y, viewport_h).min(spans.len() - 1);
+            first = first.min(page.saturating_sub(1));
+            last = last.max((page + 1).min(spans.len() - 1));
+        }
+        let hash = self.pdf_hash;
+        for page in first..=last {
+            let key = pdf_render_key(hash, page, scale);
+            if key == 0 { continue; }
+            if self.pdf_page_keys.borrow().get(page).copied() == Some(key) { continue; }
+            self.pdf_page_keys.borrow_mut()[page] = key;
+            if page == self.pdf_page {
+                self.rendered_pdf_key.set(key);
+            }
+            self.pdf_renderer.render(hash, key, page, scale);
+        }
+    }
+
+    fn pdf_page_is_shown(&self, page: usize) -> bool {
+        let key = self.pdf_page_keys.borrow().get(page).copied().unwrap_or(0);
+        key != 0 && self.pdf_page_shown.borrow().get(page).copied() == Some(key)
+    }
+
+    fn reset_pdf_layout(&mut self) {
+        self.pdf_layout_scale_bits.set(0);
+        self.pdf_layout_pages.set(0);
+        self.pdf_layout_hash.set(0);
+        self.pdf_scroll_anchor.set(None);
+        self.invalidate_pdf_page_rasters();
     }
 
     /// `clearSyncHighlight()` — hide the marker and bump the generation so a
@@ -2269,20 +2658,37 @@ impl AppState {
     /// marker is the optional part gated by `forwardSyncHighlight`. The
     /// existing marker clears first like `clearSyncHighlight()` at the top
     /// of the Swift handler, so a newer navigation supersedes the old one.
-    fn show_synctex_highlight(&mut self, page: i64, x: f64, y: f64, w: f64, h: f64) {
-        let target = (page.max(1) - 1) as usize;
-        if self.pdf_page != target {
-            self.pdf_page = target;
-            self.render_pdf_page();
+    fn scroll_pdf_highlight_into_view(&mut self, page: usize, y: f64, h: f64) {
+        let Some(spans) = self.pdf_spans() else { return };
+        let Some(span) = spans.get(page) else { return };
+        let scale = f64::from_bits(self.pdf_layout_scale_bits.get());
+        if scale <= 0.0 { return; }
+        let top = span.y + y * scale;
+        let bottom = top + (h * scale).max(2.0);
+        let (view, viewport) = self.pdf_viewport_origin();
+        if viewport > 16.0 && top >= view + 8.0 && bottom <= view + viewport - 8.0 {
+            return;
         }
+        self.pdf_scroll_anchor.set(Some((top - 32.0).max(span.y)));
+        self.apply_pdf_scroll_anchor();
+    }
+
+    fn show_synctex_highlight(&mut self, page: i64, x: f64, y: f64, w: f64, h: f64) {
+        let Some(count) = self.pdf.as_ref().map(|d| d.page_count()) else { return };
+        if count == 0 { return; }
+        let target = ((page.max(1) - 1) as usize).min(count - 1);
+        self.pdf_page = target;
+        self.render_pdf_page();
+        self.scroll_pdf_highlight_into_view(target, y, h);
         self.clear_synctex_highlight();
-        if self.displayed_pdf_key.get() != self.rendered_pdf_key.get() {
+        if !self.pdf_page_is_shown(target) {
             self.pending_pdf_highlight = Some((page, x, y, w, h));
             return;
         }
         if !self.store.forward_sync_highlight() {
             return;
         }
+        self.attach_pdf_highlight(target);
         let generation = self.highlight_generation.get();
         UI.with(|ui| {
             let (Some(picture), Some(hl), Some(doc)) = (
@@ -3563,16 +3969,13 @@ impl AppState {
                     self.pdf_auto_fit = true;
                     self.pdf = None;
                     self.pdf_hash = 0;
-                    self.rendered_pdf_key.set(0);
                     self.pdf_identity = identity;
                     // A different target's raster must not linger as the
                     // placeholder for the new document, and its scroll
-                    // offset must not carry over either — a cleared
-                    // picture keeps the scroller's last adjustments.
+                    // offset must not carry over either.
+                    self.reset_pdf_layout();
+                    self.clear_pdf_page_widgets();
                     UI.with(|ui| {
-                        if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
-                            picture.set_paintable(None::<&gtk4::gdk::Paintable>);
-                        }
                         if let Some(scroll) = ui.pdf_scroll.borrow().as_ref() {
                             for adj in [scroll.hadjustment(), scroll.vadjustment()] {
                                 adj.set_value(adj.lower());
@@ -3625,7 +4028,6 @@ impl AppState {
                 if self.pdf_hash != 0 {
                     self.pdf = None;
                     self.pdf_hash = 0;
-                    self.rendered_pdf_key.set(0);
                     self.pdf_renderer.load(0, std::sync::Arc::from([]));
                 }
                 // No artifact on screen — viewport and identity reset so a
@@ -3633,6 +4035,8 @@ impl AppState {
                 self.pdf_page = 0;
                 self.pdf_auto_fit = true;
                 self.pdf_identity = None;
+                self.reset_pdf_layout();
+                self.clear_pdf_page_widgets();
                 UI.with(|ui| {
                     if let Some(p) = ui.pdf_empty.borrow().as_ref() {
                         p.set_visible(true);
@@ -4249,32 +4653,44 @@ impl AppState {
                 }
             }
             WorkspaceMessage::PdfRendered { key, raster } => {
-                if key == self.rendered_pdf_key.get() {
-                    self.displayed_pdf_key.set(key);
+                let page = self.pdf_page_keys.borrow().iter().position(|candidate| *candidate == key);
+                if let Some(page) = page {
+                    if page < self.pdf_page_shown.borrow().len() {
+                        self.pdf_page_shown.borrow_mut()[page] = key;
+                    }
+                    if page == self.pdf_page {
+                        self.displayed_pdf_key.set(key);
+                    }
                     UI.with(|ui| {
-                        if let Some(picture) = ui.pdf_picture.borrow().as_ref() {
-                            let texture = crate::pdf::texture_from_pixels(raster.pixels, raster.width, raster.height, raster.stride);
+                        if let Some(picture) = ui.pdf_page_pictures.borrow().get(page) {
+                            let texture = crate::pdf::texture_from_pixels(
+                                raster.pixels, raster.width, raster.height, raster.stride,
+                            );
                             picture.set_paintable(Some(&texture));
-                            picture.set_size_request(raster.width, raster.height);
                         }
                     });
-                    if let Some((page, x, y, w, h)) = self.pending_pdf_highlight.take() {
-                        glib::idle_add_local_once(move || STATE.with(|slot| {
-                            if let Some(state) = slot.borrow().as_ref() {
-                                let mut state = state.borrow_mut();
-                                if state.rendered_pdf_key.get() == key {
-                                    state.show_synctex_highlight(page, x, y, w, h);
+                    if let Some((highlight_page, x, y, w, h)) = self.pending_pdf_highlight {
+                        let target = (highlight_page.max(1) - 1) as usize;
+                        if target == page {
+                            self.pending_pdf_highlight = None;
+                            glib::idle_add_local_once(move || STATE.with(|slot| {
+                                if let Some(state) = slot.borrow().as_ref() {
+                                    let mut state = state.borrow_mut();
+                                    if state.pdf_page_is_shown(page) {
+                                        state.show_synctex_highlight(highlight_page, x, y, w, h);
+                                    }
                                 }
-                            }
-                        }));
+                            }));
+                        }
                     }
                 }
             }
             WorkspaceMessage::PdfSelected { key, id, selection } => {
-                if key == self.rendered_pdf_key.get() && id == self.pdf_selection_id {
+                let expected = self.pdf_page_keys.borrow().get(self.pdf_selection_page).copied();
+                if id == self.pdf_selection_id && expected == Some(key) {
                     self.pdf_selection = selection;
                     UI.with(|ui| {
-                        if let Some(area) = ui.pdf_selection_overlay.borrow().as_ref() {
+                        for area in ui.pdf_page_selections.borrow().iter() {
                             if !self.pdf_selection.text.is_empty() {
                                 area.display().primary_clipboard().set_text(&self.pdf_selection.text);
                             }

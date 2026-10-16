@@ -266,6 +266,98 @@ pub fn texture_from_pixels(
     .upcast()
 }
 
+/// Gap between stacked pages, in pixels. Matches the preview column's box
+/// spacing and PDFView's `displaysPageBreaks` separation.
+pub const PDF_PAGE_GAP: f64 = 8.0;
+
+/// One page in the continuous preview column (PDFView `singlePageContinuous`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdfPageSpan {
+    pub index: usize,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Page rectangles at `scale` (pixels per PDF point), top to bottom.
+pub fn pdf_page_spans(sizes: &[(f64, f64)], scale: f64, gap: f64) -> Vec<PdfPageSpan> {
+    let mut y = 0.0;
+    let mut spans = Vec::with_capacity(sizes.len());
+    for (index, &(w_pt, h_pt)) in sizes.iter().enumerate() {
+        let width = (w_pt * scale).ceil().max(1.0);
+        let height = (h_pt * scale).ceil().max(1.0);
+        spans.push(PdfPageSpan { index, y, width, height });
+        y += height;
+        if index + 1 != sizes.len() {
+            y += gap;
+        }
+    }
+    spans
+}
+
+/// Page that owns the viewport's top edge. The gap's lower half belongs to
+/// the following page, so scrolling to a page's `y` keeps that page current.
+pub fn pdf_page_at_viewport(spans: &[PdfPageSpan], scroll_y: f64, _viewport_h: f64) -> usize {
+    if spans.is_empty() {
+        return 0;
+    }
+    let y = scroll_y.max(0.0);
+    for (i, span) in spans.iter().enumerate() {
+        let boundary = if let Some(next) = spans.get(i + 1) {
+            span.y + span.height + (next.y - (span.y + span.height)) / 2.0
+        } else {
+            f64::MAX
+        };
+        if y < boundary {
+            return span.index;
+        }
+    }
+    spans.len() - 1
+}
+
+/// Inclusive page range intersecting `[top, bottom]`.
+pub fn pdf_pages_intersecting(spans: &[PdfPageSpan], top: f64, bottom: f64) -> (usize, usize) {
+    if spans.is_empty() {
+        return (0, 0);
+    }
+    let mut first = None;
+    let mut last = 0usize;
+    for span in spans {
+        if span.y + span.height >= top && span.y <= bottom {
+            if first.is_none() {
+                first = Some(span.index);
+            }
+            last = span.index;
+        }
+    }
+    (first.unwrap_or(0), last)
+}
+
+/// Hand-drag: the pointer moved by `delta`, so the scroll offset moves opposite
+/// the pointer (the page follows the cursor) and stays inside the adjustment.
+pub fn pdf_drag_offset(origin: f64, delta: f64, lower: f64, upper: f64, page: f64) -> f64 {
+    let max = (upper - page).max(lower);
+    (origin - delta).clamp(lower, max)
+}
+
+/// Classify an in-progress primary drag.
+///
+/// `None` — still inside the slop, or a vertical drag that has not yet
+/// traveled far enough to be a pan. `Some(true)` — scroll the continuous
+/// document (a mostly vertical drag, and there is somewhere to scroll).
+/// `Some(false)` — text selection, including every drag once it moves sideways.
+pub fn pdf_drag_is_page_pan(dx: f64, dy: f64, scrollable: bool) -> Option<bool> {
+    let adx = dx.abs();
+    let ady = dy.abs();
+    if adx <= 8.0 && ady < 16.0 {
+        return None;
+    }
+    if scrollable && ady >= 16.0 && adx <= 8.0 {
+        return Some(true);
+    }
+    Some(false)
+}
+
 /// Only plain metadata/pixels cross threads; each worker owns its Poppler document.
 #[derive(Clone, Debug)]
 pub struct PdfInfo { sizes: Vec<(f64, f64)> }
@@ -291,47 +383,70 @@ impl PdfRenderer {
             let mut cache: std::collections::VecDeque<(u64, RenderedPage)> = std::collections::VecDeque::new();
             let mut pending = None;
             loop {
-                let mut request = match pending.take().or_else(|| receiver.recv().ok()) {
-                    Some(request) => request, None => break,
+                let first = match pending.take().or_else(|| receiver.recv().ok()) {
+                    Some(request) => request,
+                    None => break,
                 };
-                // Collapse motion/zoom bursts without crossing request kinds or loads.
-                if !matches!(request, RenderRequest::Load(..)) {
-                    while let Ok(next) = receiver.try_recv() {
-                        if std::mem::discriminant(&next) != std::mem::discriminant(&request) { pending = Some(next); break; }
-                        request = next;
+                if let RenderRequest::Load(hash, data) = first {
+                    cache.clear();
+                    document = PdfDocument::from_data(&data).map(|pdf| (hash, pdf));
+                    let info = document.as_ref().map(|(_, pdf)| PdfInfo {
+                        sizes: (0..pdf.page_count()).map(|i| pdf.page_size(i).unwrap_or((612.0, 792.0))).collect(),
+                    });
+                    let _ = sink.send(crate::model::WorkspaceMessage::PdfLoaded { hash, info });
+                    continue;
+                }
+                // A scroll tick asks for several visible pages at once. Collapse
+                // only repeats of the same page (and keep the latest selection);
+                // a load waits until this batch finishes.
+                let mut incoming = vec![first];
+                while let Ok(next) = receiver.try_recv() {
+                    if matches!(next, RenderRequest::Load(..)) {
+                        pending = Some(next);
+                        break;
+                    }
+                    incoming.push(next);
+                }
+                let mut renders: Vec<RenderRequest> = Vec::new();
+                let mut select = None;
+                for request in incoming {
+                    match request {
+                        RenderRequest::Render { page, .. } => {
+                            if let Some(pos) = renders.iter().position(|queued| {
+                                matches!(queued, RenderRequest::Render { page: queued_page, .. } if *queued_page == page)
+                            }) {
+                                renders[pos] = request;
+                            } else {
+                                renders.push(request);
+                            }
+                        }
+                        RenderRequest::Select { .. } => select = Some(request),
+                        RenderRequest::Load(..) => {}
                     }
                 }
-                match request {
-                    RenderRequest::Load(hash, data) => {
-                        cache.clear();
-                        document = PdfDocument::from_data(&data).map(|pdf| (hash, pdf));
-                        let info = document.as_ref().map(|(_, pdf)| PdfInfo {
-                            sizes: (0..pdf.page_count()).map(|i| pdf.page_size(i).unwrap_or((612.0, 792.0))).collect(),
-                        });
-                        let _ = sink.send(crate::model::WorkspaceMessage::PdfLoaded { hash, info });
-                    }
-                    RenderRequest::Render { hash, key, page, scale } => {
-                        let Some((current, pdf)) = &document else { continue };
-                        if hash != *current { continue; }
-                        let raster = cache.iter().find(|(k, _)| *k == key).map(|(_, p)| p.clone())
-                            .or_else(|| pdf.render_page(page, scale).map(|(pixels, width, height, stride)|
-                                RenderedPage { pixels: pixels.into(), width, height, stride }));
-                        if let Some(raster) = raster {
-                            if !cache.iter().any(|(k, _)| *k == key) && raster.pixels.len() <= 32 * 1024 * 1024 {
-                                cache.push_back((key, raster.clone()));
-                                while cache.len() > 3 || cache.iter().map(|(_, p)| p.pixels.len()).sum::<usize>() > 32 * 1024 * 1024 {
-                                    cache.pop_front();
-                                }
+                for request in renders {
+                    let RenderRequest::Render { hash, key, page, scale } = request else { continue };
+                    let Some((current, pdf)) = &document else { continue };
+                    if hash != *current { continue; }
+                    let raster = cache.iter().find(|(k, _)| *k == key).map(|(_, p)| p.clone())
+                        .or_else(|| pdf.render_page(page, scale).map(|(pixels, width, height, stride)|
+                            RenderedPage { pixels: pixels.into(), width, height, stride }));
+                    if let Some(raster) = raster {
+                        if !cache.iter().any(|(k, _)| *k == key) && raster.pixels.len() <= 32 * 1024 * 1024 {
+                            cache.push_back((key, raster.clone()));
+                            // A few neighbors stay warm while the viewport scrolls.
+                            while cache.len() > 6 || cache.iter().map(|(_, p)| p.pixels.len()).sum::<usize>() > 32 * 1024 * 1024 {
+                                cache.pop_front();
                             }
-                            let _ = sink.send(crate::model::WorkspaceMessage::PdfRendered { key, raster });
                         }
+                        let _ = sink.send(crate::model::WorkspaceMessage::PdfRendered { key, raster });
                     }
-                    RenderRequest::Select { hash, key, id, page, rectangle } => {
-                        let Some((current, pdf)) = &document else { continue };
-                        if hash != *current { continue; }
-                        let selection = pdf.select_text(page, rectangle);
-                        let _ = sink.send(crate::model::WorkspaceMessage::PdfSelected { key, id, selection });
-                    }
+                }
+                if let Some(RenderRequest::Select { hash, key, id, page, rectangle }) = select {
+                    let Some((current, pdf)) = &document else { continue };
+                    if hash != *current { continue; }
+                    let selection = pdf.select_text(page, rectangle);
+                    let _ = sink.send(crate::model::WorkspaceMessage::PdfSelected { key, id, selection });
                 }
             }
         });
@@ -343,5 +458,67 @@ impl PdfRenderer {
     }
     pub fn select(&self, hash: u64, key: u64, id: u64, page: usize, rectangle: SelectionRect) {
         let _ = self.sender.send(RenderRequest::Select { hash, key, id, page, rectangle });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn letter_spans() -> Vec<PdfPageSpan> {
+        // Two letter pages and one short page, at 2 px/pt.
+        pdf_page_spans(&[(612.0, 792.0), (612.0, 792.0), (612.0, 100.0)], 2.0, PDF_PAGE_GAP)
+    }
+
+    #[test]
+    fn pages_stack_with_the_preview_gap() {
+        let spans = letter_spans();
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].y, 0.0);
+        assert_eq!(spans[0].height, 1584.0);
+        assert_eq!(spans[0].width, 1224.0);
+        assert_eq!(spans[1].y, 1584.0 + PDF_PAGE_GAP);
+        assert_eq!(spans[2].y, spans[1].y + spans[1].height + PDF_PAGE_GAP);
+        assert_eq!(spans[2].height, 200.0);
+    }
+
+    #[test]
+    fn viewport_top_selects_the_page_under_it() {
+        let spans = letter_spans();
+        assert_eq!(pdf_page_at_viewport(&spans, 0.0, 800.0), 0);
+        assert_eq!(pdf_page_at_viewport(&spans, spans[0].height - 1.0, 800.0), 0);
+        // Mid-gap belongs to the next page; the page top itself stays put.
+        let gap_mid = spans[0].height + PDF_PAGE_GAP / 2.0;
+        assert_eq!(pdf_page_at_viewport(&spans, gap_mid - 0.1, 800.0), 0);
+        assert_eq!(pdf_page_at_viewport(&spans, gap_mid, 800.0), 1);
+        assert_eq!(pdf_page_at_viewport(&spans, spans[1].y, 800.0), 1);
+        assert_eq!(pdf_page_at_viewport(&spans, spans[2].y + 10_000.0, 800.0), 2);
+        assert_eq!(pdf_page_at_viewport(&[], 0.0, 100.0), 0);
+    }
+
+    #[test]
+    fn visible_range_includes_partial_pages_only() {
+        let spans = letter_spans();
+        assert_eq!(pdf_pages_intersecting(&spans, 0.0, 100.0), (0, 0));
+        let across = spans[0].height - 10.0;
+        assert_eq!(pdf_pages_intersecting(&spans, across, across + PDF_PAGE_GAP + 20.0), (0, 1));
+        assert_eq!(pdf_pages_intersecting(&spans, spans[2].y + 1.0, spans[2].y + 50.0), (2, 2));
+    }
+
+    #[test]
+    fn drag_follows_the_pointer_and_clamps() {
+        assert_eq!(pdf_drag_offset(100.0, 40.0, 0.0, 500.0, 200.0), 60.0);
+        assert_eq!(pdf_drag_offset(10.0, 40.0, 0.0, 500.0, 200.0), 0.0);
+        assert_eq!(pdf_drag_offset(290.0, -50.0, 0.0, 500.0, 200.0), 300.0);
+        assert_eq!(pdf_drag_offset(0.0, -10.0, 0.0, 100.0, 100.0), 0.0);
+    }
+
+    #[test]
+    fn vertical_drag_pans_and_sideways_drag_selects() {
+        assert_eq!(pdf_drag_is_page_pan(0.0, 10.0, true), None);
+        assert_eq!(pdf_drag_is_page_pan(2.0, 20.0, true), Some(true));
+        assert_eq!(pdf_drag_is_page_pan(2.0, 40.0, false), Some(false));
+        assert_eq!(pdf_drag_is_page_pan(30.0, 80.0, true), Some(false));
+        assert_eq!(pdf_drag_is_page_pan(9.0, 4.0, true), Some(false));
     }
 }
