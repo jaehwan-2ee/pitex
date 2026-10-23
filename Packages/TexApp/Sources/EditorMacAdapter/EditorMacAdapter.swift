@@ -8,13 +8,25 @@ import AppKit
 @MainActor
 private final class SessionTextView: NSTextView {
     var findController: EditorFindController?
+    /// Applied when the find bar is created, which is lazy on the first find.
+    private var findHighlightPalette: (@MainActor () -> (NSColor, NSColor))?
+
+    func setFindHighlightPalette(_ palette: @escaping @MainActor () -> (NSColor, NSColor)) {
+        findHighlightPalette = palette
+        findController?.highlightPalette = palette
+        findController?.noteAppearanceChanged()
+    }
 
     override func performFindPanelAction(_ sender: Any?) { performTextFinderAction(sender) }
 
     override func performTextFinderAction(_ sender: Any?) {
         let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSControl)?.tag ?? 1
         guard let action = NSTextFinder.Action(rawValue: tag), let scrollView = enclosingScrollView else { return }
-        if findController == nil { findController = EditorFindController(textView: self, scrollView: scrollView) }
+        if findController == nil {
+            let controller = EditorFindController(textView: self, scrollView: scrollView)
+            controller.highlightPalette = findHighlightPalette
+            findController = controller
+        }
         findController?.perform(action)
     }
 
@@ -184,6 +196,16 @@ private final class SessionTextView: NSTextView {
 public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     public let textView: NSTextView
     public let nativeUndoManager: UndoManager
+
+    /// Fold-accent washes for find matches. The first color is every match;
+    /// the second is the selected occurrence. Both should already carry alpha.
+    public func setFindHighlightPalette(_ palette: @escaping @MainActor () -> (NSColor, NSColor)) {
+        sessionTextView.setFindHighlightPalette(palette)
+    }
+
+    public func refreshFindHighlights() {
+        sessionTextView.findController?.noteAppearanceChanged()
+    }
 
     public var text: String { textView.string }
     public var selectedRange: NSRange { textView.selectedRange() }

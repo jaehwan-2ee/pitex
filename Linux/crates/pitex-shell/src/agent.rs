@@ -2504,7 +2504,7 @@ pub mod pi_installer {
     /// from @mariozechner to @earendil-works after 0.73.x; the legacy scope
     /// tops out at 0.73.1 so installs from it would 404.
     pub const PACKAGE_NAME: &str = "@earendil-works/pi-coding-agent";
-    pub const DESIRED_VERSION: &str = "1.0.2";
+    pub const DESIRED_VERSION: &str = "1.4.0";
     static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     pub fn installation_in_progress() -> bool {
@@ -2703,10 +2703,6 @@ pub mod pi_installer {
             for file in ["bun.lock", "bun.lockb", "package-lock.json", "package.json"] {
                 let _ = std::fs::remove_file(runtime.join(file));
             }
-            // Pi 1.0.2 imports an export removed by newer pi-codemode releases.
-            std::fs::write(runtime.join("package.json"),
-                r#"{"overrides":{"@earendil-works/pi-coding-agent@1.0.2":{"@earendil-works/pi-codemode":"1.0.2"}}}"#)
-                .map_err(|e| e.to_string())?;
             let result = match run_install(executable, arguments, &tools.environment, &runtime, 300) {
                 Ok(result) => result,
                 Err(error) => {
@@ -3029,6 +3025,8 @@ pub mod pi_installer {
             assert!(!is_older("0.85.1", "0.85.1"));
             assert!(!is_older("0.85.1-beta", "0.85.1"));
             assert!(is_older("0.85.0-rc1", "0.85.1"));
+            assert!(is_older("1.0.2", "1.4.0"));
+            assert!(!is_older("1.4.0", "1.0.2"));
         }
 
         /// Redirects the app-local pi home into a fresh temp dir and returns
@@ -3063,9 +3061,9 @@ pub mod pi_installer {
               dir=\"$3\"\n\
               pkg=\"$dir/node_modules/@earendil-works/pi-coding-agent\"\n\
               mkdir -p \"$pkg/dist\"\n\
-              printf '#!/bin/sh\\necho 1.0.2\\n' > \"$pkg/dist/cli.js\"\n\
+              printf '#!/bin/sh\\necho 1.4.0\\n' > \"$pkg/dist/cli.js\"\n\
               chmod +x \"$pkg/dist/cli.js\"\n\
-              printf '{\"name\":\"@earendil-works/pi-coding-agent\",\"version\":\"1.0.2\"}' > \"$pkg/package.json\"\n\
+              printf '{\"name\":\"@earendil-works/pi-coding-agent\",\"version\":\"1.4.0\"}' > \"$pkg/package.json\"\n\
               exit 0\n\
             elif [ \"$1\" = \"--bun\" ]; then\n\
               shift\n\
@@ -3094,7 +3092,7 @@ pub mod pi_installer {
             assert!(launcher.exists(), "launcher must be published");
             let resolved = launcher.canonicalize().unwrap();
             assert!(resolved.ends_with("dist/cli.js"));
-            assert_eq!(installed_version().as_deref(), Some("1.0.2"));
+            assert_eq!(installed_version().as_deref(), Some("1.4.0"));
             leave_sandbox(&dir);
         }
 
@@ -3200,9 +3198,9 @@ pub mod pi_installer {
                    pkg=\"$dir/node_modules/@earendil-works/pi-coding-agent\"\n\
                    if [ -d \"$pkg\" ]; then exit 0; fi\n\
                    mkdir -p \"$pkg/dist\"\n\
-                   printf '#!/bin/sh\\necho 1.0.2\\n' > \"$pkg/dist/cli.js\"\n\
+                   printf '#!/bin/sh\\necho 1.4.0\\n' > \"$pkg/dist/cli.js\"\n\
                    chmod +x \"$pkg/dist/cli.js\"\n\
-                   printf '{\"name\":\"@earendil-works/pi-coding-agent\",\"version\":\"1.0.2\"}' > \"$pkg/package.json\"\n\
+                   printf '{\"name\":\"@earendil-works/pi-coding-agent\",\"version\":\"1.4.0\"}' > \"$pkg/package.json\"\n\
                    exit 0\n\
                  elif [ \"$1\" = \"--bun\" ]; then\n\
                    shift\n\
@@ -3242,9 +3240,9 @@ pub mod pi_installer {
                    dir=\"$3\"\n\
                    pkg=\"$dir/node_modules/@earendil-works/pi-coding-agent\"\n\
                    mkdir -p \"$pkg/dist\"\n\
-                   printf '#!/bin/sh\\necho 1.0.2\\n' > \"$pkg/dist/cli.js\"\n\
+                   printf '#!/bin/sh\\necho 1.4.0\\n' > \"$pkg/dist/cli.js\"\n\
                    chmod +x \"$pkg/dist/cli.js\"\n\
-                   printf '{\"name\":\"@earendil-works/pi-coding-agent\",\"version\":\"1.0.2\"}' > \"$pkg/package.json\"\n\
+                   printf '{\"name\":\"@earendil-works/pi-coding-agent\",\"version\":\"1.4.0\"}' > \"$pkg/package.json\"\n\
                    exit 0\n\
                  fi\n\
                  exit 1\n");

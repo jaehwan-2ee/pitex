@@ -2,10 +2,10 @@
   "components": [
     {
       "name": "@earendil-works/pi-coding-agent",
-      "version": "1.0.2",
+      "version": "1.4.0",
       "type": "application",
       "repository": "https://github.com/earendil-works/pi",
-      "revision": "v1.0.2",
+      "revision": "v1.4.0",
       "copyright": "Copyright (c) 2025 Mario Zechner",
       "license": "MIT",
       "licenseFile": "licenses/pi-MIT.txt",

@@ -164,8 +164,10 @@ enum PiRuntimeInstaller {
     private static let packageName = "@earendil-works/pi-coding-agent"
 
     /// Pinned runtime version. Bump deliberately after checking the RPC
-    /// command surface still matches (get_state, set_thinking_level, …).
-    static let desiredVersion = "1.0.2"
+    /// command surface still matches (get_state, set_thinking_level,
+    /// get_session_stats, get_commands, set_model). 1.4.0 keeps that
+    /// surface and depends on pi-codemode 1.4.0 exactly.
+    static let desiredVersion = "1.4.0"
 
     @MainActor private static var installationInProgress = false
 
@@ -292,9 +294,6 @@ enum PiRuntimeInstaller {
             for name in ["node_modules", "bun.lock", "bun.lockb", "package-lock.json", "package.json"] {
                 try? FileManager.default.removeItem(at: PiPaths.runtimeDirectory.appendingPathComponent(name))
             }
-            // Pi 1.0.2 imports an export removed by newer pi-codemode releases.
-            try #"{"overrides":{"@earendil-works/pi-coding-agent@1.0.2":{"@earendil-works/pi-codemode":"1.0.2"}}}"#
-                .write(to: PiPaths.runtimeDirectory.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
             let name = attempt.name
             let result = try await ProcessRunner().run(DirectCommandPlan(executable: attempt.executable.path, arguments: attempt.arguments,
                 environment: .inherit(overrides: tools.environment)), projectRoot: PiPaths.runtimeDirectory, timeout: .seconds(300))

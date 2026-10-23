@@ -1,12 +1,12 @@
 # Pitex Agent third-party notices
 
-## Pi coding agent 1.0.2
+## Pi coding agent 1.4.0
 
 Copyright (c) 2025 Mario Zechner.
 
 Pi is licensed under the MIT License. The complete upstream notice and
 license are included in [licenses/pi-MIT.txt](licenses/pi-MIT.txt).
-Source: <https://github.com/earendil-works/pi/tree/v1.0.2>.
+Source: <https://github.com/earendil-works/pi/tree/v1.4.0>.
 
 Pitex installs Pi into an app-managed runtime directory. These notices
 identify the version pinned by Pitex; Pi's dependencies retain their own
