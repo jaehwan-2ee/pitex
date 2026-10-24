@@ -18,6 +18,12 @@ final class EditorFindController: NSObject, @preconcurrency NSTextFinderBarConta
     private var countedOptions: NSDictionary?
     private var contentRevision = 0
     private var countedRevision = -1
+    /// Ranges last painted with a find wash. Cleared by range so a bracket
+    /// match outside those ranges keeps its own temporary background.
+    private var painted: [NSRange] = []
+    /// Wash and current-match colors. The app supplies the theme accent;
+    /// until it does, the fallback follows the editor background luminance.
+    var highlightPalette: (@MainActor () -> (NSColor, NSColor))?
     nonisolated(unsafe) private var selectionObserver: NSObjectProtocol?
 
     init(textView: NSTextView, scrollView: NSScrollView) {
@@ -33,6 +39,10 @@ final class EditorFindController: NSObject, @preconcurrency NSTextFinderBarConta
         finder.client = self
         finder.findBarContainer = self
         finder.isIncrementalSearchingEnabled = true
+        // The default dims the document and paints match rects as an opaque
+        // yellow indicator on top of the glyphs. Washes are temporary
+        // background attributes instead, so the text stays readable.
+        finder.incrementalSearchingShouldDimContentView = false
         matchesObserver = finder.observe(\.incrementalMatchRanges, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.updateCount() }
         }
@@ -105,6 +115,76 @@ final class EditorFindController: NSObject, @preconcurrency NSTextFinderBarConta
         let current = textView.flatMap { matches.firstIndex(of: $0.selectedRange()) }.map { $0 + 1 } ?? 0
         counter.stringValue = "\(current) / \(matches.count)"
         counter.superview?.needsLayout = true
+        applyHighlights()
+    }
+
+    func noteAppearanceChanged() {
+        guard isFindBarVisible else { return }
+        applyHighlights()
+    }
+
+    /// Other matches use a light wash; the selected occurrence is the same
+    /// hue at a higher alpha, matching findMatch / findMatchHighlight.
+    private func highlightColors() -> (wash: NSColor, current: NSColor) {
+        if let highlightPalette {
+            let (wash, current) = highlightPalette()
+            return (wash.usingColorSpace(.sRGB) ?? wash, current.usingColorSpace(.sRGB) ?? current)
+        }
+        let background = textView?.backgroundColor.usingColorSpace(.sRGB)
+        let luminance = background.map {
+            0.2126 * $0.redComponent + 0.7152 * $0.greenComponent + 0.0722 * $0.blueComponent
+        } ?? 1
+        if luminance < 0.5 {
+            return (
+                NSColor(srgbRed: 0.96, green: 0.74, blue: 0.27, alpha: 0.28),
+                NSColor(srgbRed: 1.00, green: 0.62, blue: 0.16, alpha: 0.48)
+            )
+        }
+        return (
+            NSColor(srgbRed: 1.00, green: 0.84, blue: 0.20, alpha: 0.40),
+            NSColor(srgbRed: 1.00, green: 0.55, blue: 0.08, alpha: 0.55)
+        )
+    }
+
+    private func clearPaintedRanges() {
+        guard let view = textView, let manager = view.layoutManager else {
+            painted = []
+            return
+        }
+        let length = (view.string as NSString).length
+        for range in painted where range.length > 0 && NSMaxRange(range) <= length {
+            manager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+        }
+        painted = []
+    }
+
+    /// Bracket matching also uses a temporary background. Repaint it after
+    /// find ranges are cleared so hiding the bar does not leave holes.
+    private func restoreCaretChrome() {
+        guard let textView else { return }
+        textView.delegate?.textViewDidChangeSelection?(Notification(name: NSTextView.didChangeSelectionNotification, object: textView))
+    }
+
+    private func applyHighlights() {
+        guard isFindBarVisible, let view = textView, let manager = view.layoutManager else {
+            let hadPaint = !painted.isEmpty
+            clearPaintedRanges()
+            if hadPaint { restoreCaretChrome() }
+            return
+        }
+        clearPaintedRanges()
+        restoreCaretChrome()
+        let colors = highlightColors()
+        let selected = Set(view.selectedRanges.compactMap { ($0 as? NSValue)?.rangeValue })
+        let length = (view.string as NSString).length
+        var next: [NSRange] = []
+        next.reserveCapacity(matches.count)
+        for range in matches where range.length > 0 && NSMaxRange(range) <= length {
+            let color = selected.contains(range) ? colors.current : colors.wash
+            manager.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
+            next.append(range)
+        }
+        painted = next
     }
 
     // Explicit native client: NSTextView's internal find client is private.
@@ -136,14 +216,12 @@ final class EditorFindController: NSObject, @preconcurrency NSTextFinderBarConta
         range.pointee = NSRange(location: 0, length: string.utf16.count)
         return textView ?? NSView()
     }
-    func rects(forCharacterRange range: NSRange) -> [NSValue]? {
-        guard let view = textView, let manager = view.layoutManager, let container = view.textContainer else { return [] }
-        let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        var rects: [NSValue] = []
-        manager.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container) { rect, _ in
-            rects.append(NSValue(rect: rect.offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)))
-        }
-        return rects
+    func rects(forCharacterRange _: NSRange) -> [NSValue]? {
+        // Empty on purpose. These rects feed the find indicator, and
+        // enclosing line-fragment rects are taller than the glyphs. The
+        // indicator is also composited above the text, which hides the
+        // match. `showFindIndicator(for:)` (SyncTeX) does not use this.
+        []
     }
     var visibleCharacterRanges: [NSValue] {
         guard let view = textView, let manager = view.layoutManager, let container = view.textContainer else { return [] }
@@ -166,6 +244,7 @@ final class EditorFindController: NSObject, @preconcurrency NSTextFinderBarConta
                 countedRevision = -1
                 findBarView?.removeFromSuperview()
                 scrollView?.findBarView = nil
+                applyHighlights()
             }
         }
     }

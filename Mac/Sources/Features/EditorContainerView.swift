@@ -413,6 +413,12 @@ struct EditorContainerView: NSViewRepresentable {
             .foregroundColor: appearance.color(for: .bodyText),
         ]
         scrollView.backgroundColor = appearance.color(for: .editorBackground)
+        // Read the accent live: the closure outlives this call and theme
+        // changes must not keep the previous palette.
+        adapter.setFindHighlightPalette {
+            let accent = AppearanceSettings.shared.color(for: .foldAccent)
+            return (accent.withAlphaComponent(0.28), accent.withAlphaComponent(0.50))
+        }
     }
 }
 

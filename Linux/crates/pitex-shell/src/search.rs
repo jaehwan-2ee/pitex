@@ -1,22 +1,62 @@
 //! Keep one native search context per document: GTK counts asynchronously.
+use std::cell::Cell;
+
 use gtk4::prelude::*;
 use sourceview5::prelude::*;
+
+thread_local! {
+    /// `occurrence_position` emits `mark-set` while it scans. The handler
+    /// calls it, so a re-entry would recurse until the stack overflows.
+    static IN_COUNT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Higher-priority than GtkSourceView's `search-match` tag so the selected
+/// occurrence can use a stronger wash without replacing syntax colors.
+const CURRENT_TAG: &str = "pitex-find-current";
 
 pub(crate) struct EditorSearch {
     context: sourceview5::SearchContext,
     view: sourceview5::View,
+    current_tag: gtk4::TextTag,
 }
 
-fn update_count(context: &sourceview5::SearchContext, label: &gtk4::Label) {
+fn update_count(context: &sourceview5::SearchContext, label: &gtk4::Label, tag: &gtk4::TextTag) {
+    if IN_COUNT.with(|flag| flag.replace(true)) {
+        return;
+    }
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            IN_COUNT.with(|flag| flag.set(false));
+        }
+    }
+    let _clear = Clear;
     let total = context.occurrences_count();
     if total < 0 {
         label.set_text("…");
+        sync_current(context, tag);
         return;
     }
     let position = context.buffer().selection_bounds()
         .map(|(start, end)| context.occurrence_position(&start, &end).max(0))
         .unwrap_or(0);
     label.set_text(&format!("{position} / {total}"));
+    sync_current(context, tag);
+}
+
+/// Paint only the selected occurrence. `search-match` already washes every
+/// hit behind the glyphs; this tag is the same hue at a higher alpha.
+fn sync_current(context: &sourceview5::SearchContext, tag: &gtk4::TextTag) {
+    let buffer = context.buffer();
+    buffer.remove_tag(tag, &buffer.start_iter(), &buffer.end_iter());
+    let Some((start, end)) = buffer.selection_bounds() else { return };
+    if context.occurrence_position(&start, &end) > 0 {
+        let top = buffer.tag_table().size() - 1;
+        if top >= 0 && tag.priority() < top {
+            tag.set_priority(top);
+        }
+        buffer.apply_tag(tag, &start, &end);
+    }
 }
 
 impl EditorSearch {
@@ -26,19 +66,46 @@ impl EditorSearch {
         settings.set_wrap_around(true);
         let context = sourceview5::SearchContext::new(buffer, Some(&settings));
         context.set_highlight(true);
+        let current_tag = match buffer.tag_table().lookup(CURRENT_TAG) {
+            Some(tag) => tag,
+            None => {
+                let tag = gtk4::TextTag::new(Some(CURRENT_TAG));
+                // Glyph box, not the full line fragment. No foreground, so
+                // syntax colors stay visible through the wash.
+                tag.set_background_full_height(false);
+                buffer.tag_table().add(&tag);
+                tag
+            }
+        };
         let weak_label = label.downgrade();
+        let tag_for_count = current_tag.clone();
         context.connect_occurrences_count_notify(move |context| {
-            if let Some(label) = weak_label.upgrade() { update_count(context, &label); }
+            if let Some(label) = weak_label.upgrade() { update_count(context, &label, &tag_for_count); }
         });
         let weak_context = context.downgrade();
         let weak_label = label.downgrade();
+        let tag_for_mark = current_tag.clone();
         buffer.connect_mark_set(move |_, _, _| {
             if let (Some(context), Some(label)) = (weak_context.upgrade(), weak_label.upgrade()) {
-                update_count(&context, &label);
+                update_count(&context, &label, &tag_for_mark);
             }
         });
-        update_count(&context, label);
-        Self { context, view: view.clone() }
+        update_count(&context, label, &current_tag);
+        Self { context, view: view.clone(), current_tag }
+    }
+
+    /// Selected-occurrence wash. Called when the theme changes; equal colors
+    /// are left alone so GTK does not drop cached line layouts.
+    pub(crate) fn set_current_highlight(&self, color: gtk4::gdk::RGBA) {
+        let same = self.current_tag.background_rgba().is_some_and(|current| {
+            (current.red() - color.red()).abs() < 0.001
+                && (current.green() - color.green()).abs() < 0.001
+                && (current.blue() - color.blue()).abs() < 0.001
+                && (current.alpha() - color.alpha()).abs() < 0.001
+        });
+        if !same {
+            self.current_tag.set_background_rgba(Some(&color));
+        }
     }
 
     pub(crate) fn set_query(&self, query: &str) {

@@ -789,6 +789,10 @@ impl AppState {
         // Generate a GtkSourceView style scheme from the palette — the
         // native mechanism for editor/gutter/line-number colors.
         let prefs = self.store.prefs();
+        if let Some(search) = &self.search {
+            let (r, g, b, _) = self.appearance.color(prefs, AppearanceColorRole::FoldAccent);
+            search.set_current_highlight(gdk::RGBA::new(r as f32, g as f32, b as f32, 0.50));
+        }
         let scheme_xml = style_scheme_xml(&self.appearance, prefs);
         if let Some(display) = gdk::Display::default() {
             // One provider for the process, reloaded in place — adding a new
@@ -5586,6 +5590,10 @@ fn style_scheme_xml(
     prefs: &crate::settings::Preferences,
 ) -> String {
     let hex = |role: AppearanceColorRole| appearance.stored_hex(prefs, role);
+    // GtkSourceView draws `search-match` behind the glyphs. A translucent
+    // fold-accent wash stays readable in light and dark themes; the current
+    // occurrence is a separate higher-priority tag (see `EditorSearch`).
+    let find_wash = sourceview_rgba(&hex(AppearanceColorRole::FoldAccent), 0.28);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <style-scheme id="pitex-dynamic" _name="Pitex" version="1.0">
@@ -5608,7 +5616,7 @@ fn style_scheme_xml(
   <style name="right-margin" foreground="linenr"/>
   <style name="bracket-match" foreground="bracket" bold="true"/>
   <style name="bracket-mismatch" foreground="comment"/>
-  <style name="search-match" background="math"/>
+  <style name="search-match" background="{find_wash}"/>
 </style-scheme>"#,
         bg = hex(AppearanceColorRole::EditorBackground),
         fg = hex(AppearanceColorRole::BodyText),
@@ -5620,6 +5628,21 @@ fn style_scheme_xml(
         brace = hex(AppearanceColorRole::Braces),
         comment = hex(AppearanceColorRole::Comments),
         bracket = hex(AppearanceColorRole::BracketMatch),
+        find_wash = find_wash,
+    )
+}
+
+/// GtkSourceView color literal `#rgba(r,g,b,a)` from a palette hex. Alpha on
+/// the hex itself is ignored; the wash alpha is chosen for the highlight.
+fn sourceview_rgba(hex: &str, alpha: f64) -> String {
+    let (r, g, b, _) = crate::settings::parse_hex_color(hex).unwrap_or((1.0, 0.78, 0.24, 1.0));
+    let channel = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    format!(
+        "#rgba({},{},{},{:.2})",
+        channel(r),
+        channel(g),
+        channel(b),
+        alpha.clamp(0.0, 1.0)
     )
 }
 
@@ -7739,6 +7762,30 @@ mod ubuntu_preview_tests;
 #[cfg(test)]
 #[path = "../tests/support/parity_shots.rs"]
 mod parity_shots;
+
+#[cfg(test)]
+mod find_highlight_tests {
+    use super::*;
+
+    #[test]
+    fn search_match_is_a_translucent_fold_accent() {
+        let prefs = crate::settings::Preferences::default();
+        let mut appearance = AppearanceSettings::new(&prefs);
+        appearance.theme = Theme::Dark;
+        let xml = style_scheme_xml(&appearance, &prefs);
+        assert!(
+            xml.contains(r##"<style name="search-match" background="#rgba(255,144,47,0.28)"/>"##),
+            "{xml}"
+        );
+        assert!(!xml.contains(r#"background="math""#), "{xml}");
+        appearance.theme = Theme::Light;
+        let xml = style_scheme_xml(&appearance, &prefs);
+        assert!(
+            xml.contains(r##"<style name="search-match" background="#rgba(3,102,214,0.28)"/>"##),
+            "{xml}"
+        );
+    }
+}
 
 #[cfg(test)]
 mod build_key_tests {
