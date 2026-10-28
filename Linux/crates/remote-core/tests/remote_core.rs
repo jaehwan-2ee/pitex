@@ -1374,7 +1374,7 @@ fn live_run_git_status() {
                 "--porcelain=v1".to_string(),
                 "-z".to_string(),
                 "--branch".to_string(),
-                "-uall".to_string(),
+                "--untracked-files=normal".to_string(),
             ],
         )
         .unwrap();

@@ -234,6 +234,12 @@ actor NativeDocumentSessionPort: AppPorts.DocumentSessionPort {
     }
 }
 
+/// Listing of one opened folder. `limited` means a bound stopped the walk.
+struct ProjectFileScan: Sendable {
+    var files: [URL]
+    var limited: Bool
+}
+
 @MainActor
 final class WorkspaceModel: ObservableObject {
     @Published internal(set) var phase: WorkspacePhase = .noProject
@@ -246,6 +252,8 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var projectFiles: [URL] = [] {
         didSet { rebuildProjectTree() }
     }
+    /// The folder walk stopped early. The sidebar says the listing is incomplete.
+    @Published private(set) var projectScanLimited = false
     @Published private(set) var openDocuments: [URL] = []
     /// Per-document caret + scroll position restored on re-activation —
     /// each activation rebuilds the editor adapter, so positions are
@@ -815,17 +823,20 @@ final class WorkspaceModel: ObservableObject {
         // file is read; an unreachable device with nothing cached fails here.
         guard await beginRemoteSession(for: selectedURL), documentLoadGeneration == generation else { return }
         do {
-            let (root, files, initialURL, initialText) = try await Task.detached(priority: .userInitiated) {
+            let (root, files, scanLimited, initialURL, initialText) = try await Task.detached(priority: .userInitiated) {
                 let values = try selectedURL.resourceValues(forKeys: [.isDirectoryKey])
                 let isDirectory = values.isDirectory == true
                 // Standardize so symlinked roots (/tmp → /private/tmp) canonicalize
                 // identically to document paths in SyncTeX/path containment checks.
                 var resolver = TeXProjectResolver()
                 let root = (isDirectory ? selectedURL : resolver.projectRoot(for: selectedURL)).standardizedFileURL
-                let files = try Self.discoverTexFiles(root: root, selected: selectedURL, isDirectory: isDirectory)
+                let scan = try Self.discoverTexFiles(root: root, selected: selectedURL, isDirectory: isDirectory)
+                let files = scan.files
                 let initialURL: URL
                 if isDirectory {
-                    guard let first = resolver.initialDocument(in: files) else { throw WorkspaceOpenError.noTexSources }
+                    guard let first = resolver.initialDocument(in: files) else {
+                        throw scan.limited ? WorkspaceOpenError.folderTooLarge : WorkspaceOpenError.noTexSources
+                    }
                     initialURL = first
                 } else {
                     initialURL = selectedURL.standardizedFileURL
@@ -833,7 +844,7 @@ final class WorkspaceModel: ObservableObject {
 
                 // NSOpenPanel grants immediate access. AppShell's broker then owns the durable lease.
                 let initialText = try Self.readExactUTF8(initialURL)
-                return (root, files, initialURL, initialText)
+                return (root, files, scan.limited, initialURL, initialText)
             }.value
             guard documentLoadGeneration == generation else { return }
             let relativePath = try Self.relativePath(for: initialURL, root: root)
@@ -849,6 +860,7 @@ final class WorkspaceModel: ObservableObject {
             )
             guard documentLoadGeneration == generation else { return }
             projectURL = root
+            projectScanLimited = scanLimited
             projectFiles = files
             registeredSessions = [session]
             loadProjectCommands(root: root)
@@ -1404,6 +1416,7 @@ final class WorkspaceModel: ObservableObject {
         capabilityLease = nil
         registeredSessions.removeAll()
         projectURL = nil
+        projectScanLimited = false
         projectFiles = []
         openDocuments = []
         editorViewStates.removeAll()
@@ -1634,7 +1647,10 @@ final class WorkspaceModel: ObservableObject {
         }
         if latestBuiltPDFName == name, syncTeXBinding != nil { return }
         let pdf = root.appendingPathComponent(name)
-        guard let data = try? Data(contentsOf: pdf), data.starts(with: Data("%PDF".utf8)) else {
+        var pdfInfo = stat()
+        let pdfFits = stat(pdf.path, &pdfInfo) == 0 && pdfInfo.st_size <= off_t(Self.maxPreviewPDFBytes)
+        guard pdfFits, let data = try? Data(contentsOf: pdf),
+              data.count <= Self.maxPreviewPDFBytes, data.starts(with: Data("%PDF".utf8)) else {
             if latestBuiltPDFName != name {
                 latestBuiltPDFName = nil
                 syncTeXBinding = nil
@@ -2011,8 +2027,9 @@ final class WorkspaceModel: ObservableObject {
         if let discovered = try? Self.discoverTexFiles(
             root: root, selected: root, isDirectory: true
         ) {
+            projectScanLimited = discovered.limited
             let known = Set(projectFiles)
-            let additions = discovered.filter { !known.contains($0) }
+            let additions = discovered.files.filter { !known.contains($0) }
             if !additions.isEmpty {
                 projectFiles.append(contentsOf: additions)
                 projectFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
@@ -2441,7 +2458,8 @@ final class WorkspaceModel: ObservableObject {
                 try Self.discoverTexFiles(root: root, selected: root, isDirectory: true)
             }.value
             guard let self, projectURL == root, let discovered else { return }
-            projectFiles = discovered
+            projectScanLimited = discovered.limited
+            projectFiles = discovered.files
             refreshBuildTarget()
             refreshStructure()
             // Explicit rescan: re-stat unopened inputs too.
@@ -2537,7 +2555,9 @@ final class WorkspaceModel: ObservableObject {
         guard let regex = bibliographyRegex else { return [] }
         var items: [BibliographyItem] = []
         for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            var bibInfo = stat()
+            guard stat(file.path, &bibInfo) == 0, bibInfo.st_size <= off_t(Self.maxTextBytes),
+                  let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             let nsText = text as NSString
             let name = (try? relativePath(for: file, root: root ?? file.deletingLastPathComponent()).rawValue) ?? file.lastPathComponent
             for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
@@ -2737,28 +2757,120 @@ final class WorkspaceModel: ObservableObject {
         activeDocumentURL.map(Self.isMarkdown) ?? false
     }
 
+    /// `FolderScanLimits` is the only copy of these numbers. Linux and
+    /// Windows compile that file into the same constants.
+    nonisolated static let maxScanEntries = FolderScanLimits.maxScanEntries
+    nonisolated static let maxScanDirectories = FolderScanLimits.maxScanDirectories
+    nonisolated static let maxListedSources = FolderScanLimits.maxListedSources
+    nonisolated static let maxListedFigures = FolderScanLimits.maxListedFigures
+    nonisolated static let maxTextBytes = 32 * 1024 * 1024
+    nonisolated static let maxPreviewPDFBytes = 50 * 1024 * 1024
+    nonisolated static let prunedDirectoryNames: Set<String> = ["node_modules", "__pycache__", "venv", ".venv"]
+
     nonisolated static func discoverTexFiles(
         root: URL,
         selected: URL,
         isDirectory: Bool
-    ) throws -> [URL] {
+    ) throws -> ProjectFileScan {
         // A single-file open treats the file's directory as the project so
         // sibling .tex/.bib sources appear alongside it (matching how the
         // reference editor lists project files).
-        let scanRoot = root
+        let scanRoot = root.standardizedFileURL
+        var rootInfo = stat()
+        guard stat(scanRoot.path, &rootInfo) == 0 else { throw WorkspaceOpenError.unreadableProject }
+        var seenDirectories: Set<String> = ["\(rootInfo.st_dev):\(rootInfo.st_ino)"]
         guard let enumerator = FileManager.default.enumerator(
             at: scanRoot,
-            includingPropertiesForKeys: [.isRegularFileKey],
+            includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { throw WorkspaceOpenError.unreadableProject }
         var files: [URL] = []
-        for case let url as URL in enumerator where Self.projectFileExtensions.contains(url.pathExtension.lowercased()) {
-            files.append(url.standardizedFileURL)
+        var seenFiles = Set<URL>()
+        var entries = 0
+        var directories = 1
+        var sources = 0
+        var figures = 0
+        var limited = false
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]
+        while let url = enumerator.nextObject() as? URL {
+            entries += 1
+            if entries > Self.maxScanEntries {
+                limited = true
+                break
+            }
+            let values = try? url.resourceValues(forKeys: keys)
+            if values?.isSymbolicLink == true {
+                enumerator.skipDescendants()
+                var info = stat()
+                if stat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG {
+                    Self.recordDiscovered(
+                        url, files: &files, seenFiles: &seenFiles,
+                        sources: &sources, figures: &figures, limited: &limited
+                    )
+                }
+                continue
+            }
+            if values?.isDirectory == true {
+                if Self.prunedDirectoryNames.contains(url.lastPathComponent.lowercased()) {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                var info = stat()
+                if lstat(url.path, &info) != 0 || info.st_dev != rootInfo.st_dev {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                if !seenDirectories.insert("\(info.st_dev):\(info.st_ino)").inserted {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                directories += 1
+                if directories > Self.maxScanDirectories {
+                    limited = true
+                    enumerator.skipDescendants()
+                    break
+                }
+                continue
+            }
+            guard values?.isRegularFile == true else { continue }
+            Self.recordDiscovered(
+                url, files: &files, seenFiles: &seenFiles,
+                sources: &sources, figures: &figures, limited: &limited
+            )
         }
-        if !isDirectory, !files.contains(selected.standardizedFileURL) {
-            files.append(selected.standardizedFileURL)
+        if !isDirectory {
+            let sel = selected.standardizedFileURL
+            if !files.contains(sel) { files.append(sel) }
         }
-        return files.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        files.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        return ProjectFileScan(files: files, limited: limited)
+    }
+
+    nonisolated private static func recordDiscovered(
+        _ url: URL,
+        files: inout [URL],
+        seenFiles: inout Set<URL>,
+        sources: inout Int,
+        figures: inout Int,
+        limited: inout Bool
+    ) {
+        let ext = url.pathExtension.lowercased()
+        guard projectFileExtensions.contains(ext) else { return }
+        let source = isSourceFile(url)
+        if source {
+            if sources >= maxListedSources {
+                limited = true
+                return
+            }
+        } else if figures >= maxListedFigures {
+            limited = true
+            return
+        }
+        let standardized = url.standardizedFileURL
+        if seenFiles.insert(standardized).inserted {
+            files.append(standardized)
+            if source { sources += 1 } else { figures += 1 }
+        }
     }
 
     static func relativePath(for url: URL, root: URL) throws -> NormalizedRelativePath {
@@ -2770,7 +2882,11 @@ final class WorkspaceModel: ObservableObject {
     }
 
     nonisolated static func readExactUTF8(_ url: URL) throws -> String {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { throw WorkspaceOpenError.unreadableProject }
+        guard info.st_size <= off_t(Self.maxTextBytes) else { throw WorkspaceOpenError.unreadableProject }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard data.count <= Self.maxTextBytes else { throw WorkspaceOpenError.unreadableProject }
         guard let text = String(data: data, encoding: .utf8) else {
             throw WorkspaceOpenError.invalidUTF8
         }
@@ -2802,6 +2918,7 @@ extension Notification.Name {
 
 private enum WorkspaceOpenError: LocalizedError {
     case noTexSources
+    case folderTooLarge
     case unreadableProject
     case invalidUTF8
     case outsideProject
@@ -2812,6 +2929,7 @@ private enum WorkspaceOpenError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noTexSources: "The selected project contains no .tex source files."
+        case .folderTooLarge: "This folder is too large to open. Open a smaller folder."
         case .unreadableProject: "The selected project could not be enumerated."
         case .invalidUTF8: "The selected source is not valid UTF-8."
         case .outsideProject: "The selected source is outside the project root."

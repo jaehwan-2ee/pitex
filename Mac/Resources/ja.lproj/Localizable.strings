@@ -146,6 +146,7 @@
 "sidebar.no_bib" = "参考文献なし";
 "sidebar.no_bib_detail" = ".bib ファイルを開くと項目が表示されます。";
 "sidebar.rescan_help" = "プロジェクトファイルを再スキャン";
+"sidebar.scan_limited" = "このフォルダは大きすぎてすべてを表示できません。すべてのファイルを見るには、より小さなフォルダを開いてください。";
 "sidebar.pin_help" = "ビルド対象に固定";
 "sidebar.todos" = "TODO";
 "sidebar.no_todos" = "TODO なし";

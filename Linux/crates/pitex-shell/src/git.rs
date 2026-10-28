@@ -15,7 +15,8 @@ use crate::app_ui::AppState;
 use crate::model::{GitDiff, GitDiffSource, GitRefresh, WorkspaceMessage, WorkspaceModel};
 use git_core::{self, GitChange, GitChangeKind, GitCommitFile};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -133,6 +134,81 @@ fn local_git_output(dir: &Path, args: &[String]) -> Result<GitOutput, String> {
     })
 }
 
+/// Live `git status` can print one line per file. Stop reading, kill the
+/// child, and surface an error instead of parsing a partial `-z` stream
+/// into millions of changes. Four mebibytes is far above a real project
+/// and far below a Downloads-sized listing.
+const MAX_STATUS_STDOUT: usize = 4 * 1024 * 1024;
+
+fn status_too_large() -> String {
+    "This Git repository has too many changes to list.".into()
+}
+
+fn local_git_output_capped(dir: &Path, args: &[String], limit: usize) -> Result<GitOutput, String> {
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "git produced no output".to_string())?;
+    let stderr_pipe = child.stderr.take();
+    let stderr_thread = std::thread::spawn(move || {
+        let mut err = Vec::new();
+        if let Some(mut pipe) = stderr_pipe {
+            let _ = Read::read_to_end(&mut pipe, &mut err);
+        }
+        err
+    });
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 32 * 1024];
+    let mut too_big = false;
+    loop {
+        match stdout.read(&mut tmp) {
+            Ok(0) => break,
+            Ok(n) => {
+                if buf.len().saturating_add(n) > limit {
+                    too_big = true;
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                drop(stdout);
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stderr_thread.join();
+                return Err(e.to_string());
+            }
+        }
+    }
+    drop(stdout);
+    if too_big {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = stderr_thread.join();
+        return Err(status_too_large());
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let stderr = stderr_thread.join().unwrap_or_default();
+    Ok(GitOutput {
+        code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&buf).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
 where
@@ -200,6 +276,34 @@ impl GitRunner {
                     stderr: result.stderr_text(),
                 })
                 .map_err(|error| error.to_string()),
+        }
+    }
+
+    /// Status only. Local runs stop at `MAX_STATUS_STDOUT` and kill git;
+    /// a remote result that is already buffered is refused at the same size.
+    fn status(&self, dir: &str) -> Result<GitOutput, String> {
+        let args: Vec<String> = git_core::status_args().map(String::from).to_vec();
+        match self {
+            Self::Local => local_git_output_capped(Path::new(dir), &args, MAX_STATUS_STDOUT),
+            #[cfg(test)]
+            Self::CountingLocal(calls) => {
+                calls.lock().unwrap().push(args.clone());
+                local_git_output_capped(Path::new(dir), &args, MAX_STATUS_STDOUT)
+            }
+            Self::Remote(sync) => {
+                let output = sync
+                    .run_git(dir, &args)
+                    .map(|result| GitOutput {
+                        code: result.status,
+                        stdout: result.stdout_text(),
+                        stderr: result.stderr_text(),
+                    })
+                    .map_err(|error| error.to_string())?;
+                if output.stdout.len() > MAX_STATUS_STDOUT {
+                    return Err(status_too_large());
+                }
+                Ok(output)
+            }
         }
     }
 
@@ -343,7 +447,11 @@ fn collect_git(
         return Ok(None);
     }
     let root = top.stdout.trim().to_string();
-    let status_raw = runner.run(&root, git_core::status_args().map(String::from).as_slice()).map_err(|e| e.to_string())?;
+    let status_output = runner.status(&root)?;
+    if status_output.code != 0 {
+        return Err(status_output.error_text());
+    }
+    let status_raw = status_output.stdout;
     // `show-ref` returns 1 with empty output in an unborn repository.
     let refs_raw = runner.run_codes(&root, git_core::refs_args().map(String::from).as_slice(), &[0, 1])?;
     let refs = git_core::history_refs(&refs_raw);
@@ -1134,6 +1242,55 @@ mod tests {
             parent_root);
         std::fs::remove_dir_all(project.0.join(".git")).unwrap();
         assert!(collect_git(&child, &runner, &child_context, &cache).unwrap().is_none());
+    }
+
+    #[test]
+    fn status_collapses_untracked_directories_and_keeps_loose_files() {
+        let project = TestProject::new();
+        project.init();
+        std::fs::write(project.0.join("main.tex"), "tracked\n").unwrap();
+        project.commit("initial");
+        std::fs::create_dir_all(project.0.join("chapters")).unwrap();
+        std::fs::write(project.0.join("chapters/a.tex"), "a\n").unwrap();
+        run_git(&project.0, ["add", "chapters/a.tex"]).unwrap();
+        run_git(&project.0, ["commit", "-qm", "chapter"]).unwrap();
+        std::fs::write(project.0.join("chapters/b.tex"), "b\n").unwrap();
+        std::fs::write(project.0.join("loose.tex"), "loose\n").unwrap();
+        std::fs::create_dir_all(project.0.join("dump")).unwrap();
+        for i in 0..300 {
+            std::fs::write(project.0.join(format!("dump/f{i}.png")), "x").unwrap();
+        }
+        let cache = Mutex::new(GitCache::default());
+        let started = Instant::now();
+        let status = collect_git(&project.0, &GitRunner::Local, &context(&project.0), &cache)
+            .unwrap()
+            .unwrap()
+            .status;
+        assert!(started.elapsed() < Duration::from_secs(5), "status took {:?}", started.elapsed());
+        let unstaged: Vec<&str> = status.unstaged.iter().map(|c| c.path.as_str()).collect();
+        assert!(unstaged.contains(&"loose.tex"), "{unstaged:?}");
+        assert!(unstaged.contains(&"chapters/b.tex"), "{unstaged:?}");
+        assert!(
+            unstaged.iter().any(|p| p.trim_end_matches('/') == "dump"),
+            "{unstaged:?}"
+        );
+        assert!(unstaged.len() < 20, "{unstaged:?}");
+        run_git(&project.0, git_core::clean_args("dump/")).unwrap();
+        assert!(!project.0.join("dump").exists());
+        assert!(project.0.join("loose.tex").is_file());
+        assert!(project.0.join("chapters/b.tex").is_file());
+    }
+
+    #[test]
+    fn status_output_cap_stops_a_runaway_listing() {
+        let project = TestProject::new();
+        project.init();
+        std::fs::write(project.0.join("main.tex"), "x").unwrap();
+        let args: Vec<String> = git_core::status_args().map(String::from).to_vec();
+        match local_git_output_capped(&project.0, &args, 1) {
+            Err(err) => assert!(err.contains("too many"), "{err}"),
+            Ok(output) => panic!("status cap did not trip (exit {})", output.code),
+        }
     }
 
     #[test]

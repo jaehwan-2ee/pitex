@@ -4,8 +4,9 @@
 //! forever otherwise), while symlinked *files* still resolve like
 //! `isRegularFileKey`.
 
-use pitex_shell::model::{standardize, WorkspaceModel};
+use pitex_shell::model::{standardize, WorkspaceModel, MAX_LISTED_FIGURES, MAX_SCAN_DIRECTORIES};
 use std::collections::HashSet;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -44,10 +45,12 @@ fn discovery_does_not_descend_into_symlink_cycles() {
     std::thread::spawn(move || {
         let _ = tx.send(WorkspaceModel::discover_tex_files(&probe, &probe, true));
     });
-    let files = rx
+    let scan = rx
         .recv_timeout(Duration::from_secs(15))
         .expect("discovery hung — a symlinked directory was traversed")
         .unwrap();
+    assert!(!scan.limited);
+    let files = scan.files;
 
     let mut expected = vec![
         standardize(root.join("main.tex")),
@@ -75,8 +78,9 @@ fn discovery_skips_symlinks_escaping_the_project_root() {
     std::fs::write(outside.join("secret.tex"), "x").unwrap();
     std::os::unix::fs::symlink(outside.join("secret.tex"), root.join("evil.tex")).unwrap();
 
-    let files = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
-    assert_eq!(files, vec![standardize(root.join("main.tex"))]);
+    let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    assert!(!scan.limited);
+    assert_eq!(scan.files, vec![standardize(root.join("main.tex"))]);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&outside);
 }
@@ -143,7 +147,9 @@ fn discovery_lists_figures_but_not_build_artifacts() {
     std::fs::create_dir_all(root.join("figs")).unwrap();
     std::fs::write(root.join("figs/nested.png"), "x").unwrap();
 
-    let files = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    assert!(!scan.limited);
+    let files = scan.files;
     let listed: HashSet<PathBuf> = files.iter().cloned().collect();
 
     for name in [
@@ -217,9 +223,131 @@ fn initial_document_never_picks_a_figure() {
     std::fs::write(root.join("aaa.png"), "x").unwrap();
     std::fs::write(root.join("bbb.pdf"), "x").unwrap();
     let mut resolver = pitex_shell::model::TeXProjectResolver::new();
-    let files = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
-    let picked = resolver.initial_document(&files).unwrap();
+    let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    assert!(!scan.limited);
+    let picked = resolver.initial_document(&scan.files).unwrap();
     assert_eq!(picked, standardize(root.join("zeta.tex")));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn effective_uid_is_root() -> bool {
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() == 0 }
+}
+
+fn rss_bytes() -> u64 {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let kb: u64 = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0);
+            return kb * 1024;
+        }
+    }
+    0
+}
+
+struct ModeGuard(PathBuf);
+impl Drop for ModeGuard {
+    fn drop(&mut self) {
+        if let Ok(meta) = std::fs::metadata(&self.0) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&self.0, perms);
+        }
+    }
+}
+
+#[test]
+fn discovery_bounds_a_large_folder_and_skips_pruned_and_unreadable_trees() {
+    let root = temp_dir("large");
+    std::fs::write(root.join("main.tex"), "\\documentclass{article}").unwrap();
+    std::fs::create_dir_all(root.join("chapters")).unwrap();
+    std::fs::write(root.join("chapters/ch.tex"), "x").unwrap();
+    std::fs::create_dir_all(root.join("pics")).unwrap();
+    for i in 0..MAX_LISTED_FIGURES + 40 {
+        std::fs::write(root.join(format!("pics/f{i}.png")), "x").unwrap();
+    }
+    std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    std::fs::write(root.join("node_modules/pkg/secret.tex"), "nope").unwrap();
+    std::fs::create_dir_all(root.join("venv")).unwrap();
+    std::fs::write(root.join("venv/hidden.tex"), "nope").unwrap();
+    std::fs::create_dir_all(root.join("__pycache__")).unwrap();
+    std::fs::write(root.join("__pycache__/hidden.tex"), "nope").unwrap();
+    let locked = root.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(locked.join("secret.tex"), "nope").unwrap();
+    let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+    perms.set_mode(0);
+    std::fs::set_permissions(&locked, perms).unwrap();
+    let _guard = ModeGuard(locked);
+
+    let before = rss_bytes();
+    let started = std::time::Instant::now();
+    let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    let elapsed = started.elapsed();
+    let after = rss_bytes();
+
+    assert!(scan.limited, "figure cap should mark the listing incomplete");
+    assert!(elapsed < Duration::from_secs(5), "scan took {elapsed:?}");
+    assert!(
+        after < before.saturating_add(64 * 1024 * 1024),
+        "rss {before} -> {after}"
+    );
+    assert!(scan.files.iter().any(|p| p.ends_with("main.tex")));
+    assert!(scan.files.iter().any(|p| p.ends_with("ch.tex")));
+    // chmod 000 does not stop root. The walker lists the directory when
+    // `read_dir` succeeds, which it does for euid 0; only a non-root
+    // process proves the unreadable-dir skip.
+    let mut banned = vec!["node_modules", "venv", "__pycache__"];
+    if !effective_uid_is_root() {
+        banned.push("locked");
+    }
+    for banned in banned {
+        assert!(
+            !scan.files.iter().any(|p| p.components().any(|c| c.as_os_str() == banned)),
+            "{banned} leaked into {:?}",
+            scan.files
+        );
+    }
+    let figures = scan
+        .files
+        .iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("png"))
+        .count();
+    assert_eq!(figures, MAX_LISTED_FIGURES);
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn discovery_stops_after_the_directory_cap() {
+    let root = temp_dir("dirs");
+    std::fs::write(root.join("main.tex"), "x").unwrap();
+    for i in 0..MAX_SCAN_DIRECTORIES {
+        let dir = root.join(format!("d{i}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ch.tex"), "x").unwrap();
+    }
+    let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    assert!(
+        scan.limited,
+        "the directory cap should mark the listing incomplete"
+    );
+    let sources = scan
+        .files
+        .iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("tex"))
+        .count();
+    // The root counts as one directory, so one subdirectory is not entered.
+    assert_eq!(sources, MAX_SCAN_DIRECTORIES);
+    assert!(scan.files.iter().any(|p| p.ends_with("main.tex")));
     let _ = std::fs::remove_dir_all(&root);
 }
 

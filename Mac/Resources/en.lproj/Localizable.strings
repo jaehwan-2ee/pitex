@@ -146,6 +146,7 @@
 "sidebar.no_bib" = "No Bibliography";
 "sidebar.no_bib_detail" = "Open a .bib file to see its entries.";
 "sidebar.rescan_help" = "Rescan project files";
+"sidebar.scan_limited" = "This folder is too large to list completely. Open a smaller folder to see every file.";
 "sidebar.pin_help" = "Pin as build target";
 "sidebar.todos" = "TODOs";
 "sidebar.no_todos" = "No To-Dos";

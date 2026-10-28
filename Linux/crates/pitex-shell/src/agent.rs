@@ -2740,7 +2740,11 @@ pub mod pi_installer {
         // existing legacy package's CLI and running agent processes
         // untouched. On Windows `runtime_executable` IS the package entry
         // (`symlink` needs a privilege Windows users rarely hold), so there
-        // is no launcher to publish.
+        // is no launcher to publish and `entry` is only the success check.
+        #[cfg(not(unix))]
+        {
+            let _ = entry;
+        }
         #[cfg(unix)]
         {
             let launcher_dir = pi_paths::runtime_executable()

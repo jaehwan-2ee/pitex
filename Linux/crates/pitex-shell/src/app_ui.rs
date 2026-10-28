@@ -3331,6 +3331,17 @@ impl AppState {
                             .replace('\\', "/")
                     })
                     .collect();
+                if self.model.project_scan_limited {
+                    let note = gtk4::Label::new(Some(&tr(lang, "sidebar.scan_limited")));
+                    note.add_css_class("dim-label");
+                    note.set_wrap(true);
+                    note.set_xalign(0.0);
+                    note.set_margin_start(8);
+                    note.set_margin_end(8);
+                    note.set_margin_top(6);
+                    note.set_margin_bottom(6);
+                    list.append(&note);
+                }
                 let tree = project_feature::build_project_file_tree(&rel_paths);
                 for node in &tree {
                     append_project_node(list, node, 0, &root, &self.model);
@@ -5265,9 +5276,9 @@ pub(crate) fn wake_agent() {
 }
 
 fn view_key(value: &impl std::hash::Hash) -> u64 {
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hasher;
     let mut hash = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hash);
+    std::hash::Hash::hash(value, &mut hash);
     hash.finish()
 }
 

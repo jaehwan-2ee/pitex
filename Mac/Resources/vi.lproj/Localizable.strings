@@ -146,6 +146,7 @@
 "sidebar.no_bib" = "Không có thư mục";
 "sidebar.no_bib_detail" = "Mở tệp .bib để xem các mục.";
 "sidebar.rescan_help" = "Quét lại tệp dự án";
+"sidebar.scan_limited" = "Thư mục này quá lớn nên không liệt kê hết được. Hãy mở một thư mục nhỏ hơn để xem mọi tệp.";
 "sidebar.pin_help" = "Ghim làm mục tiêu biên dịch";
 "sidebar.todos" = "Việc cần làm";
 "sidebar.no_todos" = "Không có việc cần làm";

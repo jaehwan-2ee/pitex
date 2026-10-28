@@ -147,6 +147,7 @@
 "sidebar.no_bib" = "Sin bibliografía";
 "sidebar.no_bib_detail" = "Abre un archivo .bib para ver sus entradas.";
 "sidebar.rescan_help" = "Volver a analizar los archivos del proyecto";
+"sidebar.scan_limited" = "Esta carpeta es demasiado grande para listarla por completo. Abre una carpeta más pequeña para ver todos los archivos.";
 "sidebar.pin_help" = "Fijar como objetivo de compilación";
 "sidebar.todos" = "Tareas";
 "sidebar.no_todos" = "Sin tareas";

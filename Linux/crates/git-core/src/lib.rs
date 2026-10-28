@@ -162,8 +162,19 @@ impl GitDiffFileSection {
 pub fn top_level_args() -> [&'static str; 2] {
     ["rev-parse", "--show-toplevel"]
 }
+/// Porcelain status. `--untracked-files=normal` (git's own default) lists a
+/// wholly untracked directory as one line. `-uall` walks every file inside
+/// it, which hangs a machine when a repository root is `$HOME` and Downloads
+/// is untracked. The Swift `GitSupport.statusArgs` array is this list.
 pub fn status_args() -> [&'static str; 6] {
-    ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--branch", "-uall"]
+    [
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--branch",
+        "--untracked-files=normal",
+    ]
 }
 pub fn branch_args() -> [&'static str; 2] {
     ["branch", "--format=%(refname:short)"]
@@ -291,8 +302,11 @@ pub fn discard_staged_args(path: &str) -> [String; 4] {
 pub fn remove_file_args(path: &str) -> [String; 4] {
     ["rm".into(), "-f".into(), "--".into(), path.into()]
 }
+/// `-d` is required once status collapses an untracked directory to one
+/// `?? dir/` row. A file pathspec is still removed and nothing outside the
+/// pathspec is touched.
 pub fn clean_args(path: &str) -> [String; 4] {
-    ["clean".into(), "-f".into(), "--".into(), path.into()]
+    ["clean".into(), "-fd".into(), "--".into(), path.into()]
 }
 /// `--staged` describes the pending commit; plain `diff` covers the
 /// commit-everything fallback (untracked files produce no diff — the

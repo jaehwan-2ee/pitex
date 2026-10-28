@@ -341,6 +341,15 @@ struct ProjectSidebarView: View {
             .padding(.top, 8)
             .padding(.bottom, 4)
 
+            if isWorkspace, workspace.projectScanLimited {
+                Text("sidebar.scan_limited")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
+
             // ScrollView+VStack instead of List: NSTableView marks clicked
             // rows selected (accent wash) even without a selection binding —
             // we want only our own active-file highlight. Workspace follows
