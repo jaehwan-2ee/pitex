@@ -5277,11 +5277,12 @@ impl WorkspaceModel {
         let root = standardize(root.to_path_buf());
         let root_meta = std::fs::symlink_metadata(&root)
             .map_err(|_| WorkspaceOpenError::UnreadableProject)?;
-        let root_dev = device_id(&root_meta);
+        let root_id = directory_identity(&root, &root_meta)
+            .ok_or(WorkspaceOpenError::UnreadableProject)?;
         let mut files = Vec::new();
         let mut seen_files = HashSet::new();
         let mut seen_dirs = HashSet::new();
-        seen_dirs.insert((root_dev, inode_id(&root_meta)));
+        seen_dirs.insert(root_id);
         let mut queue = VecDeque::new();
         queue.push_back(root.clone());
         let mut directories = 0usize;
@@ -5343,15 +5344,15 @@ impl WorkspaceModel {
                     if !meta.is_dir() {
                         continue;
                     }
-                    let dev = device_id(&meta);
+                    let Some(id) = directory_identity(&path, &meta) else { continue };
                     // A mount point is a different filesystem. Crossing it
                     // walks the rest of the machine from this folder.
-                    if dev != root_dev {
+                    if id.0 != root_id.0 {
                         continue;
                     }
                     // The same directory reached again is a bind-mount cycle,
                     // which a symlink check cannot see.
-                    if !seen_dirs.insert((dev, inode_id(&meta))) {
+                    if !seen_dirs.insert(id) {
                         continue;
                     }
                     queue.push_back(path);
@@ -5538,28 +5539,74 @@ fn consider_project_file(
     }
 }
 
-#[cfg(unix)]
-fn device_id(meta: &std::fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    meta.dev()
-}
-
-#[cfg(unix)]
-fn inode_id(meta: &std::fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    meta.ino()
+/// Volume id and file index for one directory.
+///
+/// Unix reads `st_dev` and `st_ino` from the metadata already in hand.
+/// Windows cannot: `MetadataExt::volume_serial_number` and `file_index`
+/// are still unstable (`windows_by_handle`, rust-lang/rust#63010). The
+/// stable query is `GetFileInformationByHandle` on a directory handle.
+fn directory_identity(path: &Path, meta: &std::fs::Metadata) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        let _ = path;
+        use std::os::unix::fs::MetadataExt;
+        Some((meta.dev(), meta.ino()))
+    }
+    #[cfg(windows)]
+    {
+        let _ = meta;
+        windows_directory_identity(path)
+    }
 }
 
 #[cfg(windows)]
-fn device_id(meta: &std::fs::Metadata) -> u64 {
-    use std::os::windows::fs::MetadataExt;
-    u64::from(meta.volume_serial_number().unwrap_or(0))
-}
+fn windows_directory_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
 
-#[cfg(windows)]
-fn inode_id(meta: &std::fs::Metadata) -> u64 {
-    use std::os::windows::fs::MetadataExt;
-    meta.file_index().unwrap_or(0)
+    // Required to open a directory. Without it `CreateFile` rejects the path.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    #[repr(C)]
+    struct Filetime {
+        low: u32,
+        high: u32,
+    }
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        file_attributes: u32,
+        creation_time: Filetime,
+        last_access_time: Filetime,
+        last_write_time: Filetime,
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandle(
+            file: *mut std::ffi::c_void,
+            info: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .ok()?;
+    let mut info = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+    if ok == 0 {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
+    let index = (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low);
+    Some((u64::from(info.volume_serial_number), index))
 }
 
 /// `standardizedFileURL` + `resolvingSymlinksInPath`: canonicalize when the

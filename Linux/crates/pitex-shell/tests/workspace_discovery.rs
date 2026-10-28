@@ -230,6 +230,13 @@ fn initial_document_never_picks_a_figure() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn effective_uid_is_root() -> bool {
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() == 0 }
+}
+
 fn rss_bytes() -> u64 {
     let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
     for line in status.lines() {
@@ -295,7 +302,14 @@ fn discovery_bounds_a_large_folder_and_skips_pruned_and_unreadable_trees() {
     );
     assert!(scan.files.iter().any(|p| p.ends_with("main.tex")));
     assert!(scan.files.iter().any(|p| p.ends_with("ch.tex")));
-    for banned in ["node_modules", "venv", "__pycache__", "locked"] {
+    // chmod 000 does not stop root. The walker lists the directory when
+    // `read_dir` succeeds, which it does for euid 0; only a non-root
+    // process proves the unreadable-dir skip.
+    let mut banned = vec!["node_modules", "venv", "__pycache__"];
+    if !effective_uid_is_root() {
+        banned.push("locked");
+    }
+    for banned in banned {
         assert!(
             !scan.files.iter().any(|p| p.components().any(|c| c.as_os_str() == banned)),
             "{banned} leaked into {:?}",

@@ -5276,9 +5276,9 @@ pub(crate) fn wake_agent() {
 }
 
 fn view_key(value: &impl std::hash::Hash) -> u64 {
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hasher;
     let mut hash = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hash);
+    std::hash::Hash::hash(value, &mut hash);
     hash.finish()
 }
 
