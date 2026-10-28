@@ -56,6 +56,16 @@ public actor GitRepositoryReader {
         async let refsResult = runner(GitSupport.referencesArgs, detectedRoot)
         let (statusOutput, refsOutput) = await (statusResult, refsResult)
         guard !Task.isCancelled else { return .cancelled }
+        if statusOutput.stdout.utf8.count > GitSupport.maxStatusBytes {
+            return .failure(
+                GitCommandResult(
+                    code: -1,
+                    stdout: "",
+                    stderr: "This Git repository has too many changes to list."
+                ),
+                detectingRepository: false
+            )
+        }
         guard statusOutput.code == 0 else { return .failure(statusOutput, detectingRepository: false) }
         // show-ref exits 1 without stderr in an unborn repository.
         guard refsOutput.code == 0 || (refsOutput.code == 1 && refsOutput.stdout.isEmpty && refsOutput.stderr.isEmpty) else {

@@ -4,7 +4,7 @@
 //! queries — runs on background threads and reports back through
 //! `WorkspaceMessage` on the channel installed with `set_event_sink`.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -240,6 +240,8 @@ pub enum TodoLineEdit {
 #[derive(Debug)]
 pub enum WorkspaceOpenError {
     NoTexSources,
+    /// The walk stopped before it found a source file.
+    FolderTooLarge,
     UnreadableProject,
     InvalidUtf8,
     OutsideProject,
@@ -252,6 +254,9 @@ impl std::fmt::Display for WorkspaceOpenError {
         match self {
             Self::NoTexSources => {
                 write!(f, "The selected project contains no .tex source files.")
+            }
+            Self::FolderTooLarge => {
+                write!(f, "This folder is too large to open. Open a smaller folder.")
             }
             Self::UnreadableProject => {
                 write!(f, "The selected project could not be enumerated.")
@@ -664,6 +669,23 @@ impl From<WorkspaceOpenError> for OpenFailure {
     }
 }
 
+/// Listing of one opened folder. `limited` means a bound stopped the walk
+/// or the sidebar list, so the UI can say the listing is incomplete.
+pub struct ProjectFileScan {
+    pub files: Vec<PathBuf>,
+    pub limited: bool,
+}
+
+/// How far `discover_tex_files` will walk or retain. A TeX project sits
+/// far under these. Past them the sidebar would build one widget per
+/// file and a multi-gigabyte source or PDF would be read whole.
+pub const MAX_SCAN_ENTRIES: usize = 250_000;
+pub const MAX_SCAN_DIRECTORIES: usize = 8_000;
+pub const MAX_LISTED_SOURCES: usize = 4_000;
+pub const MAX_LISTED_FIGURES: usize = 4_000;
+pub const MAX_TEXT_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_PREVIEW_PDF_BYTES: u64 = 50 * 1024 * 1024;
+
 /// Payload for `open` completed off-thread. Everything expensive —
 /// build-target resolution (lexes every project file), bibliography
 /// parsing, the built-PDF read — is computed on the worker so the main
@@ -673,6 +695,8 @@ pub struct OpenedProject {
     pub root: PathBuf,
     pub selected: PathBuf,
     pub files: Vec<PathBuf>,
+    /// The walk hit a bound. The sidebar says the listing is incomplete.
+    pub scan_limited: bool,
     pub initial_url: PathBuf,
     pub session: DocumentSession,
     /// Main-document resolution for the initially selected file.
@@ -775,7 +799,7 @@ impl TeXProjectResolver {
             .as_ref()
             .filter(|(u, _)| Self::canonical(u) == file)
             .map(|(_, t)| t.clone())
-            .or_else(|| std::fs::read_to_string(&file).ok())?;
+            .or_else(|| read_text_capped(&file))?;
         let parsed = LanguageFileSnapshot::new(
             &file.to_string_lossy(),
             0,
@@ -1177,6 +1201,8 @@ pub struct WorkspaceModel {
     pub phase: WorkspacePhase,
     pub project_url: Option<PathBuf>,
     pub project_files: Vec<PathBuf>,
+    /// `discover_tex_files` stopped early. The project list is incomplete.
+    pub project_scan_limited: bool,
     pub document_project: project_feature::DocumentProject,
     /// Relative dir paths the user collapsed in the project tree. Entries
     /// for dirs that disappear on rescan are simply ignored.
@@ -1368,6 +1394,7 @@ impl WorkspaceModel {
             phase: WorkspacePhase::NoProject,
             project_url: None,
             project_files: Vec::new(),
+            project_scan_limited: false,
             document_project: Default::default(),
             collapsed_project_dirs: std::collections::HashSet::new(),
             open_documents: Vec::new(),
@@ -1545,6 +1572,24 @@ impl WorkspaceModel {
 
     // ── Open / activate ──
 
+    /// A directory open needs a source inside the walk. Stopping early with
+    /// nothing to edit is a different failure from an empty project.
+    fn initial_opened_document(
+        is_directory: bool,
+        scan: &ProjectFileScan,
+        selected: &Path,
+        resolver: &mut TeXProjectResolver,
+    ) -> Result<PathBuf, WorkspaceOpenError> {
+        if !is_directory {
+            return Ok(standardize(selected.to_path_buf()));
+        }
+        match resolver.initial_document(&scan.files) {
+            Some(url) => Ok(url),
+            None if scan.limited => Err(WorkspaceOpenError::FolderTooLarge),
+            None => Err(WorkspaceOpenError::NoTexSources),
+        }
+    }
+
     pub fn open(&mut self, selected: PathBuf, sink: Sender<WorkspaceMessage>) {
         self.close();
         self.phase = WorkspacePhase::Loading(selected.clone());
@@ -1577,14 +1622,10 @@ impl WorkspaceModel {
         } else {
             resolver.project_root(selected)
         });
-        let files = Self::discover_tex_files(&root, selected, is_directory)?;
-        let initial_url = if is_directory {
-            resolver
-                .initial_document(&files)
-                .ok_or(WorkspaceOpenError::NoTexSources)?
-        } else {
-            standardize(selected.to_path_buf())
-        };
+        let scan = Self::discover_tex_files(&root, selected, is_directory)?;
+        let initial_url =
+            Self::initial_opened_document(is_directory, &scan, selected, &mut resolver)?;
+        let files = scan.files;
         let initial_text = Self::read_exact_utf8(&initial_url)?;
         let file = Self::project_file(&initial_url, &root)?;
         let session = registry
@@ -1621,6 +1662,7 @@ impl WorkspaceModel {
             root,
             selected: selected.to_path_buf(),
             files,
+            scan_limited: scan.limited,
             initial_url,
             session,
             remote,
@@ -1636,6 +1678,7 @@ impl WorkspaceModel {
         }
         self.project_url = Some(opened.root.clone());
         self.project_files = opened.files;
+        self.project_scan_limited = opened.scan_limited;
         self.files_revision += 1;
         self.registered_sessions = vec![opened.session.clone()];
         // `capabilityBroker`/`capabilityLease` (PitexApp.swift:369-383):
@@ -2264,6 +2307,7 @@ impl WorkspaceModel {
             }
         }
         self.project_files.clear();
+        self.project_scan_limited = false;
         self.document_project = Default::default();
         self.files_revision += 1;
         self.open_documents.clear();
@@ -2545,12 +2589,19 @@ impl WorkspaceModel {
         }
         if let Ok(discovered) = Self::discover_tex_files(&root, &root, true) {
             let known: HashSet<PathBuf> = self.project_files.iter().cloned().collect();
-            let additions: Vec<PathBuf> =
-                discovered.into_iter().filter(|f| !known.contains(f)).collect();
-            if !additions.is_empty() {
-                self.project_files.extend(additions);
+            let limited = discovered.limited;
+            let additions: Vec<PathBuf> = discovered
+                .files
+                .into_iter()
+                .filter(|f| !known.contains(f))
+                .collect();
+            if !additions.is_empty() || self.project_scan_limited != limited {
+                if !additions.is_empty() {
+                    self.project_files.extend(additions);
+                    sort_files(&mut self.project_files);
+                }
+                self.project_scan_limited = limited;
                 self.files_revision += 1;
-                sort_files(&mut self.project_files);
             }
         }
         self.refresh_structure();
@@ -2694,7 +2745,7 @@ impl WorkspaceModel {
                     self.document_snapshot
                         .as_ref()
                         .map(|s| s.text.clone())
-                        .unwrap_or_else(|| std::fs::read_to_string(url).unwrap_or_default()),
+                        .unwrap_or_else(|| read_text_capped(url).unwrap_or_default()),
                 )
             } else {
                 let mtime = std::fs::metadata(url)
@@ -2710,7 +2761,7 @@ impl WorkspaceModel {
                         continue;
                     }
                 }
-                (key, std::fs::read_to_string(url).unwrap_or_default())
+                (key, read_text_capped(url).unwrap_or_default())
             };
             let parsed = Self::parse_todos(&text, url, self.project_url.as_deref());
             self.todo_cache.insert(url.clone(), (key, parsed.clone()));
@@ -3016,7 +3067,7 @@ impl WorkspaceModel {
                 .map(|(cached, _)| *cached != mtime)
                 .unwrap_or(true)
             {
-                let labels = std::fs::read_to_string(file)
+                let labels = read_text_capped(file)
                     .map(|text| Self::label_names(&text))
                     .unwrap_or_default();
                 self.label_scan_cache.insert(file.clone(), (mtime, labels));
@@ -3055,7 +3106,7 @@ impl WorkspaceModel {
                 continue;
             }
             let mtime = std::fs::metadata(file).and_then(|m| m.modified()).ok();
-            let labels = std::fs::read_to_string(file)
+            let labels = read_text_capped(file)
                 .map(|text| Self::label_names(&text))
                 .unwrap_or_default();
             cache.insert(file.clone(), (mtime, labels));
@@ -3087,7 +3138,8 @@ impl WorkspaceModel {
     pub fn rescan_project(&mut self) {
         let Some(root) = self.project_url.clone() else { return };
         if let Ok(discovered) = Self::discover_tex_files(&root, &root, true) {
-            self.project_files = discovered;
+            self.project_files = discovered.files;
+            self.project_scan_limited = discovered.limited;
             self.files_revision += 1;
             self.refresh_build_target();
             self.refresh_structure();
@@ -3181,7 +3233,7 @@ impl WorkspaceModel {
         let mut items = Vec::new();
         let mut complete = true;
         for file in files {
-            let Ok(text) = std::fs::read_to_string(file) else {
+            let Some(text) = read_text_capped(file) else {
                 complete = false;
                 continue;
             };
@@ -3353,7 +3405,8 @@ impl WorkspaceModel {
             .with_extension("pdf")
             .to_string_lossy()
             .into_owned();
-        std::fs::read(root.join(&name)).ok()
+        let bytes = read_bytes_capped(&root.join(&name), MAX_PREVIEW_PDF_BYTES)?;
+        bytes.starts_with(b"%PDF").then_some(bytes)
     }
 
     /// Record the artifact the viewer retains. `latest_built_pdf_name`
@@ -3464,11 +3517,11 @@ impl WorkspaceModel {
         });
         let read_pdf = |candidate: &str| -> Option<Vec<u8>> {
             let bytes = if Some(candidate) == prefetched_name.as_deref() {
-                prefetched
-                    .clone()
-                    .or_else(|| std::fs::read(root.join(candidate)).ok())
+                prefetched.clone().or_else(|| {
+                    read_bytes_capped(&root.join(candidate), MAX_PREVIEW_PDF_BYTES)
+                })
             } else {
-                std::fs::read(root.join(candidate)).ok()
+                read_bytes_capped(&root.join(candidate), MAX_PREVIEW_PDF_BYTES)
             }?;
             bytes.starts_with(b"%PDF").then_some(bytes)
         };
@@ -5140,54 +5193,119 @@ impl WorkspaceModel {
 
     // ── Static helpers (verbatim port) ──
 
-    /// `discoverTexFiles` — recursive enumeration of sources (.tex/.bib) and
-    /// figures (`PROJECT_FILE_EXTENSIONS`), hidden files skipped,
-    /// path-sorted. The resolver-chosen root is scanned in full so nested
-    /// source trees appear alongside the opened file.
+    /// `discoverTexFiles` — recursive enumeration of sources (.tex/.bib/.md)
+    /// and figure files, hidden files skipped,
+    /// path-sorted. The resolver-chosen root is scanned so nested source
+    /// trees appear alongside the opened file.
+    ///
+    /// The walk is bounded. A Downloads folder, a `node_modules` tree, a
+    /// bind-mount cycle, or another filesystem must not allocate one path
+    /// (and later one sidebar row) per file: this process has no swap, and
+    /// that listing takes the machine down with it. Directory symlinks are
+    /// not descended — a link to an ancestor would otherwise loop forever —
+    /// while a symlinked file still resolves and is deduped.
     pub fn discover_tex_files(
         root: &Path,
         selected: &Path,
         is_directory: bool,
-    ) -> Result<Vec<PathBuf>, WorkspaceOpenError> {
-        let scan_root = root.to_path_buf();
+    ) -> Result<ProjectFileScan, WorkspaceOpenError> {
+        let root = standardize(root.to_path_buf());
+        let root_meta = std::fs::symlink_metadata(&root)
+            .map_err(|_| WorkspaceOpenError::UnreadableProject)?;
+        let root_dev = device_id(&root_meta);
         let mut files = Vec::new();
-        let mut seen = HashSet::new();
-        let mut stack = vec![scan_root];
-        while let Some(dir) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if name.starts_with('.') {
+        let mut seen_files = HashSet::new();
+        let mut seen_dirs = HashSet::new();
+        seen_dirs.insert((root_dev, inode_id(&root_meta)));
+        let mut queue = VecDeque::new();
+        queue.push_back(root.clone());
+        let mut directories = 0usize;
+        let mut entries = 0usize;
+        let mut sources = 0usize;
+        let mut figures = 0usize;
+        let mut limited = false;
+        let mut hit_entry_cap = false;
+
+        while let Some(dir) = queue.pop_front() {
+            if directories >= MAX_SCAN_DIRECTORIES {
+                limited = true;
+                break;
+            }
+            directories += 1;
+            let read = match std::fs::read_dir(&dir) {
+                Ok(read) => read,
+                Err(_) if dir == root => return Err(WorkspaceOpenError::UnreadableProject),
+                Err(_) => continue,
+            };
+            for entry in read.flatten() {
+                entries += 1;
+                if entries > MAX_SCAN_ENTRIES {
+                    limited = true;
+                    hit_entry_cap = true;
+                    break;
+                }
+                let name = entry.file_name();
+                if name.as_encoded_bytes().first() == Some(&b'.') {
                     continue;
                 }
-                let Ok(meta) = entry.metadata() else { continue };
-                // Never descend into a symlinked directory — the macOS
-                // enumerator lists the link itself but does not traverse it,
-                // and a link to an ancestor would otherwise loop forever.
-                // `metadata()` still resolves a symlinked *file* to the
-                // target's type, so those keep listing (isRegularFileKey
-                // resolves through links the same way).
-                if meta.is_dir() && !path.is_symlink() {
-                    stack.push(path);
-                } else if meta.is_file() {
-                    let ext = path
-                        .extension()
-                        .map(|e| e.to_string_lossy().to_lowercase())
-                        .unwrap_or_default();
-                    if PROJECT_FILE_EXTENSIONS.contains(&ext.as_str()) {
-                        // A symlinked source resolves to its target: skip
-                        // targets that escape the project root (they could
-                        // never satisfy the relative-path check anyway) and
-                        // dedupe canonical paths already listed.
-                        let resolved = standardize(path);
-                        if Self::relative_path(&resolved, root).is_ok()
-                            && seen.insert(resolved.clone())
-                        {
-                            files.push(resolved);
+                let Ok(kind) = entry.file_type() else { continue };
+                let path = entry.path();
+                // `file_type` does not follow links. A directory link is not
+                // descended (an ancestor link loops). A file link resolves.
+                if kind.is_symlink() {
+                    if let Ok(meta) = std::fs::metadata(&path) {
+                        if meta.is_file() {
+                            consider_project_file(
+                                path,
+                                &root,
+                                &mut files,
+                                &mut seen_files,
+                                &mut sources,
+                                &mut figures,
+                                &mut limited,
+                            );
                         }
                     }
+                    continue;
                 }
+                if kind.is_dir() {
+                    // `d_type` can be missing. Never follow a link that a
+                    // stat then reported as a directory.
+                    if path.is_symlink() || pruned_directory(&name) {
+                        continue;
+                    }
+                    let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+                    if !meta.is_dir() {
+                        continue;
+                    }
+                    let dev = device_id(&meta);
+                    // A mount point is a different filesystem. Crossing it
+                    // walks the rest of the machine from this folder.
+                    if dev != root_dev {
+                        continue;
+                    }
+                    // The same directory reached again is a bind-mount cycle,
+                    // which a symlink check cannot see.
+                    if !seen_dirs.insert((dev, inode_id(&meta))) {
+                        continue;
+                    }
+                    queue.push_back(path);
+                    continue;
+                }
+                if kind.is_file() {
+                    consider_project_file(
+                        path,
+                        &root,
+                        &mut files,
+                        &mut seen_files,
+                        &mut sources,
+                        &mut figures,
+                        &mut limited,
+                    );
+                }
+            }
+            if hit_entry_cap {
+                break;
             }
         }
         if !is_directory {
@@ -5197,7 +5315,7 @@ impl WorkspaceModel {
             }
         }
         sort_files(&mut files);
-        Ok(files)
+        Ok(ProjectFileScan { files, limited })
     }
 
     pub fn relative_path(
@@ -5223,7 +5341,13 @@ impl WorkspaceModel {
     }
 
     pub fn read_exact_utf8(url: &Path) -> Result<String, WorkspaceOpenError> {
+        if file_len(url).ok_or(WorkspaceOpenError::UnreadableProject)? > MAX_TEXT_BYTES {
+            return Err(WorkspaceOpenError::UnreadableProject);
+        }
         let data = std::fs::read(url).map_err(|_| WorkspaceOpenError::UnreadableProject)?;
+        if data.len() as u64 > MAX_TEXT_BYTES {
+            return Err(WorkspaceOpenError::UnreadableProject);
+        }
         String::from_utf8(data).map_err(|_| WorkspaceOpenError::InvalidUtf8)
     }
 
@@ -5265,13 +5389,113 @@ impl WorkspaceModel {
 
 // ─── Free helpers ────────────────────────────────────────────────────────────
 
-/// `projectFileExtensions` — everything `discoverTexFiles` lists: sources
-/// plus the figure formats LaTeX documents include. Build artifacts stay
-/// excluded except .pdf, which figures legitimately use.
-const PROJECT_FILE_EXTENSIONS: [&str; 15] = [
-    "tex", "bib", "md", "markdown", "png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "tif", "tiff",
-    "bmp", "webp",
-];
+fn file_len(path: &Path) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|meta| meta.len())
+}
+
+/// `None` when the file is missing, unreadable, not UTF-8, or larger than
+/// `MAX_TEXT_BYTES`. Callers that lex a whole project must not allocate a
+/// multi-gigabyte `.tex` or `.bib`.
+fn read_text_capped(path: &Path) -> Option<String> {
+    String::from_utf8(read_bytes_capped(path, MAX_TEXT_BYTES)?).ok()
+}
+
+fn read_bytes_capped(path: &Path, limit: u64) -> Option<Vec<u8>> {
+    if file_len(path)? > limit {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    (data.len() as u64 <= limit).then_some(data)
+}
+
+fn pruned_directory(name: &std::ffi::OsStr) -> bool {
+    name.eq_ignore_ascii_case("node_modules")
+        || name.eq_ignore_ascii_case("__pycache__")
+        || name.eq_ignore_ascii_case("venv")
+        || name.eq_ignore_ascii_case(".venv")
+}
+
+/// `Some(true)` for a source, `Some(false)` for a figure, `None` otherwise.
+fn classify_extension(path: &Path) -> Option<bool> {
+    let ext = path.extension()?;
+    const EXTS: &[(&str, bool)] = &[
+        ("tex", true),
+        ("bib", true),
+        ("md", true),
+        ("markdown", true),
+        ("png", false),
+        ("jpg", false),
+        ("jpeg", false),
+        ("pdf", false),
+        ("eps", false),
+        ("svg", false),
+        ("gif", false),
+        ("tif", false),
+        ("tiff", false),
+        ("bmp", false),
+        ("webp", false),
+    ];
+    EXTS.iter()
+        .find(|(name, _)| ext.eq_ignore_ascii_case(name))
+        .map(|(_, source)| *source)
+}
+
+fn consider_project_file(
+    path: PathBuf,
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+    sources: &mut usize,
+    figures: &mut usize,
+    limited: &mut bool,
+) {
+    let Some(source) = classify_extension(&path) else { return };
+    if source {
+        if *sources >= MAX_LISTED_SOURCES {
+            *limited = true;
+            return;
+        }
+    } else if *figures >= MAX_LISTED_FIGURES {
+        *limited = true;
+        return;
+    }
+    // A symlinked source resolves to its target. Targets outside the
+    // project cannot satisfy the relative-path check. Canonical paths
+    // already listed are deduped.
+    let resolved = standardize(path);
+    if WorkspaceModel::relative_path(&resolved, root).is_ok() && seen.insert(resolved.clone()) {
+        if source {
+            *sources += 1;
+        } else {
+            *figures += 1;
+        }
+        files.push(resolved);
+    }
+}
+
+#[cfg(unix)]
+fn device_id(meta: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.dev()
+}
+
+#[cfg(unix)]
+fn inode_id(meta: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.ino()
+}
+
+#[cfg(windows)]
+fn device_id(meta: &std::fs::Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    u64::from(meta.volume_serial_number().unwrap_or(0))
+}
+
+#[cfg(windows)]
+fn inode_id(meta: &std::fs::Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    meta.file_index().unwrap_or(0)
+}
 
 /// `standardizedFileURL` + `resolvingSymlinksInPath`: canonicalize when the
 /// path exists, otherwise strip `.`/`..` lexically.
@@ -5471,6 +5695,87 @@ fn fill_bytes_fallback(bytes: &mut [u8; 16]) {
         state ^= state << 25;
         state ^= state >> 27;
         *b = (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 56) as u8;
+    }
+}
+
+#[cfg(test)]
+mod open_bounds {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "pitex-bounds-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn rss_bytes() -> u64 {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                let kb: u64 = rest.split_whitespace().next().unwrap_or("0").parse().unwrap_or(0);
+                return kb * 1024;
+            }
+        }
+        0
+    }
+
+    #[test]
+    fn oversized_source_is_not_read_into_memory() {
+        let dir = scratch("text");
+        let big = dir.join("huge.tex");
+        let file = std::fs::File::create(&big).unwrap();
+        file.set_len(40 * 1024 * 1024).unwrap();
+        let before = rss_bytes();
+        let err = WorkspaceModel::read_exact_utf8(&big).unwrap_err();
+        assert!(matches!(err, WorkspaceOpenError::UnreadableProject));
+        let cache = WorkspaceModel::scan_project_labels(&[big.clone()]);
+        assert!(cache.get(&big).unwrap().1.is_empty());
+        let after = rss_bytes();
+        assert!(
+            after < before.saturating_add(16 * 1024 * 1024),
+            "reading a sparse 40 MiB source moved RSS from {before} to {after}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn oversized_preview_pdf_is_not_read() {
+        let dir = scratch("pdf");
+        let tex = dir.join("main.tex");
+        std::fs::write(&tex, "\\documentclass{article}").unwrap();
+        let pdf = dir.join("main.pdf");
+        let mut file = std::fs::File::create(&pdf).unwrap();
+        use std::io::Write;
+        file.write_all(b"%PDF-1.4").unwrap();
+        file.set_len(60 * 1024 * 1024).unwrap();
+        let before = rss_bytes();
+        assert!(WorkspaceModel::built_pdf_bytes(&dir, &tex).is_none());
+        let after = rss_bytes();
+        assert!(
+            after < before.saturating_add(16 * 1024 * 1024),
+            "reading a sparse 60 MiB PDF moved RSS from {before} to {after}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_truncated_folder_with_no_source_is_too_large_to_open() {
+        let mut resolver = TeXProjectResolver::new();
+        let empty = ProjectFileScan { files: Vec::new(), limited: false };
+        let err = WorkspaceModel::initial_opened_document(true, &empty, Path::new("."), &mut resolver)
+            .unwrap_err();
+        assert!(matches!(err, WorkspaceOpenError::NoTexSources));
+        let limited = ProjectFileScan { files: Vec::new(), limited: true };
+        let err = WorkspaceModel::initial_opened_document(true, &limited, Path::new("."), &mut resolver)
+            .unwrap_err();
+        assert!(matches!(err, WorkspaceOpenError::FolderTooLarge));
     }
 }
 

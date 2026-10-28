@@ -110,6 +110,26 @@ final class GitRepositoryReaderTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("main.tex"), encoding: .utf8), "draft")
     }
 
+    func testOversizedStatusIsNotParsed() async {
+        let reader = GitRepositoryReader()
+        let huge = String(repeating: "?? f\0", count: (GitSupport.maxStatusBytes / 4) + 2)
+        let result = await reader.read(in: "/tmp", scope: "huge") { args, _ in
+            if args == GitSupport.topLevelArgs {
+                return GitCommandResult(code: 0, stdout: "/tmp\n")
+            }
+            if args == GitSupport.referencesArgs {
+                return GitCommandResult(code: 0, stdout: "")
+            }
+            return GitCommandResult(code: 0, stdout: huge)
+        }
+        guard case let .failure(output, detectingRepository) = result else {
+            return XCTFail("a status larger than maxStatusBytes must not be parsed")
+        }
+        XCTAssertFalse(detectingRepository)
+        XCTAssertEqual(output.code, -1)
+        XCTAssertTrue(output.stderr.contains("too many"))
+    }
+
     func testWarmRefreshUsesThreeCommandsAndOnlyRefsReloadHistory() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

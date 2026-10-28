@@ -167,6 +167,7 @@ struct TeXProjectResolver {
             return parsed
         }
         let key = Self.diskKey(file)
+        if let key, key.size > WorkspaceModel.maxTextBytes { return nil }
         if let key, let entry = diskCache[file], entry.mtime == key.mtime, entry.size == key.size {
             snapshots[file] = entry.snapshot
             return entry.snapshot

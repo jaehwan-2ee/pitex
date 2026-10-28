@@ -187,7 +187,12 @@ public struct GitStatus: Sendable, Equatable {
 /// file verbatim; platform shells only run the produced argv.
 public enum GitSupport {
     public static let topLevelArgs = ["rev-parse", "--show-toplevel"]
-    public static let statusArgs = ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--branch", "-uall"]
+    /// `--untracked-files=normal` matches `git_core::status_args`. `-uall`
+    /// lists every file in an untracked directory and will hang the machine
+    /// when that directory is Downloads. `maxStatusBytes` is the backstop
+    /// for a repository whose tracked changes still don't fit.
+    public static let statusArgs = ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=normal"]
+    public static let maxStatusBytes = 4 * 1024 * 1024
     public static let branchArgs = ["branch", "--format=%(refname:short)"]
     /// Includes detached HEAD as well as local/remote branches and tags.
     /// Branch names and the history invalidation key come from one subprocess.
@@ -258,7 +263,9 @@ public enum GitSupport {
     public static func discardStagedArgs(_ path: String) -> [String] { ["checkout", "HEAD", "--", path] }
     /// Staged-new discard — drops index entry and the worktree file.
     public static func removeFileArgs(_ path: String) -> [String] { ["rm", "-f", "--", path] }
-    public static func cleanArgs(_ path: String) -> [String] { ["clean", "-f", "--", path] }
+    /// `-d` removes an untracked directory now that status shows `?? dir/`
+    /// as one row. A file pathspec is unchanged.
+    public static func cleanArgs(_ path: String) -> [String] { ["clean", "-fd", "--", path] }
     /// `--staged` describes the pending commit; plain `diff` covers the
     /// commit-everything fallback (untracked files produce no diff — the
     /// caller names them in the prompt's file list).
