@@ -676,13 +676,78 @@ pub struct ProjectFileScan {
     pub limited: bool,
 }
 
-/// How far `discover_tex_files` will walk or retain. A TeX project sits
-/// far under these. Past them the sidebar would build one widget per
-/// file and a multi-gigabyte source or PDF would be read whole.
-pub const MAX_SCAN_ENTRIES: usize = 250_000;
-pub const MAX_SCAN_DIRECTORIES: usize = 8_000;
-pub const MAX_LISTED_SOURCES: usize = 4_000;
-pub const MAX_LISTED_FIGURES: usize = 4_000;
+/// `FolderScanLimits.swift` is the only copy of the walk caps. macOS
+/// reads those static lets; Linux and Windows compile the same literals
+/// into the constants below. 50,000 names and 2,000 directories stop a
+/// Downloads-sized tree. 2,000 sources and 2,000 figures still cover a
+/// large book (hundreds of chapters and figures; aux files count as
+/// names but are not listed). Past these the listing is incomplete.
+const FOLDER_SCAN_LIMITS_SWIFT: &str =
+    include_str!("../../../../Mac/Sources/AppShell/FolderScanLimits.swift");
+
+const fn folder_scan_limit(name: &[u8]) -> usize {
+    const PREFIX: &[u8] = b"static let ";
+    let src = FOLDER_SCAN_LIMITS_SWIFT.as_bytes();
+    let mut i = 0;
+    while i + PREFIX.len() + name.len() + 3 < src.len() {
+        let mut matched = true;
+        let mut j = 0;
+        while j < PREFIX.len() {
+            if src[i + j] != PREFIX[j] {
+                matched = false;
+                break;
+            }
+            j += 1;
+        }
+        if matched {
+            j = 0;
+            while j < name.len() {
+                if src[i + PREFIX.len() + j] != name[j] {
+                    matched = false;
+                    break;
+                }
+                j += 1;
+            }
+        }
+        if matched {
+            let start = i + PREFIX.len() + name.len();
+            if src[start] == b' ' && src[start + 1] == b'=' && src[start + 2] == b' ' {
+                let mut k = start + 3;
+                let mut value: usize = 0;
+                let mut digits: usize = 0;
+                while k < src.len() {
+                    let byte = src[k];
+                    if byte == b'_' {
+                        k += 1;
+                        continue;
+                    }
+                    if byte < b'0' || byte > b'9' {
+                        break;
+                    }
+                    value = value * 10 + (byte - b'0') as usize;
+                    digits += 1;
+                    k += 1;
+                }
+                if digits > 0 {
+                    return value;
+                }
+            }
+        }
+        i += 1;
+    }
+    0
+}
+
+pub const MAX_SCAN_ENTRIES: usize = folder_scan_limit(b"maxScanEntries");
+pub const MAX_SCAN_DIRECTORIES: usize = folder_scan_limit(b"maxScanDirectories");
+pub const MAX_LISTED_SOURCES: usize = folder_scan_limit(b"maxListedSources");
+pub const MAX_LISTED_FIGURES: usize = folder_scan_limit(b"maxListedFigures");
+// Agreed caps. Changing `FolderScanLimits.swift` without updating these
+// fails the build, so the three platforms cannot drift apart.
+const _: () = assert!(MAX_SCAN_ENTRIES == 50_000);
+const _: () = assert!(MAX_SCAN_DIRECTORIES == 2_000);
+const _: () = assert!(MAX_LISTED_SOURCES == 2_000);
+const _: () = assert!(MAX_LISTED_FIGURES == 2_000);
 pub const MAX_TEXT_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_PREVIEW_PDF_BYTES: u64 = 50 * 1024 * 1024;
 
@@ -5763,6 +5828,33 @@ mod open_bounds {
             "reading a sparse 60 MiB PDF moved RSS from {before} to {after}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folder_walk_caps_are_declared_once() {
+        let limits = FOLDER_SCAN_LIMITS_SWIFT;
+        let app = include_str!("../../../../Mac/Sources/AppShell/PitexApp.swift");
+        for name in [
+            "maxScanEntries",
+            "maxScanDirectories",
+            "maxListedSources",
+            "maxListedFigures",
+        ] {
+            let needle = format!("static let {name} = ");
+            assert_eq!(limits.matches(&needle).count(), 1, "{name}");
+            let duplicated = app
+                .split(&needle)
+                .nth(1)
+                .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_digit()));
+            assert!(
+                !duplicated,
+                "{name} must stay a FolderScanLimits literal, not a second number in PitexApp"
+            );
+        }
+        assert_eq!(MAX_SCAN_ENTRIES, 50_000);
+        assert_eq!(MAX_SCAN_DIRECTORIES, 2_000);
+        assert_eq!(MAX_LISTED_SOURCES, 2_000);
+        assert_eq!(MAX_LISTED_FIGURES, 2_000);
     }
 
     #[test]

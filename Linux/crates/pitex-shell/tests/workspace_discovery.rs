@@ -4,7 +4,7 @@
 //! forever otherwise), while symlinked *files* still resolve like
 //! `isRegularFileKey`.
 
-use pitex_shell::model::{standardize, WorkspaceModel, MAX_LISTED_FIGURES};
+use pitex_shell::model::{standardize, WorkspaceModel, MAX_LISTED_FIGURES, MAX_SCAN_DIRECTORIES};
 use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -309,6 +309,31 @@ fn discovery_bounds_a_large_folder_and_skips_pruned_and_unreadable_trees() {
         .count();
     assert_eq!(figures, MAX_LISTED_FIGURES);
     drop(_guard);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn discovery_stops_after_the_directory_cap() {
+    let root = temp_dir("dirs");
+    std::fs::write(root.join("main.tex"), "x").unwrap();
+    for i in 0..MAX_SCAN_DIRECTORIES {
+        let dir = root.join(format!("d{i}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ch.tex"), "x").unwrap();
+    }
+    let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    assert!(
+        scan.limited,
+        "the directory cap should mark the listing incomplete"
+    );
+    let sources = scan
+        .files
+        .iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("tex"))
+        .count();
+    // The root counts as one directory, so one subdirectory is not entered.
+    assert_eq!(sources, MAX_SCAN_DIRECTORIES);
+    assert!(scan.files.iter().any(|p| p.ends_with("main.tex")));
     let _ = std::fs::remove_dir_all(&root);
 }
 

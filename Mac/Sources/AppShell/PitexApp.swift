@@ -2757,12 +2757,12 @@ final class WorkspaceModel: ObservableObject {
         activeDocumentURL.map(Self.isMarkdown) ?? false
     }
 
-    /// Same bounds as the Linux `discover_tex_files` walk. A Downloads
-    /// folder must not become one sidebar row per file.
-    nonisolated static let maxScanEntries = 250_000
-    nonisolated static let maxScanDirectories = 8_000
-    nonisolated static let maxListedSources = 4_000
-    nonisolated static let maxListedFigures = 4_000
+    /// `FolderScanLimits` is the only copy of these numbers. Linux and
+    /// Windows compile that file into the same constants.
+    nonisolated static let maxScanEntries = FolderScanLimits.maxScanEntries
+    nonisolated static let maxScanDirectories = FolderScanLimits.maxScanDirectories
+    nonisolated static let maxListedSources = FolderScanLimits.maxListedSources
+    nonisolated static let maxListedFigures = FolderScanLimits.maxListedFigures
     nonisolated static let maxTextBytes = 32 * 1024 * 1024
     nonisolated static let maxPreviewPDFBytes = 50 * 1024 * 1024
     nonisolated static let prunedDirectoryNames: Set<String> = ["node_modules", "__pycache__", "venv", ".venv"]

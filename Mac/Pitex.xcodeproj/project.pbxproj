@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		100000000000000000000001 /* PitexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* PitexApp.swift */; };
+		100000000000000000000049 /* FolderScanLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000049 /* FolderScanLimits.swift */; };
 		100000000000000000000002 /* AppShell in Frameworks */ = {isa = PBXBuildFile; productRef = 300000000000000000000001 /* AppShell */; };
 		100000000000000000000003 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* WorkspaceView.swift */; };
 		100000000000000000000004 /* EditorContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* EditorContainerView.swift */; };
@@ -60,6 +61,7 @@
 
 /* Begin PBXFileReference section */
 		200000000000000000000001 /* PitexApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PitexApp.swift; sourceTree = "<group>"; };
+		200000000000000000000049 /* FolderScanLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderScanLimits.swift; sourceTree = "<group>"; };
 		200000000000000000000002 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		200000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		200000000000000000000004 /* Pitex.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pitex.entitlements; sourceTree = "<group>"; };
@@ -154,6 +156,7 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000001 /* PitexApp.swift */,
+				200000000000000000000049 /* FolderScanLimits.swift */,
 			);
 			path = AppShell;
 			sourceTree = "<group>";
@@ -329,6 +332,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000001 /* PitexApp.swift in Sources */,
+				100000000000000000000049 /* FolderScanLimits.swift in Sources */,
 				100000000000000000000003 /* WorkspaceView.swift in Sources */,
 				100000000000000000000004 /* EditorContainerView.swift in Sources */,
 				100000000000000000000005 /* Preview.swift in Sources */,
