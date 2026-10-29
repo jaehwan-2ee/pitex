@@ -105,7 +105,7 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
     /// `ai.agentProvider` — `pi` keeps the API-provider runtime; `codex`,
-    /// `claude`, and `grok` drive the matching local CLI through pitex-agent-bridge.
+    /// `claude`, `grok`, and `agy` drive the matching local CLI through pitex-agent-bridge.
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)
@@ -124,6 +124,8 @@ final class SettingsStore: ObservableObject {
             return "claude"
         case "grok":
             return "grok"
+        case "agy":
+            return "agy"
         default:
             return "pi"
         }
@@ -805,6 +807,7 @@ struct SettingsView: View {
                     Text("settings.ai.backend_codex").tag("codex")
                     Text("settings.ai.backend_claude").tag("claude")
                     Text("settings.ai.backend_grok").tag("grok")
+                    Text("settings.ai.backend_agy").tag("agy")
                 }
                 .accessibilityIdentifier("pitex.settings.ai.backend")
                 Text("settings.ai.backend_note")

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pitex sidecar that speaks pi RPC JSONL and drives official CLIs. Codex app-server, Claude Code, and Grok ACP.",
+  "description": "Pitex sidecar that speaks pi RPC JSONL and drives official CLIs. Codex app-server, Claude Code, Grok ACP, and Antigravity CLI stream-json.",
   "claudeAgentSdk": {
     "name": "@anthropic-ai/claude-agent-sdk",
     "version": "0.3.312",

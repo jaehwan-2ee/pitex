@@ -1,5 +1,6 @@
-// Unit tests for the Codex bridge: notification mapping, approval replies,
-// the session index, secret redaction, and a fake app-server round trip.
+// Unit tests for the agent bridge: Codex notification mapping, Antigravity
+// stream-json mapping, approval replies, the session index, secret redaction,
+// and fake-process round trips.
 // Run: node --test Mac/Resources/PitexAgent/bridge/test.ts
 
 import assert from "node:assert/strict";
@@ -11,7 +12,22 @@ import test from "node:test";
 
 import "./grok-test.ts";
 
-import type { AdapterHost, PiCommand } from "./adapter.ts";
+import { createAdapter, type AdapterHost, type PiCommand } from "./adapter.ts";
+import { AgyAdapter, agyLaunchSpec, agyStreamArgs, findAgy } from "./agy-adapter.ts";
+import {
+  AGY_ALWAYS_PROCEED_NOTICE,
+  AGY_KEYRING_LOCKED,
+  AGY_PERMISSION_LIMIT,
+  AGY_SIGNED_OUT,
+  approvalIsNotDelivered,
+  authFailureReason,
+  createAgyStreamState,
+  decisionLabel,
+  mapAgyLine,
+  modelsFromText,
+  permissionDenialNotice,
+  permissionModeNotice,
+} from "./agy-map.ts";
 import { CodexAdapter, codexForceKillPlan, codexLaunchSpec, findCodex, stopCodexChild } from "./codex-adapter.ts";
 import {
   approvalFromServerRequest,
@@ -26,6 +42,7 @@ import { LineJsonRpc, redactSecrets } from "./jsonrpc.ts";
 import {
   appendUserMessage,
   rememberSession,
+  sessionMessages,
   threadIdFor,
   writeSessionPrelude,
 } from "./session-index.ts";
@@ -571,3 +588,578 @@ async function waitForCount(events: Record<string, unknown>[], type: string, cou
   }
   throw new Error(`timed out waiting for ${count} ${type} events: ${JSON.stringify(events.map((event) => event.type))}`);
 }
+
+function textDeltas(events: Record<string, unknown>[]): string[] {
+  return events
+    .map((event) => event.assistantMessageEvent as { type?: string; delta?: string } | undefined)
+    .filter((delta) => delta?.type === "text_delta")
+    .map((delta) => delta?.delta ?? "");
+}
+
+test("agy stream-json maps the documented turn without inventing thinking text", () => {
+  const state = createAgyStreamState();
+  const init = mapAgyLine(
+    {
+      event: "init",
+      conversation_id: "9ec58bfd-4d67-4f5e-83a5-9d907e9c6b1f",
+      init: { cwd: "/home/user/project", tools: ["run_command"], permission_mode: "request-review" },
+    },
+    state
+  );
+  assert.equal(init.conversationId, "9ec58bfd-4d67-4f5e-83a5-9d907e9c6b1f");
+  assert.equal(init.permissionMode, "request-review");
+  assert.equal(init.events.length, 0);
+
+  const ignored = [
+    mapAgyLine({ event: "step_update", step_update: { step_index: 0, state: "DONE", step_type: "user_input" } }, state),
+    mapAgyLine(
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 1,
+          state: "DONE",
+          step_type: "checkpoint",
+          usage: { total_tokens: 123, input_tokens: 1, output_tokens: 1, thinking_tokens: 1, cache_read_tokens: 0 },
+        },
+      },
+      state
+    ),
+    mapAgyLine({ event: "future_event" }, state),
+    mapAgyLine({ event: "result", result: { status: "RUNNING" } }, state),
+  ];
+  assert.deepEqual(
+    ignored.flatMap((row) => row.events),
+    []
+  );
+  assert.equal(ignored[1].usage, null);
+  assert.equal(ignored[3].terminal, false);
+
+  const active = mapAgyLine(
+    {
+      event: "step_update",
+      step_update: { step_index: 2, state: "ACTIVE", step_type: "agent_response", text_delta: "apple" },
+    },
+    state
+  );
+  const done = mapAgyLine(
+    {
+      event: "step_update",
+      step_update: {
+        step_index: 2,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "\n",
+        usage: { input_tokens: 30384, output_tokens: 4, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 30388 },
+      },
+    },
+    state
+  );
+  assert.equal(done.usage, null);
+  const started = mapAgyLine(
+    {
+      event: "step_update",
+      step_update: {
+        step_index: 4,
+        state: "ACTIVE",
+        step_type: "tool",
+        tool_name: "run_command",
+        tool_info: { name: "run_command", parameters: { CommandLine: "echo hello_headless_demo" } },
+      },
+    },
+    state
+  );
+  const finished = mapAgyLine(
+    {
+      event: "step_update",
+      step_update: {
+        step_index: 4,
+        state: "DONE",
+        step_type: "tool",
+        tool_name: "run_command",
+        tool_info: {
+          name: "run_command",
+          parameters: { CommandLine: "echo hello_headless_demo" },
+          output: "hello_headless_demo\r\n",
+        },
+      },
+    },
+    state
+  );
+  const repeated = mapAgyLine(
+    {
+      event: "step_update",
+      step_update: {
+        step_index: 4,
+        state: "DONE",
+        step_type: "tool",
+        tool_info: {
+          name: "run_command",
+          parameters: { CommandLine: "echo hello_headless_demo" },
+          output: "hello_headless_demo\r\n",
+        },
+      },
+    },
+    state
+  );
+  assert.equal(repeated.events.length, 0);
+  const result = mapAgyLine(
+    {
+      event: "result",
+      result: {
+        status: "SUCCESS",
+        response: "apple\n",
+        usage: { input_tokens: 10, output_tokens: 4, thinking_tokens: 7, cache_read_tokens: 1, total_tokens: 14 },
+      },
+    },
+    state
+  );
+  const events = [...active.events, ...done.events, ...started.events, ...finished.events, ...result.events];
+  assert.deepEqual(textDeltas(events), ["apple", "\n"]);
+  assert.equal(
+    events.some((event) => (event.assistantMessageEvent as { type?: string } | undefined)?.type === "thinking_delta"),
+    false
+  );
+  assert.equal(started.events.filter((event) => event.type === "tool_execution_end").length, 0);
+  assert.equal(finished.events.filter((event) => event.type === "tool_execution_start").length, 0);
+  const toolStart = events.find((event) => event.type === "tool_execution_start");
+  assert.equal(toolStart?.toolName, "bash");
+  assert.equal((toolStart?.args as { command: string }).command, "echo hello_headless_demo");
+  const toolEnd = events.find((event) => event.type === "tool_execution_end");
+  assert.equal((toolEnd?.result as { content: { text: string }[] }).content[0].text, "hello_headless_demo\r\n");
+  assert.equal(result.usage?.thinking, 7);
+  assert.equal(result.usage?.total, 14);
+  assert.equal(result.failure, null);
+  assert.equal((result.messages[0].content as { type: string; text?: string }[])[0].text, "apple\n");
+
+  const prefixed = createAgyStreamState();
+  mapAgyLine(
+    { event: "step_update", step_update: { step_index: 2, state: "ACTIVE", step_type: "agent_response", text_delta: "apple" } },
+    prefixed
+  );
+  const full = mapAgyLine(
+    {
+      event: "step_update",
+      step_update: { step_index: 2, state: "DONE", step_type: "agent_response", text_delta: "apple\n" },
+    },
+    prefixed
+  );
+  assert.deepEqual(textDeltas(full.events), ["\n"]);
+
+  const sub = mapAgyLine(
+    {
+      event: "step_update",
+      step_update: {
+        step_index: 5,
+        state: "DONE",
+        subagent_info: {
+          subagents: [
+            {
+              type_name: "researcher",
+              role: "search",
+              conversation_id: "sub-1",
+              log_uri: "/secret/path",
+              workspace_uris: ["/secret/ws"],
+            },
+          ],
+        },
+      },
+    },
+    createAgyStreamState()
+  );
+  const dumped = JSON.stringify(sub.events);
+  assert.equal(dumped.includes("/secret/path"), false);
+  assert.equal(dumped.includes("/secret/ws"), false);
+  assert.match(dumped, /researcher/);
+
+  const failures: [string, RegExp][] = [
+    ["ERROR", /boom/],
+    ["WAITING", /waiting/i],
+    ["INTERRUPTED", /interrupted/i],
+  ];
+  for (const [status, pattern] of failures) {
+    const mapped = mapAgyLine(
+      { event: "result", result: { status, error: status === "ERROR" ? "boom" : undefined } },
+      createAgyStreamState()
+    );
+    assert.equal(mapped.terminal, true);
+    assert.match(mapped.failure ?? "", pattern);
+  }
+});
+
+test("agy approvals are not delivered and launch stays in the restrictive mode", () => {
+  assert.equal(permissionModeNotice("always-proceed"), AGY_ALWAYS_PROCEED_NOTICE);
+  assert.equal(permissionModeNotice(null), AGY_PERMISSION_LIMIT);
+  assert.equal(permissionModeNotice("request-review"), AGY_PERMISSION_LIMIT);
+  assert.deepEqual(approvalIsNotDelivered("approve"), { sent: false, choice: "once" });
+  assert.deepEqual(approvalIsNotDelivered("always_allow"), { sent: false, choice: "always" });
+  assert.equal(decisionLabel("deny"), "deny");
+  assert.equal(decisionLabel("nope"), "deny");
+  assert.equal(approvalIsNotDelivered("deny").sent, false);
+
+  const denial =
+    'a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow rule.';
+  assert.match(permissionDenialNotice(denial) ?? "", /auto-denied/);
+  assert.match(permissionDenialNotice(denial) ?? "", /does not auto-approve/);
+  assert.equal(permissionDenialNotice("progress"), null);
+
+  assert.equal(authFailureReason("authentication required"), AGY_SIGNED_OUT);
+  assert.equal(authFailureReason("Authentication expired. Please log back in."), AGY_SIGNED_OUT);
+  assert.equal(authFailureReason("secret keyring is locked"), AGY_KEYRING_LOCKED);
+  assert.match(authFailureReason("GEMINI_API_KEY is not set") ?? "", /Gemini API key/);
+
+  const models = modelsFromText(
+    "# models\nAvailable models\ngemini-4-argon-high       Gemini 4 Argon (High)\ngemini-3.8-flash-medium       Gemini 3.8 Flash (Medium)\ngemini-4-argon-high       duplicate\n"
+  );
+  assert.deepEqual(
+    models.map((model) => model.id),
+    ["gemini-4-argon-high", "gemini-3.8-flash-medium"]
+  );
+  assert.equal(models[0].name, "Gemini 4 Argon (High)");
+  assert.equal(models[0].provider, "agy");
+
+  const args = agyStreamArgs({ model: "gemini-4-argon-high", effort: "high", conversationId: "conv-1" });
+  for (const flag of ["stream-json", "--print-timeout", "0s", "--sandbox", "--disable-slash-commands", "--model", "--effort", "--conversation"]) {
+    assert.ok(args.includes(flag), flag);
+  }
+  assert.equal(args.includes("--dangerously-skip-permissions"), false);
+  assert.equal(args.includes("--mode"), false);
+  assert.equal(args.includes("accept-edits"), false);
+  assert.equal(args.includes("auto"), false);
+  const unsafe = agyStreamArgs({ model: "bad model", effort: "xhigh;rm", conversationId: "../x" });
+  assert.equal(unsafe.includes("--model"), false);
+  assert.equal(unsafe.includes("--effort"), false);
+  assert.equal(unsafe.includes("--conversation"), false);
+
+  const dir = mkdtempSync(join(tmpdir(), "pitex-bridge-agy-which-"));
+  try {
+    const binary = join(dir, "agy");
+    writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    assert.equal(findAgy({ AGY_PATH: binary, PATH: "", HOME: dir }), binary);
+    assert.equal(findAgy({ PATH: dir, HOME: dir }), binary);
+    assert.equal(findAgy({ AGY_PATH: join(dir, "missing"), PATH: "", HOME: dir }), null);
+    const exe = join(dir, "agy.exe");
+    writeFileSync(exe, "", { mode: 0o755 });
+    assert.equal(findAgy({ PATH: dir, HOME: dir }, "win32"), exe);
+    const cmd = join(dir, "agy.cmd");
+    const spec = agyLaunchSpec(cmd, ["--sandbox"], "win32");
+    assert.equal(spec.command, "cmd.exe");
+    assert.deepEqual(spec.args.slice(0, 3), ["/d", "/s", "/c"]);
+    assert.match(spec.args[3], /agy\.cmd" --sandbox/);
+    assert.equal(spec.windowsVerbatimArguments, true);
+    assert.throws(() => agyLaunchSpec(join(dir, "bad%name.cmd"), ["--sandbox"], "win32"));
+    assert.deepEqual(agyLaunchSpec(binary, ["--sandbox"], "linux"), { command: binary, args: ["--sandbox"] });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("agy adapter sources do not reference credential files", () => {
+  const forbidden = [
+    "auth.json",
+    ".gemini",
+    "gcloud",
+    "application_default_credentials",
+    "adc.json",
+    ".codex",
+    ".claude",
+    "credentials.json",
+    "credentials.db",
+  ];
+  for (const name of ["agy-adapter.ts", "agy-map.ts"]) {
+    const source = readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
+    for (const needle of forbidden) {
+      assert.equal(source.includes(needle), false, `${name} mentions ${needle}`);
+    }
+  }
+});
+
+function writeFakeAgy(binary: string, record: string): void {
+  writeFileSync(
+    binary,
+    `#!/usr/bin/env node
+import readline from "node:readline";
+import { appendFileSync, writeSync } from "node:fs";
+const record = ${JSON.stringify(record)};
+const argv = process.argv.slice(2);
+const send = (value) => writeSync(1, JSON.stringify(value) + "\\n");
+if (argv[0] === "models") {
+  if (process.env.FAKE_AGY_AUTH === "missing") {
+    writeSync(2, "authentication required\\n");
+    process.exit(1);
+  }
+  writeSync(1, "gemini-4-argon-high       Gemini 4 Argon (High)\\ngemini-3.8-flash-medium       Gemini 3.8 Flash (Medium)\\n");
+  process.exit(0);
+}
+appendFileSync(record, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");
+const conversationIndex = argv.indexOf("--conversation");
+const conversation = conversationIndex >= 0 ? argv[conversationIndex + 1] : "conv-1";
+send({
+  event: "init",
+  conversation_id: conversation,
+  init: { cwd: process.cwd(), tools: ["run_command"], permission_mode: "request-review" },
+});
+let turns = 0;
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+rl.on("line", (line) => {
+  appendFileSync(record, line + "\\n");
+  let msg = null;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    msg = null;
+  }
+  if (!msg || msg.event !== "user") {
+    send({ event: "result", result: { status: "ERROR", error: "unsupported" } });
+    return;
+  }
+  turns += 1;
+  if (process.env.FAKE_AGY_HOLD === "1" && turns === 1) {
+    send({
+      event: "step_update",
+      step_update: { step_index: 1, step_type: "agent_response", state: "ACTIVE", text_delta: "Working" },
+    });
+    return;
+  }
+  send({ event: "step_update", step_update: { step_index: 0, step_type: "user_input", state: "DONE" } });
+  send({ event: "step_update", step_update: { step_index: 1, step_type: "agent_response", state: "ACTIVE", text_delta: "Hello" } });
+  send({ event: "step_update", step_update: { step_index: 1, step_type: "agent_response", state: "DONE", text_delta: " there\\n" } });
+  send({
+    event: "step_update",
+    step_update: {
+      step_index: 2,
+      step_type: "tool",
+      state: "DONE",
+      tool_info: {
+        name: "run_command",
+        parameters: { CommandLine: "echo hello_headless_demo" },
+        output: "hello_headless_demo\\n",
+      },
+      usage: { input_tokens: 99, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 99 },
+    },
+  });
+  if (turns === 1) {
+    writeSync(2, 'a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow rule.\\n');
+  }
+  send({
+    event: "result",
+    conversation_id: conversation,
+    result: {
+      status: "SUCCESS",
+      response: "Hello there\\n",
+      usage: { input_tokens: 10, output_tokens: 4, thinking_tokens: 3, cache_read_tokens: 1, total_tokens: 14 },
+    },
+  });
+});
+rl.on("close", () => process.exit(0));
+process.on("SIGINT", () => {
+  appendFileSync(record, "SIGINT\\n");
+  send({ event: "result", result: { status: "INTERRUPTED", error: "interrupted", response: "" } });
+  process.exit(0);
+});
+`,
+    { mode: 0o755 }
+  );
+}
+
+function agyRecord(path: string): { spawns: { argv: string[]; cwd: string }[]; stdin: { event?: string; message?: { content?: string } }[]; raw: string } {
+  const raw = readFileSync(path, "utf8");
+  const spawns: { argv: string[]; cwd: string }[] = [];
+  const stdin: { event?: string; message?: { content?: string } }[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim() || line === "SIGINT") continue;
+    const parsed = JSON.parse(line) as { argv?: string[]; cwd?: string; event?: string; message?: { content?: string } };
+    if (parsed.argv && parsed.cwd) spawns.push({ argv: parsed.argv, cwd: parsed.cwd });
+    else stdin.push(parsed);
+  }
+  return { spawns, stdin, raw };
+}
+
+test("a fake agy process round-trips a prompt, a resume, and a model change", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-bridge-agy-"));
+  const binary = join(dir, "agy");
+  const record = join(dir, "record.jsonl");
+  const sessionDir = join(dir, "sessions");
+  mkdirSync(sessionDir);
+  writeFakeAgy(binary, record);
+  writeFileSync(record, "");
+  const adapter = new AgyAdapter();
+  const collected = collectHost();
+  try {
+    await adapter.start({
+      cwd: dir,
+      sessionDir,
+      developerInstructions: "Pitex instructions.",
+      env: { ...process.env, AGY_PATH: binary, FAKE_RECORD: record },
+    });
+    assert.equal(adapter.unavailableReason, null);
+    await adapter.handleCommand({ type: "get_available_models" }, collected.host);
+    const models = collected.responses.at(-1);
+    assert.equal(models?.success, true);
+    assert.deepEqual(
+      (models?.data as { models: { id: string }[] }).models.map((model) => model.id),
+      ["gemini-4-argon-high", "gemini-3.8-flash-medium"]
+    );
+    assert.match(String(collected.events[0].error), /does not auto-approve/);
+
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "Fix it" }, collected.host);
+    assert.equal(collected.responses.find((response) => response.id === "p1")?.success, true);
+    await waitForCount(collected.events, "agent_end", 1);
+    assert.equal(textDeltas(collected.events).join(""), "Hello there\n");
+    const toolStart = collected.events.find((event) => event.type === "tool_execution_start");
+    assert.equal(toolStart?.toolName, "bash");
+    assert.equal((toolStart?.args as { command: string }).command, "echo hello_headless_demo");
+    assert.equal(collected.events.some((event) => event.type === "approval_request"), false);
+    assert.match(collected.events.map((event) => String(event.error ?? "")).join("\n"), /auto-denied/);
+
+    await adapter.handleCommand({ type: "approval_response", id: "a1", decision: "always_allow" }, collected.host);
+    const approval = collected.responses.find((response) => response.command === "approval_response");
+    assert.equal(approval?.success, false);
+    assert.equal(approval?.error, AGY_PERMISSION_LIMIT);
+    assert.deepEqual(approval?.data, { sent: false, choice: "always" });
+
+    await adapter.handleCommand({ type: "get_messages" }, collected.host);
+    const history = collected.responses.find((response) => response.command === "get_messages");
+    const messages = (history?.data as { messages: { role: string; content?: { text?: string }[] }[] }).messages;
+    assert.deepEqual(
+      messages.map((message) => message.role),
+      ["user", "assistant", "toolResult"]
+    );
+    assert.equal(messages[0].content?.[0].text, "Fix it");
+    assert.match(JSON.stringify(messages[1].content), /Hello there/);
+    const index = JSON.parse(readFileSync(join(sessionDir, "codex-session-index.json"), "utf8")) as {
+      sessions: Record<string, { threadId: string }>;
+    };
+    const sessionPath = Object.keys(index.sessions)[0];
+    assert.equal(index.sessions[sessionPath].threadId, "conv-1");
+    const stored = sessionMessages(sessionPath);
+    assert.equal(stored[0].role, "user");
+    assert.equal((stored[1] as { content?: { text?: string }[] }).content?.[0].text?.includes("Hello there"), true);
+
+    await adapter.handleCommand({ type: "get_session_stats" }, collected.host);
+    const stats = collected.responses.find((response) => response.command === "get_session_stats");
+    assert.equal((stats?.data as { tokens: { thinking: number } }).tokens.thinking, 3);
+
+    await adapter.handleCommand({ type: "set_thinking_level", level: "xhigh", id: "bad-effort" }, collected.host);
+    assert.equal(collected.responses.find((response) => response.id === "bad-effort")?.success, false);
+    await adapter.handleCommand({ type: "set_thinking_level", level: "high", id: "effort" }, collected.host);
+    assert.equal(collected.responses.find((response) => response.id === "effort")?.success, true);
+    await adapter.handleCommand({ type: "set_model", modelId: "gemini-3.8-flash-medium", id: "model" }, collected.host);
+    assert.equal(collected.responses.find((response) => response.id === "model")?.success, true);
+    await adapter.handleCommand({ type: "prompt", id: "p2", message: "Next" }, collected.host);
+    await waitForCount(collected.events, "agent_end", 2);
+
+    let recorded = agyRecord(record);
+    assert.ok(recorded.stdin.every((line) => line.event === "user"));
+    assert.equal(recorded.stdin[0].message?.content?.startsWith("Pitex instructions.\n\nFix it"), true);
+    assert.equal(recorded.stdin[1].message?.content, "Next");
+    assert.equal(recorded.raw.includes("control_request"), false);
+    assert.equal(recorded.raw.includes("control_response"), false);
+    assert.equal(recorded.spawns[0].cwd, dir);
+    assert.ok(recorded.spawns.every((spawned) => spawned.argv.includes("--sandbox") && spawned.argv.includes("stream-json")));
+    assert.equal(recorded.spawns.some((spawned) => spawned.argv.includes("--dangerously-skip-permissions")), false);
+    assert.equal(recorded.spawns.some((spawned) => spawned.argv.includes("--mode")), false);
+    assert.ok(
+      recorded.spawns.some(
+        (spawned) => spawned.argv.includes("--model") && spawned.argv.includes("gemini-3.8-flash-medium") && spawned.argv.includes("--effort") && spawned.argv.includes("high")
+      )
+    );
+
+    await adapter.handleCommand({ type: "switch_session", sessionPath: join(sessionDir, "missing.jsonl"), id: "missing" }, collected.host);
+    assert.equal(collected.responses.find((response) => response.id === "missing")?.success, false);
+    await adapter.handleCommand({ type: "switch_session", sessionPath, id: "resume" }, collected.host);
+    const resumed = collected.responses.find((response) => response.id === "resume");
+    assert.equal(resumed?.success, true);
+    assert.deepEqual(resumed?.data, { cancelled: false });
+    recorded = agyRecord(record);
+    assert.ok(recorded.spawns.some((spawned) => spawned.argv.includes("--conversation") && spawned.argv.includes("conv-1")));
+
+    await adapter.handleCommand({ type: "get_messages", id: "history-2" }, collected.host);
+    const replay = collected.responses.find((response) => response.id === "history-2");
+    const replayed = (replay?.data as { messages: { role: string; content?: { text?: string }[] }[] }).messages;
+    assert.equal(replayed[0].content?.[0].text, "Fix it");
+    await adapter.handleCommand({ type: "prompt", id: "empty", message: "   " }, collected.host);
+    assert.equal(collected.responses.find((response) => response.id === "empty")?.success, false);
+  } finally {
+    await adapter.stop();
+    await removeTemp(dir);
+  }
+});
+
+test("agy abort sends SIGINT and does not write a permission reply", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-bridge-agy-abort-"));
+  const binary = join(dir, "agy");
+  const record = join(dir, "record.jsonl");
+  writeFakeAgy(binary, record);
+  writeFileSync(record, "");
+  const adapter = new AgyAdapter();
+  const collected = collectHost();
+  try {
+    await adapter.start({
+      cwd: dir,
+      sessionDir: dir,
+      env: { ...process.env, AGY_PATH: binary, FAKE_AGY_HOLD: "1", FAKE_RECORD: record },
+    });
+    assert.equal(adapter.unavailableReason, null);
+    await adapter.handleCommand({ type: "prompt", id: "hold", message: "Hold" }, collected.host);
+    await waitForCount(collected.events, "message_update", 2);
+    await adapter.handleCommand({ type: "abort", id: "stop" }, collected.host);
+    assert.equal(collected.responses.find((response) => response.id === "stop")?.success, true);
+    if (process.platform !== "win32") {
+      const recorded = await waitForText(record, /SIGINT/);
+      assert.match(recorded, /SIGINT/);
+      await waitForCount(collected.events, "agent_end", 1);
+      const end = collected.events.find((event) => event.type === "agent_end");
+      assert.match(JSON.stringify(end?.messages), /interrupted/);
+    }
+    assert.equal(readFileSync(record, "utf8").includes("control_"), false);
+  } finally {
+    await adapter.stop();
+    await removeTemp(dir);
+  }
+});
+
+test("a missing or signed-out Antigravity CLI is reported without exiting", async () => {
+  const empty = mkdtempSync(join(tmpdir(), "pitex-bridge-agy-empty-"));
+  const missing = new AgyAdapter();
+  await missing.start({ cwd: empty, sessionDir: empty, env: { PATH: "", HOME: empty, AGY_PATH: "" } });
+  assert.match(missing.unavailableReason ?? "", /Install the official Antigravity CLI/);
+  assert.match(missing.unavailableReason ?? "", /agy/);
+  const host = collectHost();
+  await missing.handleCommand({ type: "prompt", message: "Hi", id: "p" }, host.host);
+  assert.equal(host.responses[0].success, false);
+  assert.match(String(host.responses[0].error), /agy/);
+
+  const dir = mkdtempSync(join(tmpdir(), "pitex-bridge-agy-signed-out-"));
+  const binary = join(dir, "agy");
+  writeFakeAgy(binary, join(dir, "record.jsonl"));
+  const signedOut = new AgyAdapter();
+  try {
+    await signedOut.start({
+      cwd: dir,
+      sessionDir: dir,
+      env: { ...process.env, AGY_PATH: binary, FAKE_AGY_AUTH: "missing" },
+    });
+    assert.match(signedOut.unavailableReason ?? "", /not logged in/);
+    assert.match(signedOut.unavailableReason ?? "", /agy/);
+    const signedHost = collectHost();
+    await signedOut.handleCommand({ type: "prompt", message: "Hi", id: "p" }, signedHost.host);
+    assert.equal(signedHost.responses[0].success, false);
+    assert.match(String(signedHost.responses[0].error), /not logged in/);
+  } finally {
+    await signedOut.stop();
+    await missing.stop();
+    await removeTemp(dir);
+    await removeTemp(empty);
+  }
+});
+
+test("createAdapter selects agy and rejects an unknown id", async () => {
+  const agy = await createAdapter("agy");
+  assert.equal(agy.id, "agy");
+  assert.equal(agy.displayName, "Antigravity CLI");
+  const grok = await createAdapter("grok");
+  assert.equal(grok.id, "grok");
+  const claude = await createAdapter("claude");
+  assert.equal(claude.id, "claude");
+  await assert.rejects(() => createAdapter("nope"), /Unknown CLI adapter/);
+});

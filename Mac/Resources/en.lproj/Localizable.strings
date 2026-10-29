@@ -348,7 +348,8 @@
 "settings.ai.backend_codex" = "Codex CLI (your login)";
 "settings.ai.backend_claude" = "Claude Code (your login)";
 "settings.ai.backend_grok" = "Grok CLI (your login)";
-"settings.ai.backend_note" = "Codex CLI uses `codex login`, Claude Code uses `claude`, and Grok CLI uses `grok login` on this computer. Pitex never reads those credential files.";
+"settings.ai.backend_agy" = "Antigravity CLI (your login)";
+"settings.ai.backend_note" = "Codex CLI uses `codex login`, Claude Code uses `claude`, Grok CLI uses `grok login`, and Antigravity CLI uses `agy` on this computer. Pitex never reads those credential files.";
 "settings.ai.location" = "Install location";
 "settings.ai.attach_default" = "Attach the active document to prompts by default";
 "settings.ai.autocompletion" = "Inline autocompletion";
