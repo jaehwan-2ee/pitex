@@ -2755,14 +2755,17 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     let backend_pi = tr(lang, "settings.ai.backend_pi");
     let backend_codex = tr(lang, "settings.ai.backend_codex");
     let backend_claude = tr(lang, "settings.ai.backend_claude");
+    let backend_grok = tr(lang, "settings.ai.backend_grok");
     let backend = gtk4::DropDown::from_strings(&[
         backend_pi.as_str(),
         backend_codex.as_str(),
         backend_claude.as_str(),
+        backend_grok.as_str(),
     ]);
     backend.set_selected(match state.borrow().store.agent_provider().as_str() {
         "codex" => 1,
         "claude" => 2,
+        "grok" => 3,
         _ => 0,
     });
     a11y(&backend, "pitex.settings.ai.backend", "settings.ai.backend");
@@ -2772,6 +2775,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             let next = match dd.selected() {
                 1 => "codex",
                 2 => "claude",
+                3 => "grok",
                 _ => "pi",
             };
             let Ok(mut s) = state.try_borrow_mut() else { return };

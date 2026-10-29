@@ -348,7 +348,8 @@
 "settings.ai.backend_pi" = "pi（プロバイダのサインイン）";
 "settings.ai.backend_codex" = "Codex CLI（ご自身のログイン）";
 "settings.ai.backend_claude" = "Claude Code（ご自身のログイン）";
-"settings.ai.backend_note" = "Codex CLI はこのコンピュータの `codex login` のアカウントを使います。Pitex は Codex の資格情報ファイルを読みません。";
+"settings.ai.backend_grok" = "Grok CLI（ご自身のログイン）";
+"settings.ai.backend_note" = "Codex CLI は `codex login`、Claude Code は `claude`、Grok CLI は `grok login` のアカウントをこのコンピュータで使います。Pitex はそれらの資格情報ファイルを読みません。";
 "settings.ai.location" = "インストール先";
 "settings.ai.attach_default" = "デフォルトでアクティブな書類をプロンプトに添付";
 "settings.ai.autocompletion" = "インライン自動補完";

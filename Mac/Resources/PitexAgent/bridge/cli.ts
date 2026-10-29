@@ -5,9 +5,10 @@
 //
 // PITEX_SESSION_DIR              per-project session folder
 // PITEX_DEVELOPER_INSTRUCTIONS   editor instructions forwarded to the CLI
-// PITEX_CLI_ADAPTER              adapter id: "codex" (default) or "claude"
+// PITEX_CLI_ADAPTER              adapter id: "codex" (default), "claude", or "grok"
 // CODEX_PATH                     optional explicit Codex CLI binary
 // CLAUDE_PATH                    optional explicit Claude Code CLI binary
+// GROK_PATH                      optional explicit Grok CLI binary
 
 import readline from "node:readline";
 

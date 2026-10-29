@@ -130,18 +130,19 @@ impl Preferences {
     }
 }
 
-/// `ai.agentProvider` is `pi`, `codex`, or `claude`. Anything else is pi.
+/// `ai.agentProvider` is `pi`, `codex`, `claude`, or `grok`. Anything else is pi.
 pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
     match value {
         Some("codex") => "codex",
         Some("claude") => "claude",
+        Some("grok") => "grok",
         _ => "pi",
     }
 }
 
-/// Codex and Claude Code both launch the bundled bridge.
+/// Codex, Claude Code, and Grok CLI all launch the bundled bridge.
 pub fn agent_provider_uses_bridge(value: &str) -> bool {
-    matches!(value, "codex" | "claude")
+    matches!(value, "codex" | "claude" | "grok")
 }
 
 /// Port of `SettingsStore` — every @Published field with its UserDefaults key
@@ -338,7 +339,7 @@ impl SettingsStore {
     pub fn set_ai_font_size(&mut self, v: f64) {
         self.prefs.set("ai.fontSize", v);
     }
-    /// `ai.agentProvider` — `pi` (provider sign-in), `codex`, or `claude`.
+    /// `ai.agentProvider` — `pi` (provider sign-in), `codex`, `claude`, or `grok`.
     pub fn agent_provider(&self) -> String {
         normalize_agent_provider(self.prefs.string("ai.agentProvider").as_deref()).into()
     }

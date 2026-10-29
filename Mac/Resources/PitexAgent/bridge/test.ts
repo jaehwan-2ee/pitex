@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import "./grok-test.ts";
+
 import type { AdapterHost, PiCommand } from "./adapter.ts";
 import { CodexAdapter, codexForceKillPlan, codexLaunchSpec, findCodex, stopCodexChild } from "./codex-adapter.ts";
 import {

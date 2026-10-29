@@ -337,8 +337,8 @@ final class AgentCoordinator: ObservableObject {
         await spawn(executable: executable, root: root, tools: tools)
     }
 
-    /// `ai.agentProvider` at the moment of spawn. Codex and Claude Code drive
-    /// the bundled bridge; anything else keeps the pi runtime.
+    /// `ai.agentProvider` at the moment of spawn. Codex, Claude Code, and
+    /// Grok CLI drive the bundled bridge; anything else keeps the pi runtime.
     static func selectedAgentProvider() -> String {
         SettingsStore.agentProviderValue(UserDefaults.standard.string(forKey: "ai.agentProvider"))
     }
@@ -346,7 +346,7 @@ final class AgentCoordinator: ObservableObject {
     /// Adapter id for providers that launch `pitex-agent-bridge`, or nil for pi.
     static func bridgeAdapterID(_ provider: String) -> String? {
         switch provider {
-        case "codex", "claude":
+        case "codex", "claude", "grok":
             return provider
         default:
             return nil
@@ -407,6 +407,9 @@ final class AgentCoordinator: ObservableObject {
     private static func bridgeMissingMessage(_ adapter: String) -> String {
         if adapter == "claude" {
             return "The Claude Code bridge is not installed with this Pitex build."
+        }
+        if adapter == "grok" {
+            return "The Grok CLI bridge is not installed with this Pitex build."
         }
         return "The Codex bridge is not installed with this Pitex build."
     }
