@@ -2,6 +2,10 @@
 // @anthropic-ai/claude-agent-sdk `query()` (`pathToClaudeCodeExecutable`).
 // Login stays inside that CLI (`claude auth login` / `claude auth status`).
 // This adapter never reads credential files and never sets an API key.
+// Host variables that would replace that login — API keys, OAuth tokens,
+// provider switches, and ANTHROPIC_*BASE_URL overrides — are removed from
+// the environment passed to `claude` and to query(). Everything else is kept.
+// https://code.claude.com/docs/en/env-vars
 //
 // SDK 0.3.312: permissionMode "default" keeps manual approvals on
 // canUseTool (an omitted mode can start in "auto"). settingSources [] is
@@ -107,6 +111,59 @@ export interface ClaudeAdapterDeps {
 
 interface PendingApproval {
   finish: (decision: string) => void;
+}
+
+/**
+ * Credentials and endpoint overrides that make Claude Code bill an API key
+ * or a cloud provider instead of the account from `claude auth login`.
+ * Model names and the rest of the host environment stay.
+ */
+const CLAUDE_BILLING_ENV = new Set([
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_AWS_API_KEY",
+  "ANTHROPIC_AWS_WORKSPACE_ID",
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "ANTHROPIC_FEDERATION_RULE_ID",
+  "ANTHROPIC_FOUNDRY_API_KEY",
+  "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+  "ANTHROPIC_FOUNDRY_RESOURCE",
+  "ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID",
+  "ANTHROPIC_ORGANIZATION_ID",
+  "ANTHROPIC_VERTEX_PROJECT_ID",
+  "ANTHROPIC_WORKSPACE_ID",
+  "AWS_BEARER_TOKEN_BEDROCK",
+  "CLAUDE_BRIDGE_BASE_URL",
+  "CLAUDE_BRIDGE_OAUTH_TOKEN",
+  "CLAUDE_CODE_API_BASE_URL",
+  "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+  "CLAUDE_CODE_HFI_BEARER_TOKEN",
+  "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+  "CLAUDE_CODE_SESSIONS_OAUTH_TOKEN",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_VERTEX",
+]);
+
+/** `ANTHROPIC_BASE_URL` and the same override on Bedrock, Vertex, Foundry, and AWS. */
+function isClaudeBillingOverride(name: string): boolean {
+  if (CLAUDE_BILLING_ENV.has(name)) return true;
+  return /^ANTHROPIC_(?:[A-Z0-9]+_)*BASE_URL$/.test(name);
+}
+
+/** Copy of the host environment with CLI-login overrides removed. */
+export function claudeChildEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== "string" || isClaudeBillingOverride(key)) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 export function findClaude(env: NodeJS.ProcessEnv, platform = process.platform): string | null {
@@ -269,11 +326,11 @@ export class ClaudeAdapter implements CliAdapter {
     this.cwd = options.cwd;
     this.sessionDir = options.sessionDir;
     this.developerInstructions = options.developerInstructions ?? "";
-    this.childEnv = stringEnv(options.env);
+    this.childEnv = claudeChildEnv(options.env);
     try {
       this.binary = findClaude(options.env);
       if (!this.binary) throw new Error(CLAUDE_MISSING);
-      const status = await (this.deps.authStatus ?? defaultAuthStatus)(this.binary, this.cwd, options.env);
+      const status = await (this.deps.authStatus ?? defaultAuthStatus)(this.binary, this.cwd, this.childEnv);
       if (!parseClaudeAuthStatus(status.stdout, status.code)) throw new Error(CLAUDE_SIGNED_OUT);
       await this.openQuery(null);
       this.unavailableReason = null;
@@ -710,14 +767,6 @@ function appendPiMessage(sessionPath: string, message: Json): void {
 
 function joinSession(sessionDir: string, name: string): string {
   return sessionDir.endsWith("/") ? sessionDir + name : `${sessionDir}/${name}`;
-}
-
-function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (typeof value === "string") out[key] = value;
-  }
-  return out;
 }
 
 function publicClaudeError(text: string): string {

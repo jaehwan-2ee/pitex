@@ -15,6 +15,7 @@ import {
   CLAUDE_MISSING,
   CLAUDE_SIGNED_OUT,
   ClaudeAdapter,
+  claudeChildEnv,
   findClaude,
   type CanUseToolOptions,
   type ClaudeQueryFn,
@@ -188,6 +189,48 @@ test("claude adapter sources do not reference credential files", () => {
   assert.match(adapter, /settingSources: \[\]/);
 });
 
+test("claude child env drops API-key and billing overrides", () => {
+  const env = claudeChildEnv({
+    PATH: "/usr/bin",
+    HOME: "/home/me",
+    PITEX_TEST: "1",
+    ANTHROPIC_MODEL: "claude-sonnet-4-5",
+    ANTHROPIC_API_KEY: "user-supplied",
+    ANTHROPIC_AUTH_TOKEN: "user-supplied",
+    CLAUDE_CODE_OAUTH_TOKEN: "user-supplied",
+    ANTHROPIC_BASE_URL: "https://gateway.example/anthropic",
+    ANTHROPIC_BEDROCK_BASE_URL: "https://bedrock.example",
+    ANTHROPIC_VERTEX_BASE_URL: "https://vertex.example",
+    ANTHROPIC_FOUNDRY_BASE_URL: "https://foundry.example",
+    ANTHROPIC_AWS_API_KEY: "user-supplied",
+    AWS_BEARER_TOKEN_BEDROCK: "user-supplied",
+    CLAUDE_CODE_USE_BEDROCK: "1",
+    CLAUDE_CODE_USE_VERTEX: "1",
+    emptyValue: "",
+    skipped: undefined,
+  });
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.HOME, "/home/me");
+  assert.equal(env.PITEX_TEST, "1");
+  assert.equal(env.ANTHROPIC_MODEL, "claude-sonnet-4-5");
+  assert.equal(env.emptyValue, "");
+  const removed = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_VERTEX_BASE_URL",
+    "ANTHROPIC_FOUNDRY_BASE_URL",
+    "ANTHROPIC_AWS_API_KEY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "skipped",
+  ];
+  for (const name of removed) assert.equal(Object.hasOwn(env, name), false, name);
+});
+
 test("findClaude honors CLAUDE_PATH and PATH", () => {
   const dir = mkdtempSync(join(tmpdir(), "pitex-claude-which-"));
   const cmdDir = mkdtempSync(join(tmpdir(), "pitex-claude-cmd-"));
@@ -339,10 +382,17 @@ test("claude fake query round trip approves, resumes, and starts a clean session
   const opened: Opened[] = [];
   const adapter = new ClaudeAdapter({
     query: scriptedQuery(opened, "script"),
-    authStatus: async () => ({
-      stdout: '{"loggedIn":true,"authToken":"must-not-leak","configDirectory":"/tmp/hidden-home/.claude"}',
-      code: 0,
-    }),
+    authStatus: async (_binary, _cwd, env) => {
+      assert.equal(env.PITEX_TEST, "1");
+      assert.equal(env.ANTHROPIC_API_KEY, undefined);
+      assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
+      assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+      assert.equal(env.ANTHROPIC_BASE_URL, undefined);
+      return {
+        stdout: '{"loggedIn":true,"authToken":"must-not-leak","configDirectory":"/tmp/hidden-home/.claude"}',
+        code: 0,
+      };
+    },
   });
   const collected = collect();
   try {
@@ -350,7 +400,16 @@ test("claude fake query round trip approves, resumes, and starts a clean session
       cwd: dir,
       sessionDir: dir,
       developerInstructions: "Be brief",
-      env: { PATH: "", HOME: dir, CLAUDE_PATH: binary, PITEX_TEST: "1", ANTHROPIC_API_KEY: "user-supplied" },
+      env: {
+        PATH: "",
+        HOME: dir,
+        CLAUDE_PATH: binary,
+        PITEX_TEST: "1",
+        ANTHROPIC_API_KEY: "user-supplied",
+        ANTHROPIC_AUTH_TOKEN: "user-supplied",
+        CLAUDE_CODE_OAUTH_TOKEN: "user-supplied",
+        ANTHROPIC_BASE_URL: "https://gateway.example/anthropic",
+      },
     });
     assert.equal(adapter.unavailableReason, null);
     assert.equal(existsSync(marker), false);
@@ -367,8 +426,12 @@ test("claude fake query round trip approves, resumes, and starts a clean session
     assert.equal(first.includePartialMessages, true);
     assert.equal(first.systemPrompt.preset, "claude_code");
     assert.equal(first.systemPrompt.append, "Be brief");
-    assert.equal(first.env.ANTHROPIC_API_KEY, "user-supplied");
     assert.equal(first.env.PITEX_TEST, "1");
+    assert.equal(first.env.HOME, dir);
+    assert.equal(Object.hasOwn(first.env, "ANTHROPIC_API_KEY"), false);
+    assert.equal(Object.hasOwn(first.env, "ANTHROPIC_AUTH_TOKEN"), false);
+    assert.equal(Object.hasOwn(first.env, "CLAUDE_CODE_OAUTH_TOKEN"), false);
+    assert.equal(Object.hasOwn(first.env, "ANTHROPIC_BASE_URL"), false);
     assert.equal("allowedTools" in first, false);
     assert.equal("additionalDirectories" in first, false);
 
