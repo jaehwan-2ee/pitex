@@ -69,6 +69,16 @@ export class LineJsonRpc {
       this.failAll(error.message);
       this.onClose?.(error.message);
     });
+    // EPIPE after Codex exits is an 'error' on stdin. Without a listener
+    // that event crashes the bridge instead of telling the panel.
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      const message =
+        error.code === "EPIPE"
+          ? "Codex CLI is unavailable."
+          : `Codex CLI is unavailable (${error.message}).`;
+      this.failAll(message);
+      this.onClose?.(message);
+    });
   }
 
   request(method: string, params: unknown, timeoutMs = 30_000): Promise<unknown> {

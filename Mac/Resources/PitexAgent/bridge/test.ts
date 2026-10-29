@@ -3,13 +3,14 @@
 // Run: node --test Mac/Resources/PitexAgent/bridge/test.ts
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost, PiCommand } from "./adapter.ts";
-import { CodexAdapter, codexLaunchSpec, findCodex } from "./codex-adapter.ts";
+import { CodexAdapter, codexForceKillPlan, codexLaunchSpec, findCodex, stopCodexChild } from "./codex-adapter.ts";
 import {
   approvalFromServerRequest,
   approvalRpcReply,
@@ -19,7 +20,7 @@ import {
   modelsFromList,
   visibleModels,
 } from "./codex-map.ts";
-import { redactSecrets } from "./jsonrpc.ts";
+import { LineJsonRpc, redactSecrets } from "./jsonrpc.ts";
 import {
   appendUserMessage,
   rememberSession,
@@ -389,3 +390,181 @@ rl.on("line", (line) => {
     await removeTemp(empty);
   }
 });
+
+test("codex.cmd runs its npm script, or cmd.exe with a fixed argument", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-bridge-cmd-"));
+  try {
+    const root = join(dir, "Program Files");
+    const script = join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
+    mkdirSync(join(root, "node_modules", "@openai", "codex", "bin"), { recursive: true });
+    writeFileSync(script, "");
+    const cmd = join(root, "codex.cmd");
+    writeFileSync(cmd, `@ECHO off\r\n"%~dp0\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n`);
+    const spec = codexLaunchSpec(cmd, "win32");
+    assert.equal(spec.command, process.execPath);
+    assert.deepEqual(spec.args, [script, "app-server"]);
+    assert.equal(spec.windowsVerbatimArguments, undefined);
+
+    const bat = join(root, "codex.bat");
+    writeFileSync(bat, `@ECHO off\r\n"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n`);
+    assert.deepEqual(codexLaunchSpec(bat, "win32").args, [script, "app-server"]);
+
+    const opaque = join(root, "opaque.cmd");
+    writeFileSync(opaque, "@ECHO off\r\nREM no script path\r\n");
+    const fallback = codexLaunchSpec(opaque, "win32");
+    assert.equal(fallback.command, "cmd.exe");
+    assert.deepEqual(fallback.args, ["/d", "/s", "/c", `"${opaque}" app-server`]);
+    assert.equal(fallback.windowsVerbatimArguments, true);
+
+    assert.deepEqual(codexLaunchSpec(cmd, "linux"), { command: cmd, args: ["app-server"] });
+    assert.throws(() => codexLaunchSpec(join(root, "bad%PATH%.cmd"), "win32"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("two concurrent approvals are both answered, and abort or new_session denies the rest", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-bridge-queue-"));
+  const binary = join(dir, "codex");
+  const record = join(dir, "replies.jsonl");
+  writeFileSync(binary, `#!/usr/bin/env node
+import readline from "node:readline";
+import { appendFileSync } from "node:fs";
+const record = ${JSON.stringify(record)};
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+let batch = 0;
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (!msg.method) {
+    appendFileSync(record, line + "\\n");
+    return;
+  }
+  if (!Object.prototype.hasOwnProperty.call(msg, "id")) return;
+  if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { userAgent: "fake" } });
+  else if (msg.method === "account/read") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { account: { type: "chatgpt", email: "a@b.c" }, requiresOpenaiAuth: false } });
+  } else if (msg.method === "model/list") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { data: [], nextCursor: null } });
+  } else if (msg.method === "thread/start") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: "thread-1" }, model: "gpt-test" } });
+  } else if (msg.method === "turn/start") {
+    batch += 1;
+    const first = batch * 2 + 5;
+    send({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: "turn-" + batch } } });
+    send({ jsonrpc: "2.0", id: first, method: "item/commandExecution/requestApproval", params: { command: "latexmk", threadId: "thread-1", turnId: "turn-" + batch, itemId: "a" } });
+    send({ jsonrpc: "2.0", id: first + 1, method: "item/commandExecution/requestApproval", params: { command: "git status", threadId: "thread-1", turnId: "turn-" + batch, itemId: "b" } });
+  } else send({ jsonrpc: "2.0", id: msg.id, result: {} });
+});
+`, { mode: 0o755 });
+  writeFileSync(record, "");
+  const adapter = new CodexAdapter();
+  const collected = collectHost();
+  try {
+    await adapter.start({ cwd: dir, sessionDir: dir, env: { ...process.env, CODEX_PATH: binary, PATH: process.env.PATH ?? "" } });
+    assert.equal(adapter.unavailableReason, null);
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "Fix it" }, collected.host);
+    await waitForCount(collected.events, "approval_request", 2);
+    const approvals = collected.events.filter((event) => event.type === "approval_request");
+    assert.deepEqual(approvals.map((event) => event.id), ["7", "8"]);
+    assert.equal(approvals[0].detail, "latexmk");
+    assert.equal(approvals[1].detail, "git status");
+
+    await adapter.handleCommand({ type: "approval_response", id: "7", decision: "approve" }, collected.host);
+    await adapter.handleCommand({ type: "approval_response", id: "8", decision: "deny" }, collected.host);
+    const answered = await waitForText(record, /"id":8/);
+    const decisions = answered
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((line) => line.result && line.result.decision);
+    assert.deepEqual(decisions.map((line) => [line.id, line.result.decision]), [[7, "accept"], [8, "decline"]]);
+
+    await adapter.handleCommand({ type: "prompt", id: "p2", message: "Again" }, collected.host);
+    await waitForCount(collected.events, "approval_request", 4);
+    const before = readFileSync(record, "utf8");
+    await adapter.handleCommand({ type: "abort", id: "stop" }, collected.host);
+    const denied = await waitForText(record, /"id":10/);
+    const fresh = denied.slice(before.length)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((line) => line.result && line.result.decision);
+    assert.deepEqual(fresh.map((line) => [line.id, line.result.decision]), [[9, "decline"], [10, "decline"]]);
+
+    await adapter.handleCommand({ type: "prompt", id: "p3", message: "Third" }, collected.host);
+    await waitForCount(collected.events, "approval_request", 6);
+    const marked = readFileSync(record, "utf8").length;
+    await adapter.handleCommand({ type: "new_session", id: "new" }, collected.host);
+    const cleared = await waitForText(record, /"id":12/);
+    const rest = cleared.slice(marked)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((line) => line.result && line.result.decision);
+    assert.deepEqual(rest.map((line) => [line.id, line.result.decision]), [[11, "decline"], [12, "decline"]]);
+  } finally {
+    await adapter.stop();
+    await removeTemp(dir);
+  }
+});
+
+test("stdin EPIPE is reported as an unavailable error", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const messages: string[] = [];
+  const rpc = new LineJsonRpc(
+    child,
+    () => {},
+    () => {},
+    (message) => messages.push(message)
+  );
+  const error = new Error("write EPIPE") as NodeJS.ErrnoException;
+  error.code = "EPIPE";
+  child.stdin.emit("error", error);
+  assert.ok(messages.some((message) => message.includes("unavailable")));
+  rpc.close();
+  child.kill("SIGKILL");
+  await new Promise((resolve) => child.once("exit", resolve));
+});
+
+test("stop force-kills a child that ignores the graceful signal", async () => {
+  assert.deepEqual(codexForceKillPlan(4242, "win32"), {
+    command: "taskkill",
+    args: ["/PID", "4242", "/T", "/F"],
+  });
+  assert.deepEqual(codexForceKillPlan(4242, "linux"), { signal: "SIGKILL" });
+  const child = spawn(
+    process.execPath,
+    ["-e", 'process.on("SIGTERM", () => {}); process.stdout.write("ready\\n"); setInterval(() => {}, 500);'],
+    { stdio: ["pipe", "pipe", "pipe"] }
+  );
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("child did not start")), 3000);
+    child.stdout.on("data", (chunk) => {
+      if (String(chunk).includes("ready")) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    child.once("exit", () => {
+      clearTimeout(timer);
+      reject(new Error("child exited before ready"));
+    });
+  });
+  await stopCodexChild(child, 50);
+  assert.ok(child.exitCode !== null || child.signalCode !== null);
+  if (process.platform !== "win32") assert.equal(child.signalCode, "SIGKILL");
+});
+
+async function waitForCount(events: Record<string, unknown>[], type: string, count: number): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (events.filter((event) => event.type === type).length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`timed out waiting for ${count} ${type} events: ${JSON.stringify(events.map((event) => event.type))}`);
+}

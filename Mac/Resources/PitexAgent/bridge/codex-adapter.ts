@@ -10,10 +10,10 @@
 // packages/effect-codex-app-server and CodexAdapterV2.ts.
 // Pitex does not port T3's managed ChatGPT OAuth broker.
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { AdapterHost, AdapterStartOptions, CliAdapter, PiCommand } from "./adapter.ts";
@@ -66,17 +66,37 @@ export function findCodex(env: NodeJS.ProcessEnv, platform = process.platform): 
   return null;
 }
 
+export interface CodexLaunchSpec {
+  command: string;
+  args: string[];
+  /** Set when `args` is already a cmd.exe command line. */
+  windowsVerbatimArguments?: boolean;
+}
+
 /**
- * Windows CreateProcess cannot run a shebang script. Official installs are
- * `codex.exe` or `codex.cmd`; an extensionless Node shim is launched with
- * the runtime that is already running this bridge.
+ * Windows CreateProcess cannot run a shebang, and current Node rejects a
+ * direct spawn of `.cmd` / `.bat` (EINVAL). Prefer `codex.exe`. A cmd shim
+ * is the Node script it names, run with this process's node. Otherwise the
+ * shim is started through `cmd.exe /d /s /c` with the fixed argument
+ * `app-server` only.
  */
-export function codexLaunchSpec(
-  binary: string,
-  platform = process.platform
-): { command: string; args: string[] } {
+export function codexLaunchSpec(binary: string, platform = process.platform): CodexLaunchSpec {
   const direct = { command: binary, args: ["app-server"] };
-  if (platform !== "win32" || /\.(exe|cmd|bat)$/i.test(binary)) return direct;
+  if (platform !== "win32") return direct;
+  if (/\.exe$/i.test(binary)) return direct;
+  if (/\.(cmd|bat)$/i.test(binary)) {
+    const script = npmShimScript(binary);
+    if (script) return { command: process.execPath, args: [script, "app-server"] };
+    const quoted = quoteCmdExecutable(binary);
+    if (!quoted) {
+      throw new Error("Codex CLI path cannot be launched through cmd.exe.");
+    }
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", `${quoted} app-server`],
+      windowsVerbatimArguments: true,
+    };
+  }
   let header = "";
   try {
     header = readFileSync(binary).subarray(0, 128).toString("utf8");
@@ -87,6 +107,120 @@ export function codexLaunchSpec(
     return { command: process.execPath, args: [binary, "app-server"] };
   }
   return direct;
+}
+
+/** npm's cmd shim quotes the real CLI, often under `%~dp0` or `%dp0%`. */
+function npmShimScript(cmdPath: string): string | null {
+  let text = "";
+  try {
+    text = readFileSync(cmdPath).subarray(0, 8192).toString("utf8");
+  } catch {
+    return null;
+  }
+  const directory = dirname(cmdPath);
+  const pattern = /"([^"\r\n]+\.(?:js|mjs|cjs))"/gi;
+  for (const match of text.matchAll(pattern)) {
+    const candidate = expandShimPath(match[1], directory);
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function expandShimPath(raw: string, directory: string): string | null {
+  let body = raw;
+  const prefix = body.match(/^(?:%~dp0|%dp0%)/i);
+  if (prefix) body = body.slice(prefix[0].length);
+  body = body.replace(/^[\\/]+/, "").replace(/\\/g, "/");
+  if (!body || body.includes("..")) return null;
+  if (isAbsolute(body)) return body;
+  return join(directory, body);
+}
+
+/**
+ * Quote one executable for `cmd /d /s /c`. The command line is only that
+ * path plus the fixed word `app-server`. `%` and other cmd metacharacters
+ * are rejected so the path cannot expand or chain commands.
+ */
+function quoteCmdExecutable(binary: string): string | null {
+  if (!binary || /[\r\n"%!^&|<>]/.test(binary)) return null;
+  return `"${binary}"`;
+}
+
+/** How to finish a child that ignored the graceful stop. */
+export function codexForceKillPlan(
+  pid: number,
+  platform = process.platform
+): { command: string; args: string[] } | { signal: "SIGKILL" } {
+  if (platform === "win32" && Number.isInteger(pid) && pid > 0) {
+    return { command: "taskkill", args: ["/PID", String(pid), "/T", "/F"] };
+  }
+  return { signal: "SIGKILL" };
+}
+
+export async function stopCodexChild(child: ChildProcess, graceMs = 2000): Promise<void> {
+  child.stdin?.on("error", () => {
+    // Closing stdin after the CLI has gone raises EPIPE. Shutdown handles it.
+  });
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.stdin?.end();
+  } catch {
+    // The pipe is already closed when the CLI exits on its own.
+  }
+  try {
+    child.kill();
+  } catch {
+    // Exit won the race with the graceful signal.
+  }
+  await waitForChildExit(child, graceMs);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    await forceKillChild(child);
+  } catch {
+    // The process can exit between the check and the signal.
+  }
+  await waitForChildExit(child, graceMs);
+}
+
+function waitForChildExit(child: ChildProcess, graceMs: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, graceMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+function forceKillChild(child: ChildProcess): Promise<void> {
+  const plan = codexForceKillPlan(child.pid ?? 0);
+  if ("signal" in plan) {
+    try {
+      child.kill(plan.signal);
+    } catch {
+      // Already exited.
+    }
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const killer = spawn(plan.command, plan.args, { windowsHide: true, stdio: "ignore" });
+    killer.once("exit", done);
+    killer.once("error", () => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Already exited.
+      }
+      done();
+    });
+  });
 }
 
 function isExecutable(path: string): boolean {
@@ -148,6 +282,7 @@ export class CodexAdapter implements CliAdapter {
       env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments === true,
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
     child.stderr.setEncoding("utf8");
@@ -201,9 +336,11 @@ export class CodexAdapter implements CliAdapter {
           await this.prompt({ ...command, type: "prompt", streamingBehavior: "followUp" }, host);
           return;
         case "abort":
+          this.denyOutstandingApprovals();
           await this.abort(host, command.id);
           return;
         case "new_session":
+          this.denyOutstandingApprovals();
           this.threadId = null;
           this.turnId = null;
           this.sessionPath = null;
@@ -267,28 +404,16 @@ export class CodexAdapter implements CliAdapter {
   async stop(): Promise<void> {
     this.acceptClose = false;
     const child = this.child;
+    this.pending.clear();
     this.rpc?.close();
     this.child = null;
     this.rpc = null;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    const exited = new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 2000);
-      child.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
+    if (!child) return;
     try {
-      child.stdin.end();
+      await stopCodexChild(child);
     } catch {
-      // The pipe is already closed when the CLI exits on its own.
+      // Stop still finishes when the final signal cannot be delivered.
     }
-    try {
-      child.kill();
-    } catch {
-      // Exit won the race with kill.
-    }
-    await exited;
   }
 
   private stats: Json = { tokens: { total: 0 }, cost: 0, contextUsage: {} };
@@ -538,6 +663,18 @@ export class CodexAdapter implements CliAdapter {
       title: approval.title,
       detail,
     });
+  }
+
+  /** Decline every Codex request still waiting, then drop the map. */
+  private denyOutstandingApprovals(): void {
+    const outstanding = [...this.pending.values()];
+    this.pending.clear();
+    if (!this.rpc) return;
+    for (const pending of outstanding) {
+      const reply = approvalRpcReply(pending.method, "deny", pending.params);
+      if (reply.error) this.rpc.fail(pending.rpcId, reply.error.message);
+      else this.rpc.respond(pending.rpcId, reply.result ?? {});
+    }
   }
 
   private resolveApproval(command: PiCommand): void {
