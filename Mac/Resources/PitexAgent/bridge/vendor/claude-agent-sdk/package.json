@@ -1,0 +1,10 @@
+{
+  "name": "@anthropic-ai/claude-agent-sdk",
+  "version": "0.3.312",
+  "private": true,
+  "type": "module",
+  "description": "Vendored Claude Agent SDK root bundle. Native Claude Code binaries are not included.",
+  "main": "./sdk.mjs",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "claudeCodeVersion": "2.1.312"
+}

@@ -3,5 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pitex sidecar that speaks pi RPC JSONL and drives official CLIs. Milestone 1: Codex app-server."
+  "description": "Pitex sidecar that speaks pi RPC JSONL and drives official CLIs.",
+  "claudeAgentSdk": {
+    "name": "@anthropic-ai/claude-agent-sdk",
+    "version": "0.3.312",
+    "claudeCodeVersion": "2.1.312",
+    "integrity": "sha512-Ilj5Agx3ak/Z0UPZNLS7+CTnYMa+Ijf8+FKelh9MKGRwHVYyfvmJgL0fsmooI78SdkZwqjI5a4CwOAsJurdjJA==",
+    "sdkMjsSha256": "f5d668db39e357267e512a3792ebd828f6a42a23e7f8377921a924a513861181",
+    "vendor": "vendor/claude-agent-sdk/sdk.mjs",
+    "optionalNativeBinaries": "omitted"
+  }
 }

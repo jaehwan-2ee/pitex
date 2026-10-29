@@ -347,6 +347,7 @@
 "settings.ai.backend" = "アシスタントの実行方法";
 "settings.ai.backend_pi" = "pi（プロバイダのサインイン）";
 "settings.ai.backend_codex" = "Codex CLI（ご自身のログイン）";
+"settings.ai.backend_claude" = "Claude Code（ご自身のログイン）";
 "settings.ai.backend_note" = "Codex CLI はこのコンピュータの `codex login` のアカウントを使います。Pitex は Codex の資格情報ファイルを読みません。";
 "settings.ai.location" = "インストール先";
 "settings.ai.attach_default" = "デフォルトでアクティブな書類をプロンプトに添付";

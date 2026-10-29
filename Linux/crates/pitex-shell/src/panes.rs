@@ -2752,20 +2752,28 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     agent_group.set_title(&tr(lang, "settings.ai.agent"));
     let backend_row = adw::ActionRow::new();
     backend_row.set_title(&tr(lang, "settings.ai.backend"));
+    let backend_pi = tr(lang, "settings.ai.backend_pi");
+    let backend_codex = tr(lang, "settings.ai.backend_codex");
+    let backend_claude = tr(lang, "settings.ai.backend_claude");
     let backend = gtk4::DropDown::from_strings(&[
-        tr(lang, "settings.ai.backend_pi").as_str(),
-        tr(lang, "settings.ai.backend_codex").as_str(),
+        backend_pi.as_str(),
+        backend_codex.as_str(),
+        backend_claude.as_str(),
     ]);
-    backend.set_selected(if state.borrow().store.agent_provider() == "codex" {
-        1
-    } else {
-        0
+    backend.set_selected(match state.borrow().store.agent_provider().as_str() {
+        "codex" => 1,
+        "claude" => 2,
+        _ => 0,
     });
     a11y(&backend, "pitex.settings.ai.backend", "settings.ai.backend");
     {
         let state = state.clone();
         backend.connect_selected_notify(move |dd| {
-            let next = if dd.selected() == 1 { "codex" } else { "pi" };
+            let next = match dd.selected() {
+                1 => "codex",
+                2 => "claude",
+                _ => "pi",
+            };
             let Ok(mut s) = state.try_borrow_mut() else { return };
             if s.store.agent_provider() == next {
                 return;

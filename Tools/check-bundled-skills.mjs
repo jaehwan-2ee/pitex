@@ -17,11 +17,12 @@ for (const name of names) {
   assert.match(text, new RegExp(`^---\\r?\\n[\\s\\S]*?^name: ${name}$`, 'm'));
 }
 const notices = JSON.parse(await readFile(join(root, 'NOTICE-PROVENANCE.json'), 'utf8'));
-assert.deepEqual(notices.components.map(c => c.name).sort(), ['@earendil-works/pi-coding-agent', 'humanizer', 't3code']);
+assert.deepEqual(notices.components.map(c => c.name).sort(), ['@anthropic-ai/claude-agent-sdk', '@earendil-works/pi-coding-agent', 'humanizer', 't3code']);
 const indexText = await readFile(join(root, 'THIRD-PARTY-NOTICES.md'), 'utf8');
 for (const component of notices.components) {
   const bytes = await readFile(join(root, component.licenseFile));
-  assert.equal(component.license, 'MIT');
+  const expectedLicense = component.name === '@anthropic-ai/claude-agent-sdk' ? 'LicenseRef-Anthropic' : 'MIT';
+  assert.equal(component.license, expectedLicense);
   assert.ok(bytes.toString('utf8').includes(component.copyright), component.name);
   assert.equal(createHash('sha256').update(bytes).digest('hex'), component.licenseSha256, `${component.name} upstream notice changed`);
   assert.ok(indexText.includes(component.copyright), component.name);
@@ -68,4 +69,4 @@ try {
   assert.equal(await readFile(join(work, 'main.tex'), 'utf8'), original);
   await assert.rejects(inspectProject(work, '../outside.tex'));
 } finally { await rm(work, { recursive: true, force: true }); }
-console.log('PASS eight bundled skills, complete Pi/Humanizer MIT notices, source provenance, verified DOI fallback and read-only preflight');
+console.log('PASS eight bundled skills, complete Pi/Humanizer/T3 MIT notices, Claude Agent SDK notice, source provenance, verified DOI fallback and read-only preflight');

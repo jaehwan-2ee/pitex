@@ -32,6 +32,17 @@
       "license": "MIT",
       "licenseFile": "licenses/t3code-MIT.txt",
       "licenseSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43"
+    },
+    {
+      "name": "@anthropic-ai/claude-agent-sdk",
+      "version": "0.3.312",
+      "type": "library",
+      "repository": "https://github.com/anthropics/claude-agent-sdk-typescript",
+      "revision": "0.3.312",
+      "copyright": "© Anthropic PBC. All rights reserved.",
+      "license": "LicenseRef-Anthropic",
+      "licenseFile": "licenses/claude-agent-sdk-LICENSE.md",
+      "licenseSha256": "8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a"
     }
   ]
 }

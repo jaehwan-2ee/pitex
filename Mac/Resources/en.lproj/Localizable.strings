@@ -346,6 +346,7 @@
 "settings.ai.backend" = "Assistant backend";
 "settings.ai.backend_pi" = "pi (provider sign-in)";
 "settings.ai.backend_codex" = "Codex CLI (your login)";
+"settings.ai.backend_claude" = "Claude Code (your login)";
 "settings.ai.backend_note" = "Codex CLI uses the account from `codex login` on this computer. Pitex never reads Codex credential files.";
 "settings.ai.location" = "Install location";
 "settings.ai.attach_default" = "Attach the active document to prompts by default";
