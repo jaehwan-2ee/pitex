@@ -9,7 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost, PiCommand } from "./adapter.ts";
-import { CodexAdapter, findCodex } from "./codex-adapter.ts";
+import { CodexAdapter, codexLaunchSpec, findCodex } from "./codex-adapter.ts";
 import {
   approvalFromServerRequest,
   approvalRpcReply,
@@ -205,6 +205,16 @@ test("findCodex honors CODEX_PATH and ignores a missing binary", () => {
     assert.equal(findCodex({ CODEX_PATH: binary, PATH: "", HOME: dir }), binary);
     assert.equal(findCodex({ PATH: dir, HOME: dir }), binary);
     assert.equal(findCodex({ CODEX_PATH: join(dir, "missing"), PATH: "", HOME: dir }), null);
+    const exe = join(dir, "codex.exe");
+    writeFileSync(exe, "", { mode: 0o755 });
+    assert.equal(findCodex({ PATH: dir, HOME: dir }, "win32"), exe);
+    const shim = join(dir, "shim-codex");
+    writeFileSync(shim, "#!/usr/bin/env node\n");
+    const spec = codexLaunchSpec(shim, "win32");
+    assert.equal(spec.command, process.execPath);
+    assert.deepEqual(spec.args, [shim, "app-server"]);
+    assert.deepEqual(codexLaunchSpec(exe, "win32"), { command: exe, args: ["app-server"] });
+    assert.deepEqual(codexLaunchSpec(shim, "linux"), { command: shim, args: ["app-server"] });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

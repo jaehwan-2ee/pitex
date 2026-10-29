@@ -11,7 +11,7 @@
 // Pitex does not port T3's managed ChatGPT OAuth broker.
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -50,17 +50,43 @@ interface PendingApproval {
   rpcId: string | number;
 }
 
-export function findCodex(env: NodeJS.ProcessEnv): string | null {
+export function findCodex(env: NodeJS.ProcessEnv, platform = process.platform): string | null {
   const explicit = env.CODEX_PATH;
   if (explicit && isExecutable(explicit)) return explicit;
   const directories = (env.PATH ?? "").split(delimiter).filter(Boolean);
   const home = env.HOME || homedir();
   directories.push(join(home, ".local", "bin"), "/usr/local/bin", "/opt/homebrew/bin");
+  const names = platform === "win32" ? ["codex.exe", "codex.cmd", "codex"] : ["codex"];
   for (const directory of directories) {
-    const candidate = join(directory, "codex");
-    if (isExecutable(candidate)) return candidate;
+    for (const name of names) {
+      const candidate = join(directory, name);
+      if (isExecutable(candidate)) return candidate;
+    }
   }
   return null;
+}
+
+/**
+ * Windows CreateProcess cannot run a shebang script. Official installs are
+ * `codex.exe` or `codex.cmd`; an extensionless Node shim is launched with
+ * the runtime that is already running this bridge.
+ */
+export function codexLaunchSpec(
+  binary: string,
+  platform = process.platform
+): { command: string; args: string[] } {
+  const direct = { command: binary, args: ["app-server"] };
+  if (platform !== "win32" || /\.(exe|cmd|bat)$/i.test(binary)) return direct;
+  let header = "";
+  try {
+    header = readFileSync(binary).subarray(0, 128).toString("utf8");
+  } catch {
+    return direct;
+  }
+  if (header.startsWith("#!") && /node|bun/.test(header)) {
+    return { command: process.execPath, args: [binary, "app-server"] };
+  }
+  return direct;
 }
 
 function isExecutable(path: string): boolean {
@@ -116,10 +142,12 @@ export class CodexAdapter implements CliAdapter {
     const binary = findCodex(env);
     if (!binary) throw new Error(CODEX_MISSING);
     this.acceptClose = true;
-    const child = spawn(binary, ["app-server"], {
+    const launch = codexLaunchSpec(binary);
+    const child = spawn(launch.command, launch.args, {
       cwd: this.cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
     child.stderr.setEncoding("utf8");
