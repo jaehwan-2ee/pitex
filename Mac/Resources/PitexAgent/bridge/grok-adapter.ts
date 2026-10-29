@@ -15,7 +15,7 @@
 
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
@@ -90,19 +90,35 @@ export interface GrokLaunchSpec {
 
 /**
  * `grok --no-auto-update agent stdio` as documented for ACP in scripts.
- * A Windows cmd shim is started through `cmd.exe /d /s /c` with those fixed
- * arguments only. `%` and other cmd metacharacters are rejected.
+ * Windows CreateProcess cannot run a shebang. A node or bun shebang is
+ * started with this process's node. The check reads only the first 128
+ * bytes of the executable. A `.cmd` / `.bat` shim is started through
+ * `cmd.exe /d /s /c` with those fixed arguments only. `%` and other cmd
+ * metacharacters are rejected. `.exe` is spawned directly.
  */
 export function grokLaunchSpec(binary: string, platform = process.platform): GrokLaunchSpec {
   const direct = { command: binary, args: [...GROK_ARGS] };
-  if (platform !== "win32" || !/\.(cmd|bat)$/i.test(binary)) return direct;
-  const quoted = quoteCmdExecutable(binary);
-  if (!quoted) throw new Error("Grok CLI path cannot be launched through cmd.exe.");
-  return {
-    command: "cmd.exe",
-    args: ["/d", "/s", "/c", `${quoted} --no-auto-update agent stdio`],
-    windowsVerbatimArguments: true,
-  };
+  if (platform !== "win32") return direct;
+  if (/\.exe$/i.test(binary)) return direct;
+  if (/\.(cmd|bat)$/i.test(binary)) {
+    const quoted = quoteCmdExecutable(binary);
+    if (!quoted) throw new Error("Grok CLI path cannot be launched through cmd.exe.");
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", `${quoted} --no-auto-update agent stdio`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  let header = "";
+  try {
+    header = readFileSync(binary).subarray(0, 128).toString("utf8");
+  } catch {
+    return direct;
+  }
+  if (header.startsWith("#!") && /node|bun/.test(header)) {
+    return { command: process.execPath, args: [binary, ...GROK_ARGS] };
+  }
+  return direct;
 }
 
 function quoteCmdExecutable(binary: string): string | null {

@@ -619,6 +619,16 @@ test("findGrok honors GROK_PATH and a Windows cmd shim is quoted", () => {
       command: exe,
       args: ["--no-auto-update", "agent", "stdio"],
     });
+    const nodeShim = join(dir, "grok-node");
+    writeFileSync(nodeShim, "#!/usr/bin/env node\nconsole.log(1)\n", { mode: 0o755 });
+    assert.deepEqual(grokLaunchSpec(nodeShim, "win32"), {
+      command: process.execPath,
+      args: [nodeShim, "--no-auto-update", "agent", "stdio"],
+    });
+    assert.deepEqual(grokLaunchSpec(binary, "win32"), {
+      command: binary,
+      args: ["--no-auto-update", "agent", "stdio"],
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
