@@ -116,9 +116,12 @@ final class AgentCoordinator: ObservableObject {
     @Published private(set) var thinkingLevels: [String] = []
     @Published private(set) var isUpdatingModelSettings = false
     @Published var statusMessage: String?
-    /// A Codex CLI approval the user has not answered yet. pi never sets this;
-    /// its extension prompts stay auto-cancelled.
+    /// The Codex CLI approval the panel is showing. Later requests wait in
+    /// `approvalQueue`. pi never sets this; its extension prompts stay
+    /// auto-cancelled.
     @Published private(set) var pendingApproval: AgentApprovalRequest?
+    /// FIFO keyed by request id. Stop and new-session deny every entry.
+    private var approvalQueue = AgentApprovalQueue()
     /// Whether the active document/selection is folded into each prompt's
     /// context envelope (the "Attach activated document" toggle in the
     /// panel header). Persisted per user, not per project.
@@ -220,6 +223,7 @@ final class AgentCoordinator: ObservableObject {
     func shutdown() {
         intentionalStop = true
         flushDeltas()
+        approvalQueue.clear()
         pendingApproval = nil
         prepareTask?.cancel()
         eventTask?.cancel()
@@ -432,6 +436,7 @@ final class AgentCoordinator: ObservableObject {
         modelSettingsRequestID = nil
         thinkingLevels = []
         isUpdatingModelSettings = false
+        approvalQueue.clear()
         pendingApproval = nil
         guard !intentionalStop else { return }
         connection = .failed("The agent process exited unexpectedly.")
@@ -517,24 +522,45 @@ final class AgentCoordinator: ObservableObject {
     }
 
     func stop() {
-        if pendingApproval != nil { respondToApproval("deny") }
+        denyQueuedApprovals()
         guard isRunning, let process else { return }
         try? process.send(.abort)
     }
 
     func newSession() {
-        if pendingApproval != nil { respondToApproval("deny") }
+        denyQueuedApprovals()
         guard let process, process.isRunning else { return }
         clearTranscript()
         try? process.send(.newSession)
     }
 
-    /// Answers the approval row. `decision` is `approve`, `deny`, or
+    /// Answers the approval on screen. `decision` is `approve`, `deny`, or
     /// `always_allow` — the bridge maps those onto the CLI's native reply.
+    /// The next queued request, if any, takes its place.
     func respondToApproval(_ decision: String) {
-        guard let pending = pendingApproval else { return }
-        pendingApproval = nil
+        guard let pending = approvalQueue.dequeueHead() else { return }
+        showApprovalHead()
         try? process?.send(.approvalResponse(id: pending.id, decision: decision))
+    }
+
+    /// Stop and new-session must unblock every Codex request, including
+    /// ones the panel has not shown yet.
+    private func denyQueuedApprovals() {
+        let queued = approvalQueue.drain()
+        pendingApproval = nil
+        for item in queued {
+            try? process?.send(.approvalResponse(id: item.id, decision: "deny"))
+        }
+    }
+
+    private func showApprovalHead() {
+        guard let head = approvalQueue.head else {
+            pendingApproval = nil
+            return
+        }
+        pendingApproval = AgentApprovalRequest(
+            id: head.id, kind: head.kind, title: head.title, detail: head.detail
+        )
     }
 
     private func clearTranscript() {
@@ -758,12 +784,13 @@ final class AgentCoordinator: ObservableObject {
         case "extension_ui_request":
             handleExtensionUI(event)
         case "approval_request":
-            pendingApproval = AgentApprovalRequest(
+            approvalQueue.enqueue(AgentApprovalItem(
                 id: event.string("id") ?? "",
                 kind: event.string("kind") ?? "command",
                 title: event.string("title") ?? "Approval",
                 detail: event.string("detail") ?? ""
-            )
+            ))
+            showApprovalHead()
         case "extension_error":
             let message = event.string("error") ?? "extension error"
             transcript.append(AgentTranscriptEntry(

@@ -2,7 +2,7 @@
 //! `AgentCoordinator.swift` — the `pi --mode rpc` subprocess plus the
 //! transcript/state machine driving the assistant panel.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -1286,7 +1286,13 @@ pub struct AgentCoordinator {
     pub status_message: Option<String>,
     /// `ai.agentProvider` — `pi` or `codex`. Read again at spawn.
     agent_provider: String,
-    /// Codex (or a later CLI) approval waiting on the user.
+    /// Unanswered CLI approvals, oldest first. The panel shows the head.
+    approval_queue: VecDeque<AgentApprovalRequest>,
+    /// Approval replies the coordinator tried to send. Tests read this
+    /// because a unit test has no child process to capture stdin.
+    #[cfg(test)]
+    approval_sent: Vec<(String, String)>,
+    /// The approval the panel is showing. Further requests wait behind it.
     pub pending_approval: Option<AgentApprovalRequest>,
     pub attach_active_document: bool,
     pub pending_composer_insertion: Option<String>,
@@ -1346,6 +1352,9 @@ impl AgentCoordinator {
             is_updating_model_settings: false,
             status_message: None,
             agent_provider: store.agent_provider(),
+            approval_queue: VecDeque::new(),
+            #[cfg(test)]
+            approval_sent: Vec::new(),
             pending_approval: None,
             attach_active_document: store
                 .prefs()
@@ -1574,7 +1583,7 @@ impl AgentCoordinator {
         self.model_settings_request_id = None;
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
-        self.pending_approval = None;
+        self.clear_approvals();
         if !self.intentional_stop {
             self.connection = Connection::Failed("The agent process exited unexpectedly.".into());
         }
@@ -1591,7 +1600,7 @@ impl AgentCoordinator {
         self.model_settings_request_id = None;
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
-        self.pending_approval = None;
+        self.clear_approvals();
         self.ui_revision += 1;
     }
 
@@ -1713,9 +1722,7 @@ impl AgentCoordinator {
     }
 
     pub fn stop(&mut self) {
-        if self.pending_approval.is_some() {
-            self.respond_to_approval("deny");
-        }
+        self.deny_queued_approvals();
         if !self.is_running {
             return;
         }
@@ -1725,9 +1732,7 @@ impl AgentCoordinator {
         self.ui_revision += 1;
     }
     pub fn new_session(&mut self) {
-        if self.pending_approval.is_some() {
-            self.respond_to_approval("deny");
-        }
+        self.deny_queued_approvals();
         if !self.process.as_ref().is_some_and(|p| p.is_running()) {
             return;
         }
@@ -1738,22 +1743,56 @@ impl AgentCoordinator {
         self.ui_revision += 1;
     }
 
-    /// Answers the approval row. `decision` is `approve`, `deny`, or
-    /// `always_allow`.
+    /// Answers the approval on screen. `decision` is `approve`, `deny`, or
+    /// `always_allow`. The next queued request takes its place.
     pub fn respond_to_approval(&mut self, decision: &str) {
-        let Some(pending) = self.pending_approval.take() else {
+        let Some(pending) = self.approval_queue.pop_front() else {
             return;
         };
-        if let Some(process) = &self.process {
-            let _ = process.send(
-                &PiRPCCommand::ApprovalResponse {
-                    id: pending.id,
-                    decision: decision.to_string(),
-                },
-                None,
-            );
+        self.pending_approval = self.approval_queue.front().cloned();
+        self.send_approval(&pending.id, decision);
+        self.ui_revision += 1;
+    }
+
+    /// Stop and new-session deny every outstanding request, not only the
+    /// one the panel is showing.
+    fn deny_queued_approvals(&mut self) {
+        let queued: Vec<_> = self.approval_queue.drain(..).collect();
+        if queued.is_empty() {
+            return;
+        }
+        self.pending_approval = None;
+        for pending in &queued {
+            self.send_approval(&pending.id, "deny");
         }
         self.ui_revision += 1;
+    }
+
+    fn clear_approvals(&mut self) {
+        self.approval_queue.clear();
+        self.pending_approval = None;
+    }
+
+    fn note_approval(&mut self, request: AgentApprovalRequest) {
+        if let Some(existing) = self.approval_queue.iter_mut().find(|item| item.id == request.id) {
+            *existing = request;
+        } else {
+            self.approval_queue.push_back(request);
+        }
+        self.pending_approval = self.approval_queue.front().cloned();
+    }
+
+    fn send_approval(&mut self, id: &str, decision: &str) {
+        #[cfg(test)]
+        self.approval_sent.push((id.to_string(), decision.to_string()));
+        let Some(process) = &self.process else { return };
+        let _ = process.send(
+            &PiRPCCommand::ApprovalResponse {
+                id: id.to_string(),
+                decision: decision.to_string(),
+            },
+            None,
+        );
     }
 
     fn clear_transcript(&mut self) {
@@ -2010,7 +2049,7 @@ impl AgentCoordinator {
             }
             "extension_ui_request" => self.handle_extension_ui(event),
             "approval_request" => {
-                self.pending_approval = Some(AgentApprovalRequest {
+                self.note_approval(AgentApprovalRequest {
                     id: event.string("id").unwrap_or_default(),
                     kind: event.string("kind").unwrap_or_else(|| "command".into()),
                     title: event.string("title").unwrap_or_else(|| "Approval".into()),
@@ -3836,6 +3875,71 @@ mod session_history_tests {
             wire.object(),
             json!({"type": "approval_response", "id": "42", "decision": "always_allow"})
         );
+    }
+
+    #[test]
+    fn approval_requests_queue_in_order() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("1", "first"));
+        agent.handle(&approval_event("2", "second"));
+        let head = agent.pending_approval.clone().expect("head");
+        assert_eq!(head.id, "1");
+        assert_eq!(head.detail, "first");
+        agent.respond_to_approval("approve");
+        let next = agent.pending_approval.clone().expect("second");
+        assert_eq!(next.id, "2");
+        assert_eq!(next.detail, "second");
+        agent.respond_to_approval("deny");
+        assert!(agent.pending_approval.is_none());
+    }
+
+    #[test]
+    fn repeated_approval_id_keeps_its_place() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("1", "old"));
+        agent.handle(&approval_event("2", "other"));
+        agent.handle(&approval_event("1", "updated"));
+        let head = agent.pending_approval.clone().expect("head");
+        assert_eq!(head.id, "1");
+        assert_eq!(head.detail, "updated");
+        agent.respond_to_approval("approve");
+        assert_eq!(agent.pending_approval.as_ref().map(|item| item.id.as_str()), Some("2"));
+    }
+
+    #[test]
+    fn stop_and_new_session_deny_every_queued_approval() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("7", "edit"));
+        agent.handle(&approval_event("8", "shell"));
+        agent.stop();
+        assert!(agent.pending_approval.is_none());
+        assert_eq!(
+            agent.approval_sent,
+            vec![("7".into(), "deny".into()), ("8".into(), "deny".into())]
+        );
+        agent.respond_to_approval("approve");
+        assert!(agent.pending_approval.is_none());
+
+        agent.approval_sent.clear();
+        agent.handle(&approval_event("9", "again"));
+        agent.handle(&approval_event("10", "later"));
+        agent.new_session();
+        assert!(agent.pending_approval.is_none());
+        assert_eq!(
+            agent.approval_sent,
+            vec![("9".into(), "deny".into()), ("10".into(), "deny".into())]
+        );
+    }
+
+    fn approval_event(id: &str, detail: &str) -> PiRPCEvent {
+        let request = json!({
+            "type": "approval_request",
+            "id": id,
+            "kind": "command",
+            "title": "Run command",
+            "detail": detail
+        });
+        PiRPCEvent::new(request.as_object().unwrap().clone()).unwrap()
     }
 
     #[test]
