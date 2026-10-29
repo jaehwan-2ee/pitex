@@ -37,6 +37,7 @@ enum PiRPCCommand {
     case setModel(provider: String, modelID: String)
     case setThinkingLevel(level: String)
     case extensionUICancelled(id: String)
+    case approvalResponse(id: String, decision: String)
 
     var object: [String: Any] {
         switch self {
@@ -70,8 +71,18 @@ enum PiRPCCommand {
             return ["type": "set_thinking_level", "level": level]
         case let .extensionUICancelled(id):
             return ["type": "extension_ui_response", "id": id, "cancelled": true]
+        case let .approvalResponse(id, decision):
+            return ["type": "approval_response", "id": id, "decision": decision]
         }
     }
+}
+
+/// One Codex (or later CLI) approval the transcript is waiting on.
+struct AgentApprovalRequest: Equatable {
+    var id: String
+    var kind: String
+    var title: String
+    var detail: String
 }
 
 /// One decoded stdout line from the pi rpc subprocess.

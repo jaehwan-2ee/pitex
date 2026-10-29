@@ -67,6 +67,9 @@
 "assistant.send" = "Gửi";
 "assistant.stop" = "Dừng";
 "assistant.apply" = "Áp dụng";
+"assistant.approve" = "Cho phép";
+"assistant.deny" = "Từ chối";
+"assistant.always_allow" = "Luôn cho phép";
 "assistant.reject" = "Từ chối";
 "assistant.response_error" = "Lỗi trợ lý: %@";
 "assistant.sign_in_chatgpt" = "Đăng nhập bằng ChatGPT";
@@ -340,6 +343,10 @@
 "settings.appearance.terminal_font_family" = "Phông chữ terminal";
 "settings.appearance.colors" = "Màu sắc";
 "settings.ai.agent" = "Pitex Agent";
+"settings.ai.backend" = "Cách chạy trợ lý";
+"settings.ai.backend_pi" = "pi (đăng nhập nhà cung cấp)";
+"settings.ai.backend_codex" = "Codex CLI (đăng nhập của bạn)";
+"settings.ai.backend_note" = "Codex CLI dùng tài khoản từ `codex login` trên máy này. Pitex không đọc tệp thông tin đăng nhập của Codex.";
 "settings.ai.location" = "Vị trí cài đặt";
 "settings.ai.attach_default" = "Đính kèm tài liệu đang mở vào prompt theo mặc định";
 "settings.ai.autocompletion" = "Tự động hoàn thành nội tuyến";

@@ -21,6 +21,17 @@
       "license": "MIT",
       "licenseFile": "skills/humanizer/LICENSE.md",
       "licenseSha256": "4ac4810254ab36d45419141aeb8e69bf50652cfafe5b2dab947d06d44e5cbf96"
+    },
+    {
+      "name": "t3code",
+      "version": "0.1.4",
+      "type": "library",
+      "repository": "https://github.com/pingdotgg/t3code",
+      "revision": "v0.1.4",
+      "copyright": "Copyright (c) 2026 T3 Tools Inc.",
+      "license": "MIT",
+      "licenseFile": "licenses/t3code-MIT.txt",
+      "licenseSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43"
     }
   ]
 }

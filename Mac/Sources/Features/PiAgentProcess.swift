@@ -40,6 +40,16 @@ enum PiExecutableLocator {
     }
 }
 
+/// The bundled CLI bridge (`PitexAgent/bridge/cli.ts`). The app runs it with
+/// the same Bun or Node runtime it uses for pi.
+enum AgentBridge {
+    static func scriptURL() -> URL? {
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("PitexAgent/bridge/cli.ts"),
+              FileManager.default.fileExists(atPath: bundled.path) else { return nil }
+        return bundled
+    }
+}
+
 /// Finder's PATH omits shell/version-manager installs. Discover once per
 /// operation, then use the same PATH for installation, RPC and authentication.
 struct PiToolchain: Sendable {
@@ -125,7 +135,7 @@ struct PiToolchain: Sendable {
         defer { try? handle?.close() }
         let header = String(decoding: (try? handle?.read(upToCount: 256)) ?? Data(), as: UTF8.self)
             .components(separatedBy: "\n").first ?? ""
-        let javaScript = ["js", "mjs", "cjs"].contains(script.pathExtension)
+        let javaScript = ["js", "mjs", "cjs", "ts", "mts", "cts"].contains(script.pathExtension)
             || (header.hasPrefix("#!") && (header.contains("node") || header.contains("bun")))
         guard javaScript else { return (executable, arguments) }
         if let bun {

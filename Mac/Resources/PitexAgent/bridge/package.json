@@ -1,0 +1,7 @@
+{
+  "name": "pitex-agent-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pitex sidecar that speaks pi RPC JSONL and drives official CLIs. Milestone 1: Codex app-server."
+}

@@ -35,6 +35,7 @@ jobs:
       - run: node Tools/validate-xcodeproj.mjs
       - run: node Tools/check-markdown-preview.mjs
       - run: node Tools/check-bundled-skills.mjs
+      - run: node --test Mac/Resources/PitexAgent/bridge/test.ts
       - run: node Tools/check-linkage-audit.mjs
       - run: node Tools/generate-sbom.mjs
       - run: node Tools/verify-release-surface.mjs
@@ -482,6 +483,7 @@ jobs:
         run: |
           node Tools/check-bundled-skills.mjs
           bun Tools/check-bundled-skills.mjs
+          node --test Mac/Resources/PitexAgent/bridge/test.ts
       # The orchestrator suite is the build scheduler's deterministic
       # tests — native coverage for the relative live-output path logic.
       - name: Build scheduler orchestration (relative live outputs)

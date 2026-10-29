@@ -160,6 +160,10 @@ pub struct UiHandles {
     pub agent_send_button: RefCell<Option<gtk4::Button>>,
     pub agent_stop_button: RefCell<Option<gtk4::Button>>,
     pub agent_status_label: RefCell<Option<gtk4::Label>>,
+    /// Approve / deny / always-allow row for a CLI approval request.
+    pub agent_approval_box: RefCell<Option<gtk4::Box>>,
+    pub agent_approval_title: RefCell<Option<gtk4::Label>>,
+    pub agent_approval_detail: RefCell<Option<gtk4::Label>>,
     /// Right-aligned usage/context readout in the assistant controls row —
     /// populated from `get_session_stats`, hidden until stats arrive.
     pub agent_usage_label: RefCell<Option<gtk4::Label>>,
@@ -4274,6 +4278,7 @@ impl AppState {
                         }
                         crate::agent::Connection::PiMissing => tr(lang, "assistant.pi_missing"),
                         crate::agent::Connection::Connecting => tr(lang, "state.loading"),
+                        crate::agent::Connection::Failed(message) => message.clone(),
                         _ => String::new(),
                     };
                     if !detail.is_empty() {
@@ -4414,6 +4419,22 @@ impl AppState {
             }
             if let Some(b) = ui.agent_stop_button.borrow().as_ref() {
                 b.set_visible(agent.is_running);
+            }
+            // Outside the transcript throttle so a streaming burst cannot
+            // hide an approval that arrived in the same poll.
+            if let Some(box_) = ui.agent_approval_box.borrow().as_ref() {
+                if let Some(pending) = &agent.pending_approval {
+                    box_.set_visible(true);
+                    if let Some(title) = ui.agent_approval_title.borrow().as_ref() {
+                        title.set_text(&pending.title);
+                    }
+                    if let Some(detail) = ui.agent_approval_detail.borrow().as_ref() {
+                        detail.set_text(&pending.detail);
+                        detail.set_visible(!pending.detail.is_empty());
+                    }
+                } else {
+                    box_.set_visible(false);
+                }
             }
         });
         self.refresh_selection_chip();

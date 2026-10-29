@@ -324,6 +324,20 @@ impl SettingsStore {
     pub fn set_ai_font_size(&mut self, v: f64) {
         self.prefs.set("ai.fontSize", v);
     }
+    /// `ai.agentProvider` — `pi` (provider sign-in) or `codex` (Codex CLI login).
+    pub fn agent_provider(&self) -> String {
+        if self.prefs.string("ai.agentProvider").as_deref() == Some("codex") {
+            "codex".into()
+        } else {
+            "pi".into()
+        }
+    }
+    pub fn set_agent_provider(&mut self, v: &str) {
+        self.prefs.set(
+            "ai.agentProvider",
+            if v == "codex" { "codex" } else { "pi" },
+        );
+    }
     pub fn default_build_command(&self) -> String {
         self.prefs
             .string("project.defaultBuildCommand")

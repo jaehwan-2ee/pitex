@@ -67,6 +67,9 @@
 "assistant.send" = "Отправить";
 "assistant.stop" = "Остановить";
 "assistant.apply" = "Применить";
+"assistant.approve" = "Разрешить";
+"assistant.deny" = "Отклонить";
+"assistant.always_allow" = "Разрешать всегда";
 "assistant.reject" = "Отклонить";
 "assistant.response_error" = "Ошибка ассистента: %@";
 "assistant.sign_in_chatgpt" = "Войти через ChatGPT";
@@ -340,6 +343,10 @@
 "settings.appearance.terminal_font_custom" = "Пользовательский шрифт терминала";
 "settings.appearance.terminal_font_family" = "Шрифт терминала";
 "settings.ai.agent" = "Pitex Agent";
+"settings.ai.backend" = "Способ запуска ассистента";
+"settings.ai.backend_pi" = "pi (вход через провайдера)";
+"settings.ai.backend_codex" = "Codex CLI (ваш вход)";
+"settings.ai.backend_note" = "Codex CLI использует учётную запись `codex login` на этом компьютере. Pitex не читает файлы учётных данных Codex.";
 "settings.ai.location" = "Место установки";
 "settings.ai.attach_default" = "Прикреплять активный документ к запросам по умолчанию";
 "settings.ai.autocompletion" = "Встроенное автодополнение";

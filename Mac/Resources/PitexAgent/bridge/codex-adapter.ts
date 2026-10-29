@@ -1,0 +1,509 @@
+// Codex CLI adapter. Speaks `codex app-server` JSON-RPC on stdio and the
+// user's existing `codex login`. It never reads, copies, or parses
+// Codex credential files or token files, and it never refreshes tokens.
+//
+// Protocol: Codex CLI 0.165.0, `codex app-server generate-ts`.
+// approvalPolicy is the stable value "untrusted"; approvalsReviewer is "user".
+//
+// Design adapted from T3 Code v0.1.4 (MIT), Copyright (c) 2026 T3 Tools Inc.
+// https://github.com/pingdotgg/t3code
+// packages/effect-codex-app-server and CodexAdapterV2.ts.
+// Pitex does not port T3's managed ChatGPT OAuth broker.
+
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants as fsConstants } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
+import { randomUUID } from "node:crypto";
+
+import type { AdapterHost, AdapterStartOptions, CliAdapter, PiCommand } from "./adapter.ts";
+import {
+  approvalFromServerRequest,
+  approvalRpcReply,
+  createStreamState,
+  fileChangeDetail,
+  itemsToPiMessages,
+  mapNotification,
+  modelsFromList,
+  turnsToPiMessages,
+  visibleModels,
+  type Json,
+  type ListedModel,
+  type StreamState,
+} from "./codex-map.ts";
+import { LineJsonRpc } from "./jsonrpc.ts";
+import {
+  appendUserMessage,
+  rememberSession,
+  threadIdFor,
+  writeSessionPrelude,
+} from "./session-index.ts";
+
+export const CODEX_MISSING =
+  "Codex CLI was not found. Install the official Codex CLI, then run `codex login`.";
+export const CODEX_SIGNED_OUT =
+  "Codex CLI is not logged in. Run `codex login` in a terminal, then try again.";
+
+interface PendingApproval {
+  method: string;
+  params: Json;
+  rpcId: string | number;
+}
+
+export function findCodex(env: NodeJS.ProcessEnv): string | null {
+  const explicit = env.CODEX_PATH;
+  if (explicit && isExecutable(explicit)) return explicit;
+  const directories = (env.PATH ?? "").split(delimiter).filter(Boolean);
+  const home = env.HOME || homedir();
+  directories.push(join(home, ".local", "bin"), "/usr/local/bin", "/opt/homebrew/bin");
+  for (const directory of directories) {
+    const candidate = join(directory, "codex");
+    if (isExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function asObject(value: unknown): Json | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : null;
+}
+
+export class CodexAdapter implements CliAdapter {
+  readonly id = "codex";
+  readonly displayName = "Codex CLI";
+  unavailableReason: string | null = null;
+
+  private rpc: LineJsonRpc | null = null;
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private cwd = process.cwd();
+  private sessionDir = "";
+  private developerInstructions = "";
+  private stream: StreamState = createStreamState();
+  private host: AdapterHost | null = null;
+  private threadId: string | null = null;
+  private turnId: string | null = null;
+  private sessionPath: string | null = null;
+  private modelId: string | null = null;
+  private effort: string | null = null;
+  private models: ListedModel[] = [];
+  private pending = new Map<string, PendingApproval>();
+  private fileDetails = new Map<string, string>();
+  private running = false;
+  private acceptClose = false;
+
+  async start(options: AdapterStartOptions): Promise<void> {
+    this.cwd = options.cwd;
+    this.sessionDir = options.sessionDir;
+    this.developerInstructions = options.developerInstructions ?? "";
+    try {
+      await this.connect(options.env);
+      this.unavailableReason = null;
+    } catch (error) {
+      await this.stop();
+      this.unavailableReason = error instanceof Error ? error.message : CODEX_MISSING;
+    }
+  }
+
+  private async connect(env: NodeJS.ProcessEnv): Promise<void> {
+    const binary = findCodex(env);
+    if (!binary) throw new Error(CODEX_MISSING);
+    this.acceptClose = true;
+    const child = spawn(binary, ["app-server"], {
+      cwd: this.cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    }) as ChildProcessWithoutNullStreams;
+    this.child = child;
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", () => {
+      // Codex logs stay off the pi event stream. They are not credentials,
+      // and they are not forwarded to the transcript.
+    });
+    this.rpc = new LineJsonRpc(
+      child,
+      (method, params) => this.onNotification(method, params),
+      (method, id, params) => this.onServerRequest(method, id, params),
+      (message) => this.markClosed(message)
+    );
+    await this.rpc.request("initialize", {
+      clientInfo: { name: "pitex", title: "Pitex", version: "0.1.0" },
+      capabilities: { experimentalApi: false, requestAttestation: false },
+    });
+    this.rpc.notify("initialized", {});
+    // refreshToken stays false: Pitex must not ask Codex to mint or return tokens.
+    // account/read reports the login Codex already has. getAuthStatus is not
+    // called: that response can carry a token, and Pitex never wants one.
+    const account = asObject(
+      await this.rpc.request("account/read", { refreshToken: false })
+    );
+    if (!account?.account || typeof account.account !== "object") {
+      throw new Error(CODEX_SIGNED_OUT);
+    }
+    await this.refreshModels();
+  }
+
+  private markClosed(message: string): void {
+    if (!this.acceptClose) return;
+    this.acceptClose = false;
+    this.unavailableReason = message;
+    this.running = false;
+    this.host?.emit({ type: "extension_error", error: message });
+  }
+
+  async handleCommand(command: PiCommand, host: AdapterHost): Promise<void> {
+    this.host = host;
+    if (this.unavailableReason && command.type !== "abort") {
+      host.respond(command.type, false, undefined, this.unavailableReason, command.id);
+      return;
+    }
+    try {
+      switch (command.type) {
+        case "prompt":
+          await this.prompt(command, host);
+          return;
+        case "steer":
+          await this.prompt({ ...command, type: "prompt", streamingBehavior: "followUp" }, host);
+          return;
+        case "abort":
+          await this.abort(host, command.id);
+          return;
+        case "new_session":
+          this.threadId = null;
+          this.turnId = null;
+          this.sessionPath = null;
+          this.running = false;
+          host.respond("new_session", true, {}, undefined, command.id);
+          return;
+        case "switch_session":
+          await this.switchSession(command, host);
+          return;
+        case "get_messages":
+          await this.getMessages(command, host);
+          return;
+        case "get_state":
+          host.respond("get_state", true, this.stateData(), undefined, command.id);
+          return;
+        case "get_available_models":
+          host.respond(
+            "get_available_models",
+            true,
+            { models: visibleModels(this.models) },
+            undefined,
+            command.id
+          );
+          return;
+        case "get_available_thinking_levels":
+          host.respond(
+            "get_available_thinking_levels",
+            true,
+            { levels: this.thinkingLevels() },
+            undefined,
+            command.id
+          );
+          return;
+        case "set_model":
+          this.modelId = command.modelId || this.modelId;
+          host.respond("set_model", true, {}, undefined, command.id);
+          return;
+        case "set_thinking_level":
+          this.effort = command.level || this.effort;
+          host.respond("set_thinking_level", true, {}, undefined, command.id);
+          return;
+        case "get_session_stats":
+          host.respond("get_session_stats", true, this.stats, undefined, command.id);
+          return;
+        case "get_commands":
+          host.respond("get_commands", true, { commands: [] }, undefined, command.id);
+          return;
+        case "approval_response":
+          this.resolveApproval(command);
+          host.respond("approval_response", true, {}, undefined, command.id);
+          return;
+        default:
+          host.respond(command.type, false, undefined, `Unsupported command: ${command.type}`, command.id);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Codex CLI request failed.";
+      host.respond(command.type, false, undefined, message, command.id);
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.acceptClose = false;
+    this.rpc?.close();
+    this.child?.kill();
+    this.child = null;
+    this.rpc = null;
+  }
+
+  private stats: Json = { tokens: { total: 0 }, cost: 0, contextUsage: {} };
+
+  private async prompt(command: PiCommand, host: AdapterHost): Promise<void> {
+    const message = command.message ?? "";
+    if (!message.trim()) {
+      host.respond("prompt", false, undefined, "The prompt was empty.", command.id);
+      return;
+    }
+    if (!this.threadId) await this.openThread(null);
+    if (!this.sessionPath) {
+      this.sessionPath = joinSession(this.sessionDir, `codex-${randomUUID()}.jsonl`);
+      writeSessionPrelude(this.sessionPath, message, this.cwd);
+      if (this.threadId) rememberSession(this.sessionDir, this.sessionPath, this.threadId, this.modelId ?? undefined);
+    } else {
+      appendUserMessage(this.sessionPath, message);
+    }
+    const input = [{ type: "text", text: message, text_elements: [] }];
+    if (this.running && this.turnId && command.streamingBehavior === "followUp") {
+      await this.rpc?.request("turn/steer", {
+        threadId: this.threadId,
+        expectedTurnId: this.turnId,
+        input,
+      });
+      host.respond("prompt", true, {}, undefined, command.id);
+      return;
+    }
+    const started = asObject(
+      await this.rpc?.request("turn/start", {
+        threadId: this.threadId,
+        input,
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: [this.cwd],
+          networkAccess: false,
+          excludeTmpdirEnvVar: false,
+          excludeSlashTmp: false,
+        },
+        ...(this.modelId ? { model: this.modelId } : {}),
+        ...(this.effort ? { effort: this.effort } : {}),
+      })
+    );
+    const turn = asObject(started?.turn);
+    this.turnId = typeof turn?.id === "string" ? turn.id : this.turnId;
+    this.running = true;
+    host.respond("prompt", true, {}, undefined, command.id);
+  }
+
+  private async abort(host: AdapterHost, id?: string): Promise<void> {
+    if (this.rpc && this.threadId && this.turnId) {
+      try {
+        await this.rpc.request("turn/interrupt", { threadId: this.threadId, turnId: this.turnId });
+      } catch {
+        // The turn may already have finished.
+      }
+    }
+    this.running = false;
+    host.respond("abort", true, {}, undefined, id);
+  }
+
+  private async switchSession(command: PiCommand, host: AdapterHost): Promise<void> {
+    const sessionPath = command.sessionPath ?? "";
+    const threadId = threadIdFor(this.sessionDir, sessionPath);
+    if (!threadId) {
+      host.respond(
+        "switch_session",
+        false,
+        undefined,
+        "That conversation has no Codex thread to resume.",
+        command.id
+      );
+      return;
+    }
+    await this.openThread(threadId);
+    this.sessionPath = sessionPath;
+    host.respond("switch_session", true, { cancelled: false }, undefined, command.id);
+  }
+
+  private async getMessages(command: PiCommand, host: AdapterHost): Promise<void> {
+    if (!this.threadId || !this.rpc) {
+      host.respond("get_messages", true, { messages: [] }, undefined, command.id);
+      return;
+    }
+    const read = asObject(
+      await this.rpc.request("thread/read", { threadId: this.threadId, includeTurns: true })
+    );
+    const thread = asObject(read?.thread);
+    let messages = turnsToPiMessages(Array.isArray(thread?.turns) ? thread.turns : []);
+    if (messages.length === 0) {
+      const items = await this.pageItems();
+      messages = itemsToPiMessages(items);
+    }
+    host.respond("get_messages", true, { messages }, undefined, command.id);
+  }
+
+  private async pageItems(): Promise<unknown[]> {
+    if (!this.rpc || !this.threadId) return [];
+    const items: unknown[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 20; page += 1) {
+      const response = asObject(
+        await this.rpc.request("thread/items/list", {
+          threadId: this.threadId,
+          ...(cursor ? { cursor } : {}),
+          limit: 100,
+          sortDirection: "asc",
+        })
+      );
+      const data = Array.isArray(response?.data) ? response.data : [];
+      for (const entry of data) {
+        const row = asObject(entry);
+        if (row?.item) items.push(row.item);
+      }
+      cursor = typeof response?.nextCursor === "string" ? response.nextCursor : null;
+      if (!cursor || data.length === 0) break;
+    }
+    return items;
+  }
+
+  private async openThread(resumeId: string | null): Promise<void> {
+    if (!this.rpc) throw new Error(CODEX_MISSING);
+    const params: Json = {
+      cwd: this.cwd,
+      approvalPolicy: "untrusted",
+      approvalsReviewer: "user",
+      sandbox: "workspace-write",
+      ...(this.modelId ? { model: this.modelId } : {}),
+      ...(this.developerInstructions ? { developerInstructions: this.developerInstructions } : {}),
+    };
+    const method = resumeId ? "thread/resume" : "thread/start";
+    const result = asObject(
+      await this.rpc.request(method, resumeId ? { threadId: resumeId, ...params } : params)
+    );
+    const thread = asObject(result?.thread);
+    const id = typeof thread?.id === "string" ? thread.id : resumeId;
+    if (!id) throw new Error("Codex CLI did not return a thread id.");
+    this.threadId = id;
+    if (typeof result?.model === "string") this.modelId = result.model;
+    if (typeof thread?.reasoningEffort === "string") this.effort = thread.reasoningEffort;
+    this.turnId = null;
+    this.running = false;
+  }
+
+  private async refreshModels(): Promise<void> {
+    if (!this.rpc) return;
+    const collected: ListedModel[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 10; page += 1) {
+      const result = await this.rpc.request("model/list", {
+        ...(cursor ? { cursor } : {}),
+        limit: 100,
+        includeHidden: false,
+      });
+      const batch = modelsFromList(result);
+      collected.push(...batch);
+      const root = asObject(result);
+      cursor = typeof root?.nextCursor === "string" ? root.nextCursor : null;
+      if (!cursor) break;
+    }
+    this.models = collected;
+    if (!this.modelId) {
+      const preferred = collected.find((model) => model.isDefault && !model.hidden) ?? collected.find((model) => !model.hidden);
+      if (preferred) {
+        this.modelId = preferred.id;
+        this.effort = this.effort ?? preferred.defaultEffort;
+      }
+    }
+  }
+
+  private stateData(): Json {
+    const current = this.models.find((model) => model.id === this.modelId);
+    return {
+      model: current
+        ? { id: current.id, provider: "codex", name: current.name }
+        : this.modelId
+          ? { id: this.modelId, provider: "codex", name: this.modelId }
+          : null,
+      thinkingLevel: this.effort ?? current?.defaultEffort ?? "medium",
+    };
+  }
+
+  private thinkingLevels(): string[] {
+    const current = this.models.find((model) => model.id === this.modelId);
+    const levels = current?.efforts.length ? [...current.efforts] : ["low", "medium", "high"];
+    const selected = this.effort ?? current?.defaultEffort ?? levels[0];
+    if (selected && !levels.includes(selected)) levels.unshift(selected);
+    return levels;
+  }
+
+  private onNotification(method: string, params: Json): void {
+    if (method === "thread/tokenUsage/updated") {
+      const usage = asObject(params.tokenUsage);
+      const total = asObject(usage?.total);
+      const tokens = typeof total?.totalTokens === "number" ? total.totalTokens : 0;
+      const window = typeof usage?.modelContextWindow === "number" ? usage.modelContextWindow : null;
+      this.stats = {
+        tokens: { total: tokens },
+        cost: 0,
+        contextUsage: window
+          ? { tokens, contextWindow: window, percent: window ? (tokens / window) * 100 : null }
+          : {},
+      };
+    }
+    const item = asObject(params.item);
+    if (item?.type === "fileChange") {
+      const itemId = typeof item.id === "string" ? item.id : null;
+      if (itemId) this.fileDetails.set(itemId, fileChangeDetail(item));
+    }
+    if (!this.host) return;
+    for (const event of mapNotification(method, params, this.stream)) {
+      if (event.type === "agent_end") this.running = false;
+      if (event.type === "turn/started") this.running = true;
+      this.host.emit(event);
+    }
+    if (method === "turn/started") {
+      const turn = asObject(params.turn);
+      if (typeof turn?.id === "string") this.turnId = turn.id;
+      this.running = true;
+    }
+  }
+
+  private onServerRequest(method: string, id: string | number, params: Json): void {
+    if (method === "account/chatgptAuthTokens/refresh" || method === "attestation/generate") {
+      this.rpc?.fail(id, "Pitex does not handle Codex token refreshes. Run `codex login`.");
+      return;
+    }
+    const approval = approvalFromServerRequest(method, id, params);
+    if (!approval) {
+      this.rpc?.fail(id, "Pitex cannot answer this Codex request.");
+      this.host?.emit({
+        type: "extension_error",
+        error: `Skipped an unsupported Codex request (${method}).`,
+      });
+      return;
+    }
+    const itemId = typeof params.itemId === "string" ? params.itemId : null;
+    const fileDetail = itemId ? this.fileDetails.get(itemId) : undefined;
+    const detail = fileDetail ? `${approval.detail}\n\n${fileDetail}` : approval.detail;
+    this.pending.set(String(id), { method, params, rpcId: id });
+    this.host?.emit({
+      type: "approval_request",
+      id: approval.id,
+      kind: approval.kind,
+      title: approval.title,
+      detail,
+    });
+  }
+
+  private resolveApproval(command: PiCommand): void {
+    const id = command.id ?? "";
+    const pending = this.pending.get(id);
+    if (!pending || !this.rpc) return;
+    this.pending.delete(id);
+    const reply = approvalRpcReply(pending.method, command.decision, pending.params);
+    if (reply.error) this.rpc.fail(pending.rpcId, reply.error.message);
+    else this.rpc.respond(pending.rpcId, reply.result ?? {});
+  }
+}
+
+function joinSession(sessionDir: string, name: string): string {
+  return sessionDir.endsWith("/") ? sessionDir + name : `${sessionDir}/${name}`;
+}

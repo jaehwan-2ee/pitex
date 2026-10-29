@@ -67,6 +67,9 @@
 "assistant.send" = "发送";
 "assistant.stop" = "停止";
 "assistant.apply" = "应用";
+"assistant.approve" = "允许";
+"assistant.deny" = "拒绝";
+"assistant.always_allow" = "始终允许";
 "assistant.reject" = "拒绝";
 "assistant.response_error" = "助手错误：%@";
 "assistant.sign_in_chatgpt" = "使用 ChatGPT 登录";
@@ -340,6 +343,10 @@
 "settings.appearance.terminal_font_custom" = "自定义终端字体";
 "settings.appearance.terminal_font_family" = "终端字体";
 "settings.ai.agent" = "Pitex Agent";
+"settings.ai.backend" = "助手后端";
+"settings.ai.backend_pi" = "pi（提供商登录）";
+"settings.ai.backend_codex" = "Codex CLI（你的登录）";
+"settings.ai.backend_note" = "Codex CLI 使用本机 `codex login` 的账户。Pitex 不会读取 Codex 的凭据文件。";
 "settings.ai.location" = "安装位置";
 "settings.ai.attach_default" = "默认将活动文档附加到提示";
 "settings.ai.autocompletion" = "内联自动补全";
