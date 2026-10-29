@@ -17,7 +17,7 @@ for (const name of names) {
   assert.match(text, new RegExp(`^---\\r?\\n[\\s\\S]*?^name: ${name}$`, 'm'));
 }
 const notices = JSON.parse(await readFile(join(root, 'NOTICE-PROVENANCE.json'), 'utf8'));
-assert.deepEqual(notices.components.map(c => c.name).sort(), ['@earendil-works/pi-coding-agent', 'humanizer']);
+assert.deepEqual(notices.components.map(c => c.name).sort(), ['@earendil-works/pi-coding-agent', 'humanizer', 't3code']);
 const indexText = await readFile(join(root, 'THIRD-PARTY-NOTICES.md'), 'utf8');
 for (const component of notices.components) {
   const bytes = await readFile(join(root, component.licenseFile));

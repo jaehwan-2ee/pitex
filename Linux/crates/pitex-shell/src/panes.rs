@@ -1190,6 +1190,78 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     ui.selection_chip_label.replace(Some(chip_label.clone()));
     root.append(&chip);
 
+    // CLI approval — approve / deny / always allow. Hidden until a request arrives.
+    let approval = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    approval.set_margin_start(10);
+    approval.set_margin_end(10);
+    approval.set_margin_bottom(4);
+    approval.set_visible(false);
+    approval.add_css_class("card");
+    let approval_title = gtk4::Label::new(None);
+    approval_title.set_xalign(0.0);
+    approval_title.set_wrap(true);
+    approval_title.set_margin_start(8);
+    approval_title.set_margin_end(8);
+    approval_title.set_margin_top(6);
+    let approval_detail = gtk4::Label::new(None);
+    approval_detail.set_xalign(0.0);
+    approval_detail.set_wrap(true);
+    approval_detail.set_lines(6);
+    approval_detail.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    approval_detail.add_css_class("dim-label");
+    approval_detail.set_margin_start(8);
+    approval_detail.set_margin_end(8);
+    let approval_buttons = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    approval_buttons.set_margin_start(8);
+    approval_buttons.set_margin_end(8);
+    approval_buttons.set_margin_bottom(6);
+    let approve = gtk4::Button::with_label(&tr(lang, "assistant.approve"));
+    a11y(&approve, "pitex.assistant.approve", "assistant.approve");
+    let deny = gtk4::Button::with_label(&tr(lang, "assistant.deny"));
+    a11y(&deny, "pitex.assistant.deny", "assistant.deny");
+    let always = gtk4::Button::with_label(&tr(lang, "assistant.always_allow"));
+    a11y(&always, "pitex.assistant.alwaysAllow", "assistant.always_allow");
+    {
+        let state = state.clone();
+        approve.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            if let Some(agent) = s.agent.as_mut() {
+                agent.respond_to_approval("approve");
+            }
+            s.refresh_assistant();
+        });
+    }
+    {
+        let state = state.clone();
+        deny.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            if let Some(agent) = s.agent.as_mut() {
+                agent.respond_to_approval("deny");
+            }
+            s.refresh_assistant();
+        });
+    }
+    {
+        let state = state.clone();
+        always.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            if let Some(agent) = s.agent.as_mut() {
+                agent.respond_to_approval("always_allow");
+            }
+            s.refresh_assistant();
+        });
+    }
+    approval_buttons.append(&approve);
+    approval_buttons.append(&deny);
+    approval_buttons.append(&always);
+    approval.append(&approval_title);
+    approval.append(&approval_detail);
+    approval.append(&approval_buttons);
+    ui.agent_approval_box.replace(Some(approval.clone()));
+    ui.agent_approval_title.replace(Some(approval_title));
+    ui.agent_approval_detail.replace(Some(approval_detail));
+    root.append(&approval);
+
     // Composer: attach, entry, send/stop.
     let composer = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     composer.set_margin_start(10);
@@ -2678,6 +2750,43 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     ai.set_icon_name(Some("starred-symbolic"));
     let agent_group = adw::PreferencesGroup::new();
     agent_group.set_title(&tr(lang, "settings.ai.agent"));
+    let backend_row = adw::ActionRow::new();
+    backend_row.set_title(&tr(lang, "settings.ai.backend"));
+    let backend = gtk4::DropDown::from_strings(&[
+        tr(lang, "settings.ai.backend_pi").as_str(),
+        tr(lang, "settings.ai.backend_codex").as_str(),
+    ]);
+    backend.set_selected(if state.borrow().store.agent_provider() == "codex" {
+        1
+    } else {
+        0
+    });
+    a11y(&backend, "pitex.settings.ai.backend", "settings.ai.backend");
+    {
+        let state = state.clone();
+        backend.connect_selected_notify(move |dd| {
+            let next = if dd.selected() == 1 { "codex" } else { "pi" };
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            if s.store.agent_provider() == next {
+                return;
+            }
+            s.store.set_agent_provider(next);
+            if let Some(agent) = s.agent.as_mut() {
+                agent.set_agent_provider(next);
+                agent.restart();
+            }
+        });
+    }
+    backend_row.add_suffix(&backend);
+    agent_group.add(&backend_row);
+    let backend_note = gtk4::Label::new(Some(&tr(lang, "settings.ai.backend_note")));
+    backend_note.set_wrap(true);
+    backend_note.set_xalign(0.0);
+    backend_note.add_css_class("dim-label");
+    backend_note.set_margin_start(12);
+    backend_note.set_margin_end(12);
+    backend_note.set_margin_bottom(8);
+    agent_group.add(&backend_note);
     let location = adw::ActionRow::new();
     location.set_title(&tr(lang, "settings.ai.location"));
     location.set_subtitle(&crate::agent::pi_paths::runtime_directory().to_string_lossy());

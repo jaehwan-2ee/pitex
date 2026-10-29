@@ -67,6 +67,9 @@
 "assistant.send" = "送信";
 "assistant.stop" = "停止";
 "assistant.apply" = "適用";
+"assistant.approve" = "許可";
+"assistant.deny" = "拒否";
+"assistant.always_allow" = "常に許可";
 "assistant.reject" = "拒否";
 "assistant.response_error" = "アシスタントエラー：%@";
 "assistant.sign_in_chatgpt" = "ChatGPTでサインイン";
@@ -341,6 +344,10 @@
 "settings.appearance.terminal_font_family" = "ターミナルフォント";
 "settings.appearance.colors" = "カラー";
 "settings.ai.agent" = "Pitex Agent";
+"settings.ai.backend" = "アシスタントの実行方法";
+"settings.ai.backend_pi" = "pi（プロバイダのサインイン）";
+"settings.ai.backend_codex" = "Codex CLI（ご自身のログイン）";
+"settings.ai.backend_note" = "Codex CLI はこのコンピュータの `codex login` のアカウントを使います。Pitex は Codex の資格情報ファイルを読みません。";
 "settings.ai.location" = "インストール先";
 "settings.ai.attach_default" = "デフォルトでアクティブな書類をプロンプトに添付";
 "settings.ai.autocompletion" = "インライン自動補完";

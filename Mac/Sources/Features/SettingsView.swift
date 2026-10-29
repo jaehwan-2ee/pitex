@@ -104,6 +104,21 @@ final class SettingsStore: ObservableObject {
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
+    /// `ai.agentProvider` — `pi` keeps the API-provider runtime; `codex`
+    /// drives the locally installed Codex CLI through pitex-agent-bridge.
+    @Published var agentProvider: String {
+        didSet {
+            let normalized = Self.agentProviderValue(agentProvider)
+            if normalized != agentProvider {
+                agentProvider = normalized
+                return
+            }
+            UserDefaults.standard.set(agentProvider, forKey: "ai.agentProvider")
+        }
+    }
+    static func agentProviderValue(_ stored: String?) -> String {
+        stored == "codex" ? "codex" : "pi"
+    }
     @Published var defaultBuildCommand: String {
         didSet { UserDefaults.standard.set(defaultBuildCommand, forKey: "project.defaultBuildCommand") }
     }
@@ -200,6 +215,7 @@ final class SettingsStore: ObservableObject {
         aiAttachDefault = true
         aiAutocompletion = false
         aiFontSize = 13
+        agentProvider = "pi"
         defaultBuildCommand = "xelatex -interaction=nonstopmode -synctex=1 {file}"
         defaultCustomCommand = ""
         autoInstallUpdates = false
@@ -247,6 +263,7 @@ final class SettingsStore: ObservableObject {
         aiAttachDefault = defaults.object(forKey: "ai.attachDefault") as? Bool ?? true
         aiAutocompletion = defaults.object(forKey: "ai.autocompletion") as? Bool ?? false
         aiFontSize = min(max(defaults.object(forKey: "ai.fontSize") as? Double ?? 13, 10), 24)
+        agentProvider = Self.agentProviderValue(defaults.string(forKey: "ai.agentProvider"))
         defaultBuildCommand = defaults.string(forKey: "project.defaultBuildCommand") ?? "xelatex -interaction=nonstopmode -synctex=1 {file}"
         defaultCustomCommand = defaults.string(forKey: "project.defaultCustomCommand") ?? ""
         autoInstallUpdates = defaults.bool(forKey: "pitex.pref.update.autoInstall")
@@ -774,6 +791,14 @@ struct SettingsView: View {
     private var aiTab: some View {
         Form {
             Section("settings.ai.agent") {
+                Picker("settings.ai.backend", selection: $store.agentProvider) {
+                    Text("settings.ai.backend_pi").tag("pi")
+                    Text("settings.ai.backend_codex").tag("codex")
+                }
+                .accessibilityIdentifier("pitex.settings.ai.backend")
+                Text("settings.ai.backend_note")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 LabeledContent("settings.ai.location") {
                     Text(PiPaths.runtimeDirectory.path)
                         .font(.caption)

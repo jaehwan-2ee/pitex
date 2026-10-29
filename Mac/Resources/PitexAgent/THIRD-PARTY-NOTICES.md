@@ -24,3 +24,15 @@ These licenses apply to the named third-party components. Pitex's own
 license does not replace their terms. The two K-Dense academic skills have
 their notices in their respective skill directories and provenance in
 `SKILL-PROVENANCE.json`.
+
+## T3 Code 0.1.4
+
+Copyright (c) 2026 T3 Tools Inc.
+
+The Codex CLI adapter in `bridge/` follows the shape of T3 Code v0.1.4
+(MIT): `packages/effect-codex-app-server` and
+`apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`. Pitex does
+not include T3 Code source and does not include its managed ChatGPT OAuth
+broker. The MIT license is in
+[licenses/t3code-MIT.txt](licenses/t3code-MIT.txt).
+Source: <https://github.com/pingdotgg/t3code/tree/v0.1.4>.

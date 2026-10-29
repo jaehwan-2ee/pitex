@@ -42,11 +42,20 @@ struct AgentPanel: View {
                     .padding(.bottom, 4)
             }
 
+            if let approval = coordinator.pendingApproval {
+                approvalRow(approval)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
+
             composerRow
                 .padding(10)
         }
         .accessibilityIdentifier("pitex.assistant")
         .task { coordinator.prepare() }
+        .onChange(of: settings.agentProvider) { _, _ in
+            coordinator.restart()
+        }
         .onChange(of: coordinator.pendingComposerInsertion) { _, insertion in
             if let insertion {
                 draft += insertion
@@ -179,13 +188,50 @@ struct AgentPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-            case .ready, .failed:
+            case .ready:
                 EmptyView()
+            case .failed(let message):
+                Text(verbatim: message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
             Spacer()
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
+    }
+
+    private func approvalRow(_ approval: AgentApprovalRequest) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: approval.title)
+                .font(.callout.weight(.semibold))
+            if !approval.detail.isEmpty {
+                Text(verbatim: approval.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(6)
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 8) {
+                Button("assistant.approve") {
+                    coordinator.respondToApproval("approve")
+                }
+                .accessibilityIdentifier("pitex.assistant.approve")
+                Button("assistant.deny") {
+                    coordinator.respondToApproval("deny")
+                }
+                .accessibilityIdentifier("pitex.assistant.deny")
+                Button("assistant.always_allow") {
+                    coordinator.respondToApproval("always_allow")
+                }
+                .accessibilityIdentifier("pitex.assistant.alwaysAllow")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("pitex.assistant.approval")
     }
 
     /// Composer: attach button, rounded text field, circular send/stop.

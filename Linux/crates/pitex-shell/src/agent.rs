@@ -2,7 +2,7 @@
 //! `AgentCoordinator.swift` — the `pi --mode rpc` subprocess plus the
 //! transcript/state machine driving the assistant panel.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -493,7 +493,7 @@ impl PiToolchain {
                 return Ok((PathBuf::from("powershell"), args));
             }
         }
-        let java_script = ["js", "mjs", "cjs"]
+        let java_script = ["js", "mjs", "cjs", "ts", "mts", "cts"]
             .iter()
             .any(|ext| script.extension().map(|e| e == *ext).unwrap_or(false))
             || (header.starts_with("#!")
@@ -666,6 +666,12 @@ pub enum PiRPCCommand {
     ExtensionUICancelled {
         id: String,
     },
+    /// Reply to a CLI `approval_request`. `decision` is `approve`, `deny`,
+    /// or `always_allow`.
+    ApprovalResponse {
+        id: String,
+        decision: String,
+    },
     SwitchSession {
         path: String,
     },
@@ -705,8 +711,20 @@ impl PiRPCCommand {
             Self::ExtensionUICancelled { id } => {
                 json!({"type": "extension_ui_response", "id": id, "cancelled": true})
             }
+            Self::ApprovalResponse { id, decision } => {
+                json!({"type": "approval_response", "id": id, "decision": decision})
+            }
         }
     }
+}
+
+/// One CLI approval the transcript is waiting on. pi does not use this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentApprovalRequest {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
 }
 
 /// A decoded stdout line.
@@ -1201,6 +1219,43 @@ pub struct AgentSelectionAttachment {
     pub text: String,
 }
 
+/// Resolved command line for one agent spawn.
+struct AgentLaunch {
+    executable: PathBuf,
+    arguments: Vec<String>,
+    environment: HashMap<String, String>,
+}
+
+/// The bundled CLI bridge (`PitexAgent/bridge/cli.ts`), next to the install
+/// or the repo's Mac resources during development. Same lookup as skills.
+fn bridge_script() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for rel in [
+                format!(
+                    "../share/{}/PitexAgent/bridge/cli.ts",
+                    crate::identity::current().linux_share_dir_name
+                ),
+                format!(
+                    "../../share/{}/PitexAgent/bridge/cli.ts",
+                    crate::identity::current().linux_share_dir_name
+                ),
+            ] {
+                let candidate = dir.join(rel);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../Mac/Resources/PitexAgent/bridge/cli.ts");
+    if dev.is_file() {
+        return Some(dev);
+    }
+    None
+}
+
 /// The coordinator is main-thread-owned like the Swift `@MainActor` class.
 /// The process's event receiver is drained by the UI's idle loop.
 pub struct AgentCoordinator {
@@ -1229,6 +1284,16 @@ pub struct AgentCoordinator {
     /// `get_commands` payload — slash commands the composer completes.
     pub commands: Vec<PiSlashCommand>,
     pub status_message: Option<String>,
+    /// `ai.agentProvider` — `pi` or `codex`. Read again at spawn.
+    agent_provider: String,
+    /// Unanswered CLI approvals, oldest first. The panel shows the head.
+    approval_queue: VecDeque<AgentApprovalRequest>,
+    /// Approval replies the coordinator tried to send. Tests read this
+    /// because a unit test has no child process to capture stdin.
+    #[cfg(test)]
+    approval_sent: Vec<(String, String)>,
+    /// The approval the panel is showing. Further requests wait behind it.
+    pub pending_approval: Option<AgentApprovalRequest>,
     pub attach_active_document: bool,
     pub pending_composer_insertion: Option<String>,
     pub selection_attachment: Option<AgentSelectionAttachment>,
@@ -1286,6 +1351,11 @@ impl AgentCoordinator {
             thinking_levels: Vec::new(),
             is_updating_model_settings: false,
             status_message: None,
+            agent_provider: store.agent_provider(),
+            approval_queue: VecDeque::new(),
+            #[cfg(test)]
+            approval_sent: Vec::new(),
+            pending_approval: None,
             attach_active_document: store
                 .prefs()
                 .bool(Self::ATTACH_DOCUMENT_KEY)
@@ -1312,6 +1382,14 @@ impl AgentCoordinator {
             thinking_content_index: None,
             tool_index_by_call_id: HashMap::new(),
         }
+    }
+
+    pub fn set_agent_provider(&mut self, value: &str) {
+        self.agent_provider = if value == "codex" {
+            "codex".into()
+        } else {
+            "pi".into()
+        };
     }
 
     pub fn set_attach_active_document(
@@ -1395,11 +1473,15 @@ impl AgentCoordinator {
         if self.intentional_stop {
             return;
         }
-        match executable {
-            Some(executable) => self.spawn_with_tools(&executable, &root, tools),
-            None => {
-                self.connection = Connection::PiMissing;
-                self.status_message = None;
+        if self.agent_provider == "codex" {
+            self.spawn_with_tools(Path::new(""), &root, tools);
+        } else {
+            match executable {
+                Some(executable) => self.spawn_with_tools(&executable, &root, tools),
+                None => {
+                    self.connection = Connection::PiMissing;
+                    self.status_message = None;
+                }
             }
         }
         self.ui_revision += 1;
@@ -1413,23 +1495,14 @@ impl AgentCoordinator {
         let sessions = session_directory(root);
         let _ = std::fs::create_dir_all(&sessions);
         self.session_directory = Some(sessions.clone());
-        let arguments = vec![
-            "--mode".into(),
-            "rpc".into(),
-            "--session-dir".into(),
-            sessions.to_string_lossy().into_owned(),
-            "--append-system-prompt".into(),
-            Self::system_prompt_supplement().to_string(),
-        ];
-        let launch = match tools.launch(executable, &arguments) {
-            Ok(launch) => launch,
+        let plan = match Self::plan_launch(&self.agent_provider, executable, &sessions, &tools) {
+            Ok(plan) => plan,
             Err(e) => {
-                self.connection = Connection::Failed(e);
+                self.fail_connection(e);
                 return;
             }
         };
-        let environment = Self::child_environment(&launch.0, &tools.environment);
-        match PiAgentProcess::start(&launch.0, root, &launch.1, &environment) {
+        match PiAgentProcess::start(&plan.executable, root, &plan.arguments, &plan.environment) {
             Ok(agent) => {
                 self.process = Some(agent);
                 self.connection = Connection::Ready;
@@ -1441,9 +1514,64 @@ impl AgentCoordinator {
                 }
             }
             Err(e) => {
-                self.connection = Connection::Failed(e.to_string());
+                self.fail_connection(e.to_string());
             }
         }
+    }
+
+    /// Records a spawn failure. The empty transcript shows `connection`;
+    /// once the user has typed, the same text moves to the status line.
+    fn fail_connection(&mut self, message: String) {
+        self.connection = Connection::Failed(message.clone());
+        if !self.transcript.is_empty() {
+            self.status_message = Some(message);
+        }
+    }
+
+    /// What `spawn_with_tools` launches. Codex ignores `pi_executable` and
+    /// runs the bundled bridge with the same Bun/Node runtime.
+    fn plan_launch(
+        provider: &str,
+        pi_executable: &Path,
+        sessions: &Path,
+        tools: &PiToolchain,
+    ) -> Result<AgentLaunch, String> {
+        if provider == "codex" {
+            let script = bridge_script().ok_or_else(|| {
+                "The Codex bridge is not installed with this Pitex build.".to_string()
+            })?;
+            let (executable, arguments) = tools.launch(&script, &[])?;
+            let mut environment = Self::child_environment(&executable, &tools.environment);
+            environment.insert(
+                "PITEX_SESSION_DIR".into(),
+                sessions.to_string_lossy().into_owned(),
+            );
+            environment.insert(
+                "PITEX_DEVELOPER_INSTRUCTIONS".into(),
+                Self::system_prompt_supplement().to_string(),
+            );
+            environment.insert("PITEX_CLI_ADAPTER".into(), "codex".into());
+            return Ok(AgentLaunch {
+                executable,
+                arguments,
+                environment,
+            });
+        }
+        let arguments = vec![
+            "--mode".into(),
+            "rpc".into(),
+            "--session-dir".into(),
+            sessions.to_string_lossy().into_owned(),
+            "--append-system-prompt".into(),
+            Self::system_prompt_supplement().to_string(),
+        ];
+        let (executable, arguments) = tools.launch(pi_executable, &arguments)?;
+        let environment = Self::child_environment(&executable, &tools.environment);
+        Ok(AgentLaunch {
+            executable,
+            arguments,
+            environment,
+        })
     }
 
     /// Called by the UI when the process's `exited` channel fires.
@@ -1455,6 +1583,7 @@ impl AgentCoordinator {
         self.model_settings_request_id = None;
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
+        self.clear_approvals();
         if !self.intentional_stop {
             self.connection = Connection::Failed("The agent process exited unexpectedly.".into());
         }
@@ -1471,6 +1600,7 @@ impl AgentCoordinator {
         self.model_settings_request_id = None;
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
+        self.clear_approvals();
         self.ui_revision += 1;
     }
 
@@ -1551,11 +1681,11 @@ impl AgentCoordinator {
             if self.connection == Connection::Idle {
                 self.connection = Connection::Connecting;
             }
-            self.status_message = Some("The agent is not running.".into());
+            self.status_message = Some(self.not_running_message());
             return;
         };
         if !process.is_running() {
-            self.status_message = Some("The agent is not running.".into());
+            self.status_message = Some(self.not_running_message());
             return;
         }
         // Slash commands go raw — pi expands `/skill:name` and extension
@@ -1582,7 +1712,17 @@ impl AgentCoordinator {
         self.ui_revision += 1;
     }
 
+    fn not_running_message(&self) -> String {
+        if let Connection::Failed(message) = &self.connection {
+            if !message.is_empty() {
+                return message.clone();
+            }
+        }
+        "The agent is not running.".into()
+    }
+
     pub fn stop(&mut self) {
+        self.deny_queued_approvals();
         if !self.is_running {
             return;
         }
@@ -1592,6 +1732,7 @@ impl AgentCoordinator {
         self.ui_revision += 1;
     }
     pub fn new_session(&mut self) {
+        self.deny_queued_approvals();
         if !self.process.as_ref().is_some_and(|p| p.is_running()) {
             return;
         }
@@ -1600,6 +1741,58 @@ impl AgentCoordinator {
             let _ = process.send(&PiRPCCommand::NewSession, None);
         }
         self.ui_revision += 1;
+    }
+
+    /// Answers the approval on screen. `decision` is `approve`, `deny`, or
+    /// `always_allow`. The next queued request takes its place.
+    pub fn respond_to_approval(&mut self, decision: &str) {
+        let Some(pending) = self.approval_queue.pop_front() else {
+            return;
+        };
+        self.pending_approval = self.approval_queue.front().cloned();
+        self.send_approval(&pending.id, decision);
+        self.ui_revision += 1;
+    }
+
+    /// Stop and new-session deny every outstanding request, not only the
+    /// one the panel is showing.
+    fn deny_queued_approvals(&mut self) {
+        let queued: Vec<_> = self.approval_queue.drain(..).collect();
+        if queued.is_empty() {
+            return;
+        }
+        self.pending_approval = None;
+        for pending in &queued {
+            self.send_approval(&pending.id, "deny");
+        }
+        self.ui_revision += 1;
+    }
+
+    fn clear_approvals(&mut self) {
+        self.approval_queue.clear();
+        self.pending_approval = None;
+    }
+
+    fn note_approval(&mut self, request: AgentApprovalRequest) {
+        if let Some(existing) = self.approval_queue.iter_mut().find(|item| item.id == request.id) {
+            *existing = request;
+        } else {
+            self.approval_queue.push_back(request);
+        }
+        self.pending_approval = self.approval_queue.front().cloned();
+    }
+
+    fn send_approval(&mut self, id: &str, decision: &str) {
+        #[cfg(test)]
+        self.approval_sent.push((id.to_string(), decision.to_string()));
+        let Some(process) = &self.process else { return };
+        let _ = process.send(
+            &PiRPCCommand::ApprovalResponse {
+                id: id.to_string(),
+                decision: decision.to_string(),
+            },
+            None,
+        );
     }
 
     fn clear_transcript(&mut self) {
@@ -1855,6 +2048,14 @@ impl AgentCoordinator {
                 }
             }
             "extension_ui_request" => self.handle_extension_ui(event),
+            "approval_request" => {
+                self.note_approval(AgentApprovalRequest {
+                    id: event.string("id").unwrap_or_default(),
+                    kind: event.string("kind").unwrap_or_else(|| "command".into()),
+                    title: event.string("title").unwrap_or_else(|| "Approval".into()),
+                    detail: event.string("detail").unwrap_or_default(),
+                });
+            }
             "extension_error" => {
                 let message = event.string("error").unwrap_or_else(|| "extension error".into());
                 self.push_entry(AgentTranscriptEntry {
@@ -3480,6 +3681,60 @@ mod toolchain_tests {
     }
 
     #[test]
+    fn launch_uses_node_for_typescript_without_bun() {
+        let home = home("launchts");
+        let node = home.join("bin/node");
+        let entry = home.join("bridge/cli.ts");
+        executable(&node, "#!/bin/sh\n");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(&entry, "console.log(1)\n").unwrap();
+        let tools = PiToolchain {
+            environment: HashMap::new(),
+            bun: None,
+            node: Some(node.clone()),
+            npm: None,
+        };
+        let (exe, args) = tools.launch(&entry, &[]).unwrap();
+        assert_eq!(exe, node);
+        assert_eq!(args[0], entry.to_string_lossy());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn codex_launch_plan_runs_the_bridge_with_session_env() {
+        let home = home("launchcodex");
+        let node = home.join("bin/node");
+        executable(&node, "#!/bin/sh\n");
+        let script = bridge_script().expect("bundled bridge");
+        assert!(script.ends_with("PitexAgent/bridge/cli.ts"));
+        let tools = PiToolchain {
+            environment: HashMap::new(),
+            bun: None,
+            node: Some(node.clone()),
+            npm: None,
+        };
+        let sessions = home.join("sessions");
+        let plan = AgentCoordinator::plan_launch("codex", Path::new("pi"), &sessions, &tools)
+            .expect("plan");
+        assert_eq!(plan.executable, node);
+        assert!(plan.arguments.iter().any(|arg| arg.ends_with("bridge/cli.ts")));
+        assert!(!plan.arguments.iter().any(|arg| arg == "--mode"));
+        assert_eq!(
+            plan.environment.get("PITEX_CLI_ADAPTER").map(String::as_str),
+            Some("codex")
+        );
+        assert_eq!(
+            plan.environment.get("PITEX_SESSION_DIR").map(String::as_str),
+            Some(sessions.to_str().unwrap())
+        );
+        assert!(plan.environment.contains_key("PITEX_DEVELOPER_INSTRUCTIONS"));
+        let pi = AgentCoordinator::plan_launch("pi", &node, &sessions, &tools).expect("pi plan");
+        assert!(pi.arguments.iter().any(|arg| arg == "--mode"));
+        assert!(!pi.environment.contains_key("PITEX_CLI_ADAPTER"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn launch_uses_node_for_javascript_without_bun() {
         let home = home("launchnode");
         let node = home.join("bin/node");
@@ -3594,5 +3849,133 @@ mod session_history_tests {
         assert_eq!(rows[2].status, TranscriptStatus::Failed);
         assert!(rows[2].detail.contains("Undefined control sequence"));
         assert_eq!(rows[3].text, "Fixed.");
+    }
+
+    #[test]
+    fn approval_request_waits_until_the_user_answers() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let request = json!({
+            "type": "approval_request",
+            "id": "42",
+            "kind": "command",
+            "title": "Run command",
+            "detail": "ls"
+        });
+        agent.handle(&PiRPCEvent::new(request.as_object().unwrap().clone()).unwrap());
+        let pending = agent.pending_approval.clone().expect("pending");
+        assert_eq!(pending.id, "42");
+        assert_eq!(pending.detail, "ls");
+        agent.respond_to_approval("always_allow");
+        assert!(agent.pending_approval.is_none());
+        let wire = PiRPCCommand::ApprovalResponse {
+            id: "42".into(),
+            decision: "always_allow".into(),
+        };
+        assert_eq!(
+            wire.object(),
+            json!({"type": "approval_response", "id": "42", "decision": "always_allow"})
+        );
+    }
+
+    #[test]
+    fn approval_requests_queue_in_order() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("1", "first"));
+        agent.handle(&approval_event("2", "second"));
+        let head = agent.pending_approval.clone().expect("head");
+        assert_eq!(head.id, "1");
+        assert_eq!(head.detail, "first");
+        agent.respond_to_approval("approve");
+        let next = agent.pending_approval.clone().expect("second");
+        assert_eq!(next.id, "2");
+        assert_eq!(next.detail, "second");
+        agent.respond_to_approval("deny");
+        assert!(agent.pending_approval.is_none());
+    }
+
+    #[test]
+    fn repeated_approval_id_keeps_its_place() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("1", "old"));
+        agent.handle(&approval_event("2", "other"));
+        agent.handle(&approval_event("1", "updated"));
+        let head = agent.pending_approval.clone().expect("head");
+        assert_eq!(head.id, "1");
+        assert_eq!(head.detail, "updated");
+        agent.respond_to_approval("approve");
+        assert_eq!(agent.pending_approval.as_ref().map(|item| item.id.as_str()), Some("2"));
+    }
+
+    #[test]
+    fn stop_and_new_session_deny_every_queued_approval() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("7", "edit"));
+        agent.handle(&approval_event("8", "shell"));
+        agent.stop();
+        assert!(agent.pending_approval.is_none());
+        assert_eq!(
+            agent.approval_sent,
+            vec![("7".into(), "deny".into()), ("8".into(), "deny".into())]
+        );
+        agent.respond_to_approval("approve");
+        assert!(agent.pending_approval.is_none());
+
+        agent.approval_sent.clear();
+        agent.handle(&approval_event("9", "again"));
+        agent.handle(&approval_event("10", "later"));
+        agent.new_session();
+        assert!(agent.pending_approval.is_none());
+        assert_eq!(
+            agent.approval_sent,
+            vec![("9".into(), "deny".into()), ("10".into(), "deny".into())]
+        );
+    }
+
+    fn approval_event(id: &str, detail: &str) -> PiRPCEvent {
+        let request = json!({
+            "type": "approval_request",
+            "id": id,
+            "kind": "command",
+            "title": "Run command",
+            "detail": detail
+        });
+        PiRPCEvent::new(request.as_object().unwrap().clone()).unwrap()
+    }
+
+    #[test]
+    fn stop_denies_a_pending_approval() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let request = json!({"type": "approval_request", "id": "7", "title": "Edit"});
+        agent.handle(&PiRPCEvent::new(request.as_object().unwrap().clone()).unwrap());
+        agent.stop();
+        assert!(agent.pending_approval.is_none());
+    }
+
+    #[test]
+    fn extension_ui_request_stays_auto_cancelled() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let request = json!({
+            "type": "extension_ui_request",
+            "id": "ui-1",
+            "method": "confirm",
+            "title": "Continue?"
+        });
+        agent.handle(&PiRPCEvent::new(request.as_object().unwrap().clone()).unwrap());
+        assert!(agent.pending_approval.is_none());
+        assert!(agent.transcript[0].text.contains("not supported"));
+    }
+
+    #[test]
+    fn agent_provider_defaults_to_pi_and_accepts_codex() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        assert_eq!(store.agent_provider(), "pi");
+        store.set_agent_provider("codex");
+        assert_eq!(store.agent_provider(), "codex");
+        store.set_agent_provider("other");
+        assert_eq!(store.agent_provider(), "pi");
+        let mut agent = AgentCoordinator::new(&store);
+        assert_eq!(agent.agent_provider, "pi");
+        agent.set_agent_provider("codex");
+        assert_eq!(agent.agent_provider, "codex");
     }
 }

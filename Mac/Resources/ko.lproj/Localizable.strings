@@ -67,6 +67,9 @@
 "assistant.send" = "보내기";
 "assistant.stop" = "중지";
 "assistant.apply" = "적용";
+"assistant.approve" = "승인";
+"assistant.deny" = "거절";
+"assistant.always_allow" = "항상 허용";
 "assistant.reject" = "거부";
 "assistant.response_error" = "어시스턴트 오류: %@";
 "assistant.sign_in_chatgpt" = "ChatGPT로 로그인";
@@ -341,6 +344,10 @@
 "settings.appearance.terminal_font_family" = "터미널 글꼴";
 "settings.appearance.colors" = "색상";
 "settings.ai.agent" = "Pitex Agent";
+"settings.ai.backend" = "어시스턴트 실행 방식";
+"settings.ai.backend_pi" = "pi (공급자 로그인)";
+"settings.ai.backend_codex" = "Codex CLI (내 로그인)";
+"settings.ai.backend_note" = "Codex CLI는 이 컴퓨터의 `codex login` 계정을 사용합니다. Pitex는 Codex 자격 증명 파일을 읽지 않습니다.";
 "settings.ai.location" = "설치 위치";
 "settings.ai.attach_default" = "기본적으로 활성 문서를 프롬프트에 첨부";
 "settings.ai.autocompletion" = "인라인 자동 완성";

@@ -116,6 +116,12 @@ final class AgentCoordinator: ObservableObject {
     @Published private(set) var thinkingLevels: [String] = []
     @Published private(set) var isUpdatingModelSettings = false
     @Published var statusMessage: String?
+    /// The Codex CLI approval the panel is showing. Later requests wait in
+    /// `approvalQueue`. pi never sets this; its extension prompts stay
+    /// auto-cancelled.
+    @Published private(set) var pendingApproval: AgentApprovalRequest?
+    /// FIFO keyed by request id. Stop and new-session deny every entry.
+    private var approvalQueue = AgentApprovalQueue()
     /// Whether the active document/selection is folded into each prompt's
     /// context envelope (the "Attach activated document" toggle in the
     /// panel header). Persisted per user, not per project.
@@ -217,6 +223,8 @@ final class AgentCoordinator: ObservableObject {
     func shutdown() {
         intentionalStop = true
         flushDeltas()
+        approvalQueue.clear()
+        pendingApproval = nil
         prepareTask?.cancel()
         eventTask?.cancel()
         process?.terminate()
@@ -317,12 +325,22 @@ final class AgentCoordinator: ObservableObject {
         guard let root = contextProvider().projectRoot else { return }
         let tools = await PiToolchain.discover()
         guard !Task.isCancelled else { return }
+        if Self.selectedAgentProvider() == "codex" {
+            await spawnBridge(root: root, tools: tools)
+            return
+        }
         guard let executable = PiExecutableLocator.resolve(environment: tools.environment) else {
             connection = .piMissing
             statusMessage = nil
             return
         }
         await spawn(executable: executable, root: root, tools: tools)
+    }
+
+    /// `ai.agentProvider` at the moment of spawn. Codex drives the bundled
+    /// bridge; anything else keeps the pi runtime.
+    static func selectedAgentProvider() -> String {
+        SettingsStore.agentProviderValue(UserDefaults.standard.string(forKey: "ai.agentProvider"))
     }
 
     private func spawn(executable: URL, root: URL, tools: PiToolchain) async {
@@ -345,11 +363,47 @@ final class AgentCoordinator: ObservableObject {
             connection = .failed(error.localizedDescription)
             return
         }
+        let environment = Self.childEnvironment(executable: launch.executable, environment: tools.environment)
+        startAgent(launch: launch, root: root, environment: environment)
+    }
+
+    /// Codex CLI provider: the same Bun/Node runtime, pointed at the bundled
+    /// bridge instead of pi. The bridge owns `codex app-server` and the
+    /// user's existing Codex login.
+    private func spawnBridge(root: URL, tools: PiToolchain) async {
+        intentionalStop = false
+        connection = .connecting
+        let sessions = Self.sessionDirectory(for: root)
+        try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        sessionDirectory = sessions
+        guard let script = AgentBridge.scriptURL() else {
+            connection = .failed("The Codex bridge is not installed with this Pitex build.")
+            return
+        }
+        let launch: (executable: URL, arguments: [String])
+        do {
+            launch = try tools.launch(script, arguments: [])
+        } catch {
+            connection = .failed(error.localizedDescription)
+            return
+        }
+        var environment = Self.childEnvironment(executable: launch.executable, environment: tools.environment)
+        environment["PITEX_SESSION_DIR"] = sessions.path
+        environment["PITEX_DEVELOPER_INSTRUCTIONS"] = Self.systemPromptSupplement
+        environment["PITEX_CLI_ADAPTER"] = "codex"
+        startAgent(launch: launch, root: root, environment: environment)
+    }
+
+    private func startAgent(
+        launch: (executable: URL, arguments: [String]),
+        root: URL,
+        environment: [String: String]
+    ) {
         let agent = PiAgentProcess(
             executableURL: launch.executable,
             workingDirectory: root,
             arguments: launch.arguments,
-            environment: Self.childEnvironment(executable: launch.executable, environment: tools.environment)
+            environment: environment
         )
         do {
             try agent.start { [weak self, weak agent] in
@@ -382,6 +436,8 @@ final class AgentCoordinator: ObservableObject {
         modelSettingsRequestID = nil
         thinkingLevels = []
         isUpdatingModelSettings = false
+        approvalQueue.clear()
+        pendingApproval = nil
         guard !intentionalStop else { return }
         connection = .failed("The agent process exited unexpectedly.")
     }
@@ -429,7 +485,11 @@ final class AgentCoordinator: ObservableObject {
             }
             guard let process, process.isRunning else {
                 if connection == .idle { connection = .connecting }
-                statusMessage = "The agent is not running."
+                if case .failed(let message) = connection, !message.isEmpty {
+                    statusMessage = message
+                } else {
+                    statusMessage = "The agent is not running."
+                }
                 return
             }
             // Slash commands go raw so pi expands /skill:name and extension
@@ -462,14 +522,45 @@ final class AgentCoordinator: ObservableObject {
     }
 
     func stop() {
+        denyQueuedApprovals()
         guard isRunning, let process else { return }
         try? process.send(.abort)
     }
 
     func newSession() {
+        denyQueuedApprovals()
         guard let process, process.isRunning else { return }
         clearTranscript()
         try? process.send(.newSession)
+    }
+
+    /// Answers the approval on screen. `decision` is `approve`, `deny`, or
+    /// `always_allow` — the bridge maps those onto the CLI's native reply.
+    /// The next queued request, if any, takes its place.
+    func respondToApproval(_ decision: String) {
+        guard let pending = approvalQueue.dequeueHead() else { return }
+        showApprovalHead()
+        try? process?.send(.approvalResponse(id: pending.id, decision: decision))
+    }
+
+    /// Stop and new-session must unblock every Codex request, including
+    /// ones the panel has not shown yet.
+    private func denyQueuedApprovals() {
+        let queued = approvalQueue.drain()
+        pendingApproval = nil
+        for item in queued {
+            try? process?.send(.approvalResponse(id: item.id, decision: "deny"))
+        }
+    }
+
+    private func showApprovalHead() {
+        guard let head = approvalQueue.head else {
+            pendingApproval = nil
+            return
+        }
+        pendingApproval = AgentApprovalRequest(
+            id: head.id, kind: head.kind, title: head.title, detail: head.detail
+        )
     }
 
     private func clearTranscript() {
@@ -692,6 +783,14 @@ final class AgentCoordinator: ObservableObject {
             if !isUpdatingModelSettings { sendModelSettings(.getState) }
         case "extension_ui_request":
             handleExtensionUI(event)
+        case "approval_request":
+            approvalQueue.enqueue(AgentApprovalItem(
+                id: event.string("id") ?? "",
+                kind: event.string("kind") ?? "command",
+                title: event.string("title") ?? "Approval",
+                detail: event.string("detail") ?? ""
+            ))
+            showApprovalHead()
         case "extension_error":
             let message = event.string("error") ?? "extension error"
             transcript.append(AgentTranscriptEntry(
