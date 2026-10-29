@@ -848,6 +848,12 @@ test("agy approvals are not delivered and launch stays in the restrictive mode",
     assert.equal(spec.windowsVerbatimArguments, true);
     assert.throws(() => agyLaunchSpec(join(dir, "bad%name.cmd"), ["--sandbox"], "win32"));
     assert.deepEqual(agyLaunchSpec(binary, ["--sandbox"], "linux"), { command: binary, args: ["--sandbox"] });
+    assert.deepEqual(agyLaunchSpec(exe, ["--sandbox"], "win32"), { command: exe, args: ["--sandbox"] });
+    const shebang = join(dir, "agy-node");
+    writeFileSync(shebang, "#!/usr/bin/env node\nprocess.exit(0)\n", { mode: 0o755 });
+    const nodeSpec = agyLaunchSpec(shebang, ["models"], "win32");
+    assert.equal(nodeSpec.command, process.execPath);
+    assert.deepEqual(nodeSpec.args, [shebang, "models"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

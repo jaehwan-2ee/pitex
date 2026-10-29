@@ -21,7 +21,7 @@
 // approval are denied by the CLI. See agy-map.ts.
 
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -103,20 +103,37 @@ export function findAgy(env: NodeJS.ProcessEnv, platform = process.platform): st
   return null;
 }
 
-/** A Windows cmd shim cannot be spawned directly. The argument list is fixed flags plus safe tokens. */
+/**
+ * Windows CreateProcess cannot run a shebang, and Node rejects a direct
+ * spawn of `.cmd` / `.bat`. An `.exe` is started as-is. A node or bun
+ * shebang is this process's runtime plus the script. A cmd shim goes
+ * through `cmd.exe /d /s /c` with the fixed flag list.
+ */
 export function agyLaunchSpec(binary: string, streamArgs: string[], platform = process.platform): AgyLaunchSpec {
-  if (platform !== "win32" || !/\.(cmd|bat)$/i.test(binary)) {
+  if (platform !== "win32" || /\.exe$/i.test(binary)) {
     return { command: binary, args: streamArgs };
   }
-  if (!binary || /[\r\n"%!^&|<>]/.test(binary)) {
-    throw new Error("Antigravity CLI path cannot be launched through cmd.exe.");
+  if (/\.(cmd|bat)$/i.test(binary)) {
+    if (!binary || /[\r\n"%!^&|<>]/.test(binary)) {
+      throw new Error("Antigravity CLI path cannot be launched through cmd.exe.");
+    }
+    const tail = streamArgs.join(" ");
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", `"${binary}" ${tail}`],
+      windowsVerbatimArguments: true,
+    };
   }
-  const tail = streamArgs.join(" ");
-  return {
-    command: "cmd.exe",
-    args: ["/d", "/s", "/c", `"${binary}" ${tail}`],
-    windowsVerbatimArguments: true,
-  };
+  let header = "";
+  try {
+    header = readFileSync(binary).subarray(0, 128).toString("utf8");
+  } catch {
+    return { command: binary, args: streamArgs };
+  }
+  if (header.startsWith("#!") && /node|bun/.test(header)) {
+    return { command: process.execPath, args: [binary, ...streamArgs] };
+  }
+  return { command: binary, args: streamArgs };
 }
 
 function isExecutable(path: string): boolean {
@@ -329,11 +346,13 @@ export class AgyAdapter implements CliAdapter {
   }
 
   private async probeModels(binary: string): Promise<AgyModel[]> {
-    const child = spawn(binary, ["models"], {
+    const launch = agyLaunchSpec(binary, ["models"]);
+    const child = spawn(launch.command, launch.args, {
       cwd: this.cwd,
       env: this.env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments === true,
     });
     let stdout = "";
     let stderr = "";
