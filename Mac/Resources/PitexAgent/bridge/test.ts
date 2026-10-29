@@ -27,6 +27,21 @@ import {
   writeSessionPrelude,
 } from "./session-index.ts";
 
+async function removeTemp(dir: string): Promise<void> {
+  // Windows keeps a process's working directory locked until the handle
+  // closes, and rm can return EPERM for a moment after exit.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== "EPERM" && code !== "EBUSY") || attempt === 19) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
 async function waitForText(path: string, pattern: RegExp): Promise<string> {
   const deadline = Date.now() + 3000;
   let text = "";
@@ -337,7 +352,7 @@ rl.on("line", (line) => {
     assert.match(files, /thread-1/);
   } finally {
     await adapter.stop();
-    rmSync(dir, { recursive: true, force: true });
+    await removeTemp(dir);
   }
 });
 
@@ -370,7 +385,7 @@ rl.on("line", (line) => {
     assert.match(signedOut.unavailableReason ?? "", /not logged in/);
   } finally {
     await signedOut.stop();
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(empty, { recursive: true, force: true });
+    await removeTemp(dir);
+    await removeTemp(empty);
   }
 });

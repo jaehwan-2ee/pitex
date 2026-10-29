@@ -266,10 +266,29 @@ export class CodexAdapter implements CliAdapter {
 
   async stop(): Promise<void> {
     this.acceptClose = false;
+    const child = this.child;
     this.rpc?.close();
-    this.child?.kill();
     this.child = null;
     this.rpc = null;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    const exited = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    try {
+      child.stdin.end();
+    } catch {
+      // The pipe is already closed when the CLI exits on its own.
+    }
+    try {
+      child.kill();
+    } catch {
+      // Exit won the race with kill.
+    }
+    await exited;
   }
 
   private stats: Json = { tokens: { total: 0 }, cost: 0, contextUsage: {} };
