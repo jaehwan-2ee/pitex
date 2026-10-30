@@ -133,13 +133,30 @@ impl Preferences {
 pub(crate) struct AgentProviderChoice {
     pub id: &'static str,
     pub label_key: &'static str,
+    pub uses_bridge: bool,
 }
 
 pub(crate) const AGENT_PROVIDER_CHOICES: &[AgentProviderChoice] = &[
-    AgentProviderChoice { id: "pi", label_key: "settings.ai.backend_pi" },
-    AgentProviderChoice { id: "codex", label_key: "settings.ai.backend_codex" },
-    AgentProviderChoice { id: "claude", label_key: "settings.ai.backend_claude" },
-    AgentProviderChoice { id: "grok", label_key: "settings.ai.backend_grok" },
+    AgentProviderChoice {
+        id: "pi",
+        label_key: "settings.ai.backend_pi",
+        uses_bridge: false,
+    },
+    AgentProviderChoice {
+        id: "codex",
+        label_key: "settings.ai.backend_codex",
+        uses_bridge: true,
+    },
+    AgentProviderChoice {
+        id: "claude",
+        label_key: "settings.ai.backend_claude",
+        uses_bridge: true,
+    },
+    AgentProviderChoice {
+        id: "grok",
+        label_key: "settings.ai.backend_grok",
+        uses_bridge: true,
+    },
 ];
 
 /// `ai.agentProvider` is `pi`, `codex`, `claude`, or `grok`. Anything else is pi.
@@ -158,8 +175,7 @@ pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
 pub fn agent_provider_uses_bridge(value: &str) -> bool {
     AGENT_PROVIDER_CHOICES
         .iter()
-        .skip(1)
-        .any(|choice| choice.id == value)
+        .any(|choice| choice.uses_bridge && choice.id == value)
 }
 
 /// Port of `SettingsStore` — every @Published field with its UserDefaults key

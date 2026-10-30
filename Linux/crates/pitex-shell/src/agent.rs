@@ -4053,6 +4053,14 @@ mod session_history_tests {
                 .collect::<Vec<_>>(),
             ["pi", "codex", "claude", "grok"]
         );
+        assert_eq!(
+            crate::settings::AGENT_PROVIDER_CHOICES
+                .iter()
+                .filter(|choice| choice.uses_bridge)
+                .map(|choice| choice.id)
+                .collect::<Vec<_>>(),
+            ["codex", "claude", "grok"]
+        );
         let mut store = crate::settings::SettingsStore::new(Default::default());
         assert_eq!(store.agent_provider(), "pi");
         store.set_agent_provider("codex");
