@@ -337,20 +337,13 @@ final class AgentCoordinator: ObservableObject {
         await spawn(executable: executable, root: root, tools: tools)
     }
 
-    /// `ai.agentProvider` at the moment of spawn. Codex, Claude Code, Grok CLI,
-    /// and Antigravity drive the bundled bridge; anything else keeps the pi runtime.
     static func selectedAgentProvider() -> String {
         SettingsStore.agentProviderValue(UserDefaults.standard.string(forKey: "ai.agentProvider"))
     }
 
     /// Adapter id for providers that launch `pitex-agent-bridge`, or nil for pi.
     static func bridgeAdapterID(_ provider: String) -> String? {
-        switch provider {
-        case "codex", "claude", "grok", "agy":
-            return provider
-        default:
-            return nil
-        }
+        ShippedAgentProvider(rawValue: provider)?.bridgeAdapterID
     }
 
     private func spawn(executable: URL, root: URL, tools: PiToolchain) async {
@@ -410,9 +403,6 @@ final class AgentCoordinator: ObservableObject {
         }
         if adapter == "grok" {
             return "The Grok CLI bridge is not installed with this Pitex build."
-        }
-        if adapter == "agy" {
-            return "The Antigravity CLI bridge is not installed with this Pitex build."
         }
         return "The Codex bridge is not installed with this Pitex build."
     }

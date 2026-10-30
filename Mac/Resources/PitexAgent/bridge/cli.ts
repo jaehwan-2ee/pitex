@@ -5,7 +5,7 @@
 //
 // PITEX_SESSION_DIR              per-project session folder
 // PITEX_DEVELOPER_INSTRUCTIONS   editor instructions forwarded to the CLI
-// PITEX_CLI_ADAPTER              adapter id: "codex" (default), "claude", "grok", or "agy"
+// PITEX_CLI_ADAPTER              adapter id: "codex" (default), "claude", and "grok".
 // CODEX_PATH                     optional explicit Codex CLI binary
 // CLAUDE_PATH                    optional explicit Claude Code CLI binary
 // GROK_PATH                      optional explicit Grok CLI binary

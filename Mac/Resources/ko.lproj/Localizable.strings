@@ -350,7 +350,7 @@
 "settings.ai.backend_claude" = "Claude Code (내 로그인)";
 "settings.ai.backend_grok" = "Grok CLI (내 로그인)";
 "settings.ai.backend_agy" = "Antigravity CLI (내 로그인)";
-"settings.ai.backend_note" = "Codex CLI는 `codex login`, Claude Code는 `claude`, Grok CLI는 `grok login`, Antigravity CLI는 `agy` 계정을 이 컴퓨터에서 사용합니다. Pitex는 그 자격 증명 파일을 읽지 않습니다.";
+"settings.ai.backend_note" = "Codex CLI는 `codex login`, Claude Code는 `claude`, Grok CLI는 `grok login` 계정을 이 컴퓨터에서 사용합니다. Pitex는 그 자격 증명 파일을 읽지 않습니다.";
 "settings.ai.location" = "설치 위치";
 "settings.ai.attach_default" = "기본적으로 활성 문서를 프롬프트에 첨부";
 "settings.ai.autocompletion" = "인라인 자동 완성";

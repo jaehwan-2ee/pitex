@@ -1261,8 +1261,6 @@ fn bridge_missing_message(provider: &str) -> String {
         "The Claude Code bridge is not installed with this Pitex build.".to_string()
     } else if provider == "grok" {
         "The Grok CLI bridge is not installed with this Pitex build.".to_string()
-    } else if provider == "agy" {
-        "The Antigravity CLI bridge is not installed with this Pitex build.".to_string()
     } else {
         "The Codex bridge is not installed with this Pitex build.".to_string()
     }
@@ -1296,7 +1294,7 @@ pub struct AgentCoordinator {
     /// `get_commands` payload — slash commands the composer completes.
     pub commands: Vec<PiSlashCommand>,
     pub status_message: Option<String>,
-    /// `ai.agentProvider` — `pi`, `codex`, `claude`, `grok`, or `agy`. Read again at spawn.
+    /// `ai.agentProvider`. `pi`, `codex`, `claude`, or `grok`.
     agent_provider: String,
     /// Unanswered CLI approvals, oldest first. The panel shows the head.
     approval_queue: VecDeque<AgentApprovalRequest>,
@@ -3737,23 +3735,12 @@ mod toolchain_tests {
         let pi = AgentCoordinator::plan_launch("pi", &node, &sessions, &tools).expect("pi plan");
         assert!(pi.arguments.iter().any(|arg| arg == "--mode"));
         assert!(!pi.environment.contains_key("PITEX_CLI_ADAPTER"));
-        let agy = AgentCoordinator::plan_launch("agy", Path::new("pi"), &sessions, &tools)
-            .expect("agy plan");
-        assert_eq!(agy.executable, node);
-        assert!(agy.arguments.iter().any(|arg| arg.ends_with("bridge/cli.ts")));
-        assert!(!agy.arguments.iter().any(|arg| arg == "--mode"));
-        assert_eq!(
-            agy.environment.get("PITEX_CLI_ADAPTER").map(String::as_str),
-            Some("agy")
-        );
-        assert_eq!(
-            agy.environment.get("PITEX_SESSION_DIR").map(String::as_str),
-            Some(sessions.to_str().unwrap())
-        );
-        assert_eq!(
-            bridge_missing_message("agy"),
-            "The Antigravity CLI bridge is not installed with this Pitex build."
-        );
+        let agy = AgentCoordinator::plan_launch("agy", &node, &sessions, &tools).expect("agy plan");
+        assert_eq!(agy.executable, pi.executable);
+        assert_eq!(agy.arguments, pi.arguments);
+        assert_eq!(agy.environment, pi.environment);
+        assert!(agy.arguments.iter().any(|arg| arg == "--mode"));
+        assert!(!agy.environment.contains_key("PITEX_CLI_ADAPTER"));
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -4060,6 +4047,13 @@ mod session_history_tests {
 
     #[test]
     fn agent_provider_defaults_to_pi_and_accepts_codex_claude_or_grok() {
+        assert_eq!(
+            crate::settings::AGENT_PROVIDER_CHOICES
+                .iter()
+                .map(|choice| choice.id)
+                .collect::<Vec<_>>(),
+            ["pi", "codex", "claude", "grok"]
+        );
         let mut store = crate::settings::SettingsStore::new(Default::default());
         assert_eq!(store.agent_provider(), "pi");
         store.set_agent_provider("codex");
@@ -4078,10 +4072,13 @@ mod session_history_tests {
         assert_eq!(agent.agent_provider, "claude");
         agent.set_agent_provider("grok");
         assert_eq!(agent.agent_provider, "grok");
+        store.prefs_mut().set("ai.agentProvider", "agy");
+        assert_eq!(store.agent_provider(), "pi");
+        assert_eq!(store.prefs().string("ai.agentProvider").as_deref(), Some("agy"));
         store.set_agent_provider("agy");
-        assert_eq!(store.agent_provider(), "agy");
+        assert_eq!(store.agent_provider(), "pi");
         agent.set_agent_provider("agy");
-        assert_eq!(agent.agent_provider, "agy");
+        assert_eq!(agent.agent_provider, "pi");
         agent.set_agent_provider("other");
         assert_eq!(agent.agent_provider, "pi");
     }

@@ -5,6 +5,26 @@ import SettingsFeature
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum ShippedAgentProvider: String, CaseIterable {
+    case pi, codex, claude, grok
+
+    var label: LocalizedStringKey {
+        switch self {
+        case .pi: "settings.ai.backend_pi"
+        case .codex: "settings.ai.backend_codex"
+        case .claude: "settings.ai.backend_claude"
+        case .grok: "settings.ai.backend_grok"
+        }
+    }
+
+    var bridgeAdapterID: String? {
+        switch self {
+        case .pi: nil
+        case .codex, .claude, .grok: rawValue
+        }
+    }
+}
+
 /// Persists validated settings to UserDefaults. Secret material never lands
 /// here — only the preference schema owned by SettingsFeature.
 @MainActor
@@ -104,8 +124,7 @@ final class SettingsStore: ObservableObject {
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
-    /// `ai.agentProvider` — `pi` keeps the API-provider runtime; `codex`,
-    /// `claude`, `grok`, and `agy` drive the matching local CLI through pitex-agent-bridge.
+    /// `ai.agentProvider`. `pi`, `codex`, `claude`, or `grok`.
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)
@@ -117,18 +136,8 @@ final class SettingsStore: ObservableObject {
         }
     }
     static func agentProviderValue(_ stored: String?) -> String {
-        switch stored {
-        case "codex":
-            return "codex"
-        case "claude":
-            return "claude"
-        case "grok":
-            return "grok"
-        case "agy":
-            return "agy"
-        default:
-            return "pi"
-        }
+        guard let stored else { return "pi" }
+        return ShippedAgentProvider(rawValue: stored)?.rawValue ?? "pi"
     }
     @Published var defaultBuildCommand: String {
         didSet { UserDefaults.standard.set(defaultBuildCommand, forKey: "project.defaultBuildCommand") }
@@ -803,11 +812,9 @@ struct SettingsView: View {
         Form {
             Section("settings.ai.agent") {
                 Picker("settings.ai.backend", selection: $store.agentProvider) {
-                    Text("settings.ai.backend_pi").tag("pi")
-                    Text("settings.ai.backend_codex").tag("codex")
-                    Text("settings.ai.backend_claude").tag("claude")
-                    Text("settings.ai.backend_grok").tag("grok")
-                    Text("settings.ai.backend_agy").tag("agy")
+                    ForEach(ShippedAgentProvider.allCases, id: \.rawValue) { provider in
+                        Text(provider.label).tag(provider.rawValue)
+                    }
                 }
                 .accessibilityIdentifier("pitex.settings.ai.backend")
                 Text("settings.ai.backend_note")

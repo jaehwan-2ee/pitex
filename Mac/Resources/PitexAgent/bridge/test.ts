@@ -1159,13 +1159,20 @@ test("a missing or signed-out Antigravity CLI is reported without exiting", asyn
   }
 });
 
-test("createAdapter selects agy and rejects an unknown id", async () => {
+test("createAdapter maps agy to Codex and rejects an unknown id", async () => {
   const agy = await createAdapter("agy");
-  assert.equal(agy.id, "agy");
-  assert.equal(agy.displayName, "Antigravity CLI");
+  assert.equal(agy.id, "codex");
+  assert.equal(agy.displayName, "Codex CLI");
   const grok = await createAdapter("grok");
   assert.equal(grok.id, "grok");
   const claude = await createAdapter("claude");
   assert.equal(claude.id, "claude");
-  await assert.rejects(() => createAdapter("nope"), /Unknown CLI adapter/);
+  await assert.rejects(() => createAdapter("nope"), (error: Error) => {
+    assert.match(error.message, /Unknown CLI adapter/);
+    assert.match(error.message, /Codex CLI/);
+    assert.match(error.message, /Claude Code/);
+    assert.match(error.message, /Grok CLI/);
+    assert.doesNotMatch(error.message, /Antigravity/);
+    return true;
+  });
 });
