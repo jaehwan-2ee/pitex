@@ -15,6 +15,15 @@
 //
 // Checked against https://code.claude.com/docs/en/agent-sdk/typescript
 // and https://code.claude.com/docs/en/cli-reference (`claude auth status`).
+//
+// Claude Code auto-approves a built-in set of strictly read-only Bash
+// commands before it calls canUseTool, in every permission mode. That set
+// includes echo, ls, cat, pwd, head, tail, grep, find, wc, which, diff,
+// stat, du, cd, and read-only git. Pitex shows no approval row for those
+// commands, because the CLI never asks. A mutating command such as touch,
+// and a file write, still reach canUseTool and wait on the approval card.
+// https://code.claude.com/docs/en/permissions
+// https://code.claude.com/docs/en/agent-sdk/user-input
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
