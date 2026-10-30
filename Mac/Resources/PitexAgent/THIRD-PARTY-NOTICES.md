@@ -36,3 +36,16 @@ not include T3 Code source and does not include its managed ChatGPT OAuth
 broker. The MIT license is in
 [licenses/t3code-MIT.txt](licenses/t3code-MIT.txt).
 Source: <https://github.com/pingdotgg/t3code/tree/v0.1.4>.
+
+## Claude Agent SDK 0.3.312
+
+© Anthropic PBC. All rights reserved.
+
+`@anthropic-ai/claude-agent-sdk` 0.3.312 is the JavaScript package Pitex
+uses to drive the user's installed Claude Code CLI. Pitex vendors only
+`bridge/vendor/claude-agent-sdk/sdk.mjs`. The native platform packages,
+which contain Anthropic's `claude` binary, are not included. The CLI
+itself stays the user's unmodified install. This license is not MIT. The
+upstream notice is in
+[licenses/claude-agent-sdk-LICENSE.md](licenses/claude-agent-sdk-LICENSE.md).
+Source: <https://github.com/anthropics/claude-agent-sdk-typescript/tree/0.3.312>.

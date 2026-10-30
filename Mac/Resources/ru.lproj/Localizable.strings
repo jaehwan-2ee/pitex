@@ -346,6 +346,7 @@
 "settings.ai.backend" = "Способ запуска ассистента";
 "settings.ai.backend_pi" = "pi (вход через провайдера)";
 "settings.ai.backend_codex" = "Codex CLI (ваш вход)";
+"settings.ai.backend_claude" = "Claude Code (ваш вход)";
 "settings.ai.backend_note" = "Codex CLI использует учётную запись `codex login` на этом компьютере. Pitex не читает файлы учётных данных Codex.";
 "settings.ai.location" = "Место установки";
 "settings.ai.attach_default" = "Прикреплять активный документ к запросам по умолчанию";

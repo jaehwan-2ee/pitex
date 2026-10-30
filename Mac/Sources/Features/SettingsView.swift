@@ -105,7 +105,7 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
     /// `ai.agentProvider` — `pi` keeps the API-provider runtime; `codex`
-    /// drives the locally installed Codex CLI through pitex-agent-bridge.
+    /// and `claude` drive the matching local CLI through pitex-agent-bridge.
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)
@@ -117,7 +117,14 @@ final class SettingsStore: ObservableObject {
         }
     }
     static func agentProviderValue(_ stored: String?) -> String {
-        stored == "codex" ? "codex" : "pi"
+        switch stored {
+        case "codex":
+            return "codex"
+        case "claude":
+            return "claude"
+        default:
+            return "pi"
+        }
     }
     @Published var defaultBuildCommand: String {
         didSet { UserDefaults.standard.set(defaultBuildCommand, forKey: "project.defaultBuildCommand") }
@@ -794,6 +801,7 @@ struct SettingsView: View {
                 Picker("settings.ai.backend", selection: $store.agentProvider) {
                     Text("settings.ai.backend_pi").tag("pi")
                     Text("settings.ai.backend_codex").tag("codex")
+                    Text("settings.ai.backend_claude").tag("claude")
                 }
                 .accessibilityIdentifier("pitex.settings.ai.backend")
                 Text("settings.ai.backend_note")

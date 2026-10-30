@@ -130,6 +130,20 @@ impl Preferences {
     }
 }
 
+/// `ai.agentProvider` is `pi`, `codex`, or `claude`. Anything else is pi.
+pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
+    match value {
+        Some("codex") => "codex",
+        Some("claude") => "claude",
+        _ => "pi",
+    }
+}
+
+/// Codex and Claude Code both launch the bundled bridge.
+pub fn agent_provider_uses_bridge(value: &str) -> bool {
+    matches!(value, "codex" | "claude")
+}
+
 /// Port of `SettingsStore` — every @Published field with its UserDefaults key
 /// and default.
 pub struct SettingsStore {
@@ -324,19 +338,12 @@ impl SettingsStore {
     pub fn set_ai_font_size(&mut self, v: f64) {
         self.prefs.set("ai.fontSize", v);
     }
-    /// `ai.agentProvider` — `pi` (provider sign-in) or `codex` (Codex CLI login).
+    /// `ai.agentProvider` — `pi` (provider sign-in), `codex`, or `claude`.
     pub fn agent_provider(&self) -> String {
-        if self.prefs.string("ai.agentProvider").as_deref() == Some("codex") {
-            "codex".into()
-        } else {
-            "pi".into()
-        }
+        normalize_agent_provider(self.prefs.string("ai.agentProvider").as_deref()).into()
     }
     pub fn set_agent_provider(&mut self, v: &str) {
-        self.prefs.set(
-            "ai.agentProvider",
-            if v == "codex" { "codex" } else { "pi" },
-        );
+        self.prefs.set("ai.agentProvider", normalize_agent_provider(Some(v)));
     }
     pub fn default_build_command(&self) -> String {
         self.prefs

@@ -1,8 +1,7 @@
-// Per-CLI adapter. Milestone 1 registers Codex only.
+// Per-CLI adapter. Codex and Claude Code are registered.
 //
 // Later milestones plug in behind this same interface:
 // - Grok ACP via `grok agent stdio`
-// - Claude Agent SDK (`pathToClaudeCodeExecutable` + `canUseTool`)
 // - agy stream-json
 //
 // Design adapted from T3 Code v0.1.4 (MIT), Copyright (c) 2026 T3 Tools Inc.
@@ -55,9 +54,13 @@ export async function createAdapter(id: string): Promise<CliAdapter> {
       const { CodexAdapter } = await import("./codex-adapter.ts");
       return new CodexAdapter();
     }
+    case "claude": {
+      const { ClaudeAdapter } = await import("./claude-adapter.ts");
+      return new ClaudeAdapter();
+    }
     default:
       throw new Error(
-        `Unknown CLI adapter "${id}". This Pitex build can drive the Codex CLI.`
+        `Unknown CLI adapter "${id}". This Pitex build can drive the Codex CLI or Claude Code.`
       );
   }
 }

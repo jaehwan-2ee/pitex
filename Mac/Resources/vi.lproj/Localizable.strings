@@ -346,6 +346,7 @@
 "settings.ai.backend" = "Cách chạy trợ lý";
 "settings.ai.backend_pi" = "pi (đăng nhập nhà cung cấp)";
 "settings.ai.backend_codex" = "Codex CLI (đăng nhập của bạn)";
+"settings.ai.backend_claude" = "Claude Code (đăng nhập của bạn)";
 "settings.ai.backend_note" = "Codex CLI dùng tài khoản từ `codex login` trên máy này. Pitex không đọc tệp thông tin đăng nhập của Codex.";
 "settings.ai.location" = "Vị trí cài đặt";
 "settings.ai.attach_default" = "Đính kèm tài liệu đang mở vào prompt theo mặc định";

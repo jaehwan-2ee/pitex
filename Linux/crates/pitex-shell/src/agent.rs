@@ -1256,6 +1256,14 @@ fn bridge_script() -> Option<PathBuf> {
     None
 }
 
+fn bridge_missing_message(provider: &str) -> String {
+    if provider == "claude" {
+        "The Claude Code bridge is not installed with this Pitex build.".to_string()
+    } else {
+        "The Codex bridge is not installed with this Pitex build.".to_string()
+    }
+}
+
 /// The coordinator is main-thread-owned like the Swift `@MainActor` class.
 /// The process's event receiver is drained by the UI's idle loop.
 pub struct AgentCoordinator {
@@ -1284,7 +1292,7 @@ pub struct AgentCoordinator {
     /// `get_commands` payload — slash commands the composer completes.
     pub commands: Vec<PiSlashCommand>,
     pub status_message: Option<String>,
-    /// `ai.agentProvider` — `pi` or `codex`. Read again at spawn.
+    /// `ai.agentProvider` — `pi`, `codex`, or `claude`. Read again at spawn.
     agent_provider: String,
     /// Unanswered CLI approvals, oldest first. The panel shows the head.
     approval_queue: VecDeque<AgentApprovalRequest>,
@@ -1385,11 +1393,7 @@ impl AgentCoordinator {
     }
 
     pub fn set_agent_provider(&mut self, value: &str) {
-        self.agent_provider = if value == "codex" {
-            "codex".into()
-        } else {
-            "pi".into()
-        };
+        self.agent_provider = crate::settings::normalize_agent_provider(Some(value)).into();
     }
 
     pub fn set_attach_active_document(
@@ -1473,7 +1477,7 @@ impl AgentCoordinator {
         if self.intentional_stop {
             return;
         }
-        if self.agent_provider == "codex" {
+        if crate::settings::agent_provider_uses_bridge(&self.agent_provider) {
             self.spawn_with_tools(Path::new(""), &root, tools);
         } else {
             match executable {
@@ -1528,18 +1532,16 @@ impl AgentCoordinator {
         }
     }
 
-    /// What `spawn_with_tools` launches. Codex ignores `pi_executable` and
-    /// runs the bundled bridge with the same Bun/Node runtime.
+    /// What `spawn_with_tools` launches. Bridge providers ignore `pi_executable`
+    /// and run the bundled bridge with the same Bun/Node runtime.
     fn plan_launch(
         provider: &str,
         pi_executable: &Path,
         sessions: &Path,
         tools: &PiToolchain,
     ) -> Result<AgentLaunch, String> {
-        if provider == "codex" {
-            let script = bridge_script().ok_or_else(|| {
-                "The Codex bridge is not installed with this Pitex build.".to_string()
-            })?;
+        if crate::settings::agent_provider_uses_bridge(provider) {
+            let script = bridge_script().ok_or_else(|| bridge_missing_message(provider))?;
             let (executable, arguments) = tools.launch(&script, &[])?;
             let mut environment = Self::child_environment(&executable, &tools.environment);
             environment.insert(
@@ -1550,7 +1552,7 @@ impl AgentCoordinator {
                 "PITEX_DEVELOPER_INSTRUCTIONS".into(),
                 Self::system_prompt_supplement().to_string(),
             );
-            environment.insert("PITEX_CLI_ADAPTER".into(), "codex".into());
+            environment.insert("PITEX_CLI_ADAPTER".into(), provider.to_string());
             return Ok(AgentLaunch {
                 executable,
                 arguments,
@@ -3735,6 +3737,43 @@ mod toolchain_tests {
     }
 
     #[test]
+    fn claude_launch_plan_runs_the_bridge_with_session_env() {
+        let home = home("launchclaude");
+        let node = home.join("bin/node");
+        executable(&node, "#!/bin/sh\n");
+        let tools = PiToolchain {
+            environment: HashMap::new(),
+            bun: None,
+            node: Some(node.clone()),
+            npm: None,
+        };
+        let sessions = home.join("sessions");
+        let plan = AgentCoordinator::plan_launch("claude", Path::new("pi"), &sessions, &tools)
+            .expect("plan");
+        assert_eq!(plan.executable, node);
+        assert!(plan.arguments.iter().any(|arg| arg.ends_with("bridge/cli.ts")));
+        assert!(!plan.arguments.iter().any(|arg| arg == "--mode"));
+        assert_eq!(
+            plan.environment.get("PITEX_CLI_ADAPTER").map(String::as_str),
+            Some("claude")
+        );
+        assert_eq!(
+            plan.environment.get("PITEX_SESSION_DIR").map(String::as_str),
+            Some(sessions.to_str().unwrap())
+        );
+        assert!(plan.environment.contains_key("PITEX_DEVELOPER_INSTRUCTIONS"));
+        assert_eq!(
+            bridge_missing_message("claude"),
+            "The Claude Code bridge is not installed with this Pitex build."
+        );
+        assert_eq!(
+            bridge_missing_message("codex"),
+            "The Codex bridge is not installed with this Pitex build."
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn launch_uses_node_for_javascript_without_bun() {
         let home = home("launchnode");
         let node = home.join("bin/node");
@@ -3971,11 +4010,15 @@ mod session_history_tests {
         assert_eq!(store.agent_provider(), "pi");
         store.set_agent_provider("codex");
         assert_eq!(store.agent_provider(), "codex");
+        store.set_agent_provider("claude");
+        assert_eq!(store.agent_provider(), "claude");
         store.set_agent_provider("other");
         assert_eq!(store.agent_provider(), "pi");
         let mut agent = AgentCoordinator::new(&store);
         assert_eq!(agent.agent_provider, "pi");
         agent.set_agent_provider("codex");
         assert_eq!(agent.agent_provider, "codex");
+        agent.set_agent_provider("claude");
+        assert_eq!(agent.agent_provider, "claude");
     }
 }

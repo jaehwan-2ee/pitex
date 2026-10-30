@@ -325,8 +325,8 @@ final class AgentCoordinator: ObservableObject {
         guard let root = contextProvider().projectRoot else { return }
         let tools = await PiToolchain.discover()
         guard !Task.isCancelled else { return }
-        if Self.selectedAgentProvider() == "codex" {
-            await spawnBridge(root: root, tools: tools)
+        if let adapter = Self.bridgeAdapterID(Self.selectedAgentProvider()) {
+            await spawnBridge(root: root, tools: tools, adapter: adapter)
             return
         }
         guard let executable = PiExecutableLocator.resolve(environment: tools.environment) else {
@@ -337,10 +337,20 @@ final class AgentCoordinator: ObservableObject {
         await spawn(executable: executable, root: root, tools: tools)
     }
 
-    /// `ai.agentProvider` at the moment of spawn. Codex drives the bundled
-    /// bridge; anything else keeps the pi runtime.
+    /// `ai.agentProvider` at the moment of spawn. Codex and Claude Code drive
+    /// the bundled bridge; anything else keeps the pi runtime.
     static func selectedAgentProvider() -> String {
         SettingsStore.agentProviderValue(UserDefaults.standard.string(forKey: "ai.agentProvider"))
+    }
+
+    /// Adapter id for providers that launch `pitex-agent-bridge`, or nil for pi.
+    static func bridgeAdapterID(_ provider: String) -> String? {
+        switch provider {
+        case "codex", "claude":
+            return provider
+        default:
+            return nil
+        }
     }
 
     private func spawn(executable: URL, root: URL, tools: PiToolchain) async {
@@ -367,17 +377,17 @@ final class AgentCoordinator: ObservableObject {
         startAgent(launch: launch, root: root, environment: environment)
     }
 
-    /// Codex CLI provider: the same Bun/Node runtime, pointed at the bundled
-    /// bridge instead of pi. The bridge owns `codex app-server` and the
-    /// user's existing Codex login.
-    private func spawnBridge(root: URL, tools: PiToolchain) async {
+    /// CLI provider: the same Bun/Node runtime, pointed at the bundled
+    /// bridge instead of pi. The bridge owns the selected CLI and that
+    /// CLI's own login.
+    private func spawnBridge(root: URL, tools: PiToolchain, adapter: String) async {
         intentionalStop = false
         connection = .connecting
         let sessions = Self.sessionDirectory(for: root)
         try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         sessionDirectory = sessions
         guard let script = AgentBridge.scriptURL() else {
-            connection = .failed("The Codex bridge is not installed with this Pitex build.")
+            connection = .failed(Self.bridgeMissingMessage(adapter))
             return
         }
         let launch: (executable: URL, arguments: [String])
@@ -390,8 +400,15 @@ final class AgentCoordinator: ObservableObject {
         var environment = Self.childEnvironment(executable: launch.executable, environment: tools.environment)
         environment["PITEX_SESSION_DIR"] = sessions.path
         environment["PITEX_DEVELOPER_INSTRUCTIONS"] = Self.systemPromptSupplement
-        environment["PITEX_CLI_ADAPTER"] = "codex"
+        environment["PITEX_CLI_ADAPTER"] = adapter
         startAgent(launch: launch, root: root, environment: environment)
+    }
+
+    private static func bridgeMissingMessage(_ adapter: String) -> String {
+        if adapter == "claude" {
+            return "The Claude Code bridge is not installed with this Pitex build."
+        }
+        return "The Codex bridge is not installed with this Pitex build."
     }
 
     private func startAgent(

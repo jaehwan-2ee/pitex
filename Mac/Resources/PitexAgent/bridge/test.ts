@@ -27,6 +27,7 @@ import {
   threadIdFor,
   writeSessionPrelude,
 } from "./session-index.ts";
+import "./claude-checks.ts";
 
 async function removeTemp(dir: string): Promise<void> {
   // Windows keeps a process's working directory locked until the handle
