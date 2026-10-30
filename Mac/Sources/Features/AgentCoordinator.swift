@@ -165,6 +165,7 @@ final class AgentCoordinator: ObservableObject {
     private var process: PiAgentProcess?
     private var eventTask: Task<Void, Never>?
     private var intentionalStop = false
+    private var processEpoch = AgentProcessEpoch()
     private var assistantEntryIndex: Int?
     private var thinkingEntryIndex: Int?
     private var textContentIndex: Int?
@@ -222,6 +223,7 @@ final class AgentCoordinator: ObservableObject {
 
     func shutdown() {
         intentionalStop = true
+        processEpoch.retire()
         flushDeltas()
         approvalQueue.clear()
         pendingApproval = nil
@@ -412,6 +414,7 @@ final class AgentCoordinator: ObservableObject {
         root: URL,
         environment: [String: String]
     ) {
+        let token = processEpoch.beginLaunch()
         let agent = PiAgentProcess(
             executableURL: launch.executable,
             workingDirectory: root,
@@ -419,10 +422,11 @@ final class AgentCoordinator: ObservableObject {
             environment: environment
         )
         do {
-            try agent.start { [weak self, weak agent] in
-                Task { @MainActor in self?.processDidExit(agent) }
+            try agent.start { [weak self] in
+                Task { @MainActor in self?.processDidExit(token) }
             }
         } catch {
+            processEpoch.retire()
             connection = .failed(error.localizedDescription)
             return
         }
@@ -441,8 +445,8 @@ final class AgentCoordinator: ObservableObject {
         SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
     }
 
-    private func processDidExit(_ exited: PiAgentProcess?) {
-        guard exited == nil || process === exited else { return }
+    private func processDidExit(_ token: UInt64) {
+        guard processEpoch.isCurrent(token) else { return }
         flushDeltas()
         process = nil
         isRunning = false
