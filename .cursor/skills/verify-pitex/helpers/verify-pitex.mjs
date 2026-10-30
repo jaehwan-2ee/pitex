@@ -11,9 +11,10 @@ const EVIDENCE_ROOT = join(REPO, ".cursor/skills/verify-pitex/evidence");
 const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
-const PROVIDERS = ["codex", "claude", "grok", "agy"];
-const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH", agy: "AGY_PATH" };
-const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", agy: "agy.mjs" };
+const PROVIDERS = ["codex", "claude", "grok"];
+const GTK_PROVIDERS = [...PROVIDERS, "stale-agy"];
+const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH" };
+const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs" };
 
 const PROBE = {
   ANTHROPIC_API_KEY: "pitex-verify-probe-api-key",
@@ -52,14 +53,13 @@ const MISSING = {
   codex: "Codex CLI was not found",
   claude: "Claude Code was not found",
   grok: "Grok CLI was not found",
-  agy: "Antigravity CLI was not found",
 };
 
 function usage() {
   console.log(`verify-pitex doctor
-verify-pitex drive --provider <codex|claude|grok|agy|all>
+verify-pitex drive --provider <codex|claude|grok|all>
 verify-pitex cleanup
-verify-pitex gtk --provider <codex|claude|grok|agy>`);
+verify-pitex gtk --provider <codex|claude|grok|stale-agy>`);
 }
 
 function check(id, pass, observed) {
@@ -248,7 +248,6 @@ function bridgeEnv(run, mode) {
     LANG: "C.UTF-8",
     PITEX_SESSION_DIR: run.sessions,
     PITEX_DEVELOPER_INSTRUCTIONS: INSTRUCTIONS,
-    PITEX_CLI_ADAPTER: run.provider,
     FAKE_RECORD: join(run.evidence, "cli-record.jsonl"),
     FAKE_INSIDE: join(run.project, "note.txt"),
     FAKE_OUTSIDE_FILE: join(run.outside, "marker.txt"),
@@ -258,7 +257,8 @@ function bridgeEnv(run, mode) {
     FAKE_CWD_FILE: join(run.project, "terminal-cwd.txt"),
   };
   for (const [key, value] of Object.entries(PROBE)) env[key] = value;
-  if (mode === "ok" || mode === "signed-out") {
+  if (PATH_ENV[run.provider]) env.PITEX_CLI_ADAPTER = run.provider;
+  if ((mode === "ok" || mode === "signed-out") && PATH_ENV[run.provider]) {
     env[PATH_ENV[run.provider]] = join(FAKES, FAKE_BIN[run.provider]);
     if (mode === "signed-out") env.FAKE_AUTH = "signed-out";
   }
@@ -314,20 +314,15 @@ async function driveSession(provider) {
     const first = await oneTurn(bridge, run, {
       message: "Fix the title",
       decision: "approve",
-      text: provider === "agy" ? "Hello there" : "Hello",
+      text: "Hello",
       tool: true,
-      approval: provider !== "agy",
+      approval: true,
     });
     checks.push(...first);
-    if (provider === "agy") {
-      checks.push(...(await agyDecisions(bridge)));
-    } else {
-      checks.push(...(await oneTurn(bridge, run, { message: "DENY the build", decision: "deny", text: "Hello", tool: true, approval: true })).filter((item) => item.id === "approval-decision"));
-      checks.push(...(await oneTurn(bridge, run, { message: "ALWAYS allow the build", decision: "always_allow", text: "Hello", tool: true, approval: true })).filter((item) => item.id === "approval-decision"));
-    }
+    checks.push(...(await oneTurn(bridge, run, { message: "DENY the build", decision: "deny", text: "Hello", tool: true, approval: true })).filter((item) => item.id === "approval-decision"));
+    checks.push(...(await oneTurn(bridge, run, { message: "ALWAYS allow the build", decision: "always_allow", text: "Hello", tool: true, approval: true })).filter((item) => item.id === "approval-decision"));
     if (provider === "grok") checks.push(...(await jailTurn(bridge, run)));
     checks.push(...(await abortTurn(bridge)));
-    checks.push(...agyProcessChecks(provider, run, bridge));
     checks.push(...(await resumeTurn(bridge, run, provider)));
     checks.push(...envChecks(provider, run, bridge));
     checks.push(instructionsCheck(run));
@@ -362,7 +357,7 @@ async function oneTurn(bridge, run, spec) {
     const recorded = recordText(run);
     checks.push(check("approval-decision", decisionSeen(spec.decision, recorded), decisionSnippet(recorded)));
   } else {
-    await bridge.waitFor(() => bridge.textFrom(from).includes(spec.text) || bridge.events("agent_end", from).length > 0, 15000, "agy text");
+    await bridge.waitFor(() => bridge.textFrom(from).includes(spec.text) || bridge.events("agent_end", from).length > 0, 15000, "assistant text");
     checks.push(check("assistant-text", bridge.textFrom(from).includes(spec.text), bridge.textFrom(from)));
     const tool = bridge.events("tool_execution_start", from)[0];
     checks.push(check("tool-row", Boolean(tool), JSON.stringify(tool ?? null)));
@@ -380,23 +375,6 @@ function decisionSeen(decision, recorded) {
 function decisionSnippet(recorded) {
   const lines = recorded.split("\n").filter((line) => /decision|optionId|behavior|accept|decline|allow-|reject-/.test(line));
   return lines.slice(-4).join(" | ").slice(0, 500);
-}
-
-async function agyDecisions(bridge) {
-  const checks = [];
-  for (const decision of ["approve", "deny", "always_allow"]) {
-    const from = bridge.messages.length;
-    bridge.send({ type: "approval_response", id: `agy-${decision}`, decision });
-    await bridge.waitFor(() => bridge.responses("approval_response", from).length > 0, 5000, `agy ${decision}`);
-    const reply = bridge.responses("approval_response", from)[0];
-    const error = String(reply?.error ?? "");
-    checks.push(check(
-      `agy-${decision}`,
-      reply?.success === false && error.includes("cannot be sent") && reply?.data?.sent === false,
-      JSON.stringify(reply)
-    ));
-  }
-  return checks;
 }
 
 async function jailTurn(bridge, run) {
@@ -436,19 +414,6 @@ function spawnRows(run) {
     }
   }
   return rows;
-}
-
-function agyProcessChecks(provider, run, bridge) {
-  if (provider !== "agy") return [];
-  const streams = spawnRows(run).filter((row) => Array.isArray(row.argv) && row.argv.includes("stream-json"));
-  const sandboxed = streams.length > 0 && streams.every((row) => row.argv.includes("--sandbox") && row.cwd === run.project && !row.argv.includes("--dangerously-skip-permissions") && !row.argv.includes("--mode"));
-  const recorded = recordText(run);
-  bridge.sample();
-  return [
-    check("agy-sandbox", sandboxed, streams.map((row) => row.argv.join(" ")).join(" || ")),
-    check("agy-sigint", recorded.includes("SIGINT"), recorded.includes("SIGINT") ? "SIGINT recorded" : "no SIGINT"),
-    check("agy-no-permission-on-stdin", !recorded.includes("approval_response") && !recorded.includes("control_request"), "cli stdin"),
-  ];
 }
 
 async function abortTurn(bridge) {
@@ -571,7 +536,7 @@ async function driveProvider(provider) {
 }
 
 function driveGtk(provider) {
-  if (!PROVIDERS.includes(provider)) return Promise.resolve(2);
+  if (!GTK_PROVIDERS.includes(provider)) return Promise.resolve(2);
   const binary = join(REPO, "Linux/target/debug/pitex");
   if (!existsSync(binary)) {
     console.log(JSON.stringify({ pass: false, observed: `missing ${binary}` }));
@@ -668,7 +633,12 @@ async function main() {
   if (args.command === "doctor") process.exit(doctor());
   if (args.command === "cleanup") process.exit(cleanup());
   if (args.command === "gtk") {
-    process.exit(await driveGtk(args.provider === "all" ? "codex" : args.provider));
+    const provider = args.provider === "all" ? "codex" : args.provider;
+    if (!GTK_PROVIDERS.includes(provider)) {
+      usage();
+      process.exit(2);
+    }
+    process.exit(await driveGtk(provider));
   }
   if (args.command !== "drive") {
     usage();

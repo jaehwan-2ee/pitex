@@ -1,29 +1,29 @@
 # Antigravity
 
-Settings, AI, Assistant backend, Antigravity CLI. The bridge spawns `agy` with `--sandbox` and stream JSON. Headless mode cannot ask for permission.
+The window does not list Antigravity. A stored `agy` reads as pi and starts the built-in runtime. Headless stream-json cannot answer tool approvals, so this build does not start that adapter.
+
+The adapter source stays in the repo. `node --test Mac/Resources/PitexAgent/bridge/test.ts` still covers `new AgyAdapter()`.
 
 ## Sub-features
 
-- Stream text and show the command row.
-- Approve, Deny, and Always allow each return an error and send nothing to `agy`.
-- Abort a held turn with SIGINT.
-- Start a new conversation and resume the first one.
-- Report a missing `agy` binary, and `agy models` exiting with an authentication error, without exiting the bridge.
+- The picker lists pi, Codex, Claude Code, and Grok.
+- A saved `agy` still opens the built-in assistant.
+- The assistant does not launch `cli.ts`.
 
 ## How to get to it (user POV)
 
-Same Settings path as Codex. Choose Antigravity CLI (your login). The assistant may show a command row. Approve, Deny, and Always allow do not reach the CLI. The assistant reports that the permission cannot be sent.
+Open a `.tex` file. Press Ctrl+comma. Open the AI page. Open Assistant backend. The menu has no Antigravity row. Close Settings and open the assistant. A prompt stays on the built-in runtime.
 
 ## Driving it with verify-pitex
 
 ```sh
-node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs drive --provider agy
+node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider stale-agy
 ```
 
-Pass for `agy-approve`, `agy-deny`, and `agy-always_allow` means each response has `"success": false`, `"sent": false`, and an error that contains `cannot be sent`. Pass for `agy-sandbox` means every stream-json spawn argv contains `--sandbox`, omits `--dangerously-skip-permissions`, omits `--mode`, and the cwd is the project. Pass for `agy-sigint` means the CLI record contains `SIGINT`. Pass for `agy-no-permission-on-stdin` means that record has no `approval_response` and no `control_request`.
+Pass means the menu screenshot is taken while `ai.agentProvider` is still `agy`, the assistant composer is on screen after the prompt, the fake CLI record does not contain `Fix the title`, and no descendant of the Pitex pid has `cli.ts` in its command line. The stored value may still be `agy` or it may be `pi`.
+
+A normal `gtk` run for Codex, Claude Code, or Grok saves `02-menu.png` while the picker is open, before the row click.
 
 ## Gotchas
 
-The limit is the product behavior. A journey that expects Approve to run a command is the wrong journey. Do not weaken the checks so a delivered approval counts as a pass.
-
-The window command is `gtk --provider agy`. Pass there is the permission-limit sentence on screen and no approval response in the CLI record.
+`drive --provider agy` is a usage error. Doctor does not require `helpers/fakes/agy.mjs`. The file stays on disk.
