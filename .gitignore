@@ -26,6 +26,10 @@ paseo.json
 .cursor/*
 !.cursor/environment.json
 !.cursor/cloud-install.sh
+!.cursor/skills/
+!.cursor/skills/verify-pitex/
+!.cursor/skills/verify-pitex/**
+.cursor/skills/verify-pitex/evidence/
 .codegraph/
 .codex/
 .aider*
