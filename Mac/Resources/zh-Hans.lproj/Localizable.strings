@@ -348,7 +348,8 @@
 "settings.ai.backend_codex" = "Codex CLI（你的登录）";
 "settings.ai.backend_claude" = "Claude Code（你的登录）";
 "settings.ai.backend_grok" = "Grok CLI（你的登录）";
-"settings.ai.backend_note" = "Codex CLI 使用本机 `codex login`，Claude Code 使用本机 `claude`，Grok CLI 使用本机 `grok login`。Pitex 不会读取这些凭据文件。";
+"settings.ai.backend_agy" = "Antigravity CLI（你的登录）";
+"settings.ai.backend_note" = "Codex CLI 使用本机 `codex login`，Claude Code 使用本机 `claude`，Grok CLI 使用本机 `grok login`，Antigravity CLI 使用本机 `agy`。Pitex 不会读取这些凭据文件。";
 "settings.ai.location" = "安装位置";
 "settings.ai.attach_default" = "默认将活动文档附加到提示";
 "settings.ai.autocompletion" = "内联自动补全";

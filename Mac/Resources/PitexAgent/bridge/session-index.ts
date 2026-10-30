@@ -1,6 +1,7 @@
-// Per-project map from a Pitex session file to a Codex thread id.
-// The history list keeps scanning *.jsonl; this index is not a jsonl file,
-// so it never shows up as its own conversation.
+// Per-project map from a Pitex session file to a CLI conversation id
+// (Codex thread id, Claude session id, Grok session id, Antigravity
+// conversation id). The history list keeps scanning *.jsonl; this index is not
+// a jsonl file, so it never shows up as its own conversation.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -87,10 +88,38 @@ export function writeSessionPrelude(sessionPath: string, userText: string, cwd: 
   writeFileSync(sessionPath, `${JSON.stringify(header)}\n${JSON.stringify(message)}\n`, "utf8");
 }
 
+export function appendSessionMessage(sessionPath: string, message: Record<string, unknown>): void {
+  const line = { type: "message", message };
+  writeFileSync(sessionPath, `${JSON.stringify(line)}\n`, { encoding: "utf8", flag: "a" });
+}
+
 export function appendUserMessage(sessionPath: string, userText: string): void {
-  const message = {
-    type: "message",
-    message: { role: "user", content: [{ type: "text", text: userText }] },
-  };
-  writeFileSync(sessionPath, `${JSON.stringify(message)}\n`, { encoding: "utf8", flag: "a" });
+  appendSessionMessage(sessionPath, {
+    role: "user",
+    content: [{ type: "text", text: userText }],
+  });
+}
+
+/** Messages this bridge wrote into a session file. Skips the session header. */
+export function sessionMessages(sessionPath: string): Record<string, unknown>[] {
+  let text = "";
+  try {
+    text = readFileSync(sessionPath, "utf8");
+  } catch {
+    return [];
+  }
+  const messages: Record<string, unknown>[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as { type?: string; message?: Record<string, unknown> };
+      if (parsed.type === "message" && parsed.message && typeof parsed.message === "object") {
+        messages.push(parsed.message);
+      }
+    } catch {
+      // A torn final line is ignored; the next append rewrites nothing before it.
+    }
+  }
+  return messages;
 }

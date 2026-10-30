@@ -348,7 +348,8 @@
 "settings.ai.backend_codex" = "Codex CLI (đăng nhập của bạn)";
 "settings.ai.backend_claude" = "Claude Code (đăng nhập của bạn)";
 "settings.ai.backend_grok" = "Grok CLI (đăng nhập của bạn)";
-"settings.ai.backend_note" = "Codex CLI dùng `codex login`, Claude Code dùng `claude` và Grok CLI dùng `grok login` trên máy này. Pitex không đọc các tệp thông tin đăng nhập đó.";
+"settings.ai.backend_agy" = "Antigravity CLI (đăng nhập của bạn)";
+"settings.ai.backend_note" = "Codex CLI dùng `codex login`, Claude Code dùng `claude`, Grok CLI dùng `grok login` và Antigravity CLI dùng `agy` trên máy này. Pitex không đọc các tệp thông tin đăng nhập đó.";
 "settings.ai.location" = "Vị trí cài đặt";
 "settings.ai.attach_default" = "Đính kèm tài liệu đang mở vào prompt theo mặc định";
 "settings.ai.autocompletion" = "Tự động hoàn thành nội tuyến";
