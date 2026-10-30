@@ -1259,6 +1259,8 @@ fn bridge_script() -> Option<PathBuf> {
 fn bridge_missing_message(provider: &str) -> String {
     if provider == "claude" {
         "The Claude Code bridge is not installed with this Pitex build.".to_string()
+    } else if provider == "grok" {
+        "The Grok CLI bridge is not installed with this Pitex build.".to_string()
     } else {
         "The Codex bridge is not installed with this Pitex build.".to_string()
     }
@@ -1292,7 +1294,7 @@ pub struct AgentCoordinator {
     /// `get_commands` payload — slash commands the composer completes.
     pub commands: Vec<PiSlashCommand>,
     pub status_message: Option<String>,
-    /// `ai.agentProvider` — `pi`, `codex`, or `claude`. Read again at spawn.
+    /// `ai.agentProvider` — `pi`, `codex`, `claude`, or `grok`. Read again at spawn.
     agent_provider: String,
     /// Unanswered CLI approvals, oldest first. The panel shows the head.
     approval_queue: VecDeque<AgentApprovalRequest>,
@@ -3774,6 +3776,39 @@ mod toolchain_tests {
     }
 
     #[test]
+    fn grok_launch_plan_runs_the_bridge_with_session_env() {
+        let home = home("launchgrok");
+        let node = home.join("bin/node");
+        executable(&node, "#!/bin/sh\n");
+        let tools = PiToolchain {
+            environment: HashMap::new(),
+            bun: None,
+            node: Some(node.clone()),
+            npm: None,
+        };
+        let sessions = home.join("sessions");
+        let plan = AgentCoordinator::plan_launch("grok", Path::new("pi"), &sessions, &tools)
+            .expect("plan");
+        assert_eq!(plan.executable, node);
+        assert!(plan.arguments.iter().any(|arg| arg.ends_with("bridge/cli.ts")));
+        assert!(!plan.arguments.iter().any(|arg| arg == "--mode"));
+        assert_eq!(
+            plan.environment.get("PITEX_CLI_ADAPTER").map(String::as_str),
+            Some("grok")
+        );
+        assert_eq!(
+            plan.environment.get("PITEX_SESSION_DIR").map(String::as_str),
+            Some(sessions.to_str().unwrap())
+        );
+        assert!(plan.environment.contains_key("PITEX_DEVELOPER_INSTRUCTIONS"));
+        assert_eq!(
+            bridge_missing_message("grok"),
+            "The Grok CLI bridge is not installed with this Pitex build."
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn launch_uses_node_for_javascript_without_bun() {
         let home = home("launchnode");
         let node = home.join("bin/node");
@@ -4005,13 +4040,15 @@ mod session_history_tests {
     }
 
     #[test]
-    fn agent_provider_defaults_to_pi_and_accepts_codex() {
+    fn agent_provider_defaults_to_pi_and_accepts_codex_claude_or_grok() {
         let mut store = crate::settings::SettingsStore::new(Default::default());
         assert_eq!(store.agent_provider(), "pi");
         store.set_agent_provider("codex");
         assert_eq!(store.agent_provider(), "codex");
         store.set_agent_provider("claude");
         assert_eq!(store.agent_provider(), "claude");
+        store.set_agent_provider("grok");
+        assert_eq!(store.agent_provider(), "grok");
         store.set_agent_provider("other");
         assert_eq!(store.agent_provider(), "pi");
         let mut agent = AgentCoordinator::new(&store);
@@ -4020,5 +4057,9 @@ mod session_history_tests {
         assert_eq!(agent.agent_provider, "codex");
         agent.set_agent_provider("claude");
         assert_eq!(agent.agent_provider, "claude");
+        agent.set_agent_provider("grok");
+        assert_eq!(agent.agent_provider, "grok");
+        agent.set_agent_provider("other");
+        assert_eq!(agent.agent_provider, "pi");
     }
 }

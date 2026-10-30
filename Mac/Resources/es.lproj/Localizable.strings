@@ -347,7 +347,8 @@
 "settings.ai.backend_pi" = "pi (inicio de sesión del proveedor)";
 "settings.ai.backend_codex" = "Codex CLI (tu inicio de sesión)";
 "settings.ai.backend_claude" = "Claude Code (tu inicio de sesión)";
-"settings.ai.backend_note" = "Codex CLI usa la cuenta de `codex login` en este equipo. Pitex no lee los archivos de credenciales de Codex.";
+"settings.ai.backend_grok" = "Grok CLI (tu inicio de sesión)";
+"settings.ai.backend_note" = "Codex CLI usa `codex login`, Claude Code usa `claude` y Grok CLI usa `grok login` en este equipo. Pitex no lee esos archivos de credenciales.";
 "settings.ai.location" = "Ubicación de instalación";
 "settings.ai.attach_default" = "Adjuntar el documento activo a los prompts por defecto";
 "settings.ai.autocompletion" = "Autocompletado en línea";

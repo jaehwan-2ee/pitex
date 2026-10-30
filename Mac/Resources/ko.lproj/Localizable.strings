@@ -348,7 +348,8 @@
 "settings.ai.backend_pi" = "pi (공급자 로그인)";
 "settings.ai.backend_codex" = "Codex CLI (내 로그인)";
 "settings.ai.backend_claude" = "Claude Code (내 로그인)";
-"settings.ai.backend_note" = "Codex CLI는 이 컴퓨터의 `codex login` 계정을 사용합니다. Pitex는 Codex 자격 증명 파일을 읽지 않습니다.";
+"settings.ai.backend_grok" = "Grok CLI (내 로그인)";
+"settings.ai.backend_note" = "Codex CLI는 `codex login`, Claude Code는 `claude`, Grok CLI는 `grok login` 계정을 이 컴퓨터에서 사용합니다. Pitex는 그 자격 증명 파일을 읽지 않습니다.";
 "settings.ai.location" = "설치 위치";
 "settings.ai.attach_default" = "기본적으로 활성 문서를 프롬프트에 첨부";
 "settings.ai.autocompletion" = "인라인 자동 완성";

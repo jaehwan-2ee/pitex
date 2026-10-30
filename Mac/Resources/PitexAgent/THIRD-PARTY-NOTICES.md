@@ -33,7 +33,9 @@ The Codex CLI adapter in `bridge/` follows the shape of T3 Code v0.1.4
 (MIT): `packages/effect-codex-app-server` and
 `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`. Pitex does
 not include T3 Code source and does not include its managed ChatGPT OAuth
-broker. The MIT license is in
+broker. The Grok CLI adapter (`bridge/grok-adapter.ts`, `bridge/grok-map.ts`)
+uses that same Pitex adapter shape. It is original Pitex code and does not
+include T3 Code's Grok driver. The MIT license is in
 [licenses/t3code-MIT.txt](licenses/t3code-MIT.txt).
 Source: <https://github.com/pingdotgg/t3code/tree/v0.1.4>.
 
