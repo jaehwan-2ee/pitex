@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// pitex-agent-bridge — pi RPC JSONL on stdin/stdout, one official CLI behind it.
-// Milestone 1 selects the Codex adapter. The host (Pitex) discovers bun or
-// node the same way it launches pi, then runs this file.
+// pitex-agent-bridge. pi RPC JSONL on stdin and stdout, one official CLI behind it.
+// The host discovers bun or node the same way it launches pi, then runs this file.
 //
 // PITEX_SESSION_DIR              per-project session folder
 // PITEX_DEVELOPER_INSTRUCTIONS   editor instructions forwarded to the CLI

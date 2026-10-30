@@ -1294,7 +1294,6 @@ pub struct AgentCoordinator {
     /// `get_commands` payload — slash commands the composer completes.
     pub commands: Vec<PiSlashCommand>,
     pub status_message: Option<String>,
-    /// `ai.agentProvider`. `pi`, `codex`, `claude`, or `grok`.
     agent_provider: String,
     /// Unanswered CLI approvals, oldest first. The panel shows the head.
     approval_queue: VecDeque<AgentApprovalRequest>,
