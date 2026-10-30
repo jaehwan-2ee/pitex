@@ -43,6 +43,9 @@ const outsideFile = process.env.FAKE_OUTSIDE_FILE;
 const outsideDir = process.env.FAKE_OUTSIDE_DIR;
 const project = process.env.FAKE_ROOT;
 const nodeBin = process.env.FAKE_NODE;
+const shellLine = process.env.FAKE_SHELL_LINE;
+const argvCommand = process.env.FAKE_ARGV_COMMAND;
+const argvArgs = JSON.parse(process.env.FAKE_ARGV_ARGS || "[]");
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 let promptId = null;
@@ -134,8 +137,8 @@ function continueShell(msg) {
       method: "terminal/create",
       params: {
         sessionId: "sess-1",
-        command: "/bin/echo",
-        args: ["pitex-ok; echo injected"],
+        command: argvCommand,
+        args: argvArgs,
         cwd: project,
       },
     });
@@ -197,7 +200,7 @@ function handleRequest(msg) {
         method: "terminal/create",
         params: {
           sessionId: "sess-1",
-          command: "/bin/bash -lc 'echo pitex-ok'",
+          command: shellLine,
           cwd: project,
         },
       });
@@ -349,6 +352,21 @@ interface Boot {
   sessionDir: string;
 }
 
+function shellFixture(): { line: string; command: string; args: string[] } {
+  if (process.platform === "win32") {
+    return {
+      line: "echo pitex-ok",
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('pitex-ok; echo injected\\n')"],
+    };
+  }
+  return {
+    line: "/bin/bash -lc 'echo pitex-ok'",
+    command: "/bin/echo",
+    args: ["pitex-ok; echo injected"],
+  };
+}
+
 async function boot(options: { mode?: string; auth?: string; load?: string } = {}): Promise<Boot> {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "pitex-grok-")));
   const outside = realpathSync(mkdtempSync(join(tmpdir(), "pitex-grok-out-")));
@@ -380,6 +398,9 @@ async function boot(options: { mode?: string; auth?: string; load?: string } = {
       FAKE_OUTSIDE_FILE: join(outside, "secret.txt"),
       FAKE_OUTSIDE_DIR: outside,
       FAKE_NODE: process.execPath,
+      FAKE_SHELL_LINE: shellFixture().line,
+      FAKE_ARGV_COMMAND: shellFixture().command,
+      FAKE_ARGV_ARGS: JSON.stringify(shellFixture().args),
     },
   });
   return { adapter, collected, dir, outside, record, sessionDir };
@@ -852,18 +873,19 @@ test("a shell command line and an argv command both run as approved", { timeout:
     await waitUntil("shell approval", () =>
       collected.events.some((event) => event.type === "approval_request" && event.id === "80")
     );
+    const fixture = shellFixture();
     const shellApproval = collected.events.find((event) => event.id === "80");
     assert.equal(shellApproval?.kind, "command");
-    assert.equal(shellApproval?.detail, "/bin/bash -lc 'echo pitex-ok'");
+    assert.equal(shellApproval?.detail, fixture.line);
     await adapter.handleCommand({ type: "approval_response", id: "80", decision: "approve" }, collected.host);
     await waitUntil("argv approval", () =>
       collected.events.some((event) => event.type === "approval_request" && event.id === "83")
     );
     const shellOut = parseLines(readFileSync(record, "utf8")).find((line) => line.id === 82);
-    assert.equal(shellOut?.result?.output, "pitex-ok\n");
+    assert.equal(String(shellOut?.result?.output).replace(/\r\n/g, "\n"), "pitex-ok\n");
     assert.equal(shellOut?.result?.exitStatus?.exitCode, 0);
     const argvApproval = collected.events.find((event) => event.id === "83");
-    assert.equal(argvApproval?.detail, "/bin/echo pitex-ok; echo injected");
+    assert.equal(argvApproval?.detail, [fixture.command, ...fixture.args].join(" "));
     await adapter.handleCommand({ type: "approval_response", id: "83", decision: "approve" }, collected.host);
     await waitUntil("shell turn", () => collected.events.some((event) => event.type === "agent_end"));
     const argvOut = parseLines(readFileSync(record, "utf8")).find((line) => line.id === 85);
