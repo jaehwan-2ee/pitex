@@ -1134,8 +1134,6 @@ final class GhostCompletionCoordinator {
         }
     }
 
-    /// A queued exit carries the launch token. A weak process pointer is
-    /// nil after release, and that nil used to clear the replacement.
     private func processDidExit(_ token: UInt64) {
         guard processEpoch.isCurrent(token) else { return }
         process = nil

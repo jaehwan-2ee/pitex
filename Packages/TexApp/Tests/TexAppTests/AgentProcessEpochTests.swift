@@ -1,7 +1,6 @@
 import AppPorts
 import XCTest
 
-/// An exit from the process Pitex just replaced must not fail the new one.
 final class AgentProcessEpochTests: XCTestCase {
     func testAnOldAgentExitCannotFailTheReplacement() {
         var epoch = AgentProcessEpoch()

@@ -355,9 +355,7 @@ function rememberTerminalOutput(term: LiveTerminal, chunk: Buffer): void {
  * `terminal/create` arrives in two shapes. A filled `args` list is the
  * program plus its argv, and those strings are not a shell line. An empty
  * list means `command` is the whole shell command, which is what the Grok
- * CLI sends (`/bin/bash -lc 'echo pitex-ok'`). That line is one argument to
- * the shell, so quotes stay inside the command the user approved and a
- * structured argv is never parsed again.
+ * CLI sends (`/bin/bash -lc 'echo pitex-ok'`).
  */
 export function terminalSpawnSpec(
   command: string,

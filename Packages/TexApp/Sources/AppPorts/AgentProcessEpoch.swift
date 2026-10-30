@@ -1,11 +1,5 @@
 import Foundation
 
-/// Token for one agent subprocess launch.
-///
-/// The exit callback cannot carry the process. A weak reference is nil
-/// once that process has been released, and a nil check then matches the
-/// process that is running now. Each launch takes the next token. An exit
-/// applies only when its token is still the current launch.
 public struct AgentProcessEpoch: Equatable, Sendable {
     private var current: UInt64 = 0
 
