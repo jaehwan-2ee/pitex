@@ -1,11 +1,7 @@
 #!/usr/bin/env node
-// pitex-agent-bridge — pi RPC JSONL on stdin/stdout, one official CLI behind it.
-// Milestone 1 selects the Codex adapter. The host (Pitex) discovers bun or
-// node the same way it launches pi, then runs this file.
-//
 // PITEX_SESSION_DIR              per-project session folder
 // PITEX_DEVELOPER_INSTRUCTIONS   editor instructions forwarded to the CLI
-// PITEX_CLI_ADAPTER              adapter id: "codex" (default), "claude", "grok", or "agy"
+// PITEX_CLI_ADAPTER              adapter id: "codex" (default), "claude", and "grok".
 // CODEX_PATH                     optional explicit Codex CLI binary
 // CLAUDE_PATH                    optional explicit Claude Code CLI binary
 // GROK_PATH                      optional explicit Grok CLI binary

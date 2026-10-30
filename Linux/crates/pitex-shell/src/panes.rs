@@ -2752,36 +2752,26 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     agent_group.set_title(&tr(lang, "settings.ai.agent"));
     let backend_row = adw::ActionRow::new();
     backend_row.set_title(&tr(lang, "settings.ai.backend"));
-    let backend_pi = tr(lang, "settings.ai.backend_pi");
-    let backend_codex = tr(lang, "settings.ai.backend_codex");
-    let backend_claude = tr(lang, "settings.ai.backend_claude");
-    let backend_grok = tr(lang, "settings.ai.backend_grok");
-    let backend_agy = tr(lang, "settings.ai.backend_agy");
-    let backend = gtk4::DropDown::from_strings(&[
-        backend_pi.as_str(),
-        backend_codex.as_str(),
-        backend_claude.as_str(),
-        backend_grok.as_str(),
-        backend_agy.as_str(),
-    ]);
-    backend.set_selected(match state.borrow().store.agent_provider().as_str() {
-        "codex" => 1,
-        "claude" => 2,
-        "grok" => 3,
-        "agy" => 4,
-        _ => 0,
-    });
+    let labels: Vec<String> = crate::settings::AGENT_PROVIDER_CHOICES
+        .iter()
+        .map(|choice| tr(lang, choice.label_key))
+        .collect();
+    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let backend = gtk4::DropDown::from_strings(&label_refs);
+    let current = state.borrow().store.agent_provider();
+    let selected = crate::settings::AGENT_PROVIDER_CHOICES
+        .iter()
+        .position(|choice| choice.id == current)
+        .unwrap_or(0);
+    backend.set_selected(selected as u32);
     a11y(&backend, "pitex.settings.ai.backend", "settings.ai.backend");
     {
         let state = state.clone();
         backend.connect_selected_notify(move |dd| {
-            let next = match dd.selected() {
-                1 => "codex",
-                2 => "claude",
-                3 => "grok",
-                4 => "agy",
-                _ => "pi",
-            };
+            let next = crate::settings::AGENT_PROVIDER_CHOICES
+                .get(dd.selected() as usize)
+                .map(|choice| choice.id)
+                .unwrap_or("pi");
             let Ok(mut s) = state.try_borrow_mut() else { return };
             if s.store.agent_provider() == next {
                 return;

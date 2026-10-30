@@ -1,5 +1,3 @@
-// Per-CLI adapter. Codex, Claude Code, Grok, and Antigravity (`agy`) are registered.
-//
 // Design adapted from T3 Code v0.1.4 (MIT), Copyright (c) 2026 T3 Tools Inc.
 // https://github.com/pingdotgg/t3code
 // See packages/effect-codex-app-server and
@@ -45,7 +43,8 @@ export interface CliAdapter {
 }
 
 export async function createAdapter(id: string): Promise<CliAdapter> {
-  switch (id) {
+  const selected = id === "agy" ? "codex" : id;
+  switch (selected) {
     case "codex": {
       const { CodexAdapter } = await import("./codex-adapter.ts");
       return new CodexAdapter();
@@ -58,13 +57,9 @@ export async function createAdapter(id: string): Promise<CliAdapter> {
       const { GrokAdapter } = await import("./grok-adapter.ts");
       return new GrokAdapter();
     }
-    case "agy": {
-      const { AgyAdapter } = await import("./agy-adapter.ts");
-      return new AgyAdapter();
-    }
     default:
       throw new Error(
-        `Unknown CLI adapter "${id}". This Pitex build can drive the Codex CLI, Claude Code, the Grok CLI, or the Antigravity CLI.`
+        `Unknown CLI adapter "${id}". This Pitex build can drive the Codex CLI, Claude Code, or the Grok CLI.`
       );
   }
 }

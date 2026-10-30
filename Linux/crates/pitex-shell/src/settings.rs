@@ -130,20 +130,52 @@ impl Preferences {
     }
 }
 
-/// `ai.agentProvider` is `pi`, `codex`, `claude`, `grok`, or `agy`. Anything else is pi.
-pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
-    match value {
-        Some("codex") => "codex",
-        Some("claude") => "claude",
-        Some("grok") => "grok",
-        Some("agy") => "agy",
-        _ => "pi",
-    }
+pub(crate) struct AgentProviderChoice {
+    pub id: &'static str,
+    pub label_key: &'static str,
+    pub uses_bridge: bool,
 }
 
-/// Codex, Claude Code, Grok CLI, and Antigravity CLI all launch the bundled bridge.
+pub(crate) const AGENT_PROVIDER_CHOICES: &[AgentProviderChoice] = &[
+    AgentProviderChoice {
+        id: "pi",
+        label_key: "settings.ai.backend_pi",
+        uses_bridge: false,
+    },
+    AgentProviderChoice {
+        id: "codex",
+        label_key: "settings.ai.backend_codex",
+        uses_bridge: true,
+    },
+    AgentProviderChoice {
+        id: "claude",
+        label_key: "settings.ai.backend_claude",
+        uses_bridge: true,
+    },
+    AgentProviderChoice {
+        id: "grok",
+        label_key: "settings.ai.backend_grok",
+        uses_bridge: true,
+    },
+];
+
+/// `ai.agentProvider` is `pi`, `codex`, `claude`, or `grok`. Anything else is pi.
+pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
+    value
+        .and_then(|raw| {
+            AGENT_PROVIDER_CHOICES
+                .iter()
+                .find(|choice| choice.id == raw)
+                .map(|choice| choice.id)
+        })
+        .unwrap_or("pi")
+}
+
+/// Codex, Claude Code, and Grok CLI launch the bundled bridge.
 pub fn agent_provider_uses_bridge(value: &str) -> bool {
-    matches!(value, "codex" | "claude" | "grok" | "agy")
+    AGENT_PROVIDER_CHOICES
+        .iter()
+        .any(|choice| choice.uses_bridge && choice.id == value)
 }
 
 /// Port of `SettingsStore` — every @Published field with its UserDefaults key
@@ -341,7 +373,7 @@ impl SettingsStore {
     pub fn set_ai_font_size(&mut self, v: f64) {
         self.prefs.set("ai.fontSize", v);
     }
-    /// `ai.agentProvider` — `pi` (provider sign-in), `codex`, `claude`, `grok`, or `agy`.
+    /// `ai.agentProvider`. `pi` (provider sign-in), `codex`, `claude`, or `grok`.
     pub fn agent_provider(&self) -> String {
         normalize_agent_provider(self.prefs.string("ai.agentProvider").as_deref()).into()
     }
