@@ -351,6 +351,26 @@ function rememberTerminalOutput(term: LiveTerminal, chunk: Buffer): void {
   term.output = bytes.subarray(offset).toString("utf8");
 }
 
+/**
+ * `terminal/create` arrives in two shapes. A filled `args` list is the
+ * program plus its argv, and those strings are not a shell line. An empty
+ * list means `command` is the whole shell command, which is what the Grok
+ * CLI sends (`/bin/bash -lc 'echo pitex-ok'`). That line is one argument to
+ * the shell, so quotes stay inside the command the user approved and a
+ * structured argv is never parsed again.
+ */
+export function terminalSpawnSpec(
+  command: string,
+  args: readonly string[],
+  platform = process.platform
+): { command: string; args: string[]; verbatim: boolean } {
+  if (args.length > 0) return { command, args: [...args], verbatim: false };
+  if (platform === "win32") {
+    return { command: "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
+  }
+  return { command: "/bin/sh", args: ["-c", command], verbatim: false };
+}
+
 function terminalEnv(base: NodeJS.ProcessEnv, requested: unknown): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
   if (!Array.isArray(requested)) return env;
@@ -992,11 +1012,13 @@ export class GrokAdapter implements CliAdapter {
     const done = new Promise<void>((resolve) => {
       settle = resolve;
     });
-    const child = spawn(command, args, {
+    const launch = terminalSpawnSpec(command, args);
+    const child = spawn(launch.command, launch.args, {
       cwd,
       env: terminalEnv(this.env, env),
       shell: false,
       windowsHide: true,
+      windowsVerbatimArguments: launch.verbatim,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const term: LiveTerminal = {

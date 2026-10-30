@@ -97,14 +97,17 @@ function startPrompt(msg) {
     send({ jsonrpc: "2.0", id: 55, method: "fs/write_text_file", params: { sessionId: "sess-1", path: `${project}/from-grok.txt`, content: "written-inside\n" } });
     send({ jsonrpc: "2.0", id: 56, method: "fs/write_text_file", params: { sessionId: "sess-1", path: `${outsideDir}/pwned.txt`, content: "written-outside\n" } });
     send({ jsonrpc: "2.0", id: 52, method: "terminal/create", params: { sessionId: "sess-1", command: "hostname", cwd: outsideDir } });
+    const script =
+      "const fs=require('fs'); fs.writeFileSync(process.env.FAKE_CWD_FILE, process.cwd()); process.stdout.write('scoped-ok'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);";
+    const quotedNode = `'${String(nodeBin).replaceAll("'", "'\\''")}'`;
+    const quotedScript = `'${script.replaceAll("'", "'\\''")}'`;
     send({
       jsonrpc: "2.0",
       id: 53,
       method: "terminal/create",
       params: {
         sessionId: "sess-1",
-        command: nodeBin,
-        args: ["-e", "const fs=require('fs'); fs.writeFileSync(process.env.FAKE_CWD_FILE, process.cwd()); process.stdout.write('scoped-ok'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);"],
+        command: `${quotedNode} -e ${quotedScript}`,
         cwd: project,
       },
     });

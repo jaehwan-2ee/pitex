@@ -10,7 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
-import { GROK_SIGNED_OUT, GrokAdapter, findGrok, grokLaunchSpec } from "./grok-adapter.ts";
+import { GROK_SIGNED_OUT, GrokAdapter, findGrok, grokLaunchSpec, terminalSpawnSpec } from "./grok-adapter.ts";
 import {
   approvalFromPermission,
   cancelledPermission,
@@ -823,6 +823,24 @@ test("filesystem reads and terminals are jailed to the project", { timeout: 20_0
   } finally {
     await shutdown(booted);
   }
+});
+
+test("an empty argv is one shell script and a filled argv is the program", () => {
+  assert.deepEqual(terminalSpawnSpec("/bin/bash -lc 'echo pitex-ok'", [], "linux"), {
+    command: "/bin/sh",
+    args: ["-c", "/bin/bash -lc 'echo pitex-ok'"],
+    verbatim: false,
+  });
+  assert.deepEqual(terminalSpawnSpec("/bin/echo", ["pitex-ok; echo injected"], "linux"), {
+    command: "/bin/echo",
+    args: ["pitex-ok; echo injected"],
+    verbatim: false,
+  });
+  assert.deepEqual(terminalSpawnSpec("echo pitex-ok", [], "win32"), {
+    command: "cmd.exe",
+    args: ["/d", "/s", "/c", '"echo pitex-ok"'],
+    verbatim: true,
+  });
 });
 
 test("a shell command line and an argv command both run as approved", { timeout: 20_000 }, async () => {

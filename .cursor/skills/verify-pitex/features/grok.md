@@ -27,3 +27,5 @@ The project contains `note.txt` with `inside-note`. A sibling directory contains
 Resume text from the CLI is the loaded session chunk `Restored`. The pass is that string, or the original prompt, in `get_messages`.
 
 The Grok process cwd in `proc.json` is the project directory.
+
+The in-project terminal request puts the whole shell command in `command` and omits `args`. That is the shape the Grok CLI sends for `terminal/create`.
