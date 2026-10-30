@@ -137,6 +137,7 @@ jobs:
             | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | LC_ALL=C sort -u > /tmp/l.txt
           printf '%s\n' libTECkit libfreetype libgraphite2 libharfbuzz \
             libicudata libicuuc libicui18n libpng16 libz \
+            libbrotlidec libbrotlicommon \
             | LC_ALL=C sort > /tmp/l.want
           diff /tmp/l.txt /tmp/l.want || { echo "helper dylib set mismatch" >&2; exit 1; }
           # Notices: presence of the fixed project/provenance files plus one
@@ -152,7 +153,7 @@ jobs:
             external/teckit/license/License_LGPLv21.txt \
             external/harfbuzz/COPYING \
             freetype/LICENSE.TXT graphite2/LICENSE icu4c@78/LICENSE \
-            libpng/LICENSE zlib/LICENSE; do
+            libpng/LICENSE zlib/LICENSE brotli/LICENSE; do
             [ -e "$RP/$n" ] || { echo "missing notice $n" >&2; exit 1; }
           done
       - name: Ad-hoc sign and create DMG
@@ -599,7 +600,8 @@ jobs:
           # B3/U43: check the EXPECTED NAMES, not a count (the CI payload has
           # no glib/intl/pcre2). Helpers = pitex-preview, pitex-preview-xetex
           # + one each of libTECkit/libfreetype/libgraphite2/libharfbuzz/
-          # libicudata.78/libicuuc.78/libicui18n.78/libpng16/libz; nothing else.
+          # libicudata.78/libicuuc.78/libicui18n.78/libpng16/libz and
+          # FreeType's WOFF2 deps libbrotlidec/libbrotlicommon; nothing else.
           H="$GITHUB_WORKSPACE/pe-payload/Contents/Helpers/PreviewEngine"
           [ -d "$H" ] || { echo "no helper payload dir: $H" >&2; exit 1; }
           find "$H" -maxdepth 1 -type f ! -name '*.dylib' -exec basename {} \; \
@@ -611,9 +613,19 @@ jobs:
             | sed -E 's/\.[0-9.]+\.dylib$//; s/\.dylib$//' | LC_ALL=C sort -u > /tmp/libs.txt
           printf '%s\n' libTECkit libfreetype libgraphite2 libharfbuzz \
             libicudata libicuuc libicui18n libpng16 libz \
+            libbrotlidec libbrotlicommon \
             | LC_ALL=C sort > /tmp/libs.want
           diff /tmp/libs.txt /tmp/libs.want \
             || { echo "helper dylib set mismatch" >&2; exit 1; }
+          echo "=== otool -L bundled preview helpers ==="
+          bins=$(find "$H" \( -name '*.dylib' -o -name 'pitex-preview' -o -name 'pitex-preview-xetex' \) -type f | LC_ALL=C sort)
+          while IFS= read -r bin; do
+            [ -n "$bin" ] || continue
+            echo "-- $bin"
+            otool -L "$bin"
+          done <<EOF
+          $bins
+          EOF
           # D6: assert the bundled ICU dylibs are major 78.
           find "$H/lib" -name 'libicuuc.*' | grep -q 'libicuuc\.78\.' \
             || { echo "bundled ICU not major 78" >&2; exit 1; }
