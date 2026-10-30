@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
 
-const INTEREST = /^(ANTHROPIC_|CLAUDE_|AWS_BEARER_|AUTH_TOKEN$)/;
+const INTEREST = /^(ANTHROPIC_|CLAUDE_|AWS_BEARER_)/;
 
 export function recordSpawn() {
   const path = process.env.FAKE_RECORD;

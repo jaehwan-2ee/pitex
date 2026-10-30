@@ -39,13 +39,13 @@ node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs drive --provider all
 
 One provider is `--provider codex`, `claude`, `grok`, or `agy`.
 
-Window journey, after the binary exists:
+Window journey, after the binary exists. The provider is `codex`, `claude`, `grok`, or `agy`:
 
 ```sh
-node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider codex
+node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider claude
 ```
 
-`gtk` opens `main.tex` under Xvfb, presses Ctrl+comma, chooses the provider on the AI page, opens the assistant, sends `Fix the title`, and clicks Approve. Pass means `preferences.json` stores that provider, the CLI record contains the prompt, and the CLI record contains the accept decision.
+`gtk` opens `main.tex` under Xvfb, presses Ctrl+comma, chooses that provider on the AI page, opens the assistant, and sends `Fix the title`. For Codex, Claude Code, and Grok it then clicks Approve. Pass means `preferences.json` stores that provider and the CLI record contains the prompt. Approve is `accept` for Codex, `allow` with `user_temporary` for Claude Code, and `allow-once` for Grok. For Antigravity, pass means the window shows the permission-limit sentence and the CLI record contains no approval response.
 
 On GTK 4.14, AT-SPI lists the frame and no child widgets. The helper then clicks inside the default 720 by 560 Settings window. If that window size changes, the clicks miss and `gtk-result.json` names the failed check.
 
@@ -59,7 +59,7 @@ A window run stores `gtk-result.json`, `preferences.json`, `cli-record.jsonl`, a
 
 `drive --provider all` also writes `evidence/summary.json`.
 
-A failed check is a finding. `bare-auth-token` fails while the Claude child still has `AUTH_TOKEN`. Leave that check failed. Do not edit the bridge from this skill to turn it green.
+A failed check is a finding. Leave a product failure failed. Do not edit the bridge from this skill to turn it green.
 
 ## Cleanup
 

@@ -25,3 +25,5 @@ Pass for `agy-approve`, `agy-deny`, and `agy-always_allow` means each response h
 ## Gotchas
 
 The limit is the product behavior. A journey that expects Approve to run a command is the wrong journey. Do not weaken the checks so a delivered approval counts as a pass.
+
+The window command is `gtk --provider agy`. Pass there is the permission-limit sentence on screen and no approval response in the CLI record.

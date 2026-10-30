@@ -56,10 +56,13 @@ def main():
         run(["xdotool", "type", "--delay", "12", "Fix the title"])
         time.sleep(0.15)
         run(["xdotool", "key", "Return"])
-        time.sleep(1.4)
+        time.sleep(2.5)
         shot(evidence / "04-sent.png")
-        click(470, 716)
-        time.sleep(1.0)
+        if provider != "agy":
+            click(470, 716)
+            time.sleep(1.2)
+        else:
+            time.sleep(0.8)
         shot(evidence / "05-approved.png")
         prefs = Path(os.environ["HOME"]) / ".config" / "pitex" / "preferences.json"
         saved = ""
@@ -69,8 +72,14 @@ def main():
         record = Path(os.environ["FAKE_RECORD"]).read_text() if Path(os.environ["FAKE_RECORD"]).exists() else ""
         result["providerSaved"] = f'"ai.agentProvider": "{provider}"' in saved
         result["promptReachedCli"] = "Fix the title" in record
-        result["approvalReachedCli"] = 'decision\\":\\"accept' in record or '"decision":"accept"' in record
-        result["pass"] = result["providerSaved"] and result["promptReachedCli"] and result["approvalReachedCli"]
+        if provider == "agy":
+            visible = screen_text(evidence, Path(os.environ["HOME"]))
+            result["permissionLimit"] = "no interactive permission" in visible or "cannot be sent" in visible
+            result["noApprovalOnStdin"] = "approval_response" not in record
+            result["pass"] = result["providerSaved"] and result["promptReachedCli"] and result["permissionLimit"] and result["noApprovalOnStdin"]
+        else:
+            result["approvalReachedCli"] = approval_reached(provider, record)
+            result["pass"] = result["providerSaved"] and result["promptReachedCli"] and result["approvalReachedCli"]
         result["steps"].append("sent")
         write(evidence, result)
         return 0 if result["pass"] else 1
@@ -101,6 +110,31 @@ def click_window(window, x, y):
 
 def shot(path):
     run(["import", "-window", "root", str(path)])
+
+
+def approval_reached(provider, record):
+    if provider == "claude":
+        return "user_temporary" in record and "allow" in record
+    if provider == "grok":
+        return "allow-once" in record
+    return 'decision\\":\\"accept' in record or '"decision":"accept"' in record
+
+
+def screen_text(evidence, home):
+    chunks = []
+    for path in sorted(evidence.glob("*.png")):
+        proc = subprocess.run(["tesseract", str(path), "stdout"], capture_output=True, text=True)
+        chunks.append(proc.stdout)
+    root = home / ".config" / "pitex"
+    if root.exists():
+        for path in root.rglob("*"):
+            if not path.is_file() or path.stat().st_size > 2_000_000:
+                continue
+            try:
+                chunks.append(path.read_text(errors="replace"))
+            except OSError:
+                continue
+    return "\n".join(chunks)
 
 
 def wait_window(pattern):

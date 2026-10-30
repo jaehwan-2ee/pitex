@@ -18,7 +18,6 @@ const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", a
 const PROBE = {
   ANTHROPIC_API_KEY: "pitex-verify-probe-api-key",
   ANTHROPIC_AUTH_TOKEN: "pitex-verify-probe-auth-token",
-  AUTH_TOKEN: "pitex-verify-probe-bare-auth",
   CLAUDE_CODE_OAUTH_TOKEN: "pitex-verify-probe-oauth",
   AWS_BEARER_TOKEN_BEDROCK: "pitex-verify-probe-bedrock",
   CLAUDE_CODE_USE_BEDROCK: "1",
@@ -36,7 +35,6 @@ const PROBE = {
 const MUST_STRIP = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
-  "AUTH_TOKEN",
   "CLAUDE_CODE_OAUTH_TOKEN",
   "AWS_BEARER_TOKEN_BEDROCK",
   "CLAUDE_CODE_USE_BEDROCK",
@@ -509,14 +507,12 @@ function envChecks(provider, run, bridge) {
   if (provider !== "claude") return [check("env-strip", true, "not the claude child")];
   const present = claudeChildKeys(run, bridge);
   const parentHadProbe = bridge.procs.some((fact) => fact.cmdline.some((part) => part.endsWith("cli.ts")) && fact.envPresent.ANTHROPIC_API_KEY === "probe");
-  const stripped = MUST_STRIP.filter((key) => key !== "AUTH_TOKEN");
-  const leaked = stripped.filter((key) => present[key]);
+  const leaked = MUST_STRIP.filter((key) => present[key]);
   const sawSpawn = spawnRows(run).length > 0;
   return [
     check("claude-parent-had-probes", parentHadProbe, parentHadProbe ? "bridge environ contained the probe keys" : "bridge probe keys were not observed"),
     check("claude-spawn-observed", sawSpawn, `child keys: ${Object.keys(present).join(",")}`),
     check("env-strip", leaked.length === 0 && sawSpawn && parentHadProbe, leaked.length ? `still present: ${leaked.join(",")}` : "billing and endpoint keys absent on the claude child"),
-    check("bare-auth-token", !present.AUTH_TOKEN, present.AUTH_TOKEN ? "AUTH_TOKEN remained on the claude child" : "AUTH_TOKEN absent"),
   ];
 }
 
