@@ -151,6 +151,40 @@ rl.on("line", (line) => {
       finish("success", "Noted");
       return;
     }
+    if (text.includes("READONLY")) {
+      streamText("pitex-ok");
+      send({
+        type: "assistant",
+        session_id: session,
+        message: { role: "assistant", content: [{ type: "text", text: "pitex-ok" }] },
+      });
+      finish("success", "pitex-ok");
+      return;
+    }
+    if (text.includes("TOUCH")) {
+      send({
+        type: "assistant",
+        session_id: session,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Hello" },
+            { type: "tool_use", id: "toolu_touch", name: "Bash", input: { command: "touch pitex-ok" } },
+          ],
+        },
+      });
+      send({
+        type: "control_request",
+        request_id: "perm-touch",
+        request: {
+          subtype: "can_use_tool",
+          tool_name: "Bash",
+          input: { command: "touch pitex-ok" },
+          tool_use_id: "toolu_touch",
+        },
+      });
+      return;
+    }
     streamText("Hello");
     askBash();
   }

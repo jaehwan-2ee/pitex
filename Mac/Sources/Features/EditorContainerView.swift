@@ -1,4 +1,5 @@
 import AppKit
+import AppPorts
 import EditorMacAdapter
 import LanguageCore
 import SwiftUI
@@ -991,6 +992,7 @@ final class GhostCompletionCoordinator {
     private var eventTask: Task<Void, Never>?
     private var prepareTask: Task<Void, Never>?
     private var process: PiAgentProcess?
+    private var processEpoch = AgentProcessEpoch()
     /// Spawn/resolution failures latch here until the next `attach`, so a
     /// missing pi costs one probe per document — not one per idle pause.
     private var piUnavailable = false
@@ -1109,8 +1111,14 @@ final class GhostCompletionCoordinator {
                     environment: AgentCoordinator.childEnvironment(
                         executable: launch.executable, environment: tools.environment)
                 )
-                try agent.start { [weak self, weak agent] in
-                    Task { @MainActor in self?.processDidExit(agent) }
+                let token = processEpoch.beginLaunch()
+                do {
+                    try agent.start { [weak self] in
+                        Task { @MainActor in self?.processDidExit(token) }
+                    }
+                } catch {
+                    processEpoch.retire()
+                    throw error
                 }
                 process = agent
                 eventTask?.cancel()
@@ -1126,11 +1134,8 @@ final class GhostCompletionCoordinator {
         }
     }
 
-    /// Identity-guarded like `AgentCoordinator.processDidExit`: a queued
-    /// onExit from the old process must not clear a replacement that
-    /// already spawned between the exit and this MainActor hop.
-    private func processDidExit(_ exited: PiAgentProcess?) {
-        guard exited == nil || process === exited else { return }
+    private func processDidExit(_ token: UInt64) {
+        guard processEpoch.isCurrent(token) else { return }
         process = nil
         armed = false
         runStarted = false
@@ -1240,6 +1245,7 @@ final class GhostCompletionCoordinator {
 
     /// Workspace close — terminate the subprocess and drop every hook.
     func shutdown() {
+        processEpoch.retire()
         debounceTask?.cancel()
         prepareTask?.cancel()
         eventTask?.cancel()

@@ -3,6 +3,7 @@
 // Run via: node --test Mac/Resources/PitexAgent/bridge/test.ts
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -520,6 +521,170 @@ test("claude fake query round trip approves, resumes, and starts a clean session
   }
 });
 
+test("a mutating Bash command and a file write wait for approval", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-mutate-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const opened: Opened[] = [];
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery(opened, "mutate"),
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  const collected = collect();
+  try {
+    await adapter.start({
+      cwd: dir,
+      sessionDir: dir,
+      env: { PATH: "", HOME: dir, CLAUDE_PATH: binary },
+    });
+    await adapter.handleCommand({ type: "prompt", id: "p", message: "touch pitex-ok" }, collected.host);
+    await waitUntil(
+      () => collected.events.some((event) => event.type === "approval_request" && event.id === "toolu_touch"),
+      "touch approval"
+    );
+    assert.equal(opened[0].query.permissions.length, 0);
+    const touch = collected.events.find((event) => event.id === "toolu_touch");
+    assert.equal(touch?.kind, "command");
+    assert.equal(touch?.detail, "touch pitex-ok");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(opened[0].query.permissions.length, 0);
+    assert.equal(collected.events.some((event) => event.type === "agent_end"), false);
+    await adapter.handleCommand({ type: "approval_response", id: "toolu_touch", decision: "approve" }, collected.host);
+    await waitUntil(
+      () => collected.events.some((event) => event.type === "approval_request" && event.id === "toolu_write"),
+      "write approval"
+    );
+    assert.equal(opened[0].query.permissions.length, 1);
+    assert.equal(opened[0].query.permissions[0].behavior, "allow");
+    const write = collected.events.find((event) => event.id === "toolu_write");
+    assert.equal(write?.kind, "file");
+    assert.equal(write?.detail, "Write pitex-ok.txt");
+    assert.equal(collected.events.some((event) => event.type === "agent_end"), false);
+    await adapter.handleCommand({ type: "approval_response", id: "toolu_write", decision: "deny" }, collected.host);
+    await waitUntil(() => collected.events.some((event) => event.type === "agent_end"), "turn end");
+    assert.equal(opened[0].query.permissions[1].behavior, "deny");
+    assert.equal(existsSync(join(dir, "pitex-ok.txt")), false);
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+interface ClaudeFakeMessage {
+  type?: string;
+  result?: string;
+  request?: { subtype?: string; input?: { command?: string } };
+}
+
+function claudeFakeTurn(
+  fake: string,
+  prompt: string,
+  drive?: (session: {
+    messages: ClaudeFakeMessage[];
+    send(value: unknown): void;
+    waitFor(label: string, ready: (messages: ClaudeFakeMessage[]) => boolean): Promise<void>;
+  }) => Promise<void>
+): Promise<{ messages: ClaudeFakeMessage[] }> {
+  const child = spawn(process.execPath, [fake], { stdio: ["pipe", "pipe", "pipe"] });
+  const messages: ClaudeFakeMessage[] = [];
+  let buffer = "";
+  const session = {
+    messages,
+    send(value: unknown) {
+      child.stdin.write(`${JSON.stringify(value)}\n`);
+    },
+    waitFor(label: string, ready: (rows: ClaudeFakeMessage[]) => boolean) {
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          clearInterval(interval);
+          reject(new Error(`timed out waiting for ${label}: ${JSON.stringify(messages)}`));
+        }, 2500);
+        const interval = setInterval(() => {
+          if (!ready(messages)) return;
+          clearTimeout(timer);
+          clearInterval(interval);
+          resolve();
+        }, 10);
+      });
+    },
+  };
+  child.stdout.on("data", (chunk: Buffer) => {
+    buffer += chunk.toString("utf8");
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      messages.push(JSON.parse(line) as ClaudeFakeMessage);
+    }
+  });
+  session.send({
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: prompt }] },
+  });
+  const done = new Promise<{ messages: ClaudeFakeMessage[] }>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`timed out: ${JSON.stringify(messages)}`));
+    }, 3000);
+    const finish = () => {
+      clearTimeout(timer);
+      child.kill();
+      resolve({ messages });
+    };
+    if (!drive) {
+      const interval = setInterval(() => {
+        if (messages.some((message) => message.type === "result" || message.request?.subtype === "can_use_tool")) {
+          clearInterval(interval);
+          finish();
+        }
+      }, 10);
+      return;
+    }
+    drive(session).then(() => {
+      const interval = setInterval(() => {
+        if (!messages.some((message) => message.type === "result")) return;
+        clearInterval(interval);
+        finish();
+      }, 10);
+    }, (error: Error) => {
+      clearTimeout(timer);
+      child.kill();
+      reject(error);
+    });
+  });
+  return done.finally(() => {
+    child.kill();
+  });
+}
+
+test("the Claude fake runs echo without asking and waits before touch", async () => {
+  const fake = fileURLToPath(new URL("../../../../.cursor/skills/verify-pitex/helpers/fakes/claude.mjs", import.meta.url));
+  const readonly = await claudeFakeTurn(fake, "READONLY echo pitex-ok");
+  assert.equal(
+    readonly.messages.some((message) => message.request?.subtype === "can_use_tool"),
+    false
+  );
+  assert.equal(
+    readonly.messages.some((message) => message.type === "result" && message.result === "pitex-ok"),
+    true
+  );
+
+  const touch = await claudeFakeTurn(fake, "TOUCH pitex-ok", async (session) => {
+    await session.waitFor(
+      "touch permission",
+      (messages) =>
+        messages.some((message) => message.request?.subtype === "can_use_tool" && message.request?.input?.command === "touch pitex-ok")
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(session.messages.some((message) => message.type === "result"), false);
+    session.send({
+      type: "control_response",
+      response: { subtype: "success", request_id: "perm-touch", response: { behavior: "deny" } },
+    });
+  });
+  assert.equal(touch.messages.some((message) => message.type === "result"), true);
+});
+
 test("abort interrupts the claude turn and denies the pending tool", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pitex-claude-abort-"));
   const binary = join(dir, "claude");
@@ -622,7 +787,7 @@ interface Opened {
   query: ScriptedQuery;
 }
 
-function scriptedQuery(opened: Opened[], mode: "script" | "hold"): ClaudeQueryFn {
+function scriptedQuery(opened: Opened[], mode: "script" | "hold" | "mutate"): ClaudeQueryFn {
   return ({ prompt, options }) => {
     const query = new ScriptedQuery();
     opened.push({ options, query });
@@ -642,12 +807,33 @@ async function runTurns(
   prompt: AsyncIterable<Json>,
   options: ClaudeQueryOptions,
   query: ScriptedQuery,
-  mode: "script" | "hold"
+  mode: "script" | "hold" | "mutate"
 ): Promise<void> {
   try {
     for await (const _message of prompt) {
       if (mode === "hold") {
         query.permissions.push(await options.canUseTool("Bash", { command: "latexmk main.tex" }, toolOptions("toolu_abort")));
+        continue;
+      }
+      if (mode === "mutate") {
+        const touch = await options.canUseTool("Bash", { command: "touch pitex-ok" }, bareTool("toolu_touch"));
+        query.permissions.push(touch);
+        if (touch.behavior !== "allow") {
+          query.push({ type: "result", subtype: "success", result: "denied", session_id: "sess-1" });
+          continue;
+        }
+        const written = await options.canUseTool(
+          "Write",
+          { file_path: "pitex-ok.txt", content: "pitex-ok\n" },
+          bareTool("toolu_write")
+        );
+        query.permissions.push(written);
+        query.push({
+          type: "result",
+          subtype: "success",
+          result: written.behavior === "allow" ? "wrote" : "denied",
+          session_id: "sess-1",
+        });
         continue;
       }
       query.push(streamDelta(0, { type: "thinking_delta", thinking: "plan" }));
@@ -706,6 +892,10 @@ async function drain(prompt: AsyncIterable<unknown>): Promise<void> {
 
 function streamDelta(index: number, delta: Json): Json {
   return { type: "stream_event", event: { type: "content_block_delta", index, delta } };
+}
+
+function bareTool(id: string): CanUseToolOptions {
+  return { signal: new AbortController().signal, toolUseID: id };
 }
 
 function toolOptions(id: string, suggestions?: unknown): CanUseToolOptions {

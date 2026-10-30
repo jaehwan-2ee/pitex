@@ -10,7 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
-import { GROK_SIGNED_OUT, GrokAdapter, findGrok, grokLaunchSpec } from "./grok-adapter.ts";
+import { GROK_SIGNED_OUT, GrokAdapter, findGrok, grokLaunchSpec, terminalSpawnSpec } from "./grok-adapter.ts";
 import {
   approvalFromPermission,
   cancelledPermission,
@@ -43,11 +43,15 @@ const outsideFile = process.env.FAKE_OUTSIDE_FILE;
 const outsideDir = process.env.FAKE_OUTSIDE_DIR;
 const project = process.env.FAKE_ROOT;
 const nodeBin = process.env.FAKE_NODE;
+const shellLine = process.env.FAKE_SHELL_LINE;
+const argvCommand = process.env.FAKE_ARGV_COMMAND;
+const argvArgs = JSON.parse(process.env.FAKE_ARGV_ARGS || "[]");
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 let promptId = null;
 let nextPermission = 42;
 let trackedTerminal = null;
+let shellPhase = "line";
 
 function finishPrompt(stopReason) {
   if (promptId == null) return;
@@ -114,6 +118,44 @@ function continueFiles(msg) {
   if (msg.id === 70 && msg.result) finishPrompt("end_turn");
 }
 
+function continueShell(msg) {
+  if (msg.result && msg.result.terminalId && shellPhase === "line") {
+    trackedTerminal = msg.result.terminalId;
+    send({ jsonrpc: "2.0", id: 81, method: "terminal/wait_for_exit", params: { terminalId: trackedTerminal } });
+    return;
+  }
+  if (msg.id === 81 && shellPhase === "line") {
+    send({ jsonrpc: "2.0", id: 82, method: "terminal/output", params: { terminalId: trackedTerminal } });
+    return;
+  }
+  if (msg.id === 82 && shellPhase === "line") {
+    shellPhase = "argv";
+    trackedTerminal = null;
+    send({
+      jsonrpc: "2.0",
+      id: 83,
+      method: "terminal/create",
+      params: {
+        sessionId: "sess-1",
+        command: argvCommand,
+        args: argvArgs,
+        cwd: project,
+      },
+    });
+    return;
+  }
+  if (msg.result && msg.result.terminalId && shellPhase === "argv") {
+    trackedTerminal = msg.result.terminalId;
+    send({ jsonrpc: "2.0", id: 84, method: "terminal/wait_for_exit", params: { terminalId: trackedTerminal } });
+    return;
+  }
+  if (msg.id === 84 && shellPhase === "argv") {
+    send({ jsonrpc: "2.0", id: 85, method: "terminal/output", params: { terminalId: trackedTerminal } });
+    return;
+  }
+  if (msg.id === 85) finishPrompt("end_turn");
+}
+
 function handleRequest(msg) {
   if (msg.method === "initialize") {
     send({ jsonrpc: "2.0", id: msg.id, result: initResult() });
@@ -151,6 +193,19 @@ function handleRequest(msg) {
   }
   if (msg.method === "session/prompt") {
     promptId = msg.id;
+    if (mode === "shell") {
+      send({
+        jsonrpc: "2.0",
+        id: 80,
+        method: "terminal/create",
+        params: {
+          sessionId: "sess-1",
+          command: shellLine,
+          cwd: project,
+        },
+      });
+      return;
+    }
     if (mode === "files") {
       send({ jsonrpc: "2.0", id: 51, method: "fs/read_text_file", params: { sessionId: "sess-1", path: inside } });
       send({ jsonrpc: "2.0", id: 54, method: "fs/read_text_file", params: { sessionId: "sess-1", path: outsideFile } });
@@ -228,6 +283,7 @@ rl.on("line", (line) => {
   appendFileSync(record, line + "\\n");
   if (!msg.method) {
     if (mode === "files") continueFiles(msg);
+    else if (mode === "shell") continueShell(msg);
     else continueTurn(msg);
     return;
   }
@@ -296,6 +352,21 @@ interface Boot {
   sessionDir: string;
 }
 
+function shellFixture(): { line: string; command: string; args: string[] } {
+  if (process.platform === "win32") {
+    return {
+      line: "echo pitex-ok",
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('pitex-ok; echo injected\\n')"],
+    };
+  }
+  return {
+    line: "/bin/bash -lc 'echo pitex-ok'",
+    command: "/bin/echo",
+    args: ["pitex-ok; echo injected"],
+  };
+}
+
 async function boot(options: { mode?: string; auth?: string; load?: string } = {}): Promise<Boot> {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "pitex-grok-")));
   const outside = realpathSync(mkdtempSync(join(tmpdir(), "pitex-grok-out-")));
@@ -327,6 +398,9 @@ async function boot(options: { mode?: string; auth?: string; load?: string } = {
       FAKE_OUTSIDE_FILE: join(outside, "secret.txt"),
       FAKE_OUTSIDE_DIR: outside,
       FAKE_NODE: process.execPath,
+      FAKE_SHELL_LINE: shellFixture().line,
+      FAKE_ARGV_COMMAND: shellFixture().command,
+      FAKE_ARGV_ARGS: JSON.stringify(shellFixture().args),
     },
   });
   return { adapter, collected, dir, outside, record, sessionDir };
@@ -767,6 +841,56 @@ test("filesystem reads and terminals are jailed to the project", { timeout: 20_0
       errors.map((line) => line.id).sort((a, b) => a - b),
       [52, 54]
     );
+  } finally {
+    await shutdown(booted);
+  }
+});
+
+test("an empty argv is one shell script and a filled argv is the program", () => {
+  assert.deepEqual(terminalSpawnSpec("/bin/bash -lc 'echo pitex-ok'", [], "linux"), {
+    command: "/bin/sh",
+    args: ["-c", "/bin/bash -lc 'echo pitex-ok'"],
+    verbatim: false,
+  });
+  assert.deepEqual(terminalSpawnSpec("/bin/echo", ["pitex-ok; echo injected"], "linux"), {
+    command: "/bin/echo",
+    args: ["pitex-ok; echo injected"],
+    verbatim: false,
+  });
+  assert.deepEqual(terminalSpawnSpec("echo pitex-ok", [], "win32"), {
+    command: "cmd.exe",
+    args: ["/d", "/s", "/c", '"echo pitex-ok"'],
+    verbatim: true,
+  });
+});
+
+test("a shell command line and an argv command both run as approved", { timeout: 20_000 }, async () => {
+  const booted = await boot({ mode: "shell" });
+  const { adapter, collected, record } = booted;
+  try {
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "Run echo pitex-ok" }, collected.host);
+    assert.equal(responseById(collected.responses, "p1").success, true);
+    await waitUntil("shell approval", () =>
+      collected.events.some((event) => event.type === "approval_request" && event.id === "80")
+    );
+    const fixture = shellFixture();
+    const shellApproval = collected.events.find((event) => event.id === "80");
+    assert.equal(shellApproval?.kind, "command");
+    assert.equal(shellApproval?.detail, fixture.line);
+    await adapter.handleCommand({ type: "approval_response", id: "80", decision: "approve" }, collected.host);
+    await waitUntil("argv approval", () =>
+      collected.events.some((event) => event.type === "approval_request" && event.id === "83")
+    );
+    const shellOut = parseLines(readFileSync(record, "utf8")).find((line) => line.id === 82);
+    assert.equal(String(shellOut?.result?.output).replace(/\r\n/g, "\n"), "pitex-ok\n");
+    assert.equal(shellOut?.result?.exitStatus?.exitCode, 0);
+    const argvApproval = collected.events.find((event) => event.id === "83");
+    assert.equal(argvApproval?.detail, [fixture.command, ...fixture.args].join(" "));
+    await adapter.handleCommand({ type: "approval_response", id: "83", decision: "approve" }, collected.host);
+    await waitUntil("shell turn", () => collected.events.some((event) => event.type === "agent_end"));
+    const argvOut = parseLines(readFileSync(record, "utf8")).find((line) => line.id === 85);
+    assert.equal(argvOut?.result?.output, "pitex-ok; echo injected\n");
+    assert.equal(argvOut?.result?.exitStatus?.exitCode, 0);
   } finally {
     await shutdown(booted);
   }

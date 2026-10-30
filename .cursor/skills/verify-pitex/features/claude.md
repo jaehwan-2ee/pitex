@@ -26,6 +26,8 @@ The window command is `gtk --provider claude`.
 
 ## Gotchas
 
+Claude Code runs a built-in set of read-only Bash commands, including `echo`, without an approval row. The fake does that when the prompt contains `READONLY`, and the result text is `pitex-ok`. A prompt that contains `TOUCH` asks before `touch pitex-ok` and does not finish until the decision. A file write takes the same approval path in the adapter.
+
 Bare `AUTH_TOKEN` is out of scope. The Claude Code environment list and the authentication page name `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN` as the credentials. They also name the Bedrock, Vertex, and Foundry switches and the `ANTHROPIC_*BASE_URL` overrides. The authentication page says those credentials apply to the CLI and to the Agent SDK. Neither page names a variable that is only `AUTH_TOKEN`. This journey asserts the named credentials and endpoint overrides.
 
 https://code.claude.com/docs/en/env-vars
