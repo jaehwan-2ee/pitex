@@ -1,0 +1,16 @@
+.cursor/skills/verify-pitex/helpers/fakes/claude.mjs
+  h_bcbc8ae9e599aa 85,87-88,184,186-187
+Mac/Resources/PitexAgent/bridge/claude-checks.ts
+  h_bcbc8ae9e599aa 27,90,134,138-206,619,633-634,892-896,905,978-983,988-989
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d0eb01a88b93b9ec4b2f95734bc1c9aa0289062",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
