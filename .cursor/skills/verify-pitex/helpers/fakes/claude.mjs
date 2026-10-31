@@ -82,8 +82,10 @@ function askBash() {
     request: {
       subtype: "can_use_tool",
       tool_name: "Bash",
-      input: { command: "latexmk main.tex" },
+      input: { command: "latexmk main.tex", description: "Compile the document" },
       tool_use_id: "toolu_1",
+      display_name: "Bash",
+      description: "Compile the document",
     },
   });
 }
@@ -179,8 +181,10 @@ rl.on("line", (line) => {
         request: {
           subtype: "can_use_tool",
           tool_name: "Bash",
-          input: { command: "touch pitex-ok" },
+          input: { command: "touch pitex-ok", description: "Create a marker file" },
           tool_use_id: "toolu_touch",
+          display_name: "Bash",
+          description: "Create a marker file",
         },
       });
       return;

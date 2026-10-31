@@ -24,6 +24,7 @@ import {
   type ClaudeQueryOptions,
 } from "./claude-adapter.ts";
 import {
+  approvalPresentation,
   createClaudeStreamState,
   mapClaudeMessage,
   messagesFromState,
@@ -86,7 +87,7 @@ test("claude messages map to pi events without repeating streamed text", () => {
   assert.deepEqual(messageDeltas(events, "text_delta"), ["Hello"]);
   const started = events.find((event) => event.type === "tool_execution_start");
   const finished = events.find((event) => event.type === "tool_execution_end");
-  assert.equal(started?.toolName, "Bash");
+  assert.equal(started?.toolName, "bash");
   assert.deepEqual(started?.args, { command: "latexmk" });
   assert.equal(finished?.toolCallId, "t1");
   assert.equal(finished?.isError, false);
@@ -130,7 +131,77 @@ test("claude streamed tool input becomes one tool execution", () => {
     ),
   ];
   assert.equal(events.filter((event) => event.type === "tool_execution_start").length, 1);
+  assert.equal(events.at(-1)?.toolName, "bash");
   assert.deepEqual(events.at(-1)?.args, { command: "latexmk main.tex" });
+});
+
+test("claude approval cards show the command, the path, or a short summary", () => {
+  const bash = approvalPresentation(
+    "Bash",
+    { command: "touch /tmp/pitex-claude-card", description: "Create an empty marker file in /tmp" },
+    { displayName: "Bash", description: "Create an empty marker file in /tmp" }
+  );
+  assert.equal(bash.kind, "command");
+  assert.equal(bash.title, "Run command");
+  assert.equal(bash.detail, "touch /tmp/pitex-claude-card");
+
+  const write = approvalPresentation(
+    "Write",
+    { file_path: "main.tex", content: "hello" },
+    { displayName: "Write", description: "Write main.tex" }
+  );
+  assert.equal(write.kind, "file");
+  assert.equal(write.title, "Edit files");
+  assert.equal(write.detail, "main.tex");
+
+  const edit = approvalPresentation(
+    "Edit",
+    { file_path: "chapters/intro.tex", old_string: "a", new_string: "b" },
+    { displayName: "Edit" }
+  );
+  assert.equal(edit.kind, "file");
+  assert.equal(edit.title, "Edit files");
+  assert.equal(edit.detail, "chapters/intro.tex");
+
+  const search = approvalPresentation("WebSearch", { query: "pitex latex" }, { displayName: "WebSearch" });
+  assert.equal(search.kind, "permissions");
+  assert.equal(search.title, "Allow action");
+  assert.equal(search.detail, "WebSearch: pitex latex");
+
+  const opaque = approvalPresentation("Mystery", { count: 2 }, { displayName: "Mystery" });
+  assert.equal(opaque.title, "Allow action");
+  assert.equal(opaque.detail.includes("{"), false);
+
+  const state = createClaudeStreamState();
+  const rows = mapClaudeMessage(
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "b",
+            name: "Bash",
+            input: { command: "touch /tmp/pitex-claude-card", description: "Create an empty marker file in /tmp" },
+          },
+          { type: "tool_use", id: "w", name: "Write", input: { file_path: "main.tex", content: "hello" } },
+          { type: "tool_use", id: "e", name: "Edit", input: { file_path: "chapters/intro.tex" } },
+          { type: "tool_use", id: "s", name: "WebSearch", input: { query: "pitex latex" } },
+        ],
+      },
+    },
+    state
+  ).filter((event) => event.type === "tool_execution_start");
+  assert.deepEqual(
+    rows.map((event) => ({ toolName: event.toolName, args: event.args })),
+    [
+      { toolName: "bash", args: { command: "touch /tmp/pitex-claude-card" } },
+      { toolName: "write", args: { path: "main.tex" } },
+      { toolName: "edit", args: { path: "chapters/intro.tex" } },
+      { toolName: "WebSearch", args: { summary: "WebSearch: pitex latex" } },
+    ]
+  );
 });
 
 test("claude permission decisions stay session scoped", () => {
@@ -545,6 +616,7 @@ test("a mutating Bash command and a file write wait for approval", async () => {
     assert.equal(opened[0].query.permissions.length, 0);
     const touch = collected.events.find((event) => event.id === "toolu_touch");
     assert.equal(touch?.kind, "command");
+    assert.equal(touch?.title, "Run command");
     assert.equal(touch?.detail, "touch pitex-ok");
     await new Promise((resolve) => setTimeout(resolve, 40));
     assert.equal(opened[0].query.permissions.length, 0);
@@ -558,7 +630,8 @@ test("a mutating Bash command and a file write wait for approval", async () => {
     assert.equal(opened[0].query.permissions[0].behavior, "allow");
     const write = collected.events.find((event) => event.id === "toolu_write");
     assert.equal(write?.kind, "file");
-    assert.equal(write?.detail, "Write pitex-ok.txt");
+    assert.equal(write?.title, "Edit files");
+    assert.equal(write?.detail, "pitex-ok.txt");
     assert.equal(collected.events.some((event) => event.type === "agent_end"), false);
     await adapter.handleCommand({ type: "approval_response", id: "toolu_write", decision: "deny" }, collected.host);
     await waitUntil(() => collected.events.some((event) => event.type === "agent_end"), "turn end");
@@ -816,7 +889,11 @@ async function runTurns(
         continue;
       }
       if (mode === "mutate") {
-        const touch = await options.canUseTool("Bash", { command: "touch pitex-ok" }, bareTool("toolu_touch"));
+        const touch = await options.canUseTool(
+          "Bash",
+          { command: "touch pitex-ok", description: "Create a marker file" },
+          toolOptions("toolu_touch", undefined, "Bash", "Create a marker file")
+        );
         query.permissions.push(touch);
         if (touch.behavior !== "allow") {
           query.push({ type: "result", subtype: "success", result: "denied", session_id: "sess-1" });
@@ -825,7 +902,7 @@ async function runTurns(
         const written = await options.canUseTool(
           "Write",
           { file_path: "pitex-ok.txt", content: "pitex-ok\n" },
-          bareTool("toolu_write")
+          toolOptions("toolu_write", undefined, "Write", "Write the marker")
         );
         query.permissions.push(written);
         query.push({
@@ -898,13 +975,18 @@ function bareTool(id: string): CanUseToolOptions {
   return { signal: new AbortController().signal, toolUseID: id };
 }
 
-function toolOptions(id: string, suggestions?: unknown): CanUseToolOptions {
+function toolOptions(
+  id: string,
+  suggestions?: unknown,
+  displayName = "Bash",
+  description = "Compile the document"
+): CanUseToolOptions {
   return {
     signal: new AbortController().signal,
     toolUseID: id,
     suggestions,
-    title: "Run command",
-    description: "latexmk main.tex",
+    displayName,
+    description,
   };
 }
 
