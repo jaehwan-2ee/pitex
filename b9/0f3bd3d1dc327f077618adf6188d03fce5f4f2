@@ -1,0 +1,14 @@
+Mac/Sources/Features/EditorContainerView.swift
+  h_bcbc8ae9e599aa 708-729
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b90f3bd3d1dc327f077618adf6188d03fce5f4f2",
+  "prompts": {},
+  "humans": {
+    "h_bcbc8ae9e599aa": {
+      "author": "jaehwan-2ee <jh.lee@kaist.ac.kr>"
+    }
+  }
+}
