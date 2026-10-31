@@ -2678,9 +2678,16 @@ fn tool_summary(name: &str, args: Option<&Map<String, Value>>) -> String {
             .and_then(|p| p.as_str())
             .unwrap_or_default()
             .to_string(),
-        _ => serde_json::to_string(args)
-            .map(|s| bounded(&s, 500))
-            .unwrap_or_default(),
+        _ => {
+            if args.len() == 1 {
+                if let Some(summary) = args.get("summary").and_then(|value| value.as_str()) {
+                    return bounded(summary, 500);
+                }
+            }
+            serde_json::to_string(args)
+                .map(|s| bounded(&s, 500))
+                .unwrap_or_default()
+        }
     }
 }
 
@@ -3928,6 +3935,19 @@ mod session_history_tests {
         assert_eq!(rows[2].status, TranscriptStatus::Failed);
         assert!(rows[2].detail.contains("Undefined control sequence"));
         assert_eq!(rows[3].text, "Fixed.");
+    }
+
+    #[test]
+    fn tool_summary_prints_a_compact_fallback_without_json() {
+        let summary = json!({"summary": "WebSearch: pitex latex"});
+        assert_eq!(
+            tool_summary("WebSearch", summary.as_object()),
+            "WebSearch: pitex latex"
+        );
+        let bash = json!({"command": "latexmk main.tex", "description": "Compile the document"});
+        assert_eq!(tool_summary("bash", bash.as_object()), "latexmk main.tex");
+        let extra = json!({"command": "ls", "description": "list"});
+        assert!(tool_summary("custom", extra.as_object()).contains("description"));
     }
 
     #[test]

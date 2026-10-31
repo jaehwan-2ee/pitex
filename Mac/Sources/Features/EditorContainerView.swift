@@ -705,10 +705,28 @@ final class MinimapOverlayView: NSView {
 
     func reposition() {
         guard let scrollView else { return }
-        let viewport = scrollView.editorOverlayViewport().insetBy(dx: 8, dy: 8)
-        let width = min(72, max(viewport.width, 0))
-        frame = NSRect(x: viewport.maxX - width, y: viewport.minY,
-                       width: width, height: max(viewport.height, 0))
+        let raw = scrollView.editorOverlayViewport()
+        // The scroll view is still `.zero` when this overlay is created.
+        // `insetBy` on a rect smaller than 16pt returns a null rect
+        // (`{inf, inf, 0, 0}`). Installing that frame makes AppKit translate
+        // the autoresizing mask into a constraint whose constant exceeds
+        // CoreAutoLayout's limit, which is logged once at launch.
+        guard raw.width > 16, raw.height > 16 else {
+            frame = .zero
+            return
+        }
+        let viewport = raw.insetBy(dx: 8, dy: 8)
+        guard !viewport.isNull, !viewport.isInfinite, viewport.width > 0, viewport.height > 0 else {
+            frame = .zero
+            return
+        }
+        let width = min(72, viewport.width)
+        frame = NSRect(
+            x: viewport.maxX - width,
+            y: viewport.minY,
+            width: width,
+            height: viewport.height
+        )
         invalidateContent()
     }
 

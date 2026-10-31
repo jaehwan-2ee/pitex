@@ -1187,6 +1187,9 @@ final class AgentCoordinator: ObservableObject {
         case "ls", "find", "grep":
             return args["path"] as? String ?? (args["pattern"] as? String ?? "")
         default:
+            if args.count == 1, let summary = args["summary"] as? String {
+                return bounded(summary, limit: 500)
+            }
             guard let data = try? JSONSerialization.data(withJSONObject: args),
                   let text = String(data: data, encoding: .utf8) else { return "" }
             return bounded(text, limit: 500)

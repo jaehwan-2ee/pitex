@@ -98,23 +98,96 @@ export function visibleClaudeModels(models: ListedClaudeModel[]): { id: string; 
 }
 
 const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit", "MultiEdit"]);
+const SUMMARY_KEYS = [
+  "query",
+  "pattern",
+  "url",
+  "prompt",
+  "file_path",
+  "path",
+  "notebook_path",
+  "command",
+  "description",
+];
+
+function textField(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function filePathOf(input: Record<string, unknown>): string {
+  for (const key of ["file_path", "path", "notebook_path"]) {
+    const value = textField(input, key);
+    if (value) return value;
+  }
+  return "";
+}
+
+/** One line for the approval card and the tool row. JSON is only the last resort. */
+function compactToolSummary(toolName: string, input: Record<string, unknown>): string {
+  for (const key of SUMMARY_KEYS) {
+    const value = textField(input, key);
+    if (value) return `${toolName}: ${value}`;
+  }
+  for (const value of Object.values(input)) {
+    if (typeof value === "string" && value.trim()) return `${toolName}: ${value.trim()}`;
+  }
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === "number" || typeof value === "boolean") parts.push(`${key}=${String(value)}`);
+  }
+  if (parts.length > 0) return `${toolName}: ${parts.join(", ")}`;
+  if (Object.keys(input).length === 0) return "";
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return "";
+  }
+}
 
 export function approvalPresentation(
   toolName: string,
   input: Record<string, unknown>,
   options: { title?: string; displayName?: string; description?: string; decisionReason?: string }
 ): { kind: "command" | "file" | "permissions"; title: string; detail: string } {
-  const command = typeof input.command === "string" ? input.command : "";
-  const filePath =
-    typeof input.file_path === "string" ? input.file_path : typeof input.path === "string" ? input.path : "";
+  const command = textField(input, "command");
+  const filePath = filePathOf(input);
   const kind = toolName === "Bash" ? "command" : FILE_TOOLS.has(toolName) ? "file" : "permissions";
+  // displayName is the raw tool name ("Bash"). Codex and Grok cards use a
+  // human title, and the detail is the command or path rather than the
+  // model's short description of that action.
+  const explicit = options.title?.trim() ?? "";
   const title =
-    options.title ||
-    options.displayName ||
-    (kind === "command" ? "Run command" : kind === "file" ? "Edit files" : "Allow action");
+    kind === "command"
+      ? "Run command"
+      : kind === "file"
+        ? "Edit files"
+        : explicit && explicit !== toolName
+          ? explicit
+          : "Allow action";
+  const described = options.description?.trim() || options.decisionReason?.trim() || "";
   const detail =
-    options.description || command || (filePath ? `${toolName} ${filePath}` : options.decisionReason || toolName);
+    kind === "command"
+      ? command || described || toolName
+      : kind === "file"
+        ? filePath || described || toolName
+        : compactToolSummary(toolName, input) || (described ? `${toolName}: ${described}` : toolName);
   return { kind, title, detail: detail.slice(0, 4000) };
+}
+
+/** Tool-row fields the Mac and Linux transcripts already render without dumping JSON. */
+export function toolExecutionFields(name: string, args: Json): { toolName: string; args: Json } {
+  if (name === "Bash") {
+    const command = textField(args, "command");
+    return { toolName: "bash", args: command ? { command } : {} };
+  }
+  if (FILE_TOOLS.has(name)) {
+    const path = filePathOf(args);
+    return { toolName: name === "Write" ? "write" : "edit", args: path ? { path } : {} };
+  }
+  const summary = compactToolSummary(name, args);
+  if (!summary || summary.startsWith("{") || summary.startsWith("[")) return { toolName: name, args };
+  return { toolName: name, args: { summary } };
 }
 
 /** Identity of one tool call for "always allow" during this session only. */
@@ -304,8 +377,9 @@ function upsertToolDraft(state: ClaudeStreamState, id: string): void {
 }
 
 function startTool(state: ClaudeStreamState, id: string, name: string, args: Json, out: Json[]): void {
-  state.toolNameById[id] = name;
-  state.toolArgsById[id] = args;
+  const row = toolExecutionFields(name, args);
+  state.toolNameById[id] = row.toolName;
+  state.toolArgsById[id] = row.args;
   upsertToolDraft(state, id);
   if (state.toolStarted[id]) return;
   state.toolStarted[id] = true;
@@ -313,8 +387,8 @@ function startTool(state: ClaudeStreamState, id: string, name: string, args: Jso
   out.push({
     type: "tool_execution_start",
     toolCallId: id,
-    toolName: name,
-    args,
+    toolName: row.toolName,
+    args: row.args,
   });
 }
 
