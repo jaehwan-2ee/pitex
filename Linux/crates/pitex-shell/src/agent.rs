@@ -1595,6 +1595,7 @@ impl AgentCoordinator {
 
     pub fn shutdown(&mut self) {
         self.intentional_stop = true;
+        self.is_running = false;
         if let Some(process) = self.process.take() {
             process.terminate();
         }
