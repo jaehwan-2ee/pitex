@@ -224,6 +224,7 @@ final class AgentCoordinator: ObservableObject {
     func shutdown() {
         intentionalStop = true
         processEpoch.retire()
+        isRunning = false
         flushDeltas()
         approvalQueue.clear()
         pendingApproval = nil
@@ -434,7 +435,7 @@ final class AgentCoordinator: ObservableObject {
         connection = .ready
         eventTask = Task { [weak self] in
             for await event in agent.events {
-                guard let self else { return }
+                guard let self, self.processEpoch.isCurrent(token) else { return }
                 self.handle(event)
             }
         }
