@@ -1,4 +1,5 @@
 import AppKit
+import AppPorts
 import CoreServices
 import RemoteCore
 import SettingsFeature
@@ -8,6 +9,29 @@ import UniformTypeIdentifiers
 enum ShippedAgentProvider: String, CaseIterable {
     case pi, codex, claude, grok
     case appleFM = "apple-fm"
+
+    /// Direct Codex and Grok rows. Flip this one line to show both again.
+    /// Stored "codex" and "grok" read as "pi" while this is false.
+    static let showDirectCodexAndGrok = false
+
+    var isSelectable: Bool {
+        switch self {
+        case .codex, .grok: Self.showDirectCodexAndGrok
+        case .pi, .claude, .appleFM: true
+        }
+    }
+
+    static var selectableCases: [ShippedAgentProvider] {
+        let canRunAppleFM: Bool
+        if case .available = AppleFMRuntime.availability() {
+            canRunAppleFM = true
+        } else {
+            canRunAppleFM = false
+        }
+        return allCases.filter { provider in
+            provider.isSelectable && (provider != .appleFM || canRunAppleFM)
+        }
+    }
 
     var label: LocalizedStringKey {
         switch self {
@@ -126,7 +150,6 @@ final class SettingsStore: ObservableObject {
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
-    /// `ai.agentProvider`. `pi`, `codex`, `claude`, `grok`, or `apple-fm`.
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)
@@ -134,12 +157,17 @@ final class SettingsStore: ObservableObject {
                 agentProvider = normalized
                 return
             }
+            if agentProvider == oldValue {
+                return
+            }
             UserDefaults.standard.set(agentProvider, forKey: "ai.agentProvider")
         }
     }
     static func agentProviderValue(_ stored: String?) -> String {
-        guard let stored else { return "pi" }
-        return ShippedAgentProvider(rawValue: stored)?.rawValue ?? "pi"
+        guard let stored, let provider = ShippedAgentProvider(rawValue: stored), provider.isSelectable else {
+            return "pi"
+        }
+        return provider.rawValue
     }
     @Published var defaultBuildCommand: String {
         didSet { UserDefaults.standard.set(defaultBuildCommand, forKey: "project.defaultBuildCommand") }
@@ -808,22 +836,59 @@ struct SettingsView: View {
 
     // MARK: - AI
 
+    private var agentMenuSelection: Binding<String> {
+        Binding(
+            get: {
+                let offered = ShippedAgentProvider.selectableCases.map(\.rawValue)
+                let current = store.agentProvider
+                return offered.contains(current) ? current : ShippedAgentProvider.pi.rawValue
+            },
+            set: { next in
+                let offered = ShippedAgentProvider.selectableCases.map(\.rawValue)
+                guard offered.contains(next) else { return }
+                if next == ShippedAgentProvider.pi.rawValue,
+                   store.agentProvider == ShippedAgentProvider.appleFM.rawValue,
+                   !offered.contains(store.agentProvider) {
+                    return
+                }
+                store.agentProvider = next
+            }
+        )
+    }
+
+    private var agentBackendNote: LocalizedStringKey {
+        if store.agentProvider == ShippedAgentProvider.appleFM.rawValue, appleFMMenuReason == nil {
+            return "settings.ai.backend_apple_fm_note"
+        }
+        return "settings.ai.backend_note"
+    }
+
+    private var appleFMMenuReason: String? {
+        if case .unavailable(let reason) = AppleFMRuntime.availability() {
+            return reason.message
+        }
+        return nil
+    }
+
     /// Provider authentication uses pi's own terminal flows; configuration
     /// shortcuts open the app-local settings.json and models.json files.
     private var aiTab: some View {
         Form {
             Section("settings.ai.agent") {
-                Picker("settings.ai.backend", selection: $store.agentProvider) {
-                    ForEach(ShippedAgentProvider.allCases, id: \.rawValue) { provider in
+                Picker("settings.ai.backend", selection: agentMenuSelection) {
+                    ForEach(ShippedAgentProvider.selectableCases, id: \.rawValue) { provider in
                         Text(provider.label).tag(provider.rawValue)
                     }
                 }
                 .accessibilityIdentifier("pitex.settings.ai.backend")
-                Text(store.agentProvider == ShippedAgentProvider.appleFM.rawValue
-                    ? "settings.ai.backend_apple_fm_note"
-                    : "settings.ai.backend_note")
+                Text(agentBackendNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let reason = appleFMMenuReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 LabeledContent("settings.ai.location") {
                     Text(PiPaths.runtimeDirectory.path)
                         .font(.caption)

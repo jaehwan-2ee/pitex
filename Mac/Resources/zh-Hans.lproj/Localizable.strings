@@ -349,7 +349,7 @@
 "settings.ai.backend_claude" = "Claude Code（你的登录）";
 "settings.ai.backend_grok" = "Grok CLI（你的登录）";
 "settings.ai.backend_agy" = "Antigravity CLI（你的登录）";
-"settings.ai.backend_note" = "Codex CLI 使用本机 `codex login`，Claude Code 使用本机 `claude`，Grok CLI 使用本机 `grok login`。Pitex 不会读取这些凭据文件。";
+"settings.ai.backend_note" = "pi 使用自己的提供商登录。Claude Code 使用本机 `claude`。Pitex 不会读取这些凭据文件。";
 "settings.ai.backend_apple_fm" = "Apple Foundation Models（在这台 Mac 上）";
 "settings.ai.backend_apple_fm_note" = "Apple Foundation Models 在 Apple Intelligence 开启时于这台 Mac 上运行。Pitex 不会通过 pi 发送对话。";
 "settings.ai.backend_apple_fm_unavailable" = "Apple Foundation Models 在开启 Apple Intelligence 的 Pitex Mac 应用中运行。此构建无法启动它们。";

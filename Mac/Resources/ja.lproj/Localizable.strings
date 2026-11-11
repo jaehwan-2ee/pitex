@@ -350,7 +350,7 @@
 "settings.ai.backend_claude" = "Claude Code（ご自身のログイン）";
 "settings.ai.backend_grok" = "Grok CLI（ご自身のログイン）";
 "settings.ai.backend_agy" = "Antigravity CLI（ご自身のログイン）";
-"settings.ai.backend_note" = "Codex CLI は `codex login`、Claude Code は `claude`、Grok CLI は `grok login` のアカウントをこのコンピュータで使います。Pitex はそれらの資格情報ファイルを読みません。";
+"settings.ai.backend_note" = "pi は自身のプロバイダログインを使います。Claude Code は `claude` をこのコンピュータで使います。Pitex はそれらの資格情報ファイルを読みません。";
 "settings.ai.backend_apple_fm" = "Apple Foundation Models（この Mac 上）";
 "settings.ai.backend_apple_fm_note" = "Apple Foundation Models は Apple Intelligence がオンのとき、この Mac 上で動きます。Pitex はチャットを pi 経由で送りません。";
 "settings.ai.backend_apple_fm_unavailable" = "Apple Foundation Models は Apple Intelligence がオンの Pitex Mac アプリで動きます。このビルドでは起動できません。";

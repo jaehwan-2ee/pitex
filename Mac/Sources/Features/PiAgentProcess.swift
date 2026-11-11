@@ -173,11 +173,12 @@ enum PiRuntimeInstaller {
     /// from @mariozechner to @earendil-works after 0.73.x.
     private static let packageName = "@earendil-works/pi-coding-agent"
 
-    /// Pinned runtime version. Bump deliberately after checking the RPC
-    /// command surface still matches (get_state, set_thinking_level,
-    /// get_session_stats, get_commands, set_model). 1.4.0 keeps that
-    /// surface and depends on pi-codemode 1.4.0 exactly.
-    static let desiredVersion = "1.4.0"
+    /// Pinned runtime version. 1.5.2 keeps the RPC surface
+    /// (`get_state`, `set_thinking_level`, `get_session_stats`,
+    /// `get_commands`, `set_model`). RPC types, JSON events, and the JSONL
+    /// codec match 1.4.0. The package depends on pi-codemode 1.5.2 exactly.
+    /// The Node requirement is unchanged (`>=22.19.0`).
+    static let desiredVersion = "1.5.2"
 
     @MainActor private static var installationInProgress = false
 

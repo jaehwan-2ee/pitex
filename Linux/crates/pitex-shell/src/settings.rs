@@ -141,33 +141,44 @@ pub(crate) struct AgentProviderChoice {
     pub id: &'static str,
     pub label_key: &'static str,
     pub transport: AgentTransport,
+    pub selectable: bool,
 }
+
+/// v1.1.0 hides the direct Codex CLI and Grok CLI rows.
+/// Flip this line to list both again. A stored `codex` or `grok`
+/// reads as `pi` while this is false. Launch plans still accept both ids.
+pub(crate) const SHOW_DIRECT_CODEX_AND_GROK: bool = false;
 
 pub(crate) const AGENT_PROVIDER_CHOICES: &[AgentProviderChoice] = &[
     AgentProviderChoice {
         id: "pi",
         label_key: "settings.ai.backend_pi",
         transport: AgentTransport::Pi,
+        selectable: true,
     },
     AgentProviderChoice {
         id: "codex",
         label_key: "settings.ai.backend_codex",
         transport: AgentTransport::CliBridge,
+        selectable: SHOW_DIRECT_CODEX_AND_GROK,
     },
     AgentProviderChoice {
         id: "claude",
         label_key: "settings.ai.backend_claude",
         transport: AgentTransport::CliBridge,
+        selectable: true,
     },
     AgentProviderChoice {
         id: "grok",
         label_key: "settings.ai.backend_grok",
         transport: AgentTransport::CliBridge,
+        selectable: SHOW_DIRECT_CODEX_AND_GROK,
     },
     AgentProviderChoice {
         id: "apple-fm",
         label_key: "settings.ai.backend_apple_fm",
         transport: AgentTransport::OnDevice,
+        selectable: true,
     },
 ];
 
@@ -176,11 +187,10 @@ pub(crate) const AGENT_PROVIDER_CHOICES: &[AgentProviderChoice] = &[
 pub const ON_DEVICE_UNAVAILABLE_MESSAGE: &str =
     "Apple Foundation Models run in the Pitex Mac app when Apple Intelligence is on. This build cannot start them.";
 
-pub(crate) fn visible_agent_providers() -> Vec<&'static AgentProviderChoice> {
-    AGENT_PROVIDER_CHOICES
-        .iter()
-        .filter(|choice| choice.transport != AgentTransport::OnDevice)
-        .collect()
+pub(crate) fn visible_agent_providers() -> impl Iterator<Item = &'static AgentProviderChoice> {
+    AGENT_PROVIDER_CHOICES.iter().filter(|choice| {
+        choice.selectable && choice.transport != AgentTransport::OnDevice
+    })
 }
 
 pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
@@ -188,7 +198,7 @@ pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
         .and_then(|raw| {
             AGENT_PROVIDER_CHOICES
                 .iter()
-                .find(|choice| choice.id == raw)
+                .find(|choice| choice.selectable && choice.id == raw)
                 .map(|choice| choice.id)
         })
         .unwrap_or("pi")
@@ -402,7 +412,6 @@ impl SettingsStore {
     pub fn set_ai_font_size(&mut self, v: f64) {
         self.prefs.set("ai.fontSize", v);
     }
-    /// `ai.agentProvider`. `pi` (provider sign-in), `codex`, `claude`, `grok`, or `apple-fm`.
     pub fn agent_provider(&self) -> String {
         normalize_agent_provider(self.prefs.string("ai.agentProvider").as_deref()).into()
     }

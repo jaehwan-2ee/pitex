@@ -2752,15 +2752,16 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     agent_group.set_title(&tr(lang, "settings.ai.agent"));
     let backend_row = adw::ActionRow::new();
     backend_row.set_title(&tr(lang, "settings.ai.backend"));
-    let visible = crate::settings::visible_agent_providers();
-    let labels: Vec<String> = visible
+    let providers: Vec<&crate::settings::AgentProviderChoice> =
+        crate::settings::visible_agent_providers().collect();
+    let labels: Vec<String> = providers
         .iter()
         .map(|choice| tr(lang, choice.label_key))
         .collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     let backend = gtk4::DropDown::from_strings(&label_refs);
     let current = state.borrow().store.agent_provider();
-    let selected = visible
+    let selected = providers
         .iter()
         .position(|choice| choice.id == current)
         .unwrap_or(0);
@@ -2776,11 +2777,13 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     unavailable.set_visible(crate::settings::agent_provider_is_on_device(&current));
     {
         let state = state.clone();
-        let ids: Vec<&str> = visible.iter().map(|choice| choice.id).collect();
+        let ids: Vec<&str> = providers.iter().map(|choice| choice.id).collect();
         let unavailable = unavailable.clone();
         backend.connect_selected_notify(move |dd| {
             let next = ids.get(dd.selected() as usize).copied().unwrap_or("pi");
-            let Ok(mut s) = state.try_borrow_mut() else { return };
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
             unavailable.set_visible(false);
             if s.store.agent_provider() == next {
                 return;

@@ -10,7 +10,12 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"codex": 248, "claude": 284, "grok": 320}
+MENU_Y = {"claude": 248}
+STALE_STORED = {
+    "stale-agy": "agy",
+    "stale-codex": "codex",
+    "stale-grok": "grok",
+}
 
 
 def main():
@@ -19,8 +24,9 @@ def main():
     project = Path(os.environ["PITEX_GTK_PROJECT"])
     binary = os.environ["PITEX_BIN"]
     evidence.mkdir(parents=True, exist_ok=True)
-    if provider == "stale-agy":
-        seed_stale_provider()
+    stored = STALE_STORED.get(provider)
+    if stored:
+        seed_stale_provider(stored)
     tex = project / "main.tex"
     tex.write_text("\\documentclass{article}\\begin{document}Title\\end{document}\n")
     log = open(evidence / "pitex.log", "w")
@@ -47,7 +53,7 @@ def main():
         time.sleep(0.3)
         shot(evidence / "02-menu.png")
         result["steps"].append("menu-open")
-        if provider == "stale-agy":
+        if stored:
             result["storedAtMenu"] = stored_provider(preferences_path().read_text() if preferences_path().exists() else "")
             run(["xdotool", "key", "--window", settings, "Escape"])
             time.sleep(0.3)
@@ -67,7 +73,7 @@ def main():
         run(["xdotool", "key", "Return"])
         time.sleep(2.5)
         shot(evidence / "04-sent.png")
-        if provider != "stale-agy":
+        if not stored:
             click(470, 716)
             time.sleep(1.2)
             shot(evidence / "05-approved.png")
@@ -79,7 +85,7 @@ def main():
         record_path = Path(os.environ["FAKE_RECORD"]) if os.environ.get("FAKE_RECORD") else None
         record = record_path.read_text() if record_path and record_path.exists() else ""
         result["promptReachedCli"] = "Fix the title" in record
-        if provider == "stale-agy":
+        if stored:
             bridge_commands = cli_descendants(child.pid)
             result["bridgeStarted"] = len(bridge_commands) > 0
             result["bridgeCommands"] = bridge_commands
@@ -89,8 +95,8 @@ def main():
             result["assistantVisible"] = assistant_visible(sent_text)
             result["searchIntercepted"] = "No Results Found" in sent_text
             result["pass"] = (
-                result.get("storedAtMenu") == "agy"
-                and result["storedProvider"] in ("agy", "pi")
+                result.get("storedAtMenu") == stored
+                and result["storedProvider"] in (stored, "pi")
                 and not result["promptReachedCli"]
                 and not result["bridgeStarted"]
                 and result["assistantVisible"]
@@ -112,10 +118,12 @@ def main():
         log.close()
 
 
-def seed_stale_provider():
+def seed_stale_provider(stored):
     config = Path(os.environ["XDG_CONFIG_HOME"]) / "pitex"
     config.mkdir(parents=True, exist_ok=True)
-    (config / "preferences.json").write_text('{"ai.agentProvider":"agy"}')
+    (config / "preferences.json").write_text(
+        json.dumps({"ai.agentProvider": stored}, separators=(",", ":"))
+    )
 
 
 def preferences_path():
