@@ -2,6 +2,8 @@
 
 Settings, AI, Assistant backend, Codex CLI. The assistant talks to the Codex app-server the bridge spawns.
 
+The Settings row is hidden, and a stored `codex` is the `gtk --provider stale-codex` journey. `drive --provider codex` is how this adapter is still proved.
+
 ## Sub-features
 
 - Select Codex and send a prompt from the window.

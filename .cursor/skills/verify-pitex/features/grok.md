@@ -2,6 +2,8 @@
 
 Settings, AI, Assistant backend, Grok CLI. The bridge speaks ACP to `grok agent stdio` and keeps file and terminal access inside the project root.
 
+The Settings row is hidden, and a stored `grok` is the `gtk --provider stale-grok` journey. `drive --provider grok` is how this adapter is still proved.
+
 ## Sub-features
 
 - Stream text, show the command row, and answer Approve, Deny, and Always allow.
