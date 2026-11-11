@@ -1478,7 +1478,9 @@ impl AgentCoordinator {
         if self.intentional_stop {
             return;
         }
-        if crate::settings::agent_provider_uses_bridge(&self.agent_provider) {
+        if crate::settings::agent_provider_is_on_device(&self.agent_provider) {
+            self.fail_connection(crate::settings::ON_DEVICE_UNAVAILABLE_MESSAGE.into());
+        } else if crate::settings::agent_provider_uses_bridge(&self.agent_provider) {
             self.spawn_with_tools(Path::new(""), &root, tools);
         } else {
             match executable {
@@ -1541,6 +1543,9 @@ impl AgentCoordinator {
         sessions: &Path,
         tools: &PiToolchain,
     ) -> Result<AgentLaunch, String> {
+        if crate::settings::agent_provider_is_on_device(provider) {
+            return Err(crate::settings::ON_DEVICE_UNAVAILABLE_MESSAGE.to_string());
+        }
         if crate::settings::agent_provider_uses_bridge(provider) {
             let script = bridge_script().ok_or_else(|| bridge_missing_message(provider))?;
             let (executable, arguments) = tools.launch(&script, &[])?;
@@ -3829,6 +3834,26 @@ mod toolchain_tests {
     }
 
     #[test]
+    fn apple_fm_launch_fails_closed() {
+        let home = home("launchapple");
+        let node = home.join("bin/node");
+        executable(&node, "#!/bin/sh\n");
+        let tools = PiToolchain {
+            environment: HashMap::new(),
+            bun: None,
+            node: Some(node.clone()),
+            npm: None,
+        };
+        let sessions = home.join("sessions");
+        let error = match AgentCoordinator::plan_launch("apple-fm", &node, &sessions, &tools) {
+            Ok(_) => panic!("apple-fm must not launch a process"),
+            Err(error) => error,
+        };
+        assert_eq!(error, crate::settings::ON_DEVICE_UNAVAILABLE_MESSAGE);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn launch_uses_node_for_javascript_without_bun() {
         let home = home("launchnode");
         let node = home.join("bin/node");
@@ -4097,6 +4122,34 @@ mod session_history_tests {
     }
 
     #[test]
+    fn switching_to_or_from_apple_fm_mid_turn_returns_the_turn_to_idle() {
+        let mut agent =
+            AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        for next in ["apple-fm", "pi", "claude"] {
+            let start = json!({"type": "agent_start"});
+            agent.handle(&PiRPCEvent::new(start.as_object().unwrap().clone()).unwrap());
+            agent.handle(&approval_event("9", "write notes.tex"));
+            assert!(agent.is_running, "a live turn shows the stop button");
+            assert!(agent.pending_approval.is_some());
+
+            agent.wants_connection = true;
+            agent.set_agent_provider(next);
+            agent.restart();
+
+            assert!(
+                !agent.is_running,
+                "switching to {next} mid-turn must restore Send"
+            );
+            assert!(
+                agent.pending_approval.is_none(),
+                "a pending approval from the retired session must be gone"
+            );
+            agent.stop();
+            assert!(!agent.is_running, "stop after the switch stays idle");
+        }
+    }
+
+    #[test]
     fn extension_ui_request_stays_auto_cancelled() {
         let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
         let request = json!({
@@ -4117,21 +4170,21 @@ mod session_history_tests {
                 .iter()
                 .map(|choice| choice.id)
                 .collect::<Vec<_>>(),
-            ["pi", "codex", "claude", "grok"]
+            ["pi", "codex", "claude", "grok", "apple-fm"]
+        );
+        assert_eq!(
+            crate::settings::visible_agent_providers()
+                .map(|choice| choice.id)
+                .collect::<Vec<_>>(),
+            ["pi", "claude"]
         );
         assert_eq!(
             crate::settings::AGENT_PROVIDER_CHOICES
                 .iter()
-                .filter(|choice| choice.uses_bridge)
+                .filter(|choice| choice.transport == crate::settings::AgentTransport::CliBridge)
                 .map(|choice| choice.id)
                 .collect::<Vec<_>>(),
             ["codex", "claude", "grok"]
-        );
-        assert_eq!(
-            crate::settings::selectable_providers()
-                .map(|choice| choice.id)
-                .collect::<Vec<_>>(),
-            ["pi", "claude"]
         );
         let mut store = crate::settings::SettingsStore::new(Default::default());
         assert_eq!(store.agent_provider(), "pi");
@@ -4161,6 +4214,18 @@ mod session_history_tests {
                 Some(raw)
             );
         }
+        store.prefs_mut().set("ai.agentProvider", "apple-fm");
+        assert_eq!(store.agent_provider(), "apple-fm");
+        assert_eq!(
+            store.prefs().string("ai.agentProvider").as_deref(),
+            Some("apple-fm")
+        );
+        store.set_agent_provider("apple-fm");
+        assert_eq!(store.agent_provider(), "apple-fm");
+        assert_eq!(
+            store.prefs().string("ai.agentProvider").as_deref(),
+            Some("apple-fm")
+        );
         store.set_agent_provider("agy");
         assert_eq!(store.agent_provider(), "pi");
         assert_eq!(
@@ -4175,6 +4240,8 @@ mod session_history_tests {
         assert_eq!(agent.agent_provider, "pi");
         agent.set_agent_provider("claude");
         assert_eq!(agent.agent_provider, "claude");
+        agent.set_agent_provider("apple-fm");
+        assert_eq!(agent.agent_provider, "apple-fm");
         store.set_agent_provider("other");
         assert_eq!(store.agent_provider(), "pi");
         agent.set_agent_provider("other");

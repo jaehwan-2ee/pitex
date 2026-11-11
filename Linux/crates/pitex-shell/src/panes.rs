@@ -2753,7 +2753,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     let backend_row = adw::ActionRow::new();
     backend_row.set_title(&tr(lang, "settings.ai.backend"));
     let providers: Vec<&crate::settings::AgentProviderChoice> =
-        crate::settings::selectable_providers().collect();
+        crate::settings::visible_agent_providers().collect();
     let labels: Vec<String> = providers
         .iter()
         .map(|choice| tr(lang, choice.label_key))
@@ -2767,14 +2767,24 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
         .unwrap_or(0);
     backend.set_selected(selected as u32);
     a11y(&backend, "pitex.settings.ai.backend", "settings.ai.backend");
+    let unavailable = gtk4::Label::new(Some(&tr(lang, "settings.ai.backend_apple_fm_unavailable")));
+    unavailable.set_wrap(true);
+    unavailable.set_xalign(0.0);
+    unavailable.add_css_class("dim-label");
+    unavailable.set_margin_start(12);
+    unavailable.set_margin_end(12);
+    unavailable.set_margin_bottom(8);
+    unavailable.set_visible(crate::settings::agent_provider_is_on_device(&current));
     {
         let state = state.clone();
         let ids: Vec<&str> = providers.iter().map(|choice| choice.id).collect();
+        let unavailable = unavailable.clone();
         backend.connect_selected_notify(move |dd| {
             let next = ids.get(dd.selected() as usize).copied().unwrap_or("pi");
             let Ok(mut s) = state.try_borrow_mut() else {
                 return;
             };
+            unavailable.set_visible(false);
             if s.store.agent_provider() == next {
                 return;
             }
@@ -2787,6 +2797,7 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     }
     backend_row.add_suffix(&backend);
     agent_group.add(&backend_row);
+    agent_group.add(&unavailable);
     let backend_note = gtk4::Label::new(Some(&tr(lang, "settings.ai.backend_note")));
     backend_note.set_wrap(true);
     backend_note.set_xalign(0.0);

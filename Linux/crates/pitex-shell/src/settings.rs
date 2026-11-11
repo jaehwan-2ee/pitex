@@ -130,10 +130,17 @@ impl Preferences {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentTransport {
+    Pi,
+    CliBridge,
+    OnDevice,
+}
+
 pub(crate) struct AgentProviderChoice {
     pub id: &'static str,
     pub label_key: &'static str,
-    pub uses_bridge: bool,
+    pub transport: AgentTransport,
     pub selectable: bool,
 }
 
@@ -146,41 +153,52 @@ pub(crate) const AGENT_PROVIDER_CHOICES: &[AgentProviderChoice] = &[
     AgentProviderChoice {
         id: "pi",
         label_key: "settings.ai.backend_pi",
-        uses_bridge: false,
+        transport: AgentTransport::Pi,
         selectable: true,
     },
     AgentProviderChoice {
         id: "codex",
         label_key: "settings.ai.backend_codex",
-        uses_bridge: true,
+        transport: AgentTransport::CliBridge,
         selectable: SHOW_DIRECT_CODEX_AND_GROK,
     },
     AgentProviderChoice {
         id: "claude",
         label_key: "settings.ai.backend_claude",
-        uses_bridge: true,
+        transport: AgentTransport::CliBridge,
         selectable: true,
     },
     AgentProviderChoice {
         id: "grok",
         label_key: "settings.ai.backend_grok",
-        uses_bridge: true,
+        transport: AgentTransport::CliBridge,
         selectable: SHOW_DIRECT_CODEX_AND_GROK,
+    },
+    AgentProviderChoice {
+        id: "apple-fm",
+        label_key: "settings.ai.backend_apple_fm",
+        transport: AgentTransport::OnDevice,
+        selectable: true,
     },
 ];
 
-pub(crate) fn selectable_providers() -> impl Iterator<Item = &'static AgentProviderChoice> {
-    AGENT_PROVIDER_CHOICES
-        .iter()
-        .filter(|choice| choice.selectable)
+/// Same sentence as `AppleFMHost.unavailableMessage`. The GTK shell shows it
+/// when a Mac preference is opened on Linux or Windows.
+pub const ON_DEVICE_UNAVAILABLE_MESSAGE: &str =
+    "Apple Foundation Models run in the Pitex Mac app when Apple Intelligence is on. This build cannot start them.";
+
+pub(crate) fn visible_agent_providers() -> impl Iterator<Item = &'static AgentProviderChoice> {
+    AGENT_PROVIDER_CHOICES.iter().filter(|choice| {
+        choice.selectable && choice.transport != AgentTransport::OnDevice
+    })
 }
 
-/// A selectable `ai.agentProvider` id. Anything else reads as `pi`.
 pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
     value
         .and_then(|raw| {
-            selectable_providers()
-                .find(|choice| choice.id == raw)
+            AGENT_PROVIDER_CHOICES
+                .iter()
+                .find(|choice| choice.selectable && choice.id == raw)
                 .map(|choice| choice.id)
         })
         .unwrap_or("pi")
@@ -188,9 +206,15 @@ pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
 
 /// Codex, Claude Code, and Grok CLI launch the bundled bridge.
 pub fn agent_provider_uses_bridge(value: &str) -> bool {
+    AGENT_PROVIDER_CHOICES.iter().any(|choice| {
+        choice.transport == AgentTransport::CliBridge && choice.id == value
+    })
+}
+
+pub fn agent_provider_is_on_device(value: &str) -> bool {
     AGENT_PROVIDER_CHOICES
         .iter()
-        .any(|choice| choice.uses_bridge && choice.id == value)
+        .any(|choice| choice.transport == AgentTransport::OnDevice && choice.id == value)
 }
 
 /// Port of `SettingsStore` — every @Published field with its UserDefaults key

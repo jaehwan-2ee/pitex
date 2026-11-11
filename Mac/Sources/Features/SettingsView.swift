@@ -1,4 +1,5 @@
 import AppKit
+import AppPorts
 import CoreServices
 import RemoteCore
 import SettingsFeature
@@ -7,6 +8,7 @@ import UniformTypeIdentifiers
 
 enum ShippedAgentProvider: String, CaseIterable {
     case pi, codex, claude, grok
+    case appleFM = "apple-fm"
 
     /// Direct Codex and Grok rows. Flip this one line to show both again.
     /// Stored "codex" and "grok" read as "pi" while this is false.
@@ -15,12 +17,20 @@ enum ShippedAgentProvider: String, CaseIterable {
     var isSelectable: Bool {
         switch self {
         case .codex, .grok: Self.showDirectCodexAndGrok
-        case .pi, .claude: true
+        case .pi, .claude, .appleFM: true
         }
     }
 
     static var selectableCases: [ShippedAgentProvider] {
-        allCases.filter(\.isSelectable)
+        let canRunAppleFM: Bool
+        if case .available = AppleFMRuntime.availability() {
+            canRunAppleFM = true
+        } else {
+            canRunAppleFM = false
+        }
+        return allCases.filter { provider in
+            provider.isSelectable && (provider != .appleFM || canRunAppleFM)
+        }
     }
 
     var label: LocalizedStringKey {
@@ -29,12 +39,13 @@ enum ShippedAgentProvider: String, CaseIterable {
         case .codex: "settings.ai.backend_codex"
         case .claude: "settings.ai.backend_claude"
         case .grok: "settings.ai.backend_grok"
+        case .appleFM: "settings.ai.backend_apple_fm"
         }
     }
 
     var bridgeAdapterID: String? {
         switch self {
-        case .pi: nil
+        case .pi, .appleFM: nil
         case .codex, .claude, .grok: rawValue
         }
     }
@@ -825,20 +836,59 @@ struct SettingsView: View {
 
     // MARK: - AI
 
+    private var agentMenuSelection: Binding<String> {
+        Binding(
+            get: {
+                let offered = ShippedAgentProvider.selectableCases.map(\.rawValue)
+                let current = store.agentProvider
+                return offered.contains(current) ? current : ShippedAgentProvider.pi.rawValue
+            },
+            set: { next in
+                let offered = ShippedAgentProvider.selectableCases.map(\.rawValue)
+                guard offered.contains(next) else { return }
+                if next == ShippedAgentProvider.pi.rawValue,
+                   store.agentProvider == ShippedAgentProvider.appleFM.rawValue,
+                   !offered.contains(store.agentProvider) {
+                    return
+                }
+                store.agentProvider = next
+            }
+        )
+    }
+
+    private var agentBackendNote: LocalizedStringKey {
+        if store.agentProvider == ShippedAgentProvider.appleFM.rawValue, appleFMMenuReason == nil {
+            return "settings.ai.backend_apple_fm_note"
+        }
+        return "settings.ai.backend_note"
+    }
+
+    private var appleFMMenuReason: String? {
+        if case .unavailable(let reason) = AppleFMRuntime.availability() {
+            return reason.message
+        }
+        return nil
+    }
+
     /// Provider authentication uses pi's own terminal flows; configuration
     /// shortcuts open the app-local settings.json and models.json files.
     private var aiTab: some View {
         Form {
             Section("settings.ai.agent") {
-                Picker("settings.ai.backend", selection: $store.agentProvider) {
+                Picker("settings.ai.backend", selection: agentMenuSelection) {
                     ForEach(ShippedAgentProvider.selectableCases, id: \.rawValue) { provider in
                         Text(provider.label).tag(provider.rawValue)
                     }
                 }
                 .accessibilityIdentifier("pitex.settings.ai.backend")
-                Text("settings.ai.backend_note")
+                Text(agentBackendNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let reason = appleFMMenuReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 LabeledContent("settings.ai.location") {
                     Text(PiPaths.runtimeDirectory.path)
                         .font(.caption)
