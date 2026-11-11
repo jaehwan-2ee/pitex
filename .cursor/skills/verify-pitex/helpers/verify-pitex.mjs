@@ -12,7 +12,7 @@ const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
 const PROVIDERS = ["codex", "claude", "grok"];
-const GTK_PROVIDERS = [...PROVIDERS, "stale-agy"];
+const GTK_PROVIDERS = ["claude", "stale-agy", "stale-codex", "stale-grok"];
 const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH" };
 const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs" };
 
@@ -59,7 +59,11 @@ function usage() {
   console.log(`verify-pitex doctor
 verify-pitex drive --provider <codex|claude|grok|all>
 verify-pitex cleanup
-verify-pitex gtk --provider <codex|claude|grok|stale-agy>`);
+verify-pitex gtk --provider <claude|stale-agy|stale-codex|stale-grok>`);
+}
+
+function hiddenGtkProvider(provider) {
+  return provider === "codex" || provider === "grok";
 }
 
 function check(id, pass, observed) {
@@ -633,7 +637,14 @@ async function main() {
   if (args.command === "doctor") process.exit(doctor());
   if (args.command === "cleanup") process.exit(cleanup());
   if (args.command === "gtk") {
-    const provider = args.provider === "all" ? "codex" : args.provider;
+    const provider = args.provider;
+    if (hiddenGtkProvider(provider)) {
+      console.error(
+        `gtk --provider ${provider} is a usage error. Prove that adapter with drive --provider ${provider}. A stored ${provider} is gtk --provider stale-${provider}.`
+      );
+      usage();
+      process.exit(2);
+    }
     if (!GTK_PROVIDERS.includes(provider)) {
       usage();
       process.exit(2);

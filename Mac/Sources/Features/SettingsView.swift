@@ -8,6 +8,21 @@ import UniformTypeIdentifiers
 enum ShippedAgentProvider: String, CaseIterable {
     case pi, codex, claude, grok
 
+    /// Direct Codex and Grok rows. Flip this one line to show both again.
+    /// Stored "codex" and "grok" read as "pi" while this is false.
+    static let showDirectCodexAndGrok = false
+
+    var isSelectable: Bool {
+        switch self {
+        case .codex, .grok: Self.showDirectCodexAndGrok
+        case .pi, .claude: true
+        }
+    }
+
+    static var selectableCases: [ShippedAgentProvider] {
+        allCases.filter(\.isSelectable)
+    }
+
     var label: LocalizedStringKey {
         switch self {
         case .pi: "settings.ai.backend_pi"
@@ -124,7 +139,6 @@ final class SettingsStore: ObservableObject {
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
-    /// `ai.agentProvider`. `pi`, `codex`, `claude`, or `grok`.
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)
@@ -132,12 +146,17 @@ final class SettingsStore: ObservableObject {
                 agentProvider = normalized
                 return
             }
+            if agentProvider == oldValue {
+                return
+            }
             UserDefaults.standard.set(agentProvider, forKey: "ai.agentProvider")
         }
     }
     static func agentProviderValue(_ stored: String?) -> String {
-        guard let stored else { return "pi" }
-        return ShippedAgentProvider(rawValue: stored)?.rawValue ?? "pi"
+        guard let stored, let provider = ShippedAgentProvider(rawValue: stored), provider.isSelectable else {
+            return "pi"
+        }
+        return provider.rawValue
     }
     @Published var defaultBuildCommand: String {
         didSet { UserDefaults.standard.set(defaultBuildCommand, forKey: "project.defaultBuildCommand") }
@@ -812,7 +831,7 @@ struct SettingsView: View {
         Form {
             Section("settings.ai.agent") {
                 Picker("settings.ai.backend", selection: $store.agentProvider) {
-                    ForEach(ShippedAgentProvider.allCases, id: \.rawValue) { provider in
+                    ForEach(ShippedAgentProvider.selectableCases, id: \.rawValue) { provider in
                         Text(provider.label).tag(provider.rawValue)
                     }
                 }

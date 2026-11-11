@@ -2,9 +2,11 @@
 
 Settings, AI, Assistant backend, Codex CLI. The assistant talks to the Codex app-server the bridge spawns.
 
+The Settings row is hidden, and a stored `codex` is the `gtk --provider stale-codex` journey. `drive --provider codex` is how this adapter is still proved.
+
 ## Sub-features
 
-- Select Codex and send a prompt from the window.
+- A stored `codex` preference starts pi. The window does not send the prompt to the Codex CLI.
 - Stream assistant text, show the command row, and accept Approve, Deny, and Always allow.
 - Abort a turn that has not finished.
 - Start a new conversation and resume the first one.
@@ -12,16 +14,16 @@ Settings, AI, Assistant backend, Codex CLI. The assistant talks to the Codex app
 
 ## How to get to it (user POV)
 
-Open a `.tex` file. Press Ctrl+comma. Open the AI page. Set Assistant backend to Codex CLI (your login). Close Settings. Open the assistant from the header. Type in Ask about your document and press Return. Approve, Deny, or Always allow on the command banner.
+The Assistant backend menu does not list Codex CLI. A stored `codex` preference opens as pi. The bridge adapter still runs when the drive sets `PITEX_CLI_ADAPTER=codex`.
 
 ## Driving it with verify-pitex
 
 ```sh
-node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider codex
+node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider stale-codex
 node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs drive --provider codex
 ```
 
-`gtk` is the window path. `drive` sends the pi commands for Deny, Always allow, abort, new conversation, resume, missing CLI, and signed out. Pass is `gtk-result.json` with `"pass": true` and every object in the Codex `checks` array with `"pass": true`.
+`stale-codex` is the window path. It does not click a menu row. `drive` sends the pi commands for Deny, Always allow, abort, new conversation, resume, missing CLI, and signed out. Pass is `gtk-result.json` with `"pass": true` and every object in the Codex `checks` array with `"pass": true`.
 
 ## Gotchas
 

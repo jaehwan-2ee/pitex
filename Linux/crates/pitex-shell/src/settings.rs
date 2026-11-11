@@ -134,37 +134,52 @@ pub(crate) struct AgentProviderChoice {
     pub id: &'static str,
     pub label_key: &'static str,
     pub uses_bridge: bool,
+    pub selectable: bool,
 }
+
+/// v1.1.0 hides the direct Codex CLI and Grok CLI rows.
+/// Flip this line to list both again. A stored `codex` or `grok`
+/// reads as `pi` while this is false. Launch plans still accept both ids.
+pub(crate) const SHOW_DIRECT_CODEX_AND_GROK: bool = false;
 
 pub(crate) const AGENT_PROVIDER_CHOICES: &[AgentProviderChoice] = &[
     AgentProviderChoice {
         id: "pi",
         label_key: "settings.ai.backend_pi",
         uses_bridge: false,
+        selectable: true,
     },
     AgentProviderChoice {
         id: "codex",
         label_key: "settings.ai.backend_codex",
         uses_bridge: true,
+        selectable: SHOW_DIRECT_CODEX_AND_GROK,
     },
     AgentProviderChoice {
         id: "claude",
         label_key: "settings.ai.backend_claude",
         uses_bridge: true,
+        selectable: true,
     },
     AgentProviderChoice {
         id: "grok",
         label_key: "settings.ai.backend_grok",
         uses_bridge: true,
+        selectable: SHOW_DIRECT_CODEX_AND_GROK,
     },
 ];
 
-/// `ai.agentProvider` is `pi`, `codex`, `claude`, or `grok`. Anything else is pi.
+pub(crate) fn selectable_providers() -> impl Iterator<Item = &'static AgentProviderChoice> {
+    AGENT_PROVIDER_CHOICES
+        .iter()
+        .filter(|choice| choice.selectable)
+}
+
+/// A selectable `ai.agentProvider` id. Anything else reads as `pi`.
 pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
     value
         .and_then(|raw| {
-            AGENT_PROVIDER_CHOICES
-                .iter()
+            selectable_providers()
                 .find(|choice| choice.id == raw)
                 .map(|choice| choice.id)
         })
@@ -373,7 +388,6 @@ impl SettingsStore {
     pub fn set_ai_font_size(&mut self, v: f64) {
         self.prefs.set("ai.fontSize", v);
     }
-    /// `ai.agentProvider`. `pi` (provider sign-in), `codex`, `claude`, or `grok`.
     pub fn agent_provider(&self) -> String {
         normalize_agent_provider(self.prefs.string("ai.agentProvider").as_deref()).into()
     }

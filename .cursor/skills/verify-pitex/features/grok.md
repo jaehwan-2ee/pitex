@@ -2,6 +2,8 @@
 
 Settings, AI, Assistant backend, Grok CLI. The bridge speaks ACP to `grok agent stdio` and keeps file and terminal access inside the project root.
 
+The Settings row is hidden, and a stored `grok` is the `gtk --provider stale-grok` journey. `drive --provider grok` is how this adapter is still proved.
+
 ## Sub-features
 
 - Stream text, show the command row, and answer Approve, Deny, and Always allow.
@@ -12,7 +14,7 @@ Settings, AI, Assistant backend, Grok CLI. The bridge speaks ACP to `grok agent 
 
 ## How to get to it (user POV)
 
-Same Settings path as Codex. Choose Grok CLI (your login). Approve a command in the assistant. The jail is not a separate screen. It is what happens when the CLI asks to read or run something outside the open project.
+The Assistant backend menu does not list Grok CLI. A stored `grok` preference opens as pi (`gtk --provider stale-grok`). The jail checks use `drive --provider grok`. The jail is not a separate screen. It is what happens when the CLI asks to read or run something outside the open project.
 
 ## Driving it with verify-pitex
 
