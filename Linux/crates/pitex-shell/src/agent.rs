@@ -4058,6 +4058,44 @@ mod session_history_tests {
     }
 
     #[test]
+    fn switching_provider_mid_turn_returns_the_turn_to_idle_and_stop_stays_idle() {
+        let mut agent =
+            AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let start = json!({"type": "agent_start"});
+        agent.handle(&PiRPCEvent::new(start.as_object().unwrap().clone()).unwrap());
+        agent.handle(&approval_event("9", "rm build"));
+        assert!(agent.is_running, "a live turn shows the stop button");
+        assert!(agent.pending_approval.is_some());
+
+        agent.wants_connection = true;
+        agent.set_agent_provider("claude");
+        agent.restart();
+
+        assert!(
+            !agent.is_running,
+            "switching provider mid-turn must restore Send without waiting for the old process"
+        );
+        assert!(
+            agent.pending_approval.is_none(),
+            "a pending approval from the retired session must be gone"
+        );
+        assert_eq!(agent.connection, Connection::Idle);
+
+        agent.stop();
+        assert!(
+            !agent.is_running,
+            "stop after the switch stays idle and does not wait for agent_end"
+        );
+
+        let start = json!({"type": "agent_start"});
+        agent.handle(&PiRPCEvent::new(start.as_object().unwrap().clone()).unwrap());
+        assert!(agent.is_running, "a new session can start a turn");
+        let end = json!({"type": "agent_end"});
+        agent.handle(&PiRPCEvent::new(end.as_object().unwrap().clone()).unwrap());
+        assert!(!agent.is_running, "agent_end still ends the new turn");
+    }
+
+    #[test]
     fn extension_ui_request_stays_auto_cancelled() {
         let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
         let request = json!({
