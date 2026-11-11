@@ -166,6 +166,7 @@ final class AgentCoordinator: ObservableObject {
     private var eventTask: Task<Void, Never>?
     private var intentionalStop = false
     private var processEpoch = AgentProcessEpoch()
+    private var attachedToken: UInt64 = 0
     private var assistantEntryIndex: Int?
     private var thinkingEntryIndex: Int?
     private var textContentIndex: Int?
@@ -224,6 +225,7 @@ final class AgentCoordinator: ObservableObject {
     func shutdown() {
         intentionalStop = true
         processEpoch.retire()
+        isRunning = false
         flushDeltas()
         approvalQueue.clear()
         pendingApproval = nil
@@ -437,6 +439,7 @@ final class AgentCoordinator: ObservableObject {
         environment: [String: String]
     ) {
         let token = processEpoch.beginLaunch()
+        attachedToken = token
         let agent = PiAgentProcess(
             executableURL: launch.executable,
             workingDirectory: root,
@@ -456,11 +459,15 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func connect(_ session: any AgentSession) {
+        if !processEpoch.isCurrent(attachedToken) {
+            attachedToken = processEpoch.beginLaunch()
+        }
+        let token = attachedToken
         process = session
         connection = .ready
         eventTask = Task { [weak self] in
             for await event in session.events {
-                guard let self else { return }
+                guard let self, self.processEpoch.isCurrent(token) else { return }
                 self.handle(event)
             }
         }

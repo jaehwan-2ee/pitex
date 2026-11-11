@@ -84,6 +84,8 @@ The panel already queues `approval_request` and answers with `approval_response`
 
 `abort` cancels the generation task, stops a running command, resumes approval waiters as deny, and closes an open turn once. A second prompt while a turn is open fails with a sentence. The model does not start a second generation on top of the first. `new_session` drops the `LanguageModelSession`. `switch_session` answers `cancelled: true` so the host does not load a pi transcript this model does not have. `get_commands` is empty. The host adds `/resume` itself.
 
+A provider switch calls `shutdown` while a turn is open. `shutdown` clears the turn flag, retires `processEpoch`, drops the pending approval, and calls `terminate` on the session. `terminate` cancels the Apple FM generation task. `connect(_:)` watches that epoch for every session. Apple FM does not launch a process, so `connect` mints the token when the caller did not. An event whose token is no longer current is ignored, including a late snapshot from the cancelled stream.
+
 ## Why this is not a helper process
 
 A small Swift helper that spoke the same JSONL would keep the host rule "every provider is a subprocess." That rule is the one this change removes. A helper also needs a second Xcode product, a copy phase, and signing. `Tools/validate-xcodeproj.mjs` is strict about the project file. Crash isolation is the real advantage of a helper. `FoundationModels` can still fail the process. This design surfaces `GenerationError` and later `LanguageModelError` as a failed turn. It does not claim the framework cannot crash the app.

@@ -136,6 +136,39 @@ final class AppleFMContractTests: XCTestCase {
         XCTAssertEqual(other["success"], .bool(false))
     }
 
+    func testSwitchingProviderMidTurnRetiresTheAppleFMTurn() throws {
+        var epoch = AgentProcessEpoch()
+        let live = epoch.beginLaunch()
+        var cursor = AppleFMStreamCursor()
+        XCTAssertEqual(deltaText(in: cursor.consume(snapshot: "Hel")), "Hel")
+        let openTurn = cursor
+
+        epoch.retire()
+        XCTAssertFalse(epoch.isCurrent(live))
+
+        var lateTurn = openTurn
+        let late = lateTurn.consume(snapshot: "Hello")
+        XCTAssertEqual(deltaText(in: late), "lo")
+        XCTAssertTrue(events(late, acceptedBy: epoch, token: live).isEmpty)
+
+        var cancelTurn = openTurn
+        let cancelled = cancelTurn.close(stopReason: "error", errorMessage: "The turn was cancelled.")
+        XCTAssertEqual(cancelled.last?.string("type"), "agent_end")
+        XCTAssertTrue(events(cancelled, acceptedBy: epoch, token: live).isEmpty)
+
+        let replacement = epoch.beginLaunch()
+        XCTAssertTrue(epoch.isCurrent(replacement))
+        XCTAssertFalse(epoch.isCurrent(live))
+        XCTAssertEqual(deltaText(in: events(late, acceptedBy: epoch, token: replacement)), "lo")
+
+        let coordinator = try source("Mac/Sources/Features/AgentCoordinator.swift")
+        XCTAssertTrue(coordinator.contains("guard let self, self.processEpoch.isCurrent(token) else { return }"))
+        XCTAssertTrue(coordinator.contains("for await event in session.events"))
+        XCTAssertTrue(coordinator.contains("connect(session)"))
+        XCTAssertTrue(coordinator.contains("isRunning = false"))
+        XCTAssertTrue(coordinator.contains("process?.terminate()"))
+    }
+
     func testPickerSourcesGateAppleFMToTheMacApp() throws {
         let settings = try source("Mac/Sources/Features/SettingsView.swift")
         XCTAssertTrue(settings.contains("case appleFM = \"apple-fm\""))
@@ -154,6 +187,14 @@ final class AppleFMContractTests: XCTestCase {
         XCTAssertTrue(panes.contains("visible_agent_providers"))
         XCTAssertFalse(panes.contains("selectable_providers"))
         XCTAssertFalse(panes.contains("DropDown::from_strings(&label_refs)") && panes.contains("AGENT_PROVIDER_CHOICES\n        .iter()\n        .map(|choice| tr(lang, choice.label_key))"))
+    }
+
+    private func events(
+        _ events: [AppleFMJSON],
+        acceptedBy epoch: AgentProcessEpoch,
+        token: UInt64
+    ) -> [AppleFMJSON] {
+        epoch.isCurrent(token) ? events : []
     }
 
     private func deltaText(in events: [AppleFMJSON]) -> String? {
