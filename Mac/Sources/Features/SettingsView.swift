@@ -139,7 +139,6 @@ final class SettingsStore: ObservableObject {
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
-    /// `ai.agentProvider`. Reads a selectable id.
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)

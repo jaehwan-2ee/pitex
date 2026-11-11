@@ -388,7 +388,6 @@ impl SettingsStore {
     pub fn set_ai_font_size(&mut self, v: f64) {
         self.prefs.set("ai.fontSize", v);
     }
-    /// `ai.agentProvider`. Reads a selectable id.
     pub fn agent_provider(&self) -> String {
         normalize_agent_provider(self.prefs.string("ai.agentProvider").as_deref()).into()
     }
