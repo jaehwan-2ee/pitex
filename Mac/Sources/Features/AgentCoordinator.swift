@@ -162,7 +162,7 @@ final class AgentCoordinator: ObservableObject {
     var agentActivityDidFinish: () async -> Void = {}
 
     private let environment: AppEnvironment
-    private var process: PiAgentProcess?
+    private var process: (any AgentSession)?
     private var eventTask: Task<Void, Never>?
     private var intentionalStop = false
     private var processEpoch = AgentProcessEpoch()
@@ -325,6 +325,11 @@ final class AgentCoordinator: ObservableObject {
     private func prepareAgent() async {
         defer { prepareTask = nil }
         guard let root = contextProvider().projectRoot else { return }
+        if Self.selectedAgentProvider() == AppleFMCatalog.providerID {
+            guard !Task.isCancelled else { return }
+            spawnAppleFM(root: root)
+            return
+        }
         let tools = await PiToolchain.discover()
         guard !Task.isCancelled else { return }
         if let adapter = Self.bridgeAdapterID(Self.selectedAgentProvider()) {
@@ -409,6 +414,23 @@ final class AgentCoordinator: ObservableObject {
         return "The Codex bridge is not installed with this Pitex build."
     }
 
+    private func spawnAppleFM(root: URL) {
+        intentionalStop = false
+        switch AppleFMRuntime.availability() {
+        case .unavailable(let reason):
+            connection = .failed(reason.message)
+            statusMessage = nil
+        case .available(let contextTokens):
+            connection = .connecting
+            let session = AppleFMSession(
+                workingDirectory: root,
+                contextTokens: contextTokens,
+                instructions: Self.systemPromptSupplement
+            )
+            connect(session)
+        }
+    }
+
     private func startAgent(
         launch: (executable: URL, arguments: [String]),
         root: URL,
@@ -430,10 +452,14 @@ final class AgentCoordinator: ObservableObject {
             connection = .failed(error.localizedDescription)
             return
         }
-        process = agent
+        connect(agent)
+    }
+
+    private func connect(_ session: any AgentSession) {
+        process = session
         connection = .ready
         eventTask = Task { [weak self] in
-            for await event in agent.events {
+            for await event in session.events {
                 guard let self else { return }
                 self.handle(event)
             }
@@ -1178,11 +1204,11 @@ final class AgentCoordinator: ObservableObject {
     private func toolSummary(name: String, args: [String: Any]?) -> String {
         guard let args else { return "" }
         switch name {
-        case "bash":
+        case "bash", "run_command":
             return (args["command"] as? String).map { bounded($0, limit: 2_000) } ?? ""
-        case "read":
+        case "read", "read_file":
             return args["path"] as? String ?? ""
-        case "edit", "write":
+        case "edit", "write", "write_file":
             return args["path"] as? String ?? ""
         case "ls", "find", "grep":
             return args["path"] as? String ?? (args["pattern"] as? String ?? "")

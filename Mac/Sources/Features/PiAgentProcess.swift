@@ -421,10 +421,23 @@ enum PiRuntimeInstaller {
     }
 }
 
+protocol AgentSession: AnyObject, Sendable {
+    var events: AsyncStream<PiRPCEvent> { get }
+    var isRunning: Bool { get }
+    func send(_ command: PiRPCCommand, id: String?) throws
+    func terminate()
+}
+
+extension AgentSession {
+    func send(_ command: PiRPCCommand) throws {
+        try send(command, id: nil)
+    }
+}
+
 /// One running `pi --mode rpc` subprocess. Commands are JSON-encoded onto
 /// stdin; stdout lines are decoded and republished as an `AsyncStream`.
 /// The stream finishes when the process exits.
-final class PiAgentProcess: @unchecked Sendable {
+final class PiAgentProcess: AgentSession, @unchecked Sendable {
     let executableURL: URL
     let workingDirectory: URL
 

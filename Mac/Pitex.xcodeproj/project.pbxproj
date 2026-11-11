@@ -21,6 +21,7 @@
 		10000000000000000000000C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* SettingsView.swift */; };
 		10000000000000000000000D /* SyntaxHighlighting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* SyntaxHighlighting.swift */; };
 		10000000000000000000001E /* AgentCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* AgentCoordinator.swift */; };
+		100000000000000000000050 /* AppleFMSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000050 /* AppleFMSession.swift */; };
 		10000000000000000000001F /* PiRPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* PiRPC.swift */; };
 		100000000000000000000020 /* PiAgentProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* PiAgentProcess.swift */; };
 		100000000000000000000021 /* PiAuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* PiAuthStore.swift */; };
@@ -80,6 +81,7 @@
 		200000000000000000000030 /* PitexAgent */ = {isa = PBXFileReference; lastKnownFileType = folder; path = PitexAgent; sourceTree = "<group>"; };
 		200000000000000000000009 /* BuildSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildSupport.swift; sourceTree = "<group>"; };
 		200000000000000000000013 /* AgentCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCoordinator.swift; sourceTree = "<group>"; };
+		200000000000000000000050 /* AppleFMSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleFMSession.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* PiRPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiRPC.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* PiAgentProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiAgentProcess.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* PiAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiAuthStore.swift; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 				200000000000000000000008 /* Preview.swift */,
 				200000000000000000000009 /* BuildSupport.swift */,
 				200000000000000000000013 /* AgentCoordinator.swift */,
+				200000000000000000000050 /* AppleFMSession.swift */,
 				200000000000000000000014 /* PiRPC.swift */,
 				200000000000000000000015 /* PiAgentProcess.swift */,
 				200000000000000000000016 /* PiAuthStore.swift */,
@@ -338,6 +341,7 @@
 				100000000000000000000005 /* Preview.swift in Sources */,
 				100000000000000000000008 /* BuildSupport.swift in Sources */,
 				10000000000000000000001E /* AgentCoordinator.swift in Sources */,
+				100000000000000000000050 /* AppleFMSession.swift in Sources */,
 				10000000000000000000001F /* PiRPC.swift in Sources */,
 				100000000000000000000020 /* PiAgentProcess.swift in Sources */,
 				100000000000000000000021 /* PiAuthStore.swift in Sources */,

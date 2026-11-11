@@ -350,6 +350,9 @@
 "settings.ai.backend_grok" = "Grok CLI (ваш вход)";
 "settings.ai.backend_agy" = "Antigravity CLI (ваш вход)";
 "settings.ai.backend_note" = "Codex CLI использует `codex login`, Claude Code — `claude`, а Grok CLI — `grok login` на этом компьютере. Pitex не читает эти файлы учётных данных.";
+"settings.ai.backend_apple_fm" = "Apple Foundation Models (на этом Mac)";
+"settings.ai.backend_apple_fm_note" = "Apple Foundation Models работает на этом Mac, когда включена Apple Intelligence. Pitex не отправляет чат через pi.";
+"settings.ai.backend_apple_fm_unavailable" = "Apple Foundation Models работает в приложении Pitex для Mac, когда включена Apple Intelligence. Эта сборка не может их запустить.";
 "settings.ai.location" = "Место установки";
 "settings.ai.attach_default" = "Прикреплять активный документ к запросам по умолчанию";
 "settings.ai.autocompletion" = "Встроенное автодополнение";

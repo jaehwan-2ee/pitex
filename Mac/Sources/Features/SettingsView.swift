@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 enum ShippedAgentProvider: String, CaseIterable {
     case pi, codex, claude, grok
+    case appleFM = "apple-fm"
 
     var label: LocalizedStringKey {
         switch self {
@@ -14,12 +15,13 @@ enum ShippedAgentProvider: String, CaseIterable {
         case .codex: "settings.ai.backend_codex"
         case .claude: "settings.ai.backend_claude"
         case .grok: "settings.ai.backend_grok"
+        case .appleFM: "settings.ai.backend_apple_fm"
         }
     }
 
     var bridgeAdapterID: String? {
         switch self {
-        case .pi: nil
+        case .pi, .appleFM: nil
         case .codex, .claude, .grok: rawValue
         }
     }
@@ -124,7 +126,7 @@ final class SettingsStore: ObservableObject {
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
-    /// `ai.agentProvider`. `pi`, `codex`, `claude`, or `grok`.
+    /// `ai.agentProvider`. `pi`, `codex`, `claude`, `grok`, or `apple-fm`.
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)
@@ -817,7 +819,9 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("pitex.settings.ai.backend")
-                Text("settings.ai.backend_note")
+                Text(store.agentProvider == ShippedAgentProvider.appleFM.rawValue
+                    ? "settings.ai.backend_apple_fm_note"
+                    : "settings.ai.backend_note")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 LabeledContent("settings.ai.location") {
