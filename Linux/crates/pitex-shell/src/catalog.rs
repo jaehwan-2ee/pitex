@@ -70,7 +70,6 @@ pub(crate) struct CatalogMenu {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SelectionIntent {
     Row(CatalogRowId),
-    Backend(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,18 +173,6 @@ pub(crate) fn effect(
         return PickEffect::None;
     }
     match intent {
-        SelectionIntent::Backend(backend) => {
-            if !facts.slots.iter().any(|slot| slot.backend == *backend) {
-                return PickEffect::None;
-            }
-            if facts.active_backend == backend {
-                return PickEffect::None;
-            }
-            PickEffect::Switch {
-                backend: backend.clone(),
-                model: None,
-            }
-        }
         SelectionIntent::Row(id) => {
             if !facts.accepts_picks {
                 return PickEffect::None;
@@ -226,6 +213,170 @@ pub(crate) fn session_after(effect: &PickEffect, session: &SessionSnapshot) -> S
             current: model.clone(),
         },
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OfferedBackend {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DisabledBackends {
+    ids: Vec<String>,
+}
+
+impl DisabledBackends {
+    pub(crate) fn parse(stored: Option<&[String]>, offered: &[OfferedBackend]) -> Self {
+        let Some(stored) = stored else {
+            return Self { ids: Vec::new() };
+        };
+        let mut ids = Vec::new();
+        for id in stored {
+            if offered.iter().any(|backend| backend.id == *id) && !ids.iter().any(|kept| kept == id) {
+                ids.push(id.clone());
+            }
+        }
+        ids.sort_by_key(|id| {
+            offered
+                .iter()
+                .position(|backend| backend.id == *id)
+                .unwrap_or(usize::MAX)
+        });
+        Self { ids }
+    }
+
+    pub(crate) fn toggled(&self, id: &str, disabled: bool, offered: &[OfferedBackend]) -> Self {
+        if !offered.iter().any(|backend| backend.id == id) {
+            return self.clone();
+        }
+        let mut ids = self.ids.clone();
+        if disabled {
+            if !ids.iter().any(|kept| kept == id) {
+                ids.push(id.to_string());
+            }
+        } else {
+            ids.retain(|kept| kept != id);
+        }
+        ids.sort_by_key(|id| {
+            offered
+                .iter()
+                .position(|backend| backend.id == *id)
+                .unwrap_or(usize::MAX)
+        });
+        Self { ids }
+    }
+
+    pub(crate) fn contains(&self, id: &str) -> bool {
+        self.ids.iter().any(|kept| kept == id)
+    }
+
+    pub(crate) fn ids(&self) -> &[String] {
+        &self.ids
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionTarget {
+    Active(String),
+    Unsupported,
+    Idle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionPlan {
+    Keep,
+    Switch(String),
+    Stop,
+}
+
+pub(crate) struct EnablementFacts<'a> {
+    pub offered: &'a [OfferedBackend],
+    pub stored_disabled: Option<&'a [String]>,
+    pub normalized_provider: &'a str,
+    pub normalized_is_on_device: bool,
+    pub session_open: bool,
+    pub previous_slots: &'a [Slot],
+    pub seeded: &'a [(&'a str, Vec<CatalogModel>)],
+}
+
+pub(crate) struct EnablementPlan {
+    pub enabled: Vec<String>,
+    pub target: SessionTarget,
+    pub session: SessionPlan,
+    pub slots: Vec<Slot>,
+}
+
+pub(crate) fn gtk_offered() -> Vec<OfferedBackend> {
+    visible_agent_providers()
+        .map(|choice| OfferedBackend {
+            id: choice.id.to_string(),
+        })
+        .collect()
+}
+
+pub(crate) fn enablement_plan(facts: &EnablementFacts<'_>) -> EnablementPlan {
+    let disabled = DisabledBackends::parse(facts.stored_disabled, facts.offered);
+    let enabled: Vec<String> = facts
+        .offered
+        .iter()
+        .filter(|backend| !disabled.contains(&backend.id))
+        .map(|backend| backend.id.clone())
+        .collect();
+    let target = if enabled.iter().any(|id| id == facts.normalized_provider) {
+        SessionTarget::Active(facts.normalized_provider.to_string())
+    } else if facts.normalized_is_on_device
+        && !facts
+            .offered
+            .iter()
+            .any(|backend| backend.id == facts.normalized_provider)
+    {
+        SessionTarget::Unsupported
+    } else if let Some(first) = enabled.first() {
+        SessionTarget::Active(first.clone())
+    } else {
+        SessionTarget::Idle
+    };
+    let session = match &target {
+        SessionTarget::Active(id) if id == facts.normalized_provider => SessionPlan::Keep,
+        SessionTarget::Active(id) => SessionPlan::Switch(id.clone()),
+        SessionTarget::Unsupported => SessionPlan::Keep,
+        SessionTarget::Idle if facts.session_open => SessionPlan::Stop,
+        SessionTarget::Idle => SessionPlan::Keep,
+    };
+    let slots = project_slots(&enabled, facts.previous_slots, facts.seeded);
+    EnablementPlan {
+        enabled,
+        target,
+        session,
+        slots,
+    }
+}
+
+pub(crate) fn project_slots(
+    enabled: &[String],
+    previous: &[Slot],
+    seeded: &[(&str, Vec<CatalogModel>)],
+) -> Vec<Slot> {
+    enabled
+        .iter()
+        .map(|id| {
+            if let Some((_, models)) = seeded.iter().find(|(backend, _)| *backend == id) {
+                if !models.is_empty() {
+                    return Slot {
+                        backend: id.clone(),
+                        state: SlotState::Ready(models.clone()),
+                    };
+                }
+            }
+            if let Some(kept) = previous.iter().find(|slot| slot.backend == *id) {
+                return kept.clone();
+            }
+            Slot {
+                backend: id.clone(),
+                state: SlotState::Pending,
+            }
+        })
+        .collect()
 }
 
 fn model_in_slots(slots: &[Slot], id: &CatalogRowId) -> Option<CatalogModel> {
@@ -484,36 +635,102 @@ mod tests {
         closed.accepts_picks = false;
         let blocked = effect(&SelectionIntent::Row(built.rows[1].id.clone()), &closed, 3);
         assert_eq!(blocked, PickEffect::None);
-        let settings = effect(&SelectionIntent::Backend("claude".into()), &closed, 3);
-        assert!(matches!(settings, PickEffect::Switch { model: None, .. }));
+    }
+
+    fn offered(ids: &[&str]) -> Vec<OfferedBackend> {
+        ids.iter()
+            .map(|id| OfferedBackend {
+                id: (*id).to_string(),
+            })
+            .collect()
+    }
+
+    fn plan(
+        stored: Option<&[String]>,
+        provider: &str,
+        on_device: bool,
+        open: bool,
+        ids: &[&str],
+    ) -> EnablementPlan {
+        let offered = offered(ids);
+        enablement_plan(&EnablementFacts {
+            offered: &offered,
+            stored_disabled: stored,
+            normalized_provider: provider,
+            normalized_is_on_device: on_device,
+            session_open: open,
+            previous_slots: &[],
+            seeded: &[],
+        })
     }
 
     #[test]
-    fn settings_backend_for_the_hidden_clis_does_nothing() {
-        let slots = gtk_slots();
-        let codex = effect(
-            &SelectionIntent::Backend("codex".into()),
-            &facts(&slots, "pi", None),
-            3,
+    fn a_missing_denylist_enables_every_offered_backend_and_keeps_the_session() {
+        let decided = plan(None, "claude", false, true, &["pi", "claude"]);
+        assert_eq!(decided.enabled, vec!["pi".to_string(), "claude".to_string()]);
+        assert_eq!(decided.session, SessionPlan::Keep);
+        assert_eq!(decided.target, SessionTarget::Active("claude".into()));
+    }
+
+    #[test]
+    fn unchecking_the_live_backend_switches_to_the_first_remaining_one() {
+        let stored = vec!["pi".to_string()];
+        let running = plan(Some(&stored), "pi", false, true, &["pi", "claude"]);
+        assert_eq!(running.session, SessionPlan::Switch("claude".into()));
+        let idle = plan(Some(&stored), "pi", false, false, &["pi", "claude"]);
+        assert_eq!(idle.session, SessionPlan::Switch("claude".into()));
+    }
+
+    #[test]
+    fn unchecking_every_backend_stops_an_open_session_and_is_allowed() {
+        let stored = vec!["pi".to_string(), "claude".to_string()];
+        let running = plan(Some(&stored), "pi", false, true, &["pi", "claude"]);
+        assert_eq!(running.target, SessionTarget::Idle);
+        assert_eq!(running.session, SessionPlan::Stop);
+        assert!(running.enabled.is_empty());
+        let closed = plan(Some(&stored), "pi", false, false, &["pi", "claude"]);
+        assert_eq!(closed.session, SessionPlan::Keep);
+    }
+
+    #[test]
+    fn a_disabled_backend_is_omitted_from_the_slots() {
+        let decided = plan(Some(&["claude".into()]), "pi", false, false, &["pi", "claude"]);
+        assert_eq!(
+            decided
+                .slots
+                .iter()
+                .map(|slot| slot.backend.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pi"]
         );
-        assert_eq!(codex, PickEffect::None);
-        let grok = effect(
-            &SelectionIntent::Backend("grok".into()),
-            &facts(&slots, "pi", None),
-            3,
-        );
-        assert_eq!(grok, PickEffect::None);
-        let apple = effect(
-            &SelectionIntent::Backend("apple-fm".into()),
-            &facts(&slots, "pi", None),
-            3,
-        );
-        assert_eq!(apple, PickEffect::None);
-        let same = effect(
-            &SelectionIntent::Backend("pi".into()),
-            &facts(&slots, "pi", None),
-            3,
-        );
-        assert_eq!(same, PickEffect::None);
+    }
+
+    #[test]
+    fn hidden_cli_ids_are_dropped_from_the_denylist_and_do_not_move_the_session() {
+        let offered = offered(&["pi", "claude"]);
+        let stored = vec!["codex".into(), "grok".into(), "agy".into(), "apple-fm".into()];
+        let disabled = DisabledBackends::parse(Some(&stored), &offered);
+        assert!(disabled.ids().is_empty());
+        let decided = plan(Some(&stored), "pi", false, true, &["pi", "claude"]);
+        assert_eq!(decided.session, SessionPlan::Keep);
+        assert_eq!(decided.target, SessionTarget::Active("pi".into()));
+    }
+
+    #[test]
+    fn an_on_device_session_this_host_cannot_offer_stays_put() {
+        let decided = plan(None, "apple-fm", true, true, &["pi", "claude"]);
+        assert_eq!(decided.target, SessionTarget::Unsupported);
+        assert_eq!(decided.session, SessionPlan::Keep);
+        assert_eq!(decided.enabled, vec!["pi".to_string(), "claude".to_string()]);
+    }
+
+    #[test]
+    fn toggling_the_same_box_twice_is_a_no_op() {
+        let offered = offered(&["pi", "claude"]);
+        let once = DisabledBackends::parse(None, &offered).toggled("pi", true, &offered);
+        let twice = once.toggled("pi", true, &offered);
+        assert_eq!(once, twice);
+        let restored = twice.toggled("pi", false, &offered);
+        assert!(restored.ids().is_empty());
     }
 }

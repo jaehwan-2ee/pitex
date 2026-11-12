@@ -2772,6 +2772,9 @@ impl AppState {
                 Some(default_model)
             };
             coordinator.history_limit = self.store.chat_history_limit().max(0) as usize;
+            let lang = self.language;
+            let notice = crate::l10n::tr(lang, "assistant.switched_backend");
+            coordinator.reconcile_enablement(&mut self.store, &notice);
             self.agent = Some(coordinator);
             // pi is spawned lazily, when the Assistant pane first shows
             // (`sync_assistant_visibility`) — like macOS since v1.8.3.

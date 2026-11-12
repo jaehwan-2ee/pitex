@@ -2759,23 +2759,14 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     ai.set_icon_name(Some("starred-symbolic"));
     let agent_group = adw::PreferencesGroup::new();
     agent_group.set_title(&tr(lang, "settings.ai.agent"));
-    let backend_row = adw::ActionRow::new();
-    backend_row.set_title(&tr(lang, "settings.ai.backend"));
-    let providers: Vec<&crate::settings::AgentProviderChoice> =
-        crate::settings::visible_agent_providers().collect();
-    let labels: Vec<String> = providers
-        .iter()
-        .map(|choice| tr(lang, choice.label_key))
-        .collect();
-    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-    let backend = gtk4::DropDown::from_strings(&label_refs);
     let current = state.borrow().store.agent_provider();
-    let selected = providers
-        .iter()
-        .position(|choice| choice.id == current)
-        .unwrap_or(0);
-    backend.set_selected(selected as u32);
-    a11y(&backend, "pitex.settings.ai.backend", "settings.ai.backend");
+    let backend_label = gtk4::Label::new(Some(&tr(lang, "settings.ai.backend")));
+    backend_label.set_xalign(0.0);
+    backend_label.set_margin_start(12);
+    backend_label.set_margin_end(12);
+    backend_label.set_margin_bottom(6);
+    a11y(&backend_label, "pitex.settings.ai.backend", "settings.ai.backend");
+    agent_group.add(&backend_label);
     let unavailable = gtk4::Label::new(Some(&tr(lang, "settings.ai.backend_apple_fm_unavailable")));
     unavailable.set_wrap(true);
     unavailable.set_xalign(0.0);
@@ -2784,37 +2775,35 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
     unavailable.set_margin_end(12);
     unavailable.set_margin_bottom(8);
     unavailable.set_visible(crate::settings::agent_provider_is_on_device(&current));
-    {
+    let offered: Vec<&crate::settings::AgentProviderChoice> =
+        crate::settings::visible_agent_providers().collect();
+    let disabled = state.borrow().store.disabled_backend_ids().unwrap_or_default();
+    for choice in &offered {
+        let (row, toggle) = compat::switch_row(&tr(lang, choice.label_key));
+        toggle.set_active(!disabled.iter().any(|id| id == choice.id));
+        let id = choice.id;
         let state = state.clone();
-        let ids: Vec<&str> = providers.iter().map(|choice| choice.id).collect();
-        let unavailable = unavailable.clone();
-        backend.connect_selected_notify(move |dd| {
-            let next = ids.get(dd.selected() as usize).copied().unwrap_or("pi");
+        toggle.connect_active_notify(move |toggle| {
             let Ok(mut s) = state.try_borrow_mut() else {
                 return;
             };
-            unavailable.set_visible(false);
-            if s.store.agent_provider() == next {
+            let offered = crate::catalog::gtk_offered();
+            let stored = s.store.disabled_backend_ids();
+            let current = crate::catalog::DisabledBackends::parse(stored.as_deref(), &offered);
+            let next = current.toggled(id, !toggle.is_active(), &offered);
+            if next.ids() == current.ids() {
                 return;
             }
+            s.store.set_disabled_backend_ids(next.ids());
             let lang = s.language;
             let notice = tr(lang, "assistant.switched_backend");
-            let generation = s.agent.as_ref().map(|agent| agent.catalog_generation()).unwrap_or(1);
             let crate::app_ui::AppState { agent, store, .. } = &mut *s;
             if let Some(agent) = agent.as_mut() {
-                agent.apply_catalog(
-                    &crate::catalog::SelectionIntent::Backend(next.to_string()),
-                    generation,
-                    store,
-                    &notice,
-                );
-            } else {
-                store.set_agent_provider(next);
+                agent.reconcile_enablement(store, &notice);
             }
         });
+        agent_group.add(&row);
     }
-    backend_row.add_suffix(&backend);
-    agent_group.add(&backend_row);
     agent_group.add(&unavailable);
     let backend_note = gtk4::Label::new(Some(&tr(lang, "settings.ai.backend_note")));
     backend_note.set_wrap(true);

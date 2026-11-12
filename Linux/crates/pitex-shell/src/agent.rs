@@ -1348,6 +1348,7 @@ pub struct AgentCoordinator {
     /// The new session's model list arrived while a settings round trip was
     /// still in flight. Commit it once that round trip goes idle.
     catalog_commit_pending: bool,
+    launch_idle: bool,
     #[cfg(test)]
     model_requests: Vec<(String, String)>,
 }
@@ -1462,6 +1463,7 @@ impl AgentCoordinator {
             probes: Vec::new(),
             probe_generation: 1,
             catalog_commit_pending: false,
+            launch_idle: false,
             #[cfg(test)]
             model_requests: Vec::new(),
         }
@@ -1509,6 +1511,9 @@ impl AgentCoordinator {
     /// process couldn't start; the UI calls this when the panel appears.
     pub fn prepare(&mut self) {
         self.wants_connection = true;
+        if self.launch_idle {
+            return;
+        }
         if matches!(self.connection, Connection::Connecting | Connection::Ready) {
             if crate::catalog::rearm_unavailable(&mut self.catalog_slots) {
                 self.refresh_probes();
@@ -1721,7 +1726,7 @@ impl AgentCoordinator {
         })
     }
 
-    /// The model menu and the Settings backend dropdown both come through here.
+    /// The model menu comes through here.
     /// A cross-backend choice shuts the turn down before the next session starts.
     pub(crate) fn apply_catalog(
         &mut self,
@@ -1747,32 +1752,106 @@ impl AgentCoordinator {
                 self.select_model(&Self::from_catalog(model));
             }
             crate::catalog::PickEffect::Switch { backend, model } => {
-                self.switch_ticket = Some(SwitchTicket {
-                    backend: backend.clone(),
-                    model: model.clone(),
-                });
-                self.preferred_model_id = None;
-                match &model {
-                    Some(model) => store.set_ai_default_model(&model.id),
-                    None => store.set_ai_default_model(""),
-                }
-                self.models.clear();
-                self.current_model = None;
-                self.catalog_generation = self.catalog_generation.wrapping_add(1);
-                self.set_agent_provider(&backend);
-                store.set_agent_provider(&backend);
-                if !self.transcript.is_empty() {
-                    self.push_entry(AgentTranscriptEntry {
-                        role: TranscriptRole::Notice,
-                        title: "Assistant".into(),
-                        text: notice.to_string(),
-                        detail: String::new(),
-                        status: TranscriptStatus::Done,
-                    });
-                }
-                self.restart();
+                self.begin_switch(backend, model, store, notice);
             }
         }
+    }
+
+    fn begin_switch(
+        &mut self,
+        backend: String,
+        model: Option<crate::catalog::CatalogModel>,
+        store: &mut crate::settings::SettingsStore,
+        notice: &str,
+    ) {
+        self.switch_ticket = Some(SwitchTicket {
+            backend: backend.clone(),
+            model: model.clone(),
+        });
+        self.preferred_model_id = None;
+        match &model {
+            Some(model) => store.set_ai_default_model(&model.id),
+            None => store.set_ai_default_model(""),
+        }
+        self.models.clear();
+        self.current_model = None;
+        self.catalog_generation = self.catalog_generation.wrapping_add(1);
+        self.set_agent_provider(&backend);
+        store.set_agent_provider(&backend);
+        if !self.transcript.is_empty() && !notice.is_empty() {
+            self.push_entry(AgentTranscriptEntry {
+                role: TranscriptRole::Notice,
+                title: "Assistant".into(),
+                text: notice.to_string(),
+                detail: String::new(),
+                status: TranscriptStatus::Done,
+            });
+        }
+        self.restart();
+    }
+
+    pub(crate) fn reconcile_enablement(
+        &mut self,
+        store: &mut crate::settings::SettingsStore,
+        notice: &str,
+    ) {
+        let was_idle = self.launch_idle;
+        let offered = crate::catalog::gtk_offered();
+        let stored = store.disabled_backend_ids();
+        let plan = crate::catalog::enablement_plan(&crate::catalog::EnablementFacts {
+            offered: &offered,
+            stored_disabled: stored.as_deref(),
+            normalized_provider: &self.agent_provider,
+            normalized_is_on_device: crate::settings::agent_provider_is_on_device(&self.agent_provider),
+            session_open: self.session_is_open(),
+            previous_slots: &self.catalog_slots,
+            seeded: &[],
+        });
+        self.launch_idle = matches!(plan.target, crate::catalog::SessionTarget::Idle);
+        self.catalog_slots = plan.slots;
+        self.catalog_generation = self.catalog_generation.wrapping_add(1);
+        self.stop_probes_outside(&plan.enabled);
+        match plan.session {
+            crate::catalog::SessionPlan::Keep => {
+                let stored_is_enabled = matches!(
+                    &plan.target,
+                    crate::catalog::SessionTarget::Active(id) if id == &self.agent_provider
+                );
+                if was_idle && stored_is_enabled && self.wants_connection {
+                    self.prepare();
+                } else {
+                    self.refresh_probes();
+                    self.ui_revision += 1;
+                }
+            }
+            crate::catalog::SessionPlan::Switch(backend) => {
+                self.begin_switch(backend, None, store, notice);
+            }
+            crate::catalog::SessionPlan::Stop => self.restart(),
+        }
+    }
+
+    fn session_is_open(&self) -> bool {
+        self.is_running
+            || self.process.is_some()
+            || self.toolchain_rx.is_some()
+            || matches!(
+                self.connection,
+                Connection::Connecting | Connection::Ready
+            )
+    }
+
+    fn stop_probes_outside(&mut self, enabled: &[String]) {
+        let mut kept = Vec::new();
+        for probe in self.probes.drain(..) {
+            if enabled.iter().any(|id| id == &probe.backend) {
+                kept.push(probe);
+            } else {
+                probe.process.terminate();
+                let _ = std::fs::remove_dir_all(&probe.sessions);
+            }
+        }
+        self.probes = kept;
     }
 
     fn catalog_facts(&self) -> crate::catalog::CatalogFacts<'_> {
@@ -4704,6 +4783,87 @@ mod session_history_tests {
             .transcript
             .iter()
             .all(|entry| !entry.text.contains("Switched")));
+    }
+
+    #[test]
+    fn catalog_unchecking_the_live_backend_mid_turn_switches_and_returns_to_idle() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.transcript.push(AgentTranscriptEntry {
+            role: TranscriptRole::User,
+            title: "You".into(),
+            text: "draft the abstract".into(),
+            detail: String::new(),
+            status: TranscriptStatus::Done,
+        });
+        let start = json!({"type": "agent_start"});
+        agent.handle(&response(start));
+        agent.note_catalog_report("pi", Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]));
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![catalog_model("claude-sonnet", "claude", "Claude Sonnet")]),
+        );
+        assert!(agent.is_running);
+        store.set_disabled_backend_ids(&["pi".into()]);
+        agent.reconcile_enablement(
+            &mut store,
+            "Switched assistant. The next message starts a new session.",
+        );
+        assert!(!agent.is_running, "unchecking the live backend ends the turn");
+        assert_eq!(agent.agent_provider, "claude");
+        assert_eq!(store.agent_provider(), "claude");
+        assert!(agent.model_requests.is_empty());
+        assert!(agent
+            .transcript
+            .iter()
+            .any(|entry| entry.text.contains("new session")));
+        let menu = agent.catalog_menu("en");
+        assert!(menu.rows.iter().all(|row| row.id.backend != "pi"));
+    }
+
+    #[test]
+    fn catalog_unchecking_a_backend_that_is_not_the_session_leaves_the_turn_running() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        let start = json!({"type": "agent_start"});
+        agent.handle(&response(start));
+        agent.note_catalog_report("pi", Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]));
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![catalog_model("claude-sonnet", "claude", "Claude Sonnet")]),
+        );
+        store.set_disabled_backend_ids(&["claude".into()]);
+        agent.reconcile_enablement(&mut store, "Switched assistant. The next message starts a new session.");
+        assert!(agent.is_running);
+        assert_eq!(agent.agent_provider, "pi");
+        assert!(agent.catalog_menu("en").rows.iter().all(|row| row.id.backend != "claude"));
+    }
+
+    #[test]
+    fn catalog_rechecking_the_stored_backend_after_a_full_stop_launches_it() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.context_provider = Some(Box::new(|| AgentContextSnapshot {
+            project_root: Some(std::env::temp_dir()),
+            active_path: None,
+            active_text: None,
+            selection_text: None,
+            project_files: Vec::new(),
+            pdf_path: None,
+            pdf_data: None,
+        }));
+        agent.handle(&response(json!({"type": "agent_start"})));
+        store.set_disabled_backend_ids(&["pi".into(), "claude".into()]);
+        agent.reconcile_enablement(&mut store, "Switched assistant. The next message starts a new session.");
+        assert!(!agent.is_running, "unchecking every backend ends the turn");
+        assert_eq!(agent.agent_provider, "pi");
+        assert!(agent.catalog_menu("en").rows.is_empty());
+        agent.prepare();
+        assert!(agent.toolchain_rx.is_none(), "an empty catalog does not spawn");
+        store.set_disabled_backend_ids(&[]);
+        agent.reconcile_enablement(&mut store, "Switched assistant. The next message starts a new session.");
+        assert!(agent.toolchain_rx.is_some(), "rechecking the stored backend starts it");
+        assert_eq!(agent.agent_provider, "pi");
     }
 
     #[test]
