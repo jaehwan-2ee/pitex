@@ -1821,6 +1821,7 @@ impl AgentCoordinator {
         let Some(wanted) = ticket.model else {
             self.catalog_commit_pending = false;
             self.switch_ticket = None;
+            self.send_model_settings(PiRPCCommand::GetState, None);
             return;
         };
         if self.is_updating_model_settings {
@@ -1838,6 +1839,8 @@ impl AgentCoordinator {
             self.select_model(&found);
         } else {
             self.switch_ticket = None;
+            self.current_model = None;
+            self.send_model_settings(PiRPCCommand::GetState, None);
         }
     }
 
@@ -1894,7 +1897,7 @@ impl AgentCoordinator {
             return;
         }
         let pi = self.catalog_pi.clone().unwrap_or_default();
-        let plan = match Self::plan_launch(backend, &pi, &sessions, &tools) {
+        let mut plan = match Self::plan_launch(backend, &pi, &sessions, &tools) {
             Ok(plan) => plan,
             Err(_) => {
                 let _ = std::fs::remove_dir_all(&sessions);
@@ -1902,6 +1905,9 @@ impl AgentCoordinator {
                 return;
             }
         };
+        // The bridge reads this and does not write a Claude session for the project.
+        plan.environment
+            .insert("PITEX_CATALOG_PROBE".into(), "1".into());
         match PiAgentProcess::start(&plan.executable, &root, &plan.arguments, &plan.environment) {
             Ok(process) => {
                 let _ = process.send(&PiRPCCommand::GetAvailableModels, None);
@@ -4834,6 +4840,47 @@ mod session_history_tests {
             agent.model_requests,
             vec![("claude".into(), "claude-sonnet".into())]
         );
+    }
+
+    #[test]
+    fn cross_backend_catalog_pick_drops_a_model_the_new_session_does_not_list() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.note_catalog_report("pi", Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]));
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![catalog_model("claude-sonnet", "claude", "Claude Sonnet")]),
+        );
+        let claude = agent
+            .catalog_menu("en")
+            .rows
+            .into_iter()
+            .find(|row| row.id.backend == "claude")
+            .unwrap()
+            .id;
+        let generation = agent.catalog_generation();
+        agent.apply_catalog(
+            &crate::catalog::SelectionIntent::Row(claude),
+            generation,
+            &mut store,
+            "Switched assistant. The next message starts a new session.",
+        );
+        agent.current_model = Some(PiModelDescriptor {
+            id: "claude-sonnet".into(),
+            provider: "claude".into(),
+            name: "Claude Sonnet".into(),
+            context_window: None,
+        });
+        let models = json!({
+            "type": "response",
+            "command": "get_available_models",
+            "success": true,
+            "data": {"models": [{"id": "claude-opus", "provider": "claude", "name": "Claude Opus"}]}
+        });
+        agent.handle(&response(models));
+        assert!(agent.switch_ticket.is_none());
+        assert!(agent.current_model.is_none());
+        assert!(agent.model_requests.is_empty());
     }
 
     #[test]

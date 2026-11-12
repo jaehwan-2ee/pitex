@@ -324,6 +324,8 @@ export class ClaudeAdapter implements CliAdapter {
   /** `auth_status` can arrive before the host's first command. */
   private signedOutPending = false;
   private running = false;
+  /** A model-list probe must not write a Claude session for the project. */
+  private catalogProbe = false;
   private stats: Json = { tokens: { total: 0 }, cost: 0, contextUsage: {} };
   private readonly deps: ClaudeAdapterDeps;
 
@@ -332,6 +334,7 @@ export class ClaudeAdapter implements CliAdapter {
   }
 
   async start(options: AdapterStartOptions): Promise<void> {
+    this.catalogProbe = options.env.PITEX_CATALOG_PROBE === "1";
     this.cwd = options.cwd;
     this.sessionDir = options.sessionDir;
     this.developerInstructions = options.developerInstructions ?? "";
@@ -488,7 +491,7 @@ export class ClaudeAdapter implements CliAdapter {
       },
       strictMcpConfig: true,
       mcpServers: {},
-      persistSession: true,
+      persistSession: !this.catalogProbe,
       env: this.childEnv,
     };
     if (this.modelId) options.model = this.modelId;

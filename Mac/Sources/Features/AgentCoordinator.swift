@@ -893,7 +893,9 @@ final class AgentCoordinator: ObservableObject {
         case .clear:
             catalogCommitPending = false
             switchTicket = nil
+            currentModel = nil
             publishCatalog()
+            sendModelSettings(.getState)
         case .select(let model):
             if isUpdatingModelSettings {
                 catalogCommitPending = true
@@ -1009,6 +1011,7 @@ final class AgentCoordinator: ObservableObject {
             environment["PITEX_SESSION_DIR"] = sessions.path
             environment["PITEX_DEVELOPER_INSTRUCTIONS"] = Self.systemPromptSupplement
             environment["PITEX_CLI_ADAPTER"] = adapter
+            environment["PITEX_CATALOG_PROBE"] = "1"
             return (launch.executable, launch.arguments, environment)
         }
         guard let executable = PiExecutableLocator.resolve(environment: tools.environment) else { return nil }
@@ -1018,7 +1021,8 @@ final class AgentCoordinator: ObservableObject {
             "--append-system-prompt", Self.systemPromptSupplement,
         ]
         guard let launch = try? tools.launch(executable, arguments: arguments) else { return nil }
-        let environment = Self.childEnvironment(executable: launch.executable, environment: tools.environment)
+        var environment = Self.childEnvironment(executable: launch.executable, environment: tools.environment)
+        environment["PITEX_CATALOG_PROBE"] = "1"
         return (launch.executable, launch.arguments, environment)
     }
 
