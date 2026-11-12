@@ -1,4 +1,5 @@
 import AppKit
+import AppPorts
 import SwiftUI
 
 /// Native chat surface for the embedded pi agent, laid out like the host
@@ -53,8 +54,12 @@ struct AgentPanel: View {
         }
         .accessibilityIdentifier("pitex.assistant")
         .task { coordinator.prepare() }
-        .onChange(of: settings.agentProvider) { _, _ in
-            coordinator.restart()
+        .onChange(of: settings.agentProvider) { _, provider in
+            coordinator.applyCatalog(
+                .backend(provider),
+                shownGeneration: coordinator.catalogMenu.generation,
+                settings: settings
+            )
         }
         .onChange(of: coordinator.pendingComposerInsertion) { _, insertion in
             if let insertion {
@@ -73,18 +78,24 @@ struct AgentPanel: View {
                 .foregroundStyle(.secondary)
 
             Picker(selection: modelBinding) {
-                if coordinator.currentModel == nil {
-                    Text("assistant.model_placeholder").tag(Optional<PiModelDescriptor>.none)
+                if coordinator.catalogMenu.selection == nil || coordinator.catalogMenu.rows.isEmpty {
+                    Text("assistant.model_placeholder").tag(Optional<AssistantCatalog.RowID>.none)
                 }
-                ForEach(coordinator.models) { model in
-                    Text(verbatim: modelLabel(model)).tag(Optional(model))
+                ForEach(catalogSections) { section in
+                    Section {
+                        ForEach(section.rows) { row in
+                            Text(verbatim: rowTitle(row, among: section.rows)).tag(Optional(row.id))
+                        }
+                    } header: {
+                        Text(verbatim: section.title)
+                    }
                 }
             } label: {
                 EmptyView()
             }
             .labelsHidden()
-            .frame(maxWidth: 200)
-            .disabled(coordinator.models.isEmpty || coordinator.isUpdatingModelSettings)
+            .frame(maxWidth: 320)
+            .disabled(!coordinator.catalogMenu.acceptsPicks || coordinator.isUpdatingModelSettings)
             .accessibilityIdentifier("pitex.assistantModel")
 
             if coordinator.connection == .ready, !coordinator.thinkingLevels.isEmpty {
@@ -363,12 +374,30 @@ struct AgentPanel: View {
         return "\(value)"
     }
 
-    /// Disambiguates same-named models across providers once more than one
-    /// provider is configured (`name · provider`).
-    private func modelLabel(_ model: PiModelDescriptor) -> String {
-        let providers = Set(coordinator.models.map(\.provider))
-        guard providers.count > 1 else { return model.pickerTitle }
-        return "\(model.pickerTitle) · \(model.provider)"
+    private struct CatalogSection: Identifiable {
+        var title: String
+        var rows: [AssistantCatalog.Row]
+        var id: String { title }
+    }
+
+    private var catalogSections: [CatalogSection] {
+        var sections: [CatalogSection] = []
+        for row in coordinator.catalogMenu.rows {
+            if let index = sections.lastIndex(where: { $0.title == row.section }), index == sections.count - 1 {
+                sections[index].rows.append(row)
+            } else {
+                sections.append(CatalogSection(title: row.section, rows: [row]))
+            }
+        }
+        return sections
+    }
+
+    /// Inside a backend section the row is the model. Two RPC providers in one
+    /// section keep the provider name so identical titles stay distinct.
+    private func rowTitle(_ row: AssistantCatalog.Row, among rows: [AssistantCatalog.Row]) -> String {
+        let providers = Set(rows.map(\.model.provider))
+        guard providers.count > 1 else { return row.model.pickerTitle }
+        return "\(row.model.pickerTitle) · \(row.model.provider)"
     }
 
     /// Chip shown while the user drags over editor text: filename + line
@@ -434,10 +463,17 @@ struct AgentPanel: View {
         coordinator.insertIntoComposer(paths.joined(separator: " ") + " ")
     }
 
-    private var modelBinding: Binding<PiModelDescriptor?> {
+    private var modelBinding: Binding<AssistantCatalog.RowID?> {
         Binding(
-            get: { coordinator.currentModel },
-            set: { if let model = $0 { coordinator.selectModel(model) } }
+            get: { coordinator.catalogMenu.selection },
+            set: { selection in
+                guard let selection else { return }
+                coordinator.applyCatalog(
+                    .row(selection),
+                    shownGeneration: coordinator.catalogMenu.generation,
+                    settings: settings
+                )
+            }
         )
     }
 
