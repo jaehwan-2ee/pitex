@@ -93,7 +93,146 @@ public enum AssistantCatalog {
 
     public enum SelectionIntent: Equatable, Sendable {
         case row(RowID)
-        case backend(String)
+    }
+
+    public struct OfferedBackend: Equatable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    public struct DisabledBackends: Equatable, Sendable {
+        public var ids: [String]
+
+        public init(ids: [String]) {
+            self.ids = ids
+        }
+
+        public static func parse(stored: [String]?, offered: [OfferedBackend]) -> DisabledBackends {
+            guard let stored else { return DisabledBackends(ids: []) }
+            var ids: [String] = []
+            for id in stored where offered.contains(where: { $0.id == id }) && !ids.contains(id) {
+                ids.append(id)
+            }
+            ids.sort { lhs, rhs in
+                let left = offered.firstIndex(where: { $0.id == lhs }) ?? Int.max
+                let right = offered.firstIndex(where: { $0.id == rhs }) ?? Int.max
+                return left < right
+            }
+            return DisabledBackends(ids: ids)
+        }
+
+        public func toggled(_ id: String, disabled: Bool, offered: [OfferedBackend]) -> DisabledBackends {
+            guard offered.contains(where: { $0.id == id }) else { return self }
+            var ids = self.ids
+            if disabled {
+                if !ids.contains(id) { ids.append(id) }
+            } else {
+                ids.removeAll { $0 == id }
+            }
+            ids.sort { lhs, rhs in
+                let left = offered.firstIndex(where: { $0.id == lhs }) ?? Int.max
+                let right = offered.firstIndex(where: { $0.id == rhs }) ?? Int.max
+                return left < right
+            }
+            return DisabledBackends(ids: ids)
+        }
+
+        public func contains(_ id: String) -> Bool { ids.contains(id) }
+    }
+
+    public enum SessionTarget: Equatable, Sendable {
+        case active(String)
+        case unsupported
+        case idle
+    }
+
+    public enum SessionPlan: Equatable, Sendable {
+        case keep
+        case switchBackend(String)
+        case stop
+    }
+
+    public struct EnablementFacts: Equatable, Sendable {
+        public var offered: [OfferedBackend]
+        public var storedDisabled: [String]?
+        public var normalizedProvider: String
+        public var normalizedIsOnDevice: Bool
+        public var sessionOpen: Bool
+        public var previousSlots: [Slot]
+        public var seeded: [String: [Model]]
+
+        public init(
+            offered: [OfferedBackend],
+            storedDisabled: [String]?,
+            normalizedProvider: String,
+            normalizedIsOnDevice: Bool,
+            sessionOpen: Bool,
+            previousSlots: [Slot],
+            seeded: [String: [Model]]
+        ) {
+            self.offered = offered
+            self.storedDisabled = storedDisabled
+            self.normalizedProvider = normalizedProvider
+            self.normalizedIsOnDevice = normalizedIsOnDevice
+            self.sessionOpen = sessionOpen
+            self.previousSlots = previousSlots
+            self.seeded = seeded
+        }
+    }
+
+    public struct EnablementPlan: Equatable, Sendable {
+        public var enabled: [String]
+        public var target: SessionTarget
+        public var session: SessionPlan
+        public var slots: [Slot]
+
+        public init(enabled: [String], target: SessionTarget, session: SessionPlan, slots: [Slot]) {
+            self.enabled = enabled
+            self.target = target
+            self.session = session
+            self.slots = slots
+        }
+    }
+
+    public static func enablementPlan(_ facts: EnablementFacts) -> EnablementPlan {
+        let disabled = DisabledBackends.parse(stored: facts.storedDisabled, offered: facts.offered)
+        let enabled = facts.offered.map(\.id).filter { !disabled.contains($0) }
+        let target: SessionTarget
+        if enabled.contains(facts.normalizedProvider) {
+            target = .active(facts.normalizedProvider)
+        } else if facts.normalizedIsOnDevice && !facts.offered.contains(where: { $0.id == facts.normalizedProvider }) {
+            target = .unsupported
+        } else if let first = enabled.first {
+            target = .active(first)
+        } else {
+            target = .idle
+        }
+        let session: SessionPlan
+        switch target {
+        case .active(let id) where id == facts.normalizedProvider:
+            session = .keep
+        case .active(let id):
+            session = .switchBackend(id)
+        case .unsupported:
+            session = .keep
+        case .idle where facts.sessionOpen:
+            session = .stop
+        case .idle:
+            session = .keep
+        }
+        let slots = enabled.map { id -> Slot in
+            if let models = facts.seeded[id], !models.isEmpty {
+                return Slot(backend: id, state: .ready(models))
+            }
+            if let kept = facts.previousSlots.first(where: { $0.backend == id }) {
+                return kept
+            }
+            return Slot(backend: id, state: .pending)
+        }
+        return EnablementPlan(enabled: enabled, target: target, session: session, slots: slots)
     }
 
     public enum Effect: Equatable, Sendable {
@@ -193,11 +332,6 @@ public enum AssistantCatalog {
     public static func effect(intent: SelectionIntent, facts: Facts, shownGeneration: UInt64) -> Effect {
         guard shownGeneration == facts.generation else { return .none }
         switch intent {
-        case .backend(let backend):
-            guard facts.slots.contains(where: { $0.backend == backend }), facts.activeBackend != backend else {
-                return .none
-            }
-            return .switchBackend(backend: backend, model: nil)
         case .row(let id):
             guard facts.acceptsPicks, let model = model(in: facts.slots, id: id) else { return .none }
             if id.backend == facts.activeBackend,

@@ -179,6 +179,7 @@ final class AgentCoordinator: ObservableObject {
     private var catalogProbes: [CatalogProbe] = []
     /// The new session listed models while a settings round trip was open.
     private var catalogCommitPending = false
+    private var launchIdle = false
     @Published private(set) var catalogMenu = AssistantCatalog.Menu(
         rows: [], selection: nil, acceptsPicks: false, generation: 1
     )
@@ -231,6 +232,7 @@ final class AgentCoordinator: ObservableObject {
         wantsConnection = true
         startConfigWatcher()
         installCatalogSlots()
+        if launchIdle { return }
         let needsLaunch: Bool
         switch connection {
         case .connecting, .ready:
@@ -277,7 +279,6 @@ final class AgentCoordinator: ObservableObject {
         if wantsConnection { prepare() }
     }
 
-    /// The model menu and the Settings backend menu both come through here.
     /// A cross-backend choice shuts the turn down before the next session starts.
     func applyCatalog(_ intent: AssistantCatalog.SelectionIntent, shownGeneration: UInt64, settings: SettingsStore) {
         let session = AssistantCatalog.SessionSnapshot(
@@ -301,23 +302,88 @@ final class AgentCoordinator: ObservableObject {
                 selectModel(descriptor)
             }
         case .switchBackend(let backend, let model):
-            switchTicket = AssistantCatalog.SwitchTicket(backend: backend, model: model)
-            preferredModelID = nil
-            settings.aiDefaultModel = model?.id ?? ""
-            models = []
-            currentModel = model.flatMap(Self.descriptor(from:))
-            catalogGeneration &+= 1
-            sessionBackend = backend
-            if !transcript.isEmpty {
-                transcript.append(AgentTranscriptEntry(
-                    role: .notice,
-                    title: "Assistant",
-                    text: String(localized: "assistant.switched_backend")
-                ))
+            beginSwitch(backend: backend, model: model, settings: settings)
+        }
+    }
+
+    private func beginSwitch(backend: String, model: AssistantCatalog.Model?, settings: SettingsStore) {
+        switchTicket = AssistantCatalog.SwitchTicket(backend: backend, model: model)
+        preferredModelID = nil
+        settings.aiDefaultModel = model?.id ?? ""
+        models = []
+        currentModel = model.flatMap(Self.descriptor(from:))
+        catalogGeneration &+= 1
+        sessionBackend = backend
+        if !transcript.isEmpty {
+            transcript.append(AgentTranscriptEntry(
+                role: .notice,
+                title: "Assistant",
+                text: String(localized: "assistant.switched_backend")
+            ))
+        }
+        publishCatalog()
+        settings.agentProvider = backend
+        restart()
+    }
+
+    func reconcileEnablement(settings: SettingsStore) {
+        let wasIdle = launchIdle
+        let plan = AssistantCatalog.enablementPlan(enablementFacts())
+        catalogSlots = plan.slots
+        launchIdle = plan.target == .idle
+        catalogGeneration &+= 1
+        stopProbes(outside: plan.enabled)
+        publishCatalog()
+        switch plan.session {
+        case .keep:
+            if wasIdle, case .active(let id) = plan.target, id == sessionBackend, wantsConnection {
+                prepare()
+            } else {
+                refreshCatalogProbes()
             }
-            publishCatalog()
-            settings.agentProvider = backend
+        case .switchBackend(let backend):
+            beginSwitch(backend: backend, model: nil, settings: settings)
+        case .stop:
             restart()
+        }
+    }
+
+    private func sessionIsOpen() -> Bool {
+        isRunning || process != nil || prepareTask != nil || connection == .connecting || connection == .ready
+    }
+
+    private func enablementFacts() -> AssistantCatalog.EnablementFacts {
+        var seeded: [String: [AssistantCatalog.Model]] = [:]
+        if Self.offeredBackends().contains(where: { $0.id == AppleFMCatalog.providerID }) {
+            seeded[AppleFMCatalog.providerID] = [AssistantCatalog.appleModel]
+        }
+        let storedDisabled = UserDefaults.standard.object(forKey: "ai.disabledBackends") == nil
+            ? nil
+            : UserDefaults.standard.stringArray(forKey: "ai.disabledBackends")
+        return AssistantCatalog.EnablementFacts(
+            offered: Self.offeredBackends(),
+            storedDisabled: storedDisabled,
+            normalizedProvider: sessionBackend,
+            normalizedIsOnDevice: sessionBackend == AppleFMCatalog.providerID,
+            sessionOpen: sessionIsOpen(),
+            previousSlots: catalogSlots,
+            seeded: seeded
+        )
+    }
+
+    private static func offeredBackends() -> [AssistantCatalog.OfferedBackend] {
+        ShippedAgentProvider.selectableCases.map {
+            AssistantCatalog.OfferedBackend(id: $0.rawValue)
+        }
+    }
+
+    private func stopProbes(outside enabled: [String]) {
+        let removed = catalogProbes.filter { !enabled.contains($0.backend) }
+        catalogProbes.removeAll { !enabled.contains($0.backend) }
+        for probe in removed {
+            probe.task.cancel()
+            probe.process.terminate()
+            try? FileManager.default.removeItem(at: probe.sessions)
         }
     }
 
@@ -818,20 +884,9 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func installCatalogSlots() {
-        let backends = ShippedAgentProvider.selectableCases.map(\.rawValue)
-        var seeded: [String: [AssistantCatalog.Model]] = [:]
-        if backends.contains(AppleFMCatalog.providerID) {
-            seeded[AppleFMCatalog.providerID] = [AssistantCatalog.appleModel]
-        }
-        let previous = catalogSlots
-        catalogSlots = AssistantCatalog.slots(backends: backends, seeded: seeded).map { slot in
-            if case .ready = slot.state { return slot }
-            if let kept = previous.first(where: { $0.backend == slot.backend }),
-               case .ready(let models) = kept.state, !models.isEmpty {
-                return AssistantCatalog.Slot(backend: slot.backend, state: .ready(models))
-            }
-            return slot
-        }
+        let plan = AssistantCatalog.enablementPlan(enablementFacts())
+        catalogSlots = plan.slots
+        launchIdle = plan.target == .idle
         publishCatalog()
     }
 

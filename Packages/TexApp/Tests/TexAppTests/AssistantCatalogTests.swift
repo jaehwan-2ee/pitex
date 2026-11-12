@@ -213,26 +213,48 @@ final class AssistantCatalogTests: XCTestCase {
             shownGeneration: 3
         )
         XCTAssertEqual(blocked, .none)
-        let settings = AssistantCatalog.effect(
-            intent: .backend("claude"),
-            facts: facts(slots, active: "pi", current: nil, acceptsPicks: false),
-            shownGeneration: 3
-        )
-        XCTAssertEqual(settings, .switchBackend(backend: "claude", model: nil))
         let running = AssistantCatalog.SessionSnapshot(isRunning: true, backend: "pi", current: nil)
+        let settings = AssistantCatalog.Effect.switchBackend(backend: "claude", model: nil)
         XCTAssertFalse(AssistantCatalog.sessionAfter(settings, session: running).isRunning)
     }
 
-    func testSettingsBackendForTheHiddenCLIsDoesNothing() {
-        let slots = AssistantCatalog.slots(backends: ["pi", "claude"])
-        let state = facts(slots, active: "pi", current: nil)
-        for hidden in ["codex", "grok", "apple-fm", "pi"] {
-            XCTAssertEqual(
-                AssistantCatalog.effect(intent: .backend(hidden), facts: state, shownGeneration: 3),
-                .none,
-                hidden
-            )
-        }
+    func testAMissingDenylistEnablesEveryOfferedBackend() {
+        let decided = plan(stored: nil, provider: "claude", onDevice: false, open: true, ids: ["pi", "claude"])
+        XCTAssertEqual(decided.enabled, ["pi", "claude"])
+        XCTAssertEqual(decided.session, .keep)
+        XCTAssertEqual(decided.target, .active("claude"))
+    }
+
+    func testUncheckingTheLiveBackendSwitchesAndClearingEveryBoxStops() {
+        let switched = plan(stored: ["pi"], provider: "pi", onDevice: false, open: true, ids: ["pi", "claude"])
+        XCTAssertEqual(switched.session, .switchBackend("claude"))
+        let idle = plan(stored: ["pi"], provider: "pi", onDevice: false, open: false, ids: ["pi", "claude"])
+        XCTAssertEqual(idle.session, .switchBackend("claude"))
+        let stopped = plan(stored: ["pi", "claude"], provider: "pi", onDevice: false, open: true, ids: ["pi", "claude"])
+        XCTAssertEqual(stopped.target, .idle)
+        XCTAssertEqual(stopped.session, .stop)
+        XCTAssertTrue(stopped.enabled.isEmpty)
+    }
+
+    func testHiddenCLIIdsDoNotMoveTheSession() {
+        let decided = plan(
+            stored: ["codex", "grok", "agy", "apple-fm"],
+            provider: "pi",
+            onDevice: false,
+            open: true,
+            ids: ["pi", "claude"]
+        )
+        XCTAssertEqual(decided.session, .keep)
+        XCTAssertEqual(decided.enabled, ["pi", "claude"])
+        let offered = [AssistantCatalog.OfferedBackend(id: "pi")]
+        let once = AssistantCatalog.DisabledBackends.parse(stored: nil, offered: offered).toggled("pi", disabled: true, offered: offered)
+        XCTAssertEqual(once.toggled("pi", disabled: true, offered: offered), once)
+    }
+
+    func testAnOnDeviceSessionThisHostCannotOfferStaysPut() {
+        let decided = plan(stored: nil, provider: "apple-fm", onDevice: true, open: true, ids: ["pi", "claude"])
+        XCTAssertEqual(decided.target, .unsupported)
+        XCTAssertEqual(decided.session, .keep)
     }
 
     func testMacCoordinatorAppliesASwitchByRestarting() throws {
@@ -244,8 +266,11 @@ final class AssistantCatalogTests: XCTestCase {
         let switchPart = apply[switched.lowerBound...]
         XCTAssertTrue(setPart.contains("selectModel"))
         XCTAssertFalse(setPart.contains("restart()"))
-        XCTAssertTrue(switchPart.contains("restart()"))
+        XCTAssertTrue(switchPart.contains("beginSwitch"))
         XCTAssertFalse(switchPart.contains("selectModel"))
+        let begin = try functionBody(named: "func beginSwitch", in: coordinator)
+        XCTAssertTrue(begin.contains("restart()"))
+        XCTAssertFalse(begin.contains("selectModel"))
         XCTAssertTrue(coordinator.contains("spawnAppleFM"))
         XCTAssertTrue(coordinator.contains("processEpoch.retire()"))
         XCTAssertTrue(coordinator.contains("isRunning = false"))
@@ -264,6 +289,25 @@ final class AssistantCatalogTests: XCTestCase {
             let table = try source("Mac/Resources/\(locale).lproj/Localizable.strings")
             XCTAssertTrue(table.contains("\"assistant.switched_backend\""), locale)
         }
+    }
+
+    private func plan(
+        stored: [String]?,
+        provider: String,
+        onDevice: Bool,
+        open: Bool,
+        ids: [String]
+    ) -> AssistantCatalog.EnablementPlan {
+        let offered = ids.map { AssistantCatalog.OfferedBackend(id: $0) }
+        return AssistantCatalog.enablementPlan(AssistantCatalog.EnablementFacts(
+            offered: offered,
+            storedDisabled: stored,
+            normalizedProvider: provider,
+            normalizedIsOnDevice: onDevice,
+            sessionOpen: open,
+            previousSlots: [],
+            seeded: [:]
+        ))
     }
 
     private func functionBody(named name: String, in source: String) throws -> String {

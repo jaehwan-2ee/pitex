@@ -53,13 +53,12 @@ struct AgentPanel: View {
                 .padding(10)
         }
         .accessibilityIdentifier("pitex.assistant")
-        .task { coordinator.prepare() }
-        .onChange(of: settings.agentProvider) { _, provider in
-            coordinator.applyCatalog(
-                .backend(provider),
-                shownGeneration: coordinator.catalogMenu.generation,
-                settings: settings
-            )
+        .task {
+            coordinator.reconcileEnablement(settings: settings)
+            coordinator.prepare()
+        }
+        .onChange(of: settings.disabledBackends) { _, _ in
+            coordinator.reconcileEnablement(settings: settings)
         }
         .onChange(of: coordinator.pendingComposerInsertion) { _, insertion in
             if let insertion {
