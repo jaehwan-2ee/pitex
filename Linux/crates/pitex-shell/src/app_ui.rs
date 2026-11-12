@@ -4322,38 +4322,28 @@ impl AppState {
                 label.set_text(agent.status_message.as_deref().unwrap_or(""));
                 label.set_visible(agent.status_message.is_some());
             }
-            let picker_key = view_key(&(&agent.models, &agent.current_model,
-                &agent.thinking_levels, &agent.thinking_level,
-                agent.is_updating_model_settings, agent.connection == crate::agent::Connection::Ready, lang));
+            let menu = agent.catalog_menu(lang);
+            let picker_key = view_key(&(
+                menu.rows.iter().map(|row| row.label.as_str()).collect::<Vec<_>>(),
+                &menu.selection,
+                menu.accepts_picks,
+                &agent.thinking_levels,
+                &agent.thinking_level,
+                agent.connection == crate::agent::Connection::Ready,
+                lang,
+            ));
             if self.rendered_picker_key.replace(picker_key) != picker_key {
-            // Model picker — when models span multiple providers the
-            // provider name disambiguates same-named entries.
             if let Some(picker) = ui.agent_model_picker.borrow().as_ref() {
-                let providers: std::collections::HashSet<&str> =
-                    agent.models.iter().map(|m| m.provider.as_str()).collect();
-                let disambiguate = providers.len() > 1;
-                let titles: Vec<String> = if agent.models.is_empty() {
+                let titles: Vec<String> = if menu.rows.is_empty() {
                     vec![tr(lang, "assistant.model_placeholder")]
                 } else {
-                    agent
-                        .models
-                        .iter()
-                        .map(|m| {
-                            if disambiguate {
-                                format!("{} · {}", m.picker_title(), m.provider)
-                            } else {
-                                m.picker_title()
-                            }
-                        })
-                        .collect()
+                    menu.rows.iter().map(|row| row.label.clone()).collect()
                 };
                 let list = gtk4::StringList::new(&titles.iter().map(String::as_str).collect::<Vec<_>>());
                 picker.set_model(Some(&list));
-                picker.set_sensitive(
-                    !agent.models.is_empty() && !agent.is_updating_model_settings,
-                );
-                if let Some(current) = agent.current_model.as_ref() {
-                    if let Some(idx) = agent.models.iter().position(|m| m == current) {
+                picker.set_sensitive(menu.accepts_picks);
+                if let Some(selection) = menu.selection.as_ref() {
+                    if let Some(idx) = menu.rows.iter().position(|row| row.id == *selection) {
                         picker.set_selected(idx as u32);
                     }
                 } else {
@@ -4470,6 +4460,7 @@ impl AppState {
         self.ensure_agent();
         let agent = self.agent.as_mut().unwrap();
         agent.poll_toolchain();
+        agent.poll_catalog_probes();
         while let Some(event) = agent.poll_event() {
             agent.handle(&event);
         }

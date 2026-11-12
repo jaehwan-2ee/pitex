@@ -235,6 +235,7 @@
 "assistant.configure_hint" = "提供商和账户通过 Pitex Agent 自己的登录流程进行配置。";
 "assistant.open_pi_config" = "打开 Pitex Agent 配置";
 "assistant.model_placeholder" = "没有模型——请通过设置 → AI 登录";
+"assistant.switched_backend" = "已切换助手。下一条消息将开始新的会话。";
 "assistant.reasoning_help" = "推理强度";
 "assistant.send_help" = "发送（⌘Return）";
 "assistant.stop_help" = "停止代理";

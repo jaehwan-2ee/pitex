@@ -1041,12 +1041,21 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
         let state = state.clone();
         model_picker.connect_selected_notify(move |dd| {
             let Ok(mut s) = state.try_borrow_mut() else { return };
-            let i = dd.selected() as usize;
-            if let Some(agent) = s.agent.as_mut() {
-                if let Some(model) = agent.models.get(i).cloned() {
-                    agent.select_model(&model);
-                }
-            }
+            let index = dd.selected() as usize;
+            let lang = s.language;
+            let notice = tr(lang, "assistant.switched_backend");
+            let crate::app_ui::AppState { agent, store, .. } = &mut *s;
+            let Some(agent) = agent.as_mut() else { return };
+            let generation = agent.catalog_generation();
+            let Some(row_id) = agent.catalog_menu(lang).rows.get(index).map(|row| row.id.clone()) else {
+                return;
+            };
+            agent.apply_catalog(
+                &crate::catalog::SelectionIntent::Row(row_id),
+                generation,
+                store,
+                &notice,
+            );
         });
     }
     ui.agent_model_picker.replace(Some(model_picker.clone()));
@@ -2788,10 +2797,19 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             if s.store.agent_provider() == next {
                 return;
             }
-            s.store.set_agent_provider(next);
-            if let Some(agent) = s.agent.as_mut() {
-                agent.set_agent_provider(next);
-                agent.restart();
+            let lang = s.language;
+            let notice = tr(lang, "assistant.switched_backend");
+            let generation = s.agent.as_ref().map(|agent| agent.catalog_generation()).unwrap_or(1);
+            let crate::app_ui::AppState { agent, store, .. } = &mut *s;
+            if let Some(agent) = agent.as_mut() {
+                agent.apply_catalog(
+                    &crate::catalog::SelectionIntent::Backend(next.to_string()),
+                    generation,
+                    store,
+                    &notice,
+                );
+            } else {
+                store.set_agent_provider(next);
             }
         });
     }

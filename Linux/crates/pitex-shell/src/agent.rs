@@ -1337,6 +1337,69 @@ pub struct AgentCoordinator {
     text_content_index: Option<i64>,
     thinking_content_index: Option<i64>,
     tool_index_by_call_id: HashMap<String, usize>,
+    catalog_slots: Vec<crate::catalog::Slot>,
+    catalog_generation: u64,
+    switch_ticket: Option<SwitchTicket>,
+    catalog_tools: Option<PiToolchain>,
+    catalog_pi: Option<PathBuf>,
+    catalog_root: Option<PathBuf>,
+    probes: Vec<CatalogProbe>,
+    probe_generation: u64,
+    /// The new session's model list arrived while a settings round trip was
+    /// still in flight. Commit it once that round trip goes idle.
+    catalog_commit_pending: bool,
+    #[cfg(test)]
+    model_requests: Vec<(String, String)>,
+}
+
+#[derive(Clone)]
+struct SwitchTicket {
+    backend: String,
+    model: Option<crate::catalog::CatalogModel>,
+}
+
+struct CatalogProbe {
+    backend: String,
+    generation: u64,
+    process: PiAgentProcess,
+    started: std::time::Instant,
+    sessions: std::path::PathBuf,
+}
+
+const CATALOG_PROBE_LIMIT: std::time::Duration = std::time::Duration::from_secs(15);
+
+fn catalog_models_from_event(
+    event: &PiRPCEvent,
+) -> Option<Result<Vec<crate::catalog::CatalogModel>, ()>> {
+    if event.event_type != "response"
+        || event.response_command().as_deref() != Some("get_available_models")
+    {
+        return None;
+    }
+    if !event.response_succeeded() {
+        return Some(Err(()));
+    }
+    let raw = event
+        .response_data()
+        .and_then(|data| data.get("models"))
+        .and_then(|models| models.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let models: Vec<_> = raw
+        .iter()
+        .filter_map(PiModelDescriptor::from_value)
+        .map(|model| crate::catalog::CatalogModel {
+            id: model.id,
+            provider: model.provider,
+            name: model.name,
+            context_window: model.context_window,
+        })
+        .collect();
+    if models.is_empty() {
+        Some(Err(()))
+    } else {
+        Some(Ok(models))
+    }
 }
 
 impl AgentCoordinator {
@@ -1390,6 +1453,17 @@ impl AgentCoordinator {
             text_content_index: None,
             thinking_content_index: None,
             tool_index_by_call_id: HashMap::new(),
+            catalog_slots: crate::catalog::gtk_slots(),
+            catalog_generation: 1,
+            switch_ticket: None,
+            catalog_tools: None,
+            catalog_pi: None,
+            catalog_root: None,
+            probes: Vec::new(),
+            probe_generation: 1,
+            catalog_commit_pending: false,
+            #[cfg(test)]
+            model_requests: Vec::new(),
         }
     }
 
@@ -1436,8 +1510,12 @@ impl AgentCoordinator {
     pub fn prepare(&mut self) {
         self.wants_connection = true;
         if matches!(self.connection, Connection::Connecting | Connection::Ready) {
+            if crate::catalog::rearm_unavailable(&mut self.catalog_slots) {
+                self.refresh_probes();
+            }
             return;
         }
+        crate::catalog::rearm_unavailable(&mut self.catalog_slots);
         let Some(root) = self
             .context_provider
             .as_ref()
@@ -1475,6 +1553,9 @@ impl AgentCoordinator {
         let Ok((tools, executable)) = rx.try_recv() else { return };
         self.toolchain_rx = None;
         let Some(root) = self.pending_root.take() else { return };
+        self.catalog_tools = Some(tools.clone());
+        self.catalog_pi = executable.clone();
+        self.catalog_root = Some(root.clone());
         if self.intentional_stop {
             return;
         }
@@ -1491,6 +1572,7 @@ impl AgentCoordinator {
                 }
             }
         }
+        self.refresh_probes();
         self.ui_revision += 1;
     }
 
@@ -1601,6 +1683,7 @@ impl AgentCoordinator {
     pub fn shutdown(&mut self) {
         self.intentional_stop = true;
         self.is_running = false;
+        self.stop_catalog_probes();
         if let Some(process) = self.process.take() {
             process.terminate();
         }
@@ -1626,6 +1709,285 @@ impl AgentCoordinator {
             self.prepare();
         }
         self.ui_revision += 1;
+    }
+
+    pub(crate) fn catalog_generation(&self) -> u64 {
+        self.catalog_generation
+    }
+
+    pub(crate) fn catalog_menu(&self, lang: &str) -> crate::catalog::CatalogMenu {
+        crate::catalog::menu(&self.catalog_facts(), |backend| {
+            self.backend_title(lang, backend)
+        })
+    }
+
+    /// The model menu and the Settings backend dropdown both come through here.
+    /// A cross-backend choice shuts the turn down before the next session starts.
+    pub(crate) fn apply_catalog(
+        &mut self,
+        intent: &crate::catalog::SelectionIntent,
+        shown_generation: u64,
+        store: &mut crate::settings::SettingsStore,
+        notice: &str,
+    ) {
+        let effect = crate::catalog::effect(intent, &self.catalog_facts(), shown_generation);
+        let before = crate::catalog::SessionSnapshot {
+            is_running: self.is_running,
+            backend: self.agent_provider.clone(),
+            current: self.current_model.as_ref().map(Self::to_catalog),
+        };
+        if crate::catalog::session_after(&effect, &before) == before {
+            return;
+        }
+        match effect {
+            crate::catalog::PickEffect::None => {}
+            crate::catalog::PickEffect::SetModel(model) => {
+                store.set_ai_default_model(&model.id);
+                self.preferred_model_id = Some(model.id.clone());
+                self.select_model(&Self::from_catalog(model));
+            }
+            crate::catalog::PickEffect::Switch { backend, model } => {
+                self.switch_ticket = Some(SwitchTicket {
+                    backend: backend.clone(),
+                    model: model.clone(),
+                });
+                self.preferred_model_id = None;
+                match &model {
+                    Some(model) => store.set_ai_default_model(&model.id),
+                    None => store.set_ai_default_model(""),
+                }
+                self.models.clear();
+                self.current_model = None;
+                self.catalog_generation = self.catalog_generation.wrapping_add(1);
+                self.set_agent_provider(&backend);
+                store.set_agent_provider(&backend);
+                if !self.transcript.is_empty() {
+                    self.push_entry(AgentTranscriptEntry {
+                        role: TranscriptRole::Notice,
+                        title: "Assistant".into(),
+                        text: notice.to_string(),
+                        detail: String::new(),
+                        status: TranscriptStatus::Done,
+                    });
+                }
+                self.restart();
+            }
+        }
+    }
+
+    fn catalog_facts(&self) -> crate::catalog::CatalogFacts<'_> {
+        crate::catalog::CatalogFacts {
+            slots: &self.catalog_slots,
+            active_backend: &self.agent_provider,
+            current: self.current_model.as_ref().map(Self::to_catalog),
+            generation: self.catalog_generation,
+            accepts_picks: self.switch_ticket.is_none() && !self.is_updating_model_settings,
+        }
+    }
+
+    fn backend_title(&self, lang: &str, backend: &str) -> String {
+        crate::settings::AGENT_PROVIDER_CHOICES
+            .iter()
+            .find(|choice| choice.id == backend)
+            .map(|choice| crate::l10n::tr(lang, choice.label_key))
+            .unwrap_or_else(|| backend.to_string())
+    }
+
+    fn note_live_models(&mut self) {
+        let models: Vec<_> = self.models.iter().map(Self::to_catalog).collect();
+        let state = if models.is_empty() {
+            crate::catalog::SlotState::Unavailable
+        } else {
+            crate::catalog::SlotState::Ready(models)
+        };
+        crate::catalog::note(&mut self.catalog_slots, &self.agent_provider, state);
+        self.catalog_generation = self.catalog_generation.wrapping_add(1);
+    }
+
+    fn retry_catalog_commit(&mut self) {
+        if self.catalog_commit_pending {
+            self.commit_switch_ticket();
+        }
+    }
+
+    fn commit_switch_ticket(&mut self) {
+        let Some(ticket) = self.switch_ticket.clone() else {
+            self.catalog_commit_pending = false;
+            return;
+        };
+        if ticket.backend != self.agent_provider {
+            return;
+        }
+        let Some(wanted) = ticket.model else {
+            self.catalog_commit_pending = false;
+            self.switch_ticket = None;
+            return;
+        };
+        if self.is_updating_model_settings {
+            self.catalog_commit_pending = true;
+            return;
+        }
+        self.catalog_commit_pending = false;
+        if let Some(found) = self
+            .models
+            .iter()
+            .find(|model| model.id == wanted.id && model.provider == wanted.provider)
+            .cloned()
+        {
+            self.switch_ticket = None;
+            self.select_model(&found);
+        } else {
+            self.switch_ticket = None;
+        }
+    }
+
+    fn note_catalog_report(
+        &mut self,
+        backend: &str,
+        report: Result<Vec<crate::catalog::CatalogModel>, ()>,
+    ) {
+        let state = match report {
+            Ok(models) if !models.is_empty() => crate::catalog::SlotState::Ready(models),
+            _ => crate::catalog::SlotState::Unavailable,
+        };
+        crate::catalog::note(&mut self.catalog_slots, backend, state);
+        self.catalog_generation = self.catalog_generation.wrapping_add(1);
+        self.ui_revision += 1;
+    }
+
+    fn refresh_probes(&mut self) {
+        if self.catalog_tools.is_none() {
+            return;
+        }
+        let active = self.agent_provider.clone();
+        let pending: Vec<String> = self
+            .catalog_slots
+            .iter()
+            .filter(|slot| {
+                slot.backend != active
+                    && !self.probe_running(&slot.backend)
+                    && matches!(slot.state, crate::catalog::SlotState::Pending)
+            })
+            .map(|slot| slot.backend.clone())
+            .collect();
+        for backend in pending {
+            self.start_probe(&backend);
+        }
+    }
+
+    fn probe_running(&self, backend: &str) -> bool {
+        self.probes
+            .iter()
+            .any(|probe| probe.backend == backend && probe.generation == self.probe_generation)
+    }
+
+    fn start_probe(&mut self, backend: &str) {
+        let Some(tools) = self.catalog_tools.clone() else {
+            return;
+        };
+        let root = self.catalog_root.clone().unwrap_or_else(std::env::temp_dir);
+        let sessions = std::env::temp_dir().join(format!("pitex-catalog-{backend}-{}", uuid_v4()));
+        // A throwaway directory keeps the probe out of the project history.
+        // The CLI still uses its own login. This path is not a credential file.
+        if std::fs::create_dir_all(&sessions).is_err() {
+            self.note_catalog_report(backend, Err(()));
+            return;
+        }
+        let pi = self.catalog_pi.clone().unwrap_or_default();
+        let plan = match Self::plan_launch(backend, &pi, &sessions, &tools) {
+            Ok(plan) => plan,
+            Err(_) => {
+                let _ = std::fs::remove_dir_all(&sessions);
+                self.note_catalog_report(backend, Err(()));
+                return;
+            }
+        };
+        match PiAgentProcess::start(&plan.executable, &root, &plan.arguments, &plan.environment) {
+            Ok(process) => {
+                let _ = process.send(&PiRPCCommand::GetAvailableModels, None);
+                self.probes.push(CatalogProbe {
+                    backend: backend.to_string(),
+                    generation: self.probe_generation,
+                    process,
+                    started: std::time::Instant::now(),
+                    sessions,
+                });
+            }
+            Err(_) => {
+                let _ = std::fs::remove_dir_all(&sessions);
+                self.note_catalog_report(backend, Err(()));
+            }
+        }
+    }
+
+    fn stop_catalog_probes(&mut self) {
+        self.probe_generation = self.probe_generation.wrapping_add(1);
+        for probe in self.probes.drain(..) {
+            probe.process.terminate();
+            let _ = std::fs::remove_dir_all(&probe.sessions);
+        }
+    }
+
+    pub fn poll_catalog_probes(&mut self) {
+        let generation = self.probe_generation;
+        let mut finished = Vec::new();
+        for (index, probe) in self.probes.iter().enumerate() {
+            if probe.generation != generation {
+                finished.push((index, None));
+                continue;
+            }
+            let mut outcome = None;
+            {
+                let events = probe.process.events.lock().unwrap();
+                while let Ok(event) = events.try_recv() {
+                    if let Some(report) = catalog_models_from_event(&event) {
+                        outcome = Some(report);
+                        break;
+                    }
+                }
+            }
+            // A process can exit before its stdout thread delivers the line.
+            // Wait briefly so a fast catalog reply is not recorded as a failure.
+            if outcome.is_none()
+                && (probe.started.elapsed() > CATALOG_PROBE_LIMIT
+                    || (!probe.process.is_running()
+                        && probe.started.elapsed() > std::time::Duration::from_millis(200)))
+            {
+                outcome = Some(Err(()));
+            }
+            if outcome.is_some() {
+                finished.push((index, outcome));
+            }
+        }
+        for (index, report) in finished.into_iter().rev() {
+            let probe = self.probes.remove(index);
+            probe.process.terminate();
+            let _ = std::fs::remove_dir_all(&probe.sessions);
+            if probe.generation != self.probe_generation {
+                continue;
+            }
+            if let Some(report) = report {
+                self.note_catalog_report(&probe.backend, report);
+            }
+        }
+    }
+
+    fn to_catalog(model: &PiModelDescriptor) -> crate::catalog::CatalogModel {
+        crate::catalog::CatalogModel {
+            id: model.id.clone(),
+            provider: model.provider.clone(),
+            name: model.name.clone(),
+            context_window: model.context_window,
+        }
+    }
+
+    fn from_catalog(model: crate::catalog::CatalogModel) -> PiModelDescriptor {
+        PiModelDescriptor {
+            id: model.id,
+            provider: model.provider,
+            name: model.name,
+            context_window: model.context_window,
+        }
     }
 
     /// Poll one event (non-blocking) — the UI drains in its idle loop.
@@ -1903,6 +2265,8 @@ impl AgentCoordinator {
         if self.is_updating_model_settings || self.current_model.as_ref() == Some(model) {
             return;
         }
+        #[cfg(test)]
+        self.model_requests.push((model.provider.clone(), model.id.clone()));
         self.send_model_settings(
             PiRPCCommand::SetModel {
                 provider: model.provider.clone(),
@@ -2104,6 +2468,8 @@ impl AgentCoordinator {
                     Some("set_model" | "set_thinking_level")
                 ) {
                     self.send_model_settings(PiRPCCommand::GetState, None);
+                } else {
+                    self.retry_catalog_commit();
                 }
             }
             let message = event
@@ -2124,8 +2490,10 @@ impl AgentCoordinator {
         match event.response_command().as_deref() {
             Some("get_state") => {
                 if let Some(data) = event.response_data() {
-                    self.current_model =
-                        data.get("model").and_then(PiModelDescriptor::from_value);
+                    if self.switch_ticket.is_none() {
+                        self.current_model =
+                            data.get("model").and_then(PiModelDescriptor::from_value);
+                    }
                     if let Some(level) = data.get("thinkingLevel").and_then(|v| v.as_str()) {
                         self.thinking_level = level.to_string();
                     }
@@ -2161,6 +2529,7 @@ impl AgentCoordinator {
                     self.status_message = Some(
                         "The agent did not return valid reasoning levels for this model.".into(),
                     );
+                    self.retry_catalog_commit();
                     return;
                 }
                 self.thinking_levels = if self.current_model.is_none() {
@@ -2169,6 +2538,7 @@ impl AgentCoordinator {
                     levels
                 };
                 self.apply_preferred_model_if_ready();
+                self.retry_catalog_commit();
             }
             Some("get_available_models") => {
                 let raw = event
@@ -2178,7 +2548,9 @@ impl AgentCoordinator {
                     .cloned()
                     .unwrap_or_default();
                 self.models = raw.iter().filter_map(PiModelDescriptor::from_value).collect();
+                self.note_live_models();
                 self.apply_preferred_model_if_ready();
+                self.commit_switch_ticket();
             }
             Some("get_session_stats") => {
                 if let Some(data) = event.response_data() {
@@ -4247,6 +4619,332 @@ mod session_history_tests {
         agent.set_agent_provider("other");
         assert_eq!(agent.agent_provider, "pi");
     }
+
+    fn catalog_model(id: &str, provider: &str, name: &str) -> crate::catalog::CatalogModel {
+        crate::catalog::CatalogModel {
+            id: id.into(),
+            provider: provider.into(),
+            name: name.into(),
+            context_window: None,
+        }
+    }
+
+    fn response(value: serde_json::Value) -> PiRPCEvent {
+        PiRPCEvent::new(value.as_object().unwrap().clone()).unwrap()
+    }
+
+    #[test]
+    fn catalog_merges_ready_backends_and_omits_one_that_cannot_start() {
+        let mut agent =
+            AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.note_catalog_report(
+            "pi",
+            Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]),
+        );
+        agent.note_catalog_report("claude", Err(()));
+        let menu = agent.catalog_menu("en");
+        assert_eq!(menu.rows.len(), 1);
+        assert_eq!(menu.rows[0].id.backend, "pi");
+        assert_eq!(menu.rows[0].id.model_id, "sonnet");
+        assert!(menu.rows[0].label.contains("pi (provider sign-in)"));
+        assert!(menu.rows[0].label.contains("Sonnet (sonnet)"));
+        assert!(menu.rows.iter().all(|row| row.id.backend != "claude"));
+    }
+
+    #[test]
+    fn same_backend_catalog_pick_changes_only_the_model() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        let start = json!({"type": "agent_start"});
+        agent.handle(&response(start));
+        agent.note_catalog_report(
+            "pi",
+            Ok(vec![
+                catalog_model("sonnet", "anthropic", "Sonnet"),
+                catalog_model("opus", "anthropic", "Opus"),
+            ]),
+        );
+        agent.current_model = Some(PiModelDescriptor {
+            id: "sonnet".into(),
+            provider: "anthropic".into(),
+            name: "Sonnet".into(),
+            context_window: None,
+        });
+        let opus = agent
+            .catalog_menu("en")
+            .rows
+            .into_iter()
+            .find(|row| row.id.model_id == "opus")
+            .unwrap()
+            .id;
+        let generation = agent.catalog_generation();
+        agent.apply_catalog(
+            &crate::catalog::SelectionIntent::Row(opus),
+            generation,
+            &mut store,
+            "Switched assistant. The next message starts a new session.",
+        );
+        assert_eq!(agent.agent_provider, "pi");
+        assert_eq!(store.agent_provider(), "pi");
+        assert!(
+            agent.is_running,
+            "a same-backend pick leaves the turn running"
+        );
+        assert_eq!(
+            agent.model_requests,
+            vec![("anthropic".into(), "opus".into())]
+        );
+        assert!(agent
+            .transcript
+            .iter()
+            .all(|entry| !entry.text.contains("Switched")));
+    }
+
+    #[test]
+    fn cross_backend_catalog_pick_switches_backend_and_model_and_mid_turn_returns_to_idle() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.transcript.push(AgentTranscriptEntry {
+            role: TranscriptRole::User,
+            title: "You".into(),
+            text: "draft the abstract".into(),
+            detail: String::new(),
+            status: TranscriptStatus::Done,
+        });
+        let start = json!({"type": "agent_start"});
+        agent.handle(&response(start));
+        agent.handle(&approval_event("9", "rm build"));
+        agent.note_catalog_report(
+            "pi",
+            Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]),
+        );
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![catalog_model(
+                "claude-sonnet",
+                "claude",
+                "Claude Sonnet",
+            )]),
+        );
+        agent.current_model = Some(PiModelDescriptor {
+            id: "sonnet".into(),
+            provider: "anthropic".into(),
+            name: "Sonnet".into(),
+            context_window: None,
+        });
+        assert!(agent.is_running);
+        let claude = agent
+            .catalog_menu("en")
+            .rows
+            .into_iter()
+            .find(|row| row.id.backend == "claude")
+            .unwrap()
+            .id;
+        agent.wants_connection = true;
+        let generation = agent.catalog_generation();
+        agent.apply_catalog(
+            &crate::catalog::SelectionIntent::Row(claude),
+            generation,
+            &mut store,
+            "Switched assistant. The next message starts a new session.",
+        );
+        assert_eq!(agent.agent_provider, "claude");
+        assert_eq!(store.agent_provider(), "claude");
+        assert!(
+            !agent.is_running,
+            "a cross-backend pick mid-turn must restore Send before the new session starts"
+        );
+        assert!(agent.pending_approval.is_none());
+        assert!(
+            agent.model_requests.is_empty(),
+            "the retired session must not receive set_model"
+        );
+        assert!(agent
+            .transcript
+            .iter()
+            .any(|entry| entry.text.contains("new session")));
+        assert_eq!(
+            agent
+                .switch_ticket
+                .as_ref()
+                .map(|ticket| ticket.backend.as_str()),
+            Some("claude")
+        );
+
+        let models = json!({
+            "type": "response",
+            "command": "get_available_models",
+            "success": true,
+            "data": {"models": [{"id": "claude-sonnet", "provider": "claude", "name": "Claude Sonnet"}]}
+        });
+        agent.handle(&response(models));
+        assert!(agent.switch_ticket.is_none());
+        assert_eq!(
+            agent.model_requests,
+            vec![("claude".into(), "claude-sonnet".into())]
+        );
+        agent.stop();
+        assert!(!agent.is_running, "stop after the switch stays idle");
+    }
+
+    #[test]
+    fn cross_backend_catalog_pick_keeps_the_ticket_until_the_model_list_arrives() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.note_catalog_report("pi", Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]));
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![catalog_model("claude-sonnet", "claude", "Claude Sonnet")]),
+        );
+        let claude = agent
+            .catalog_menu("en")
+            .rows
+            .into_iter()
+            .find(|row| row.id.backend == "claude")
+            .unwrap()
+            .id;
+        let generation = agent.catalog_generation();
+        agent.apply_catalog(
+            &crate::catalog::SelectionIntent::Row(claude),
+            generation,
+            &mut store,
+            "Switched assistant. The next message starts a new session.",
+        );
+        agent.model_settings_request_id = Some("levels".into());
+        agent.is_updating_model_settings = true;
+        let levels = json!({
+            "type": "response",
+            "id": "levels",
+            "command": "get_available_thinking_levels",
+            "success": true,
+            "data": {"levels": ["off"]}
+        });
+        agent.handle(&response(levels));
+        assert!(agent.switch_ticket.is_some());
+        assert!(agent.model_requests.is_empty());
+        let models = json!({
+            "type": "response",
+            "command": "get_available_models",
+            "success": true,
+            "data": {"models": [{"id": "claude-sonnet", "provider": "claude", "name": "Claude Sonnet"}]}
+        });
+        agent.handle(&response(models));
+        assert!(agent.switch_ticket.is_none());
+        assert_eq!(
+            agent.model_requests,
+            vec![("claude".into(), "claude-sonnet".into())]
+        );
+    }
+
+    #[test]
+    fn cross_backend_catalog_pick_waits_for_idle_model_settings_before_set_model() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.note_catalog_report(
+            "pi",
+            Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]),
+        );
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![catalog_model(
+                "claude-sonnet",
+                "claude",
+                "Claude Sonnet",
+            )]),
+        );
+        agent.current_model = Some(PiModelDescriptor {
+            id: "sonnet".into(),
+            provider: "anthropic".into(),
+            name: "Sonnet".into(),
+            context_window: None,
+        });
+        let claude = agent
+            .catalog_menu("en")
+            .rows
+            .into_iter()
+            .find(|row| row.id.backend == "claude")
+            .unwrap()
+            .id;
+        let generation = agent.catalog_generation();
+        agent.apply_catalog(
+            &crate::catalog::SelectionIntent::Row(claude),
+            generation,
+            &mut store,
+            "Switched assistant. The next message starts a new session.",
+        );
+        agent.is_updating_model_settings = true;
+        let models = json!({
+            "type": "response",
+            "command": "get_available_models",
+            "success": true,
+            "data": {"models": [{"id": "claude-sonnet", "provider": "claude", "name": "Claude Sonnet"}]}
+        });
+        agent.handle(&response(models));
+        assert!(
+            agent.switch_ticket.is_some(),
+            "the ticket stays until model settings are idle"
+        );
+        assert!(agent.model_requests.is_empty());
+        agent.model_settings_request_id = Some("levels".into());
+        let levels = json!({
+            "type": "response",
+            "id": "levels",
+            "command": "get_available_thinking_levels",
+            "success": true,
+            "data": {"levels": ["off"]}
+        });
+        agent.handle(&response(levels));
+        assert!(agent.switch_ticket.is_none());
+        assert_eq!(
+            agent.model_requests,
+            vec![("claude".into(), "claude-sonnet".into())]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_short_lived_probe_merges_the_other_backends_models() {
+        let dir = std::env::temp_dir().join(format!("pitex-catalog-probe-{}", uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("reply.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"id\":\"claude-sonnet\",\"provider\":\"claude\",\"name\":\"Claude Sonnet\"}]}}'\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut agent =
+            AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.note_catalog_report(
+            "pi",
+            Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]),
+        );
+        let process =
+            PiAgentProcess::start(&script, &dir, &[], &std::collections::HashMap::new()).unwrap();
+        agent.probes.push(CatalogProbe {
+            backend: "claude".into(),
+            generation: agent.probe_generation,
+            process,
+            started: std::time::Instant::now(),
+            sessions: dir.clone(),
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while agent.catalog_menu("en").rows.len() < 2 && std::time::Instant::now() < deadline {
+            agent.poll_catalog_probes();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let menu = agent.catalog_menu("en");
+        assert!(
+            menu.rows
+                .iter()
+                .any(|row| row.id.backend == "claude" && row.id.model_id == "claude-sonnet"),
+            "probe models should join the live pi row, got {menu:?}"
+        );
+        assert!(agent.probes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
 
     #[test]
     fn pinned_pi_version_matches_swift_notice_and_flag() {
