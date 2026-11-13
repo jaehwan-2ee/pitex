@@ -1,11 +1,8 @@
 import EditorMacAdapter
+import Foundation
 import XCTest
 
-#if os(macOS)
-import AppKit
-
 final class LineCommentAndFoldRangeTests: XCTestCase {
-    @MainActor
     func testLineCommentUsesTheTextItIsGiven() {
         let edit = EditorMacAdapter.lineCommentEdit(
             text: "keep me",
@@ -15,7 +12,6 @@ final class LineCommentAndFoldRangeTests: XCTestCase {
         XCTAssertEqual(edit.range, NSRange(location: 0, length: 7))
     }
 
-    @MainActor
     func testLineCommentClampsASelectionPastTheBuffer() {
         let text = "keep me"
         let edit = EditorMacAdapter.lineCommentEdit(
@@ -28,7 +24,6 @@ final class LineCommentAndFoldRangeTests: XCTestCase {
         XCTAssertLessThanOrEqual(edit.range.location + edit.range.length, limit)
     }
 
-    @MainActor
     func testLineCommentRoundTripLeavesTheOriginalLines() {
         let commented = EditorMacAdapter.lineCommentEdit(
             text: "alpha\nbeta",
@@ -42,12 +37,10 @@ final class LineCommentAndFoldRangeTests: XCTestCase {
         XCTAssertEqual(restored.replacement, "alpha\nbeta")
     }
 
-    @MainActor
     func testFoldRangePastTheBufferIsSkipped() {
         XCTAssertNil(EditorMacAdapter.clampedCharacterRange(start: 100, end: 120, limit: 10))
     }
 
-    @MainActor
     func testFoldRangeIsClampedToTheBuffer() {
         XCTAssertEqual(
             EditorMacAdapter.clampedCharacterRange(start: 2, end: 50, limit: 10),
@@ -55,9 +48,7 @@ final class LineCommentAndFoldRangeTests: XCTestCase {
         )
     }
 
-    @MainActor
     func testEmptyFoldRangeIsSkipped() {
         XCTAssertNil(EditorMacAdapter.clampedCharacterRange(start: 4, end: 4, limit: 10))
     }
 }
-#endif
