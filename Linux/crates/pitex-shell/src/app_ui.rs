@@ -1782,10 +1782,11 @@ impl AppState {
                     let save_remote = st.model.remote.is_some()
                         && st.model.project_url.as_ref().is_some_and(|root| path.starts_with(root));
                     if let Some(tx) = st.tx.clone() {
-                        st.model.save_as(path, tx);
-                    }
-                    if save_remote && !matches!(st.model.phase, WorkspacePhase::Failed(_)) {
-                        st.begin_remote_save(RemoteSaveAction::Build);
+                        if let Some(error) = st.model.save_as(path, tx) {
+                            st.toast(&error);
+                        } else if save_remote {
+                            st.begin_remote_save(RemoteSaveAction::Build);
+                        }
                     }
                     st.refresh_after_document_change();
                 }

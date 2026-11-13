@@ -356,7 +356,7 @@ Proposed fix. After `ensure_agent`, return when `self.agent` is `None`. Not patc
 - Severity: data-loss
 - Confidence: high that both calls use `std::fs::write`. A full disk was not simulated.
 - Reachable: yes. Save As can target the open document. Save PDF can target an existing file.
-- Fixed in this change: no
+- Fixed in this change: yes. Save As and Save PDF write a temp file, sync it, and rename it over the destination. A failed PDF write is shown.
 
 `save_as` writes the editor snapshot with `std::fs::write` (`Linux/crates/pitex-shell/src/model.rs` lines 2452 to 2459). That opens the destination with truncation before the bytes are written. On `Err` it stores `WorkspacePhase::Failed` and returns, so a failed write can leave a shorter file. The failure path returns before `activate_document`.
 

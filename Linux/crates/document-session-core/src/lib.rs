@@ -691,6 +691,32 @@ impl AtomicDocumentStore {
             },
         }
     }
+
+    /// Replaces `url` by writing a temp file, syncing it, and renaming it
+    /// over the destination. A failed write leaves the destination as it was.
+    pub fn replace_bytes(bytes: &[u8], url: &Path) -> Result<(), String> {
+        let parent = url.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        let file_name = url
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "document".to_string());
+        let temporary = parent.join(format!(".{file_name}.pitex-{}.tmp", uuid_v4()));
+        let written = (|| -> Result<(), StoreError> {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .map_err(classify_io)?;
+            file.write_all(bytes).map_err(classify_io)?;
+            file.sync_all().map_err(classify_io)?;
+            std::fs::rename(&temporary, url).map_err(classify_io)?;
+            synchronize_directory(&parent)?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(&temporary);
+        written.map_err(|_| format!("The file {} could not be saved.", url.display()))
+    }
 }
 
 /// `fsync` on the containing directory after rename. Tolerates EINVAL,

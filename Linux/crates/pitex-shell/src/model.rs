@@ -2449,13 +2449,12 @@ impl WorkspaceModel {
     }
 
     /// File → Save As…
-    pub fn save_as(&mut self, url: PathBuf, sink: Sender<WorkspaceMessage>) {
-        let Some(snapshot) = self.document_snapshot.clone() else { return };
+    pub fn save_as(&mut self, url: PathBuf, sink: Sender<WorkspaceMessage>) -> Option<String> {
+        let Some(snapshot) = self.document_snapshot.clone() else { return None };
         {
             let _write_gate = remote_core::MirrorWrites::shared().ticket();
-            if let Err(e) = std::fs::write(&url, &snapshot.text) {
-                self.phase = WorkspacePhase::Failed(e.to_string());
-                return;
+            if let Err(error) = AtomicDocumentStore::replace_bytes(snapshot.text.as_bytes(), &url) {
+                return Some(error);
             }
         }
         if let Some(root) = self.project_url.clone() {
@@ -2468,6 +2467,7 @@ impl WorkspaceModel {
                 self.activate_document(url, sink);
             }
         }
+        None
     }
 
     /// Edit → Toggle Line Comment: returns the (UTF-16 range, replacement)
