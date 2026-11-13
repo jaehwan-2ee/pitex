@@ -14,6 +14,8 @@ mod backend_definitions;
 mod pdf_metadata;
 #[path = "../shared/preview_diagnostics.rs"]
 mod preview_diagnostics;
+#[path = "../shared/publish_dedup.rs"]
+mod publish_dedup;
 
 #[path = "../shared/pdf_definitions.rs"]
 mod pdf_definitions;

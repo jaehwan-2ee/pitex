@@ -615,6 +615,7 @@ jobs:
           PITEX_BIN: ${{ runner.temp }}/pitex-preview-engine/bin
           PITEX_EVIDENCE: ${{ runner.temp }}/pitex-semantic-evidence.jsonl
         run: |
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-publish-writes
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-tex-compat
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-pdf-features
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-engine-primitives
