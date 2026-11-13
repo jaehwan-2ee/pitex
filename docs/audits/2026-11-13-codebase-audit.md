@@ -17,7 +17,8 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | Linux remote save, placeholder scan, build-log carry, agent stdout cap, second build | Covered |
 | Adapter line parsers named below | Covered |
 | `Tools/install-deb.sh`, one input-audit step, one release skill step | Covered |
-| Windows app | Not yet audited |
+| Windows uninstaller and `shell_target` | Covered |
+| Rest of the Windows app | Not yet audited |
 | TexCore persistence, SSH, and sync | Not yet audited |
 | TexApp beyond the editor delegate assignment and `ShellAuthority` | Not yet audited |
 | Linux GTK UI and the rest of `pitex-shell` | Not yet audited |
@@ -25,7 +26,9 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | Rest of CI and release scripts | Not yet audited |
 | Retain cycles, main-thread UI calls, and force unwraps outside the sites below | Not yet audited |
 
-The Mac reviewer finished. The fold, close, and comment findings below are that pass, re-checked against the source in this checkout. The other six reviewers had not returned by the time this report was committed. Anything only they might still find is not yet audited.
+The Mac reviewer and the Windows reviewer finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The TexApp, preview, Linux, adapter, and CI reviewers had not returned by the last commit. Anything only they might still find is not yet audited.
+
+Numbers below follow the order a finding was confirmed. Severity is on each item.
 
 ## Findings
 
@@ -211,6 +214,61 @@ An empty string becomes `.disabled`, so `emptyCustomShell` is not the throw. `UI
 Trigger. The custom-shell field is set to a string that contains U+0000. The `try!` aborts the process.
 
 Needs Mac verification. Confirm whether the SwiftUI text field can deliver a NUL. If it can, replace `try!` with a failed update that keeps the previous `BuildPreferences`.
+
+### 7. Uninstall deletes the chosen directory and kills every `pitex.exe`
+
+- Severity: data-loss
+- Confidence: high for what the script requests. NSIS and `taskkill` were not executed here.
+- Reachable: yes. The installer shows a directory page, and uninstall uses the directory stored at install time.
+- Fixed in this change: no
+
+The uninstall section is `Windows/pitex.nsi` lines 95 to 99.
+
+```nsis
+Section "Uninstall"
+  nsExec::ExecToStack 'taskkill /F /IM ${BINARY}'
+  Pop $0
+  RMDir /r "$INSTDIR"
+  RMDir /r "$SMPROGRAMS\${NAME}"
+```
+
+`BINARY` is `pitex.exe`. `taskkill /F /IM` matches that image name for the whole machine. The pop of `$0` ignores the result. `RMDir /r "$INSTDIR"` then removes every file under the install directory. The directory page is line 50, so the user can point the install at a folder that already holds other files. There is no list of files the installer copied.
+
+The install section says not to kill unrelated instances (`pitex.nsi` lines 59 to 60). Uninstall does not follow that.
+
+Trigger. Install into a folder that contains other files, or add a file under the install directory later, then uninstall. Those files are deleted. Uninstall also force-kills every running `pitex.exe`, including a copy that is not the install being removed. Autosave defaults off, so a killed editor drops its unsaved buffer.
+
+Proposed fix. Delete only the files the installer copied, and remove `$INSTDIR` only when it is empty. Stop uninstall when the installed executable is still running, instead of `taskkill /IM` on every `pitex.exe`. This is not a small patch. It was not changed here.
+
+### 8. `shell_target` turns some `\\?\` paths into relative paths
+
+- Severity: wrong-behavior
+- Confidence: high for the string rewrite. `ShellExecuteW` was not called.
+- Reachable: yes for a `\\?\Volume{...}` path. A lowercase `unc` prefix is reachable only if the path was not already spelled `UNC`.
+- Fixed in this change: no
+
+`shell_target` in `Windows/crates/windows-platform/src/lib.rs` lines 348 to 366 always drops a leading `\\?\`. It rewrites the remainder only when the next units are the exact string `UNC\`.
+
+A replica of that prefix logic, compiled and run on Linux, printed:
+
+```
+\\?\C:\paper\draft.pdf
+  -> C:\paper\draft.pdf
+\\?\UNC\server\share\draft.pdf
+  -> \\server\share\draft.pdf
+\\?\unc\server\share\draft.pdf
+  -> unc\server\share\draft.pdf
+\\?\Volume{12345678-1234-1234-1234-123456789abc}\paper\main.pdf
+  -> Volume{12345678-1234-1234-1234-123456789abc}\paper\main.pdf
+```
+
+The in-tree tests cover the drive letter and the uppercase `UNC` case (`lib.rs` lines 551 to 568). They do not cover `Volume{...}` or a lowercase `unc` prefix.
+
+`open_document` calls this function (`lib.rs` lines 300 to 303). The PDF open button and the agent-config button reach it from `Linux/crates/pitex-shell/src/panes.rs`.
+
+Trigger. Open a file whose canonical path is `\\?\Volume{guid}\...`. The shell receives a relative path.
+
+Proposed fix. Strip `\\?\` only for a drive letter and for `UNC` compared without case. Leave every other `\\?\` path unchanged. Add those two inputs to the existing tests. Not patched here, because this environment cannot run the Windows crate.
 
 ## Checks that did not show a bug
 
