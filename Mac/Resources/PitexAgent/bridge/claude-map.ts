@@ -531,7 +531,7 @@ function applyStreamEvent(state: ClaudeStreamState, event: Json, out: Json[]): v
         const parsed = JSON.parse(raw) as unknown;
         args = asObject(parsed) ?? {};
       } catch {
-        args = {};
+        return;
       }
     }
     startTool(state, id, state.toolNameById[id] ?? "tool", args, out);

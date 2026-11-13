@@ -135,6 +135,39 @@ test("claude streamed tool input becomes one tool execution", () => {
   assert.deepEqual(events.at(-1)?.args, { command: "latexmk main.tex" });
 });
 
+test("a torn claude tool json does not start the tool", () => {
+  const state = createClaudeStreamState();
+  const events = [
+    ...mapClaudeMessage(
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 2,
+          content_block: { type: "tool_use", id: "t2", name: "Bash", input: {} },
+        },
+      },
+      state
+    ),
+    ...mapClaudeMessage(
+      {
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 2,
+          delta: { type: "input_json_delta", partial_json: '{"command":' },
+        },
+      },
+      state
+    ),
+    ...mapClaudeMessage(
+      { type: "stream_event", event: { type: "content_block_stop", index: 2 } },
+      state
+    ),
+  ];
+  assert.equal(events.some((event) => event.type === "tool_execution_start"), false);
+});
+
 test("claude approval cards show the command, the path, or a short summary", () => {
   const bash = approvalPresentation(
     "Bash",

@@ -4,13 +4,14 @@
 // Run with the Codex suite: node --test Mac/Resources/PitexAgent/bridge/test.ts
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
-import { GROK_SIGNED_OUT, GrokAdapter, findGrok, grokLaunchSpec, terminalSpawnSpec } from "./grok-adapter.ts";
+import { GROK_SIGNED_OUT, GrokAdapter, findGrok, grokLaunchSpec, killProcessGroup, terminalSpawnSpec } from "./grok-adapter.ts";
 import {
   approvalFromPermission,
   cancelledPermission,
@@ -288,7 +289,19 @@ rl.on("line", (line) => {
     return;
   }
   if (!Object.prototype.hasOwnProperty.call(msg, "id")) {
-    if (msg.method === "session/cancel") finishPrompt("cancelled");
+    if (msg.method === "session/cancel") {
+      finishPrompt("cancelled");
+      if (mode === "late") {
+        setTimeout(() => {
+          send({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "after stop" } } },
+          });
+        }, 40);
+      }
+      return;
+    }
     return;
   }
   handleRequest(msg);
@@ -989,4 +1002,59 @@ test("session/load restores a transcript without replaying it into the live stre
   } finally {
     await shutdown(booted);
   }
+});
+
+test("stopping a terminal kills the background writer", async () => {
+  if (process.platform === "win32") return;
+  const dir = mkdtempSync(join(tmpdir(), "pitex-grok-kill-"));
+  const file = join(dir, "late.txt");
+  const child = spawn("/bin/sh", ["-c", `(sleep 0.3; printf survived > ${file}) & sleep 30`], {
+    detached: true,
+    stdio: "ignore",
+  });
+  killProcessGroup(child);
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 1000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(existsSync(file), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a session update after abort does not reopen the turn", async () => {
+  const booted = await boot({ mode: "late" });
+  const { adapter, collected } = booted;
+  try {
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "Hi" }, collected.host);
+    await waitUntil("approval", () => collected.events.some((event) => event.type === "approval_request"));
+    await adapter.handleCommand({ type: "abort", id: "stop" }, collected.host);
+    await waitUntil("cancelled", () => collected.events.some((event) => event.type === "agent_end"));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    assert.equal(JSON.stringify(collected.events).includes("after stop"), false);
+    const end = collected.events.findLastIndex((event) => event.type === "agent_end");
+    assert.equal(collected.events.slice(end + 1).some((event) => event.type === "agent_start"), false);
+  } finally {
+    await shutdown(booted);
+  }
+});
+
+test("closeTurn marks an unfinished tool as an error", () => {
+  const state = createStreamState();
+  mapSessionUpdate(
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "c1",
+      kind: "execute",
+      status: "pending",
+      rawInput: { command: "latexmk" },
+    },
+    state
+  );
+  const end = closeTurn(state, "end_turn").find((event) => event.type === "tool_execution_end");
+  assert.equal(end?.toolCallId, "c1");
+  assert.equal(end?.isError, true);
 });

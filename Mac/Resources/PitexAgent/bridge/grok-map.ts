@@ -422,7 +422,7 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
     out.push({
       type: "tool_execution_end",
       toolCallId: id,
-      isError: stopReason === "cancelled" || stopReason === "refusal",
+      isError: true,
       result: toolContent(""),
     });
   }
