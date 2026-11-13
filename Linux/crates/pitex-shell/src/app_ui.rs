@@ -7925,9 +7925,8 @@ mod assistant_close_tests {
     use super::*;
 
     #[test]
-    #[ignore = "requires a GTK display (use xvfb-run)"]
     fn refresh_assistant_returns_when_a_remote_close_removed_the_agent() {
-        let _ = adw::init();
+        adw::init().unwrap();
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut state = AppState::new(
             crate::settings::SettingsStore::new(crate::settings::Preferences::standard()),
