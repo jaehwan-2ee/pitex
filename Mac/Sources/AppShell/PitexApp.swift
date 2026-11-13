@@ -1292,29 +1292,22 @@ final class WorkspaceModel: ObservableObject {
     }
 
     private func promptSaveChanges(names: [String]) -> LocalCloseChoice {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
+        let message: String
+        let detail: String
         if names.count == 1 {
-            alert.messageText = String(format: String(localized: "close.unsaved_one"), names[0])
-            alert.informativeText = String(localized: "close.unsaved_detail")
+            message = String(format: String(localized: "close.unsaved_one"), names[0])
+            detail = String(localized: "close.unsaved_detail")
         } else {
-            alert.messageText = String(format: String(localized: "close.unsaved_many"), names.count)
-            alert.informativeText = names.joined(separator: "\n") + "\n\n" + String(localized: "close.unsaved_detail")
+            message = String(format: String(localized: "close.unsaved_many"), names.count)
+            detail = names.joined(separator: "\n") + "\n\n" + String(localized: "close.unsaved_detail")
         }
-        alert.addButton(withTitle: String(localized: "close.save"))
-        alert.addButton(withTitle: String(localized: "close.dont_save"))
-        alert.addButton(withTitle: String(localized: "close.cancel"))
-        if alert.buttons.count > 2 {
-            alert.buttons[2].keyEquivalent = "\u{1b}"
-        }
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            return .save
-        case .alertSecondButtonReturn:
-            return .discard
-        default:
-            return .cancel
-        }
+        return SaveChangesAlert.choose(
+            message: message,
+            detail: detail,
+            saveTitle: String(localized: "close.save"),
+            dontSaveTitle: String(localized: "close.dont_save"),
+            cancelTitle: String(localized: "close.cancel")
+        )
     }
 
     func closeDocument(_ url: URL) async {
@@ -3172,7 +3165,13 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Closing the editor window while quit is already waiting on the save
+    /// alert must not start a second termination. That second call returns
+    /// terminateLater and never replies, so Cancel cannot end the alert.
+    @MainActor
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !terminationInFlight
+    }
 
     /// Quit asks before dropping unsaved local text, and waits for a save that is already queued.
     @MainActor
