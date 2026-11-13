@@ -21,12 +21,13 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | Rest of the Windows app | Not yet audited |
 | TexCore persistence, SSH, and sync | Not yet audited |
 | TexApp beyond the editor delegate assignment and `ShellAuthority` | Not yet audited |
-| Linux GTK UI and the rest of `pitex-shell` | Not yet audited |
+| Linux assistant refresh during SSH close, Save As, Save PDF, local close, and the uncapped build PDF and log | Covered |
+| Rest of the Linux GTK UI | Not yet audited |
 | Rest of preview `publish`, unsafe blocks, and image decoders | Not yet audited |
 | Rest of CI and release scripts | Not yet audited |
 | Retain cycles, main-thread UI calls, and force unwraps outside the sites below | Not yet audited |
 
-The Mac, Windows, and preview reviewers finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The TexApp, Linux, adapter, and CI reviewers had not returned by the last commit. Anything only they might still find is not yet audited.
+The Mac, Windows, preview, and Linux reviewers finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The TexApp, adapter, and CI reviewers had not returned by the last commit. Anything only they might still find is not yet audited.
 
 Numbers below follow the order a finding was confirmed. Severity is on each item.
 
@@ -334,6 +335,73 @@ rmdir -> -1
 `snprintf` into the fixed buffer is also unchecked. A canonical `--out` path near 4096 bytes can make the formatted path collapse onto `--out` itself. That length was not executed here.
 
 Proposed fix. If `snprintf` does not fit, skip the deletion and report an I/O error. In `remove_dir`, `lstat` the path and unlink a symlink without following it. For a real directory, delete children through a descriptor opened with `O_NOFOLLOW` and `O_DIRECTORY`. Not patched here. Another change is already editing publish in this file, and the helper was not rebuilt.
+
+### 12. Closing an SSH project while an assistant render is deferred panics
+
+- Severity: crash
+- Confidence: high that `refresh_assistant` unwraps `agent` after `ensure_agent` has refused to create one. The GTK timeout was not run.
+- Reachable: yes during an SSH close while a transcript render is already scheduled.
+- Fixed in this change: no
+
+`refresh_assistant` in `Linux/crates/pitex-shell/src/app_ui.rs` lines 4242 to 4246 calls `ensure_agent` and then `self.agent.as_mut().unwrap()`. `ensure_agent` returns immediately while `closing_remote_workspace()` is true (line 2743) and does not recreate the agent. That flag is set when `pending_remote_save` or `queued_remote_save` is any remote action except Build (lines 233 to 235 and 3463 to 3466). `begin_remote_save` for a closing action calls `shutdown_agent`, which sets `agent` to `None` (lines 3480 to 3482 and 1593 to 1596). File → Close on a remote project takes that path (lines 2075 to 2078).
+
+A streaming reply schedules one deferred render with `glib::timeout_add_local_once` (`schedule_transcript_render`, lines 5242 to 5249). That callback calls `refresh_assistant` with no check that `agent` is still present. `shutdown_agent` does not remove the source. The same unwrap is reached from the agent-config debounce, which calls `refresh_assistant` after `ensure_agent` even when the coordinator is still absent (lines 4606 to 4610).
+
+A local close does not take this path. `closing_remote_workspace` is false, so `ensure_agent` builds a new coordinator before the unwrap.
+
+Proposed fix. After `ensure_agent`, return when `self.agent` is `None`. Not patched here. The GTK UI was not run.
+
+### 13. Save As and Save PDF truncate the destination before the write finishes
+
+- Severity: data-loss
+- Confidence: high that both calls use `std::fs::write`. A full disk was not simulated.
+- Reachable: yes. Save As can target the open document. Save PDF can target an existing file.
+- Fixed in this change: no
+
+`save_as` writes the editor snapshot with `std::fs::write` (`Linux/crates/pitex-shell/src/model.rs` lines 2452 to 2459). That opens the destination with truncation before the bytes are written. On `Err` it stores `WorkspacePhase::Failed` and returns, so a failed write can leave a shorter file. The failure path returns before `activate_document`.
+
+Preview → Save PDF uses the same call and ignores the error (`Linux/crates/pitex-shell/src/panes.rs` lines 1516 to 1518).
+
+Normal Save goes through `AtomicDocumentStore::save` (`Linux/crates/document-session-core/src/lib.rs` lines 631 to 677). A failed write there removes the temp file and leaves the original.
+
+Proposed fix. Write Save As and the PDF export through the same temp file, fsync, and rename, and surface the error. Not patched here.
+
+### 14. Linux local close and quit drop unsaved text, and a failed file switch covers the editor
+
+- Severity: data-loss
+- Confidence: high for the close and quit paths. The window was not run.
+- Reachable: yes with autosave left off, one local edit, then close the window or quit.
+- Fixed in this change: no
+
+`connect_close_request` lets a local window close proceed (`app_ui.rs` lines 5975 to 5978). An SSH window starts `begin_remote_save` instead. `application` shutdown waits for writes already in flight and does not flush a dirty buffer (`app_ui.rs` lines 5836 to 5848). `model.close` says pending edits die and removes the sessions (`model.rs` lines 2351 to 2364).
+
+A failed switch makes this easier to hit. `ActivateFinished(Err)` sets `WorkspacePhase::Failed` and `refresh_phase` shows the error page (`app_ui.rs` lines 4665 to 4667 and 2933 to 2940). `read_exact_utf8` rejects a source over 32 MiB or that is not UTF-8 (`model.rs` lines 5409 to 5417). The error page replaces the editor. Its Open button calls `present_open` (lines 6561 to 6562). While a project is still open, `open_routed` asks for a new window (lines 1627 to 1631). It does not call `model.open` in this window, so that button by itself does not drop the session. Quitting from the error page still does.
+
+Proposed fix. On a local dirty session, flush and ask before the window closes and before shutdown. On `ActivateFinished(Err)`, report the error and leave the editor up. Not patched here.
+
+### 15. A build reads the whole output PDF into memory with no size cap
+
+- Severity: crash, by allocation, if the PDF is larger than the process can hold
+- Confidence: high that the reads are uncapped. The allocation failure was not run.
+- Reachable: yes when `main.pdf` already exists and a build starts.
+- Fixed in this change: no
+
+Before the engine runs, an existing output is read with `std::fs::read` and kept as `preexisting_pdf` (`Linux/crates/build-core/src/lib.rs` lines 2306 to 2309). A successful build reads the output again (line 2434). `output_changed` reads it a third time (lines 3034 to 3036). A read error fails the build. There is no size check.
+
+Opening a project refuses the same file over 50 MiB. `MAX_PREVIEW_PDF_BYTES` is that cap (`model.rs` line 752), and `built_pdf_bytes` uses `read_bytes_capped` (lines 3467 to 3473). The build path does not.
+
+Proposed fix. Use the existing 50 MiB cap for these three reads, leave a larger PDF on disk, and publish the path. Not patched here.
+
+### 16. The build log string grows without a cap
+
+- Severity: crash, by allocation, if the build command writes without stopping
+- Confidence: high that each chunk is appended. A runaway command was not run.
+- Reachable: yes. The build command is user-editable.
+- Fixed in this change: no
+
+`apply_build_event` appends every log chunk to `build_log_text` (`model.rs` line 4893). Git status stops at 4 MiB and kills the child. The build log has no such stop. Cancel still leaves the bytes already copied in the string.
+
+Proposed fix. Cap `build_log_text` the way git status is capped, and drop the rest. Not patched here.
 
 ## Checks that did not show a bug
 
