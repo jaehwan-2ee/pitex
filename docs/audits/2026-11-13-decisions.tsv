@@ -1,0 +1,9 @@
+ts	phase	decision	why	evidence	result
+2026-11-13T12:14:29Z	start	started the v1.1.1 crash audit on this run	the log is new, so the first row marks the run	/home/ubuntu/pstack-audit/decisions.tsv	open
+2026-11-13T12:20:00Z	frame	done means a report of only re-checked findings plus small safe crash or data-loss fixes in one PR	the user wants evidence, not a speculative list, and no version bump or merge	user request, HEAD a6bbed8766e7ae7c3a3e3f2b97272eabe4f13320	predicate set
+2026-11-13T12:20:00Z	design	seven read-only slices on this machine, reports under /tmp/pitex-audit, Grok grok-4.7-xhigh only	shared repo writes would collide, and a new cloud VM was not requested	separate output dirs	open
+2026-11-13T12:20:00Z	design	wait for the auditors in this turn instead of backgrounding them	the user said not to end the turn while a subagent is still running, and background results arrive only after the turn ends	Task tool note vs user constraint	foreground fan-out
+2026-11-13T12:22:00Z	design	the seven reviewers ran on separate cloud agents and stayed in the background	the wait-in-this-turn call still returned as soon as each agent started	bc-7a8fa326 and the six sibling ids, status RUNNING at 12:28Z	supersedes the foreground row
+2026-11-13T12:26:00Z	preview	reproduced the Unicode argument panic with a child process	the helper main calls std::env::args and the Linux app passes a Path	/opt/cursor/artifacts/args-panic.log exit 101	proposed, not patched
+2026-11-13T12:30:00Z	cutoff	shipped the report without a runtime patch	no crash fix was both small and executed as a test before 12:50 UTC	docs/audits/2026-11-13-codebase-audit.md	report only
+2026-11-13T12:30:21Z	gates	static gates passed after generating the ignored SBOM	full cargo test and swift test were not available in time	verify-target-dag, verify-rust-dag, validate-xcodeproj, verify-release-surface, workflow yaml, linkage	pass
