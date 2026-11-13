@@ -1046,6 +1046,7 @@ static mut pending_complete: bool = false;
 static mut pending_generation: ::core::ffi::c_longlong = 0;
 static mut writer: *mut xdv2pdf = ::core::ptr::null::<xdv2pdf>() as *mut xdv2pdf;
 static mut publish_seq: ::core::ffi::c_int = 0;
+static mut force_publish: bool = false;
 static mut current_seq: ::core::ffi::c_int = 0;
 static mut generation: ::core::ffi::c_longlong = 0;
 static mut generation_start_ms: ::core::ffi::c_longlong = 0;
@@ -1530,6 +1531,7 @@ unsafe extern "C" fn publish(
         pbuf_free(&raw mut event);
         pbuf_free(&raw mut pdf);
         pbuf_free(&raw mut warnings);
+        force_publish = true;
         return true;
     }
     if err != 0 {
@@ -1549,6 +1551,87 @@ unsafe extern "C" fn publish(
         pbuf_free(&raw mut warnings);
         return true_0 != 0;
     }
+    let log_bytes: &[u8] = if !(*cur).log.is_null() && (*(*cur).log).len != 0 {
+        std::slice::from_raw_parts((*(*cur).log).data, (*(*cur).log).len)
+    } else {
+        b""
+    };
+    let pdf_bytes: &[u8] = if pdf.data.is_null() || pdf.len == 0 {
+        b""
+    } else {
+        std::slice::from_raw_parts(pdf.data, pdf.len)
+    };
+    let sync_input = if with_synctex && !(*(*cur).synctex).data.is_null() {
+        Some((
+            std::slice::from_raw_parts((*(*cur).synctex).data, (*(*cur).synctex).len),
+            ncur,
+        ))
+    } else {
+        None
+    };
+    let stamp = crate::publish_dedup::stamp(pdf_bytes, log_bytes, sync_input);
+    let kept_copy = crate::publish_dedup::kept()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .clone();
+    let alive = kept_copy
+        .as_ref()
+        .map(|kept| {
+            let mut i = 0;
+            while i < MAX_UNRELEASED {
+                if artifacts[i as usize].used && artifacts[i as usize].seq == kept.seq {
+                    return true;
+                }
+                i += 1;
+            }
+            false
+        })
+        .unwrap_or(false);
+    let plan = crate::publish_dedup::plan(stamp, complete, alive, kept_copy.as_ref());
+    let publish_anyway = force_publish && complete;
+    let (pdf_reuse, log_reuse, sync_reuse) = match plan {
+        crate::publish_dedup::Plan::Unchanged { idle_seq } if !publish_anyway => {
+            if let Some(idle_seq) = idle_seq {
+                current_seq = idle_seq;
+                let mut b: pbuf = pbuf {
+                    data: std::ptr::null_mut(),
+                    len: 0,
+                    cap: 0,
+                };
+                pbuf_printf(
+                    &raw mut b,
+                    b"{\"event\":\"idle\",\"generation\":%lld,\"seq\":%d,\"bytes_written\":0}\0"
+                        as *const u8 as *const ::core::ffi::c_char,
+                    gen,
+                    idle_seq,
+                );
+                emit(&raw mut b);
+                pbuf_free(&raw mut b);
+            }
+            last_publish_ms = now_ms();
+            pbuf_free(&raw mut pdf);
+            pbuf_free(&raw mut warnings);
+            return true_0 != 0;
+        }
+        crate::publish_dedup::Plan::Unchanged { .. } => {
+            let kept = kept_copy.as_ref().expect("an unchanged plan has a kept publication");
+            (
+                Some(kept.pdf.clone()),
+                Some(kept.log.clone()),
+                kept.stamp.has_sync.then(|| kept.sync.clone()),
+            )
+        }
+        crate::publish_dedup::Plan::Store {
+            pdf_reuse,
+            log_reuse,
+            sync_reuse,
+        } => (
+            pdf_reuse.map(std::path::Path::to_path_buf),
+            log_reuse.map(std::path::Path::to_path_buf),
+            sync_reuse.map(std::path::Path::to_path_buf),
+        ),
+    };
+    let mut bytes_written: u64 = 0;
     publish_seq += 1;
     let mut seq: ::core::ffi::c_int = publish_seq;
     let mut tmp: [::core::ffi::c_char; 4096] = [0; 4096];
@@ -1576,13 +1659,19 @@ unsafe extern "C" fn publish(
         b"%s.pdf\0" as *const u8 as *const ::core::ffi::c_char,
         &raw mut cfg.job as *mut ::core::ffi::c_char,
     );
-    ok = ok as ::core::ffi::c_int != 0
-        && write_file(
-            &raw mut tmp as *mut ::core::ffi::c_char,
-            &raw mut name as *mut ::core::ffi::c_char,
-            pdf.data as *const ::core::ffi::c_void,
-            pdf.len,
-        ) as ::core::ffi::c_int != 0;
+    if ok {
+        let tmp_dir = std::ffi::CStr::from_ptr(tmp.as_ptr()).to_string_lossy();
+        let pdf_name = std::ffi::CStr::from_ptr(name.as_ptr()).to_string_lossy();
+        match crate::publish_dedup::place_artifact(
+            std::path::Path::new(tmp_dir.as_ref()),
+            pdf_name.as_ref(),
+            pdf_bytes,
+            pdf_reuse.as_deref(),
+        ) {
+            Ok(n) => bytes_written = bytes_written.wrapping_add(n),
+            Err(_) => ok = false,
+        }
+    }
     if ok as ::core::ffi::c_int != 0 && with_synctex as ::core::ffi::c_int != 0 {
         let mut p: [::core::ffi::c_char; 4096] = [0; 4096];
         snprintf(
@@ -1592,14 +1681,26 @@ unsafe extern "C" fn publish(
             &raw mut tmp as *mut ::core::ffi::c_char,
             &raw mut cfg.job as *mut ::core::ffi::c_char,
         );
-        let mut f: *mut FILE = fopen(
-            &raw mut p as *mut ::core::ffi::c_char,
-            b"wb\0" as *const u8 as *const ::core::ffi::c_char,
-        ) as *mut FILE;
-        ok = !f.is_null();
-        if !f.is_null() {
-            write_synctex(f, (*cur).synctex, ncur);
-            ok = fclose(f) == 0 as ::core::ffi::c_int;
+        let linked = sync_reuse.as_ref().is_some_and(|source| {
+            crate::publish_dedup::link_or_false(source, std::path::Path::new(
+                std::ffi::CStr::from_ptr(p.as_ptr()).to_string_lossy().as_ref(),
+            ))
+        });
+        if !linked {
+            let mut f: *mut FILE = fopen(
+                &raw mut p as *mut ::core::ffi::c_char,
+                b"wb\0" as *const u8 as *const ::core::ffi::c_char,
+            ) as *mut FILE;
+            ok = !f.is_null();
+            if !f.is_null() {
+                write_synctex(f, (*cur).synctex, ncur);
+                ok = fclose(f) == 0 as ::core::ffi::c_int;
+                if ok {
+                    if let Ok(meta) = std::fs::metadata(std::ffi::CStr::from_ptr(p.as_ptr()).to_string_lossy().as_ref()) {
+                        bytes_written = bytes_written.wrapping_add(meta.len());
+                    }
+                }
+            }
         }
     }
     snprintf(
@@ -1608,18 +1709,19 @@ unsafe extern "C" fn publish(
         b"%s.log\0" as *const u8 as *const ::core::ffi::c_char,
         &raw mut cfg.job as *mut ::core::ffi::c_char,
     );
-    ok = ok as ::core::ffi::c_int != 0
-        && write_file(
-            &raw mut tmp as *mut ::core::ffi::c_char,
-            &raw mut name as *mut ::core::ffi::c_char,
-            (if !(*cur).log.is_null() {
-                (*(*cur).log).data as *const ::core::ffi::c_uchar
-            } else {
-                b"\0" as *const u8 as *const ::core::ffi::c_char
-                    as *const ::core::ffi::c_uchar
-            }) as *const ::core::ffi::c_void,
-            (if !(*cur).log.is_null() { (*(*cur).log).len } else { 0 as size_t }),
-        ) as ::core::ffi::c_int != 0;
+    if ok {
+        let tmp_dir = std::ffi::CStr::from_ptr(tmp.as_ptr()).to_string_lossy();
+        let log_name = std::ffi::CStr::from_ptr(name.as_ptr()).to_string_lossy();
+        match crate::publish_dedup::place_artifact(
+            std::path::Path::new(tmp_dir.as_ref()),
+            log_name.as_ref(),
+            log_bytes,
+            log_reuse.as_deref(),
+        ) {
+            Ok(n) => bytes_written = bytes_written.wrapping_add(n),
+            Err(_) => ok = false,
+        }
+    }
     ok = ok as ::core::ffi::c_int != 0
         && rename(
             &raw mut tmp as *mut ::core::ffi::c_char,
@@ -1638,6 +1740,25 @@ unsafe extern "C" fn publish(
     }
     artifacts[slot as usize].used = true_0 != 0;
     artifacts[slot as usize].seq = seq;
+    {
+        let dir_s = std::ffi::CStr::from_ptr(dir.as_ptr()).to_string_lossy();
+        let job = std::ffi::CStr::from_ptr(cfg.job.as_ptr()).to_string_lossy();
+        let base = format!("{dir_s}/{job}");
+        *crate::publish_dedup::kept()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(crate::publish_dedup::Kept {
+            seq,
+            complete,
+            stamp,
+            pdf: std::path::PathBuf::from(format!("{base}.pdf")),
+            log: std::path::PathBuf::from(format!("{base}.log")),
+            sync: std::path::PathBuf::from(format!("{base}.synctex")),
+        });
+        if bytes_written > 0 {
+            eprintln!("[publish] bytes_written={bytes_written} seq={seq}");
+        }
+        force_publish = false;
+    }
     let mut first: [::core::ffi::c_char; 512] = [0; 512];
     let mut errors: ::core::ffi::c_int = log_errors(
         (*cur).log,
@@ -1754,6 +1875,11 @@ unsafe extern "C" fn publish(
         let text=crate::preview_diagnostics::excerpt(std::slice::from_raw_parts(warnings.data,warnings.len));
         json_write_string(&raw mut ev,text.as_ptr().cast(),text.len());
     }
+    pbuf_printf(
+        &raw mut ev,
+        b",\"bytes_written\":%llu\0" as *const u8 as *const ::core::ffi::c_char,
+        bytes_written,
+    );
     pbuf_putc(&raw mut ev, '}' as i32);
     emit(&raw mut ev);
     pbuf_free(&raw mut ev);
