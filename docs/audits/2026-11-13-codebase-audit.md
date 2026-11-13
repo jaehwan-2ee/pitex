@@ -19,15 +19,16 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | `Tools/install-deb.sh`, one input-audit step, one release skill step | Covered |
 | Windows uninstaller and `shell_target` | Covered |
 | Rest of the Windows app | Not yet audited |
-| TexCore persistence, SSH, and sync | Not yet audited |
-| TexApp beyond the editor delegate assignment and `ShellAuthority` | Not yet audited |
+| TexCore pull, fetch, and resolve downloads | Covered |
+| TexApp editor rejection fallback | Covered |
+| Rest of TexCore persistence and TexApp | Not yet audited |
 | Linux assistant refresh during SSH close, Save As, Save PDF, local close, and the uncapped build PDF and log | Covered |
 | Rest of the Linux GTK UI | Not yet audited |
 | Rest of preview `publish`, unsafe blocks, and image decoders | Not yet audited |
 | Rest of CI and release scripts | Not yet audited |
 | Retain cycles, main-thread UI calls, and force unwraps outside the sites below | Not yet audited |
 
-The Mac, Windows, preview, Linux, and adapter reviewers finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The TexApp and CI reviewers had not returned by the last commit. Anything only they might still find is not yet audited.
+The Mac, Windows, preview, Linux, adapter, and TexApp reviewers finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The CI reviewer had not returned by the last commit. Anything only that pass might still find is not yet audited.
 
 Numbers below follow the order a finding was confirmed. Severity is on each item.
 
@@ -485,6 +486,34 @@ Proposed fix. Set `isError: true` when the tool never completed. Not patched her
 On `content_block_stop`, a `JSON.parse` failure sets `args` to `{}` and calls `startTool` (`claude-map.ts` lines 524 to 537). `startTool` returns before emitting when `toolStarted` is already set (lines 379 to 384), so a later full `tool_use` does not emit a new start.
 
 Proposed fix. On parse failure, do not call `startTool`. Not patched here.
+
+### 24. Pull can install a short tar snapshot and record it as the baseline
+
+- Severity: data-loss
+- Confidence: high that the received bytes are placed without a check against the listing hash. GNU tar 1.35 on this machine archived 200000 bytes of a file that was 4200000 bytes when tar returned, and tar exited 0.
+- Reachable: yes when a remote file changes between the hash listing and `tar -cf`.
+- Fixed in this change: no
+
+`download` runs `tarOut` with `client.run`, not `runChecked` (`Packages/TexCore/Sources/RemoteCore/RemoteSync.swift` lines 807 to 813). `run` returns a non-zero status and throws only on 255 (`SSHClient.swift` lines 187 to 199). A non-empty archive is kept. The comment on line 807 says a non-zero tar exit can still leave a usable archive.
+
+`pull` places those bytes when the local hash is still the pre-download hash, then sets `manifest[path]` to the hash of the received file (lines 559 to 568). Nothing compares that hash to `remote[path]` from the listing. `fetch` places the same way with no local-hash re-check (lines 685 to 696). `resolve` with keep-remote does the same (lines 758 to 766).
+
+`SyncPlanner.pull` downloads again when the remote hash differs from the manifest and the local hash still equals the manifest (lines 199 to 202). If the editor then saves a different local copy, both sides differ, so pull records a conflict (lines 203 to 204). `resolve(keepLocal: true)` uploads the local bytes over the remote file (lines 722 to 730). That upload is what would replace the remote tail.
+
+Proposed fix. If the received hash is not the listing hash, skip `place` and do not update the manifest. Not patched here. Swift is not installed.
+
+### 25. A rejected editor submit replaces the text view and drops the in-flight keystroke
+
+- Severity: data-loss
+- Confidence: medium. The fallback is written in the adapter. The keystroke and the disk change were not interleaved here.
+- Reachable: yes when a submit is in flight and the session text changes.
+- Fixed in this change: no
+
+`EditorMacAdapter` submits on a task and, on `.rejected`, rebases only when `current.text == committed.text` and `attempts < 3`. Any other rejection calls `apply(current)` (`Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift` lines 537 to 548). The comment at lines 520 to 527 says that fallback drops the in-flight keystroke. `apply` sets `desiredText` to the snapshot text and replaces the text storage (lines 570 to 577). After that, `desiredText == committed.text`, so the follow-up `submitPendingChangeIfNeeded` does not resubmit the typed characters.
+
+`processDiskChange` adopts the file when `saveState == .clean` (`PitexApp.swift` lines 1951 to 1956). A keystroke that has not reached `DocumentSession.apply` still leaves the session clean, so a watcher event during the await can resolve the session to the disk text and make `submit` return `.rejected`.
+
+Proposed fix. On a divergent rejection, keep the text still in the view and resubmit that diff, or surface a conflict. Not patched here.
 
 ## Checks that did not show a bug
 
