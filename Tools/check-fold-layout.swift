@@ -239,6 +239,11 @@ func temporary(_ prefix: String, _ action: (URL) throws -> Void) throws {
 let host = #"""
 
 import AppKit
+enum EditorMacAdapter {
+    static func clampedCharacterRange(start: Int, end: Int, limit: Int) -> NSRange? {
+        EditorText.clampedCharacterRange(start: start, end: end, limit: limit)
+    }
+}
 func check(_ ok: Bool, _ message: String, line: Int = #line) {
     if !ok {
         FileHandle.standardError.write(Data("line \(line): \(message)\n".utf8))
@@ -411,10 +416,11 @@ do {
         .replacingOccurrences(of: "FoldEngine", with: "BaselineFoldEngine")
     let analysis = try slice(read(highlighting), from: "/// A text storage owns", to: "/// Applies deterministic")
     let core = try read("Packages/TexCore/Sources/LanguageCore/LanguageCore.swift")
+    let editorText = try stripImports(try read("Packages/TexApp/Sources/EditorMacAdapter/EditorText.swift"))
     try temporary("pitex-fold-") { root in
         let source = root.appendingPathComponent("Check.swift")
         let executable = root.appendingPathComponent("check")
-        try write(stripImports(core) + analysis + current + prior + host, to: source)
+        try write(stripImports(core) + analysis + current + prior + editorText + host, to: source)
         try run(["swiftc", "-swift-version", "6", "-O", "-parse-as-library", source.path, "-o", executable.path])
         try run([executable.path, repoPath + "/Fixtures/projects/large/main.tex"], timeout: 180)
     }
