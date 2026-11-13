@@ -92,6 +92,19 @@ public struct BuildPreferences: Codable, Equatable, Sendable {
         )
     }
 
+    /// A custom shell command that `BuildPreferences` rejects returns nil.
+    /// The caller keeps the previous value instead of trapping.
+    public func replacingCustomShell(command: String) -> BuildPreferences? {
+        let execution: ShellExecutionPreference = command.isEmpty ? .disabled : .custom(command: command)
+        return try? Self(
+            engine: engine,
+            maximumPasses: maximumPasses,
+            stopsAfterFirstError: stopsAfterFirstError,
+            shellExecution: execution,
+            customShellAcknowledged: command.isEmpty ? false : customShellAcknowledged
+        )
+    }
+
     public func acknowledgingCustomShell() throws -> Self {
         guard case .custom = shellExecution else {
             return try Self(
