@@ -920,33 +920,7 @@ impl PiAgentProcess {
 
         let stdout_thread = std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
-            loop {
-                // Read one LF-delimited line without splitting UTF-8.
-                let mut line = Vec::<u8>::new();
-                let mut byte = [0u8; 1];
-                loop {
-                    match reader.read(&mut byte) {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) => {
-                            if byte[0] == b'\n' {
-                                break;
-                            }
-                            line.push(byte[0]);
-                        }
-                    }
-                    if line.len() > 4 * 1024 * 1024 {
-                        break;
-                    }
-                }
-                if line.last() == Some(&b'\r') {
-                    line.pop();
-                }
-                if line.is_empty() {
-                    if reader.buffer().is_empty() && reader.fill_buf().map(|b| b.is_empty()).unwrap_or(true) {
-                        break;
-                    }
-                    continue;
-                }
+            while let Some(line) = next_agent_stdout_line(&mut reader, 4 * 1024 * 1024) {
                 if let Ok(value) = serde_json::from_slice::<Value>(&line) {
                     if let Some(object) = value.as_object() {
                         if let Some(event) = PiRPCEvent::new(object.clone()) {
@@ -1311,6 +1285,9 @@ pub struct AgentCoordinator {
     /// different id are stale and ignored. Public for integration tests.
     #[doc(hidden)]
     pub model_settings_request_id: Option<String>,
+    /// The get_messages request still in force. An older reply must not
+    /// replace the transcript of the session now on screen.
+    messages_request_id: Option<String>,
     /// Bumped on every mutation of UI-visible state; the panel rebuilds
     /// only when this changes instead of on every agent event.
     pub ui_revision: u64,
@@ -1437,6 +1414,7 @@ impl AgentCoordinator {
             selection_attachment: None,
             suppressed_attachment: None,
             model_settings_request_id: None,
+            messages_request_id: None,
             ui_revision: 0,
             wants_connection: false,
             pdf_text_cache: std::cell::RefCell::new(None),
@@ -2682,11 +2660,19 @@ impl AgentCoordinator {
                     .and_then(|c| c.as_bool())
                     == Some(true);
                 if let (false, Some(process)) = (cancelled, &self.process) {
-                    let _ = process.send(&PiRPCCommand::GetMessages, None);
+                    let request_id = uuid_v4();
+                    self.messages_request_id = Some(request_id.clone());
+                    let _ = process.send(&PiRPCCommand::GetMessages, Some(&request_id));
                 }
                 self.send_model_settings(PiRPCCommand::GetState, None);
             }
             Some("get_messages") => {
+                let Some(latest) = self.messages_request_id.as_deref() else {
+                    return;
+                };
+                if event.string("id").as_deref() != Some(latest) {
+                    return;
+                }
                 let messages = event
                     .response_data()
                     .and_then(|d| d.get("messages"))
@@ -4384,6 +4370,42 @@ mod toolchain_tests {
     }
 }
 
+/// One stdout line. A line past `cap` is discarded through its newline
+/// and is not returned, so the next event stays aligned.
+fn next_agent_stdout_line(reader: &mut impl BufRead, cap: usize) -> Option<Vec<u8>> {
+    loop {
+        let mut line = Vec::new();
+        let mut skipped = false;
+        loop {
+            let mut byte = [0u8; 1];
+            match reader.read(&mut byte) {
+                Ok(0) | Err(_) => {
+                    if skipped || line.is_empty() {
+                        return None;
+                    }
+                    return Some(line);
+                }
+                Ok(_) if byte[0] == b'\n' => break,
+                Ok(_) if skipped => {}
+                Ok(_) => {
+                    line.push(byte[0]);
+                    if line.len() > cap {
+                        skipped = true;
+                        line.clear();
+                    }
+                }
+            }
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if skipped || line.is_empty() {
+            continue;
+        }
+        return Some(line);
+    }
+}
+
 #[cfg(test)]
 mod session_history_tests {
     use super::*;
@@ -4725,6 +4747,50 @@ mod session_history_tests {
 
     fn response(value: serde_json::Value) -> PiRPCEvent {
         PiRPCEvent::new(value.as_object().unwrap().clone()).unwrap()
+    }
+
+    #[test]
+    fn a_stale_get_messages_reply_does_not_replace_the_transcript() {
+        let mut agent =
+            AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.messages_request_id = Some("current".into());
+        agent.transcript = vec![AgentTranscriptEntry {
+            role: TranscriptRole::User,
+            title: "You".into(),
+            text: "kept".into(),
+            detail: String::new(),
+            status: TranscriptStatus::Done,
+        }];
+        let stale = json!({
+            "type": "response",
+            "id": "previous",
+            "command": "get_messages",
+            "success": true,
+            "data": {"messages": [{"role": "user", "content": "old"}]}
+        });
+        agent.handle(&response(stale));
+        assert_eq!(agent.transcript[0].text, "kept");
+        let current = json!({
+            "type": "response",
+            "id": "current",
+            "command": "get_messages",
+            "success": true,
+            "data": {"messages": [{"role": "user", "content": "fresh"}]}
+        });
+        agent.handle(&response(current));
+        assert_eq!(agent.transcript[0].text, "fresh");
+    }
+
+    #[test]
+    fn a_line_over_the_cap_is_dropped_and_the_next_line_is_kept() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"{\"ok\":1}\n");
+        input.extend(std::iter::repeat(b'x').take(20));
+        input.extend_from_slice(b"\n{\"ok\":2}\n");
+        let mut reader = std::io::Cursor::new(input);
+        assert_eq!(next_agent_stdout_line(&mut reader, 8).unwrap(), b"{\"ok\":1}");
+        assert_eq!(next_agent_stdout_line(&mut reader, 8).unwrap(), b"{\"ok\":2}");
+        assert!(next_agent_stdout_line(&mut reader, 8).is_none());
     }
 
     #[test]
