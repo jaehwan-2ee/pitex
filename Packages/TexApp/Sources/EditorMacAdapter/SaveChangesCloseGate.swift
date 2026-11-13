@@ -1,12 +1,19 @@
 #if os(macOS)
 import AppKit
 
+/// Asks before the red close button orders a document window out.
+///
+/// The window keeps SwiftUI's delegate. Replacing that delegate stops
+/// LaunchServices from reusing the window, and refusing `windowShouldClose`
+/// during quit deadlocks `NSApp.terminate`.
 @MainActor
-public final class SaveChangesCloseGate: NSObject, NSWindowDelegate {
+public final class SaveChangesCloseGate: NSObject {
     public private(set) var isPrompting = false
     private var closeInFlight = false
     private weak var guardedWindow: NSWindow?
-    nonisolated(unsafe) private weak var original: (any NSWindowDelegate)?
+    private weak var closeButton: NSButton?
+    private weak var originalTarget: AnyObject?
+    private var originalAction: Selector?
     private let shouldPrompt: @MainActor () -> Bool
     private let confirm: @MainActor () async -> Bool
 
@@ -21,25 +28,32 @@ public final class SaveChangesCloseGate: NSObject, NSWindowDelegate {
     public func attach(to window: NSWindow) {
         restore()
         guardedWindow = window
-        original = window.delegate
-        window.delegate = self
+        guard let button = window.standardWindowButton(.closeButton) else { return }
+        closeButton = button
+        originalTarget = button.target
+        originalAction = button.action
+        button.target = self
+        button.action = #selector(closeClicked(_:))
     }
 
     public func restore() {
-        guard let window = guardedWindow, window.delegate === self else {
-            guardedWindow = nil
-            original = nil
-            return
+        if let closeButton {
+            closeButton.target = originalTarget
+            closeButton.action = originalAction
         }
-        window.delegate = original
+        closeButton = nil
+        originalTarget = nil
+        originalAction = nil
         guardedWindow = nil
-        original = nil
     }
 
-    public func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if original?.windowShouldClose?(sender) == false { return false }
-        guard shouldPrompt() else { return true }
-        guard !closeInFlight else { return false }
+    @objc public func closeClicked(_ sender: Any?) {
+        guard let window = guardedWindow else { return }
+        guard shouldPrompt() else {
+            window.performClose(sender)
+            return
+        }
+        guard !closeInFlight else { return }
         closeInFlight = true
         isPrompting = true
         Task { @MainActor in
@@ -47,17 +61,8 @@ public final class SaveChangesCloseGate: NSObject, NSWindowDelegate {
             self.isPrompting = false
             self.closeInFlight = false
             guard accepted else { return }
-            sender.performClose(nil)
+            window.performClose(sender)
         }
-        return false
-    }
-
-    public nonisolated override func responds(to selector: Selector!) -> Bool {
-        super.responds(to: selector) || (original?.responds(to: selector) ?? false)
-    }
-
-    public nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
-        original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
     }
 }
 #endif

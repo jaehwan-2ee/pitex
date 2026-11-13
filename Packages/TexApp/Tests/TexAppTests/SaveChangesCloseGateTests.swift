@@ -92,8 +92,10 @@ final class SaveChangesCloseGateTests: XCTestCase {
                 }
             }
         )
-        gate.attach(to: window)
         window.makeKeyAndOrderFront(nil)
+        gate.attach(to: window)
+        let closeButton = window.standardWindowButton(.closeButton)
+        XCTAssertNotNil(closeButton)
         let holder = Holder(delivery: deliver, window: window, state: state)
         Self.schedule(holder)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -102,7 +104,7 @@ final class SaveChangesCloseGateTests: XCTestCase {
                 NSApp.stopModal(withCode: .abort)
             }
         }
-        window.performClose(nil)
+        closeButton?.performClick(nil)
         let start = Date()
         while state.armed && Date().timeIntervalSince(start) < 3 {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))

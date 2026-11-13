@@ -500,7 +500,7 @@ The other `delegate = self` assignments are not the view assigning itself:
 
 `SessionTextView.validateUserInterfaceItem` calls `super` after handling find actions (`EditorMacAdapter.swift` lines 33 to 38). That is not the split view calling itself.
 
-`SaveChangesCloseGate` forwards to the previous window delegate. The gate is not the window. After `close()` the workspace has no project, so the gate is removed and the window's own delegate accepts the close.
+The red close button is hooked by `SaveChangesCloseGate`. The window keeps SwiftUI's delegate, so LaunchServices can still reuse it. After `close()` clears the project, the gate restores the button and `performClose` uses that delegate.
 
 `BuildSupport.swift` lines 832 to 840 call `try! ShellAuthority(...)` with `source: .userConfiguration`, `approvedByUser: true`, and a non-empty disclosure. `ShellAuthority.init` throws only when the source is not built-in and the user has not approved it, or when the disclosure is empty (`BuildCore.swift` lines 67 to 69). Those arguments do not throw.
 
