@@ -4241,6 +4241,11 @@ impl AppState {
 
     pub fn refresh_assistant(&mut self) {
         self.ensure_agent();
+        // A remote close shuts the agent down and refuses to create another
+        // one. A transcript render scheduled before that close still runs.
+        if self.agent.is_none() {
+            return;
+        }
         self.sync_assistant_visibility();
         let lang = self.language;
         let agent = self.agent.as_mut().unwrap();
@@ -7774,6 +7779,26 @@ for line in sys.stdin:
         texture.save_to_png(&out).unwrap();
         eprintln!("diff screenshot written to {out}");
         window.close();
+    }
+}
+
+#[cfg(test)]
+mod assistant_close_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_assistant_returns_when_a_remote_close_removed_the_agent() {
+        let _ = adw::init();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut state = AppState::new(
+            crate::settings::SettingsStore::new(crate::settings::Preferences::standard()),
+            tx,
+            "test".into(),
+        );
+        state.pending_remote_save = Some(RemoteSaveAction::CloseWindow);
+        state.agent = None;
+        state.refresh_assistant();
+        assert!(state.agent.is_none());
     }
 }
 

@@ -341,7 +341,7 @@ Proposed fix. If `snprintf` does not fit, skip the deletion and report an I/O er
 - Severity: crash
 - Confidence: high that `refresh_assistant` unwraps `agent` after `ensure_agent` has refused to create one. The GTK timeout was not run.
 - Reachable: yes during an SSH close while a transcript render is already scheduled.
-- Fixed in this change: no
+- Fixed in this change: yes. `refresh_assistant` returns when the agent is gone, so a deferred render during a remote close does not panic.
 
 `refresh_assistant` in `Linux/crates/pitex-shell/src/app_ui.rs` lines 4242 to 4246 calls `ensure_agent` and then `self.agent.as_mut().unwrap()`. `ensure_agent` returns immediately while `closing_remote_workspace()` is true (line 2743) and does not recreate the agent. That flag is set when `pending_remote_save` or `queued_remote_save` is any remote action except Build (lines 233 to 235 and 3463 to 3466). `begin_remote_save` for a closing action calls `shutdown_agent`, which sets `agent` to `None` (lines 3480 to 3482 and 1593 to 1596). File → Close on a remote project takes that path (lines 2075 to 2078).
 
