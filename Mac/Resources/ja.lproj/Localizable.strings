@@ -234,6 +234,7 @@
 "assistant.configure_hint" = "プロバイダとアカウントは Pitex Agent のサインイン手順で設定します。";
 "assistant.open_pi_config" = "Pitex Agent 設定を開く";
 "assistant.model_placeholder" = "モデルなし — 設定 → AI でログイン";
+"assistant.switched_backend" = "アシスタントを切り替えました。次のメッセージから新しいセッションです。";
 "assistant.reasoning_help" = "推論レベル";
 "assistant.send_help" = "送信 (⌘Return)";
 "assistant.stop_help" = "エージェントを停止";

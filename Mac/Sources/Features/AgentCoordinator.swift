@@ -114,7 +114,14 @@ final class AgentCoordinator: ObservableObject {
     /// Both the effective level and the model's choices come from pi.
     @Published private(set) var thinkingLevel = "off"
     @Published private(set) var thinkingLevels: [String] = []
-    @Published private(set) var isUpdatingModelSettings = false
+    /// `get_state` publishes the menu while this is true. Clearing it has to
+    /// publish again, or the model popup stays disabled after the reply.
+    @Published private(set) var isUpdatingModelSettings = false {
+        didSet {
+            guard oldValue != isUpdatingModelSettings else { return }
+            publishCatalog()
+        }
+    }
     @Published var statusMessage: String?
     /// The Codex CLI approval the panel is showing. Later requests wait in
     /// `approvalQueue`. pi never sets this; its extension prompts stay
@@ -167,6 +174,22 @@ final class AgentCoordinator: ObservableObject {
     private var intentionalStop = false
     private var processEpoch = AgentProcessEpoch()
     private var attachedToken: UInt64 = 0
+    /// The backend of the live conversation. Settings can move first; this
+    /// catches up when the switch shuts the current turn down.
+    private var sessionBackend = AgentCoordinator.selectedAgentProvider()
+    private var catalogSlots: [AssistantCatalog.Slot] = []
+    private var catalogGeneration: UInt64 = 1
+    private var switchTicket: AssistantCatalog.SwitchTicket?
+    private var catalogTools: PiToolchain?
+    private var catalogRoot: URL?
+    private var probeGeneration: UInt64 = 1
+    private var catalogProbes: [CatalogProbe] = []
+    /// The new session listed models while a settings round trip was open.
+    private var catalogCommitPending = false
+    private var launchIdle = false
+    @Published private(set) var catalogMenu = AssistantCatalog.Menu(
+        rows: [], selection: nil, acceptsPicks: false, generation: 1
+    )
     private var assistantEntryIndex: Int?
     private var thinkingEntryIndex: Int?
     private var textContentIndex: Int?
@@ -197,6 +220,7 @@ final class AgentCoordinator: ObservableObject {
         } else {
             attachActiveDocument = UserDefaults.standard.bool(forKey: Self.attachDocumentKey)
         }
+        installCatalogSlots()
     }
 
     /// Queues text for the composer field (used by Send Selection to AI and
@@ -214,9 +238,18 @@ final class AgentCoordinator: ObservableObject {
     func prepare() {
         wantsConnection = true
         startConfigWatcher()
+        installCatalogSlots()
+        if launchIdle { return }
+        let needsLaunch: Bool
         switch connection {
-        case .connecting, .ready: return
-        case .idle, .piMissing, .failed: break
+        case .connecting, .ready:
+            needsLaunch = false
+        case .idle, .piMissing, .failed:
+            needsLaunch = true
+        }
+        if !needsLaunch, catalogTools != nil {
+            refreshCatalogProbes()
+            return
         }
         guard prepareTask == nil else { return }
         prepareTask = Task { await prepareAgent() }
@@ -226,6 +259,7 @@ final class AgentCoordinator: ObservableObject {
         intentionalStop = true
         processEpoch.retire()
         isRunning = false
+        stopCatalogProbes()
         flushDeltas()
         approvalQueue.clear()
         pendingApproval = nil
@@ -250,6 +284,123 @@ final class AgentCoordinator: ObservableObject {
         sessionStats = nil
         commands = []
         if wantsConnection { prepare() }
+    }
+
+    /// A cross-backend choice shuts the turn down before the next session starts.
+    func applyCatalog(_ intent: AssistantCatalog.SelectionIntent, shownGeneration: UInt64, settings: SettingsStore) {
+        let session = AssistantCatalog.SessionSnapshot(
+            isRunning: isRunning,
+            backend: sessionBackend,
+            current: currentModel.map(Self.catalogModel(from:))
+        )
+        guard let plan = AssistantCatalog.plan(
+            intent: intent,
+            facts: catalogFacts(),
+            shownGeneration: shownGeneration,
+            session: session
+        ) else { return }
+        switch plan {
+        case .setModel(let model):
+            if var ticket = switchTicket, ticket.backend == sessionBackend {
+                ticket.model = model
+                switchTicket = ticket
+                settings.aiDefaultModel = model.id
+                preferredModelID = nil
+                currentModel = Self.descriptor(from: model)
+                publishCatalog()
+                return
+            }
+            settings.aiDefaultModel = model.id
+            preferredModelID = model.id
+            if let descriptor = Self.descriptor(from: model) {
+                currentModel = descriptor
+                publishCatalog()
+                selectModel(descriptor)
+            }
+        case .switchBackend(let backend, let model):
+            beginSwitch(backend: backend, model: model, settings: settings)
+        }
+    }
+
+    private func beginSwitch(backend: String, model: AssistantCatalog.Model?, settings: SettingsStore) {
+        switchTicket = AssistantCatalog.SwitchTicket(backend: backend, model: model)
+        preferredModelID = nil
+        settings.aiDefaultModel = model?.id ?? ""
+        models = []
+        currentModel = model.flatMap(Self.descriptor(from:))
+        catalogGeneration &+= 1
+        sessionBackend = backend
+        if !transcript.isEmpty {
+            transcript.append(AgentTranscriptEntry(
+                role: .notice,
+                title: "Assistant",
+                text: String(localized: "assistant.switched_backend")
+            ))
+        }
+        publishCatalog()
+        settings.agentProvider = backend
+        restart()
+    }
+
+    func reconcileEnablement(settings: SettingsStore) {
+        let wasIdle = launchIdle
+        let plan = AssistantCatalog.enablementPlan(enablementFacts())
+        catalogSlots = plan.slots
+        launchIdle = plan.target == .idle
+        catalogGeneration &+= 1
+        stopProbes(outside: plan.enabled)
+        publishCatalog()
+        switch plan.session {
+        case .keep:
+            if wasIdle, case .active(let id) = plan.target, id == sessionBackend, wantsConnection {
+                prepare()
+            } else {
+                refreshCatalogProbes()
+            }
+        case .switchBackend(let backend):
+            beginSwitch(backend: backend, model: nil, settings: settings)
+        case .stop:
+            restart()
+        }
+    }
+
+    private func sessionIsOpen() -> Bool {
+        isRunning || process != nil || prepareTask != nil || connection == .connecting || connection == .ready
+    }
+
+    private func enablementFacts() -> AssistantCatalog.EnablementFacts {
+        var seeded: [String: [AssistantCatalog.Model]] = [:]
+        if Self.offeredBackends().contains(where: { $0.id == AppleFMCatalog.providerID }) {
+            seeded[AppleFMCatalog.providerID] = [AssistantCatalog.appleModel]
+        }
+        let storedDisabled = UserDefaults.standard.object(forKey: "ai.disabledBackends") == nil
+            ? nil
+            : UserDefaults.standard.stringArray(forKey: "ai.disabledBackends")
+        return AssistantCatalog.EnablementFacts(
+            offered: Self.offeredBackends(),
+            storedDisabled: storedDisabled,
+            normalizedProvider: sessionBackend,
+            normalizedIsOnDevice: sessionBackend == AppleFMCatalog.providerID,
+            sessionOpen: sessionIsOpen(),
+            previousSlots: catalogSlots,
+            seeded: seeded
+        )
+    }
+
+    private static func offeredBackends() -> [AssistantCatalog.OfferedBackend] {
+        ShippedAgentProvider.selectableCases.map {
+            AssistantCatalog.OfferedBackend(id: $0.rawValue)
+        }
+    }
+
+    private func stopProbes(outside enabled: [String]) {
+        let removed = catalogProbes.filter { !enabled.contains($0.backend) }
+        catalogProbes.removeAll { !enabled.contains($0.backend) }
+        for probe in removed {
+            probe.task.cancel()
+            probe.process.terminate()
+            try? FileManager.default.removeItem(at: probe.sessions)
+        }
     }
 
     /// Install hooks (re)connect only when the panel already asked for a
@@ -327,14 +478,20 @@ final class AgentCoordinator: ObservableObject {
     private func prepareAgent() async {
         defer { prepareTask = nil }
         guard let root = contextProvider().projectRoot else { return }
-        if Self.selectedAgentProvider() == AppleFMCatalog.providerID {
+        let provider = Self.selectedAgentProvider()
+        sessionBackend = provider
+        let launching = process == nil
+        if launching, provider == AppleFMCatalog.providerID {
             guard !Task.isCancelled else { return }
             spawnAppleFM(root: root)
-            return
         }
         let tools = await PiToolchain.discover()
         guard !Task.isCancelled else { return }
-        if let adapter = Self.bridgeAdapterID(Self.selectedAgentProvider()) {
+        catalogTools = tools
+        catalogRoot = root
+        refreshCatalogProbes()
+        guard launching, provider != AppleFMCatalog.providerID else { return }
+        if let adapter = Self.bridgeAdapterID(provider) {
             await spawnBridge(root: root, tools: tools, adapter: adapter)
             return
         }
@@ -734,6 +891,274 @@ final class AgentCoordinator: ObservableObject {
         return entries
     }
 
+    private struct CatalogProbe {
+        var backend: String
+        var generation: UInt64
+        var process: PiAgentProcess
+        var sessions: URL
+        var task: Task<Void, Never>
+    }
+
+    private func installCatalogSlots() {
+        let plan = AssistantCatalog.enablementPlan(enablementFacts())
+        catalogSlots = plan.slots
+        launchIdle = plan.target == .idle
+        publishCatalog()
+    }
+
+    private func catalogFacts() -> AssistantCatalog.Facts {
+        AssistantCatalog.Facts(
+            slots: catalogSlots,
+            activeBackend: sessionBackend,
+            current: currentModel.map(Self.catalogModel(from:)),
+            generation: catalogGeneration,
+            acceptsPicks: !isUpdatingModelSettings
+        )
+    }
+
+    private func publishCatalog() {
+        catalogMenu = AssistantCatalog.menu(facts: catalogFacts(), title: backendTitle)
+    }
+
+    private func backendTitle(_ backend: String) -> String {
+        switch backend {
+        case ShippedAgentProvider.pi.rawValue:
+            String(localized: "settings.ai.backend_pi")
+        case ShippedAgentProvider.claude.rawValue:
+            String(localized: "settings.ai.backend_claude")
+        case ShippedAgentProvider.appleFM.rawValue:
+            String(localized: "settings.ai.backend_apple_fm")
+        case ShippedAgentProvider.codex.rawValue:
+            String(localized: "settings.ai.backend_codex")
+        case ShippedAgentProvider.grok.rawValue:
+            String(localized: "settings.ai.backend_grok")
+        default:
+            backend
+        }
+    }
+
+    private func noteLiveModels() {
+        let listed = models.map(Self.catalogModel(from:))
+        let state: AssistantCatalog.SlotState = listed.isEmpty ? .unavailable : .ready(listed)
+        noteCatalog(backend: sessionBackend, state: state)
+    }
+
+    private func noteCatalog(backend: String, state: AssistantCatalog.SlotState) {
+        AssistantCatalog.note(&catalogSlots, backend: backend, state: state)
+        catalogGeneration &+= 1
+        publishCatalog()
+    }
+
+    private func retryCatalogCommit() {
+        if catalogCommitPending { commitSwitchTicket() }
+    }
+
+    private func commitSwitchTicket() {
+        switch AssistantCatalog.commit(
+            ticket: switchTicket,
+            activeBackend: sessionBackend,
+            models: models.map(Self.catalogModel(from:))
+        ) {
+        case .hold:
+            break
+        case .clear:
+            catalogCommitPending = false
+            switchTicket = nil
+            currentModel = nil
+            publishCatalog()
+            sendModelSettings(.getState)
+        case .select(let model):
+            if isUpdatingModelSettings {
+                catalogCommitPending = true
+                return
+            }
+            catalogCommitPending = false
+            switchTicket = nil
+            publishCatalog()
+            if let descriptor = Self.descriptor(from: model) {
+                selectModel(descriptor)
+            }
+        }
+    }
+
+    private func refreshCatalogProbes() {
+        guard catalogTools != nil else { return }
+        let root = catalogRoot ?? contextProvider().projectRoot
+        guard let root else { return }
+        catalogRoot = root
+        for slot in catalogSlots where slot.backend != sessionBackend && !catalogProbeRunning(slot.backend) {
+            if case .pending = slot.state {
+                startCatalogProbe(backend: slot.backend, root: root)
+            }
+        }
+    }
+
+    private func catalogProbeRunning(_ backend: String) -> Bool {
+        catalogProbes.contains { $0.backend == backend && $0.generation == probeGeneration }
+    }
+
+    /// A short-lived process answers `get_available_models` and exits.
+    /// Its session directory is disposable. The CLI signs in on its own.
+    private func startCatalogProbe(backend: String, root: URL) {
+        guard let tools = catalogTools else { return }
+        let sessions = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pitex-catalog-\(backend)-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        } catch {
+            noteCatalog(backend: backend, state: .unavailable)
+            return
+        }
+        guard let launch = catalogProbeLaunch(backend: backend, sessions: sessions, tools: tools) else {
+            try? FileManager.default.removeItem(at: sessions)
+            noteCatalog(backend: backend, state: .unavailable)
+            return
+        }
+        let process = PiAgentProcess(
+            executableURL: launch.executable,
+            workingDirectory: root,
+            arguments: launch.arguments,
+            environment: launch.environment
+        )
+        do {
+            try process.start(onExit: {})
+            try process.send(.getAvailableModels)
+        } catch {
+            process.terminate()
+            try? FileManager.default.removeItem(at: sessions)
+            noteCatalog(backend: backend, state: .unavailable)
+            return
+        }
+        let generation = probeGeneration
+        let task = Task { @MainActor [weak self] in
+            let timeout = Task { @MainActor in
+                do {
+                    try await Task.sleep(for: .seconds(15))
+                    process.terminate()
+                } catch {
+                    // The catalog line arrived, or the conversation shut down.
+                }
+            }
+            var found: [AssistantCatalog.Model]?
+            for await event in process.events {
+                if Task.isCancelled {
+                    timeout.cancel()
+                    return
+                }
+                if let models = Self.catalogModels(from: event) {
+                    found = models
+                    break
+                }
+            }
+            timeout.cancel()
+            process.terminate()
+            guard !Task.isCancelled else { return }
+            self?.completeCatalogProbe(
+                backend: backend,
+                generation: generation,
+                sessions: sessions,
+                models: found
+            )
+        }
+        catalogProbes.append(CatalogProbe(
+            backend: backend,
+            generation: generation,
+            process: process,
+            sessions: sessions,
+            task: task
+        ))
+    }
+
+    private func catalogProbeLaunch(
+        backend: String,
+        sessions: URL,
+        tools: PiToolchain
+    ) -> (executable: URL, arguments: [String], environment: [String: String])? {
+        if backend == AppleFMCatalog.providerID { return nil }
+        if let adapter = Self.bridgeAdapterID(backend) {
+            guard let script = AgentBridge.scriptURL(),
+                  let launch = try? tools.launch(script, arguments: []) else { return nil }
+            var environment = Self.childEnvironment(executable: launch.executable, environment: tools.environment)
+            environment["PITEX_SESSION_DIR"] = sessions.path
+            environment["PITEX_DEVELOPER_INSTRUCTIONS"] = Self.systemPromptSupplement
+            environment["PITEX_CLI_ADAPTER"] = adapter
+            environment["PITEX_CATALOG_PROBE"] = "1"
+            return (launch.executable, launch.arguments, environment)
+        }
+        guard let executable = PiExecutableLocator.resolve(environment: tools.environment) else { return nil }
+        let arguments = [
+            "--mode", "rpc",
+            "--session-dir", sessions.path,
+            "--append-system-prompt", Self.systemPromptSupplement,
+        ]
+        guard let launch = try? tools.launch(executable, arguments: arguments) else { return nil }
+        var environment = Self.childEnvironment(executable: launch.executable, environment: tools.environment)
+        environment["PITEX_CATALOG_PROBE"] = "1"
+        return (launch.executable, launch.arguments, environment)
+    }
+
+    private func completeCatalogProbe(
+        backend: String,
+        generation: UInt64,
+        sessions: URL,
+        models: [AssistantCatalog.Model]?
+    ) {
+        catalogProbes.removeAll { probe in
+            guard probe.backend == backend, probe.generation == generation else { return false }
+            probe.process.terminate()
+            try? FileManager.default.removeItem(at: probe.sessions)
+            return true
+        }
+        guard generation == probeGeneration else {
+            try? FileManager.default.removeItem(at: sessions)
+            return
+        }
+        if let models, !models.isEmpty {
+            noteCatalog(backend: backend, state: .ready(models))
+        } else {
+            noteCatalog(backend: backend, state: .unavailable)
+        }
+    }
+
+    private func stopCatalogProbes() {
+        probeGeneration &+= 1
+        let stopped = catalogProbes
+        catalogProbes = []
+        for probe in stopped {
+            probe.task.cancel()
+            probe.process.terminate()
+            try? FileManager.default.removeItem(at: probe.sessions)
+        }
+    }
+
+    private static func catalogModels(from event: PiRPCEvent) -> [AssistantCatalog.Model]? {
+        guard event.isResponse, event.responseCommand == "get_available_models" else { return nil }
+        guard event.responseSucceeded else { return [] }
+        let raw = event.responseData?["models"] as? [Any] ?? []
+        return raw.compactMap(PiModelDescriptor.init).map(catalogModel(from:))
+    }
+
+    private static func catalogModel(from model: PiModelDescriptor) -> AssistantCatalog.Model {
+        AssistantCatalog.Model(
+            id: model.id,
+            provider: model.provider,
+            name: model.name,
+            contextWindow: model.contextWindow
+        )
+    }
+
+    private static func descriptor(from model: AssistantCatalog.Model) -> PiModelDescriptor? {
+        var object: [String: Any] = [
+            "id": model.id,
+            "provider": model.provider,
+            "name": model.name,
+        ]
+        if let contextWindow = model.contextWindow {
+            object["contextWindow"] = contextWindow
+        }
+        return PiModelDescriptor(object)
+    }
+
     func selectModel(_ model: PiModelDescriptor) {
         guard !isUpdatingModelSettings else { return }
         sendModelSettings(.setModel(provider: model.provider, modelID: model.id))
@@ -864,6 +1289,8 @@ final class AgentCoordinator: ObservableObject {
                 isUpdatingModelSettings = false
                 if event.responseCommand == "set_model" || event.responseCommand == "set_thinking_level" {
                     sendModelSettings(.getState)
+                } else {
+                    retryCatalogCommit()
                 }
             }
             let message = event.responseError ?? "The agent command failed."
@@ -877,7 +1304,10 @@ final class AgentCoordinator: ObservableObject {
         }
         switch event.responseCommand {
         case "get_state":
-            currentModel = event.responseData?["model"].flatMap(PiModelDescriptor.init)
+            if switchTicket == nil {
+                currentModel = event.responseData?["model"].flatMap(PiModelDescriptor.init)
+            }
+            publishCatalog()
             SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
             if let level = event.responseData?["thinkingLevel"] as? String {
                 thinkingLevel = level
@@ -890,14 +1320,18 @@ final class AgentCoordinator: ObservableObject {
                   !levels.isEmpty, levels.allSatisfy({ !$0.isEmpty }),
                   Set(levels).count == levels.count, levels.contains(thinkingLevel) else {
                 statusMessage = "The agent did not return valid reasoning levels for this model."
+                retryCatalogCommit()
                 return
             }
             thinkingLevels = currentModel == nil ? [] : levels
             applyPreferredModelIfReady()
+            retryCatalogCommit()
         case "get_available_models":
             let raw = event.responseData?["models"] as? [Any] ?? []
             models = raw.compactMap(PiModelDescriptor.init)
+            noteLiveModels()
             applyPreferredModelIfReady()
+            commitSwitchTicket()
         case "get_session_stats":
             if let data = event.responseData {
                 sessionStats = PiSessionStats(data)

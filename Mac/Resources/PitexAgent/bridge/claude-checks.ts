@@ -446,6 +446,29 @@ test("claude auth_status errors do not copy CLI output", async () => {
   }
 });
 
+test("a catalog probe does not persist a claude session", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-probe-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const opened: Opened[] = [];
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery(opened, "script"),
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  try {
+    await adapter.start({
+      cwd: dir,
+      sessionDir: dir,
+      env: { PATH: "", HOME: dir, CLAUDE_PATH: binary, PITEX_CATALOG_PROBE: "1" },
+    });
+    assert.equal(opened[0].options.persistSession, false);
+    assert.equal(opened[0].options.cwd, dir);
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("claude fake query round trip approves, resumes, and starts a clean session", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pitex-claude-round-"));
   const binary = join(dir, "claude");

@@ -150,6 +150,24 @@ final class SettingsStore: ObservableObject {
     @Published var aiFontSize: Double {
         didSet { UserDefaults.standard.set(aiFontSize, forKey: "ai.fontSize") }
     }
+    @Published private(set) var disabledBackends: [String] = []
+
+    func setBackendDisabled(_ id: String, disabled: Bool) {
+        let offered = Self.offeredBackends()
+        let next = AssistantCatalog.DisabledBackends
+            .parse(stored: disabledBackends, offered: offered)
+            .toggled(id, disabled: disabled, offered: offered)
+        guard next.ids != disabledBackends else { return }
+        UserDefaults.standard.set(next.ids, forKey: "ai.disabledBackends")
+        disabledBackends = next.ids
+    }
+
+    private static func offeredBackends() -> [AssistantCatalog.OfferedBackend] {
+        ShippedAgentProvider.selectableCases.map {
+            AssistantCatalog.OfferedBackend(id: $0.rawValue)
+        }
+    }
+
     @Published var agentProvider: String {
         didSet {
             let normalized = Self.agentProviderValue(agentProvider)
@@ -314,6 +332,12 @@ final class SettingsStore: ObservableObject {
         aiAutocompletion = defaults.object(forKey: "ai.autocompletion") as? Bool ?? false
         aiFontSize = min(max(defaults.object(forKey: "ai.fontSize") as? Double ?? 13, 10), 24)
         agentProvider = Self.agentProviderValue(defaults.string(forKey: "ai.agentProvider"))
+        let storedDisabled = defaults.object(forKey: "ai.disabledBackends") == nil
+            ? nil
+            : defaults.stringArray(forKey: "ai.disabledBackends")
+        disabledBackends = AssistantCatalog.DisabledBackends
+            .parse(stored: storedDisabled, offered: Self.offeredBackends())
+            .ids
         defaultBuildCommand = defaults.string(forKey: "project.defaultBuildCommand") ?? "xelatex -interaction=nonstopmode -synctex=1 {file}"
         defaultCustomCommand = defaults.string(forKey: "project.defaultCustomCommand") ?? ""
         autoInstallUpdates = defaults.bool(forKey: "pitex.pref.update.autoInstall")
@@ -836,26 +860,6 @@ struct SettingsView: View {
 
     // MARK: - AI
 
-    private var agentMenuSelection: Binding<String> {
-        Binding(
-            get: {
-                let offered = ShippedAgentProvider.selectableCases.map(\.rawValue)
-                let current = store.agentProvider
-                return offered.contains(current) ? current : ShippedAgentProvider.pi.rawValue
-            },
-            set: { next in
-                let offered = ShippedAgentProvider.selectableCases.map(\.rawValue)
-                guard offered.contains(next) else { return }
-                if next == ShippedAgentProvider.pi.rawValue,
-                   store.agentProvider == ShippedAgentProvider.appleFM.rawValue,
-                   !offered.contains(store.agentProvider) {
-                    return
-                }
-                store.agentProvider = next
-            }
-        )
-    }
-
     private var agentBackendNote: LocalizedStringKey {
         if store.agentProvider == ShippedAgentProvider.appleFM.rawValue, appleFMMenuReason == nil {
             return "settings.ai.backend_apple_fm_note"
@@ -875,12 +879,14 @@ struct SettingsView: View {
     private var aiTab: some View {
         Form {
             Section("settings.ai.agent") {
-                Picker("settings.ai.backend", selection: agentMenuSelection) {
-                    ForEach(ShippedAgentProvider.selectableCases, id: \.rawValue) { provider in
-                        Text(provider.label).tag(provider.rawValue)
-                    }
+                Text("settings.ai.backend")
+                    .accessibilityIdentifier("pitex.settings.ai.backend")
+                ForEach(ShippedAgentProvider.selectableCases, id: \.rawValue) { provider in
+                    Toggle(provider.label, isOn: Binding(
+                        get: { !store.disabledBackends.contains(provider.rawValue) },
+                        set: { on in store.setBackendDisabled(provider.rawValue, disabled: !on) }
+                    ))
                 }
-                .accessibilityIdentifier("pitex.settings.ai.backend")
                 Text(agentBackendNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)

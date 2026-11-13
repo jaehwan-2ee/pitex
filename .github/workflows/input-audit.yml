@@ -51,7 +51,8 @@ jobs:
           # Headless Mesa on 22.04 can stall before the Git fixture is installed.
           GSK_RENDERER: cairo
         run: |
-          binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
+          # rustc 1.100 writes the lib harness under target/debug/build/.../out.
+          binary=$(find target/debug -type f -executable -name 'pitex_shell-*' | head -1)
           xvfb-run -a dbus-run-session -- gdb -batch -return-child-result -ex run -ex 'thread apply all bt 12' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1 > ../git-audit.log 2>&1
       - uses: actions/upload-artifact@v4
         if: always()

@@ -363,7 +363,8 @@ jobs:
         working-directory: Linux
       - name: Full window startup and small project check
         run: |
-          binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'pitex_shell-*' | head -1)
+          # rustc 1.100 writes the lib harness under target/debug/build/.../out.
+          binary=$(find target/debug -type f -executable -name 'pitex_shell-*' | head -1)
           GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- gdb -batch -return-child-result -ex run -ex 'thread apply all bt' --args "$binary" startup_tests::small_project_opens_without_blocking_the_ui --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Compare release optimization profiles
@@ -497,6 +498,9 @@ jobs:
       # SyncTeX path mapping (host-dependent separators) — lib-only, no GUI.
       - name: SyncTeX path mapping
         run: "cargo test -p pitex-shell --lib synctex::"
+        working-directory: Windows
+      - name: Assistant model catalog
+        run: "cargo test -p pitex-shell --lib catalog"
         working-directory: Windows
       - run: cargo build -p pitex-windows
         working-directory: Windows

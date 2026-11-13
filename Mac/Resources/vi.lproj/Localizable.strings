@@ -234,6 +234,7 @@
 "assistant.configure_hint" = "Nhà cung cấp và tài khoản được thiết lập qua quy trình đăng nhập của Pitex Agent.";
 "assistant.open_pi_config" = "Mở cấu hình Pitex Agent";
 "assistant.model_placeholder" = "Không có mô hình — đăng nhập trong Cài đặt → AI";
+"assistant.switched_backend" = "Đã chuyển trợ lý. Tin nhắn tiếp theo bắt đầu một phiên mới.";
 "assistant.reasoning_help" = "Mức suy luận";
 "assistant.send_help" = "Gửi (⌘Return)";
 "assistant.stop_help" = "Dừng agent";

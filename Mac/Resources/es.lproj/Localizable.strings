@@ -235,6 +235,7 @@
 "assistant.configure_hint" = "Los proveedores y las cuentas se configuran mediante el propio flujo de inicio de sesión de Pitex Agent.";
 "assistant.open_pi_config" = "Abrir configuración de Pitex Agent";
 "assistant.model_placeholder" = "Sin modelos: inicia sesión en Ajustes → AI";
+"assistant.switched_backend" = "Asistente cambiado. El siguiente mensaje inicia una sesión nueva.";
 "assistant.reasoning_help" = "Nivel de razonamiento";
 "assistant.send_help" = "Enviar (⌘Retorno)";
 "assistant.stop_help" = "Detener el agente";

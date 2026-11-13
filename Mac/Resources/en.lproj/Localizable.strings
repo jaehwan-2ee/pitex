@@ -234,6 +234,7 @@
 "assistant.configure_hint" = "Providers and accounts are configured through Pitex Agent's own sign-in flow.";
 "assistant.open_pi_config" = "Open Pitex Agent Configuration";
 "assistant.model_placeholder" = "No models — sign in via Settings → AI";
+"assistant.switched_backend" = "Switched assistant. The next message starts a new session.";
 "assistant.reasoning_help" = "Reasoning effort";
 "assistant.send_help" = "Send (⌘Return)";
 "assistant.stop_help" = "Stop the agent";

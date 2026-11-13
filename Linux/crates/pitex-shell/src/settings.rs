@@ -418,6 +418,21 @@ impl SettingsStore {
     pub fn set_agent_provider(&mut self, v: &str) {
         self.prefs.set("ai.agentProvider", normalize_agent_provider(Some(v)));
     }
+    pub fn disabled_backend_ids(&self) -> Option<Vec<String>> {
+        if !self.prefs.contains("ai.disabledBackends") {
+            return None;
+        }
+        Some(self.prefs.string_array("ai.disabledBackends").unwrap_or_default())
+    }
+    pub fn set_disabled_backend_ids(&mut self, ids: &[String]) {
+        let values: Vec<serde_json::Value> = ids
+            .iter()
+            .cloned()
+            .map(serde_json::Value::String)
+            .collect();
+        self.prefs
+            .set("ai.disabledBackends", serde_json::Value::Array(values));
+    }
     pub fn default_build_command(&self) -> String {
         self.prefs
             .string("project.defaultBuildCommand")

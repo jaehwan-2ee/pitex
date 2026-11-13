@@ -7,6 +7,7 @@
 //! tables are platform-neutral; `app_ui` binds them to GTK4/libadwaita.
 
 pub mod agent;
+mod catalog;
 pub mod app_ui;
 pub mod compat;
 pub mod completion;
