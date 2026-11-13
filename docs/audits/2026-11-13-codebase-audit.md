@@ -384,7 +384,7 @@ Proposed fix. On a local dirty session, flush and ask before the window closes a
 - Severity: crash, by allocation, if the PDF is larger than the process can hold
 - Confidence: high that the reads are uncapped. The allocation failure was not run.
 - Reachable: yes when `main.pdf` already exists and a build starts.
-- Fixed in this change: yes. A PDF over 50 MiB is left on disk and its path is published. The build does not read it into memory.
+- Fixed in this change: yes. A PDF over 50 MiB stays on disk and its path is published. The build copies that file aside and puts it back if the build fails. It does not read the file into memory.
 
 Before the engine runs, an existing output is read with `std::fs::read` and kept as `preexisting_pdf` (`Linux/crates/build-core/src/lib.rs` lines 2306 to 2309). A successful build reads the output again (line 2434). `output_changed` reads it a third time (lines 3034 to 3036). A read error fails the build. There is no size check.
 

@@ -2332,6 +2332,22 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
                 }
             }
         }
+        if preserve_kept_pdf(&output_url, &mut preexisting).is_err() {
+            let lifecycle = BuildLifecycle::Failed {
+                exit_code: None,
+                finished_at_milliseconds: now_milliseconds(),
+            };
+            let _ = self.finish(
+                &id,
+                lifecycle,
+                BuildArtifactDisposition::NoPDF {
+                    partial_output_was_discarded: false,
+                },
+            );
+            return Err(BuildOrchestratorError::ProcessError(
+                "Unable to preserve the existing PDF before building".into(),
+            ));
+        }
 
         let run_result = (|| -> Result<(), BuildOrchestratorError> {
             prepare_build_directory(&target)?;
@@ -2430,10 +2446,15 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
             let _ = self.finish(&id, lifecycle, disposition);
             return Err(failure);
         }
-        let successful = match read_build_pdf(&output_url) {
-            Ok(PdfSnapshot { bytes: Some(data), kept_on_disk: false, .. }) => Some(data),
-            Ok(PdfSnapshot { kept_on_disk: true, .. }) => None,
-            _ => {
+        let read = match read_build_pdf(&output_url) {
+            Ok(snapshot) if snapshot.kept_on_disk => Ok(None),
+            Ok(mut snapshot) => Ok(snapshot.bytes.take()),
+            Err(_) => Err(()),
+        };
+        let successful = match read {
+            Ok(Some(data)) => Some(data),
+            Ok(None) if output_url.exists() => None,
+            Ok(None) | Err(()) => {
                 let disposition = self.restore_for_build(&id, &preexisting, &output_url, partial)?;
                 let lifecycle = BuildLifecycle::Failed {
                     exit_code: None,
@@ -2691,7 +2712,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
     ) -> Result<BuildArtifactDisposition, BuildOrchestratorError> {
         if partial {
             let result = if previous.kept_on_disk {
-                Ok(())
+                restore_kept_pdf(output_url, previous)
             } else if let Some(previous) = previous.bytes.as_deref() {
                 atomic_write(output_url, previous)
             } else if output_url.exists() {
@@ -3032,8 +3053,17 @@ pub const MAX_BUILD_PDF_BYTES: u64 = 50 * 1024 * 1024;
 struct PdfSnapshot {
     bytes: Option<Vec<u8>>,
     kept_on_disk: bool,
+    backup: Option<PathBuf>,
     len: u64,
     modified: Option<std::time::SystemTime>,
+}
+
+impl Drop for PdfSnapshot {
+    fn drop(&mut self) {
+        if let Some(path) = self.backup.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 fn read_build_pdf(path: &Path) -> std::io::Result<PdfSnapshot> {
@@ -3043,6 +3073,7 @@ fn read_build_pdf(path: &Path) -> std::io::Result<PdfSnapshot> {
             return Ok(PdfSnapshot {
                 bytes: None,
                 kept_on_disk: false,
+                backup: None,
                 len: 0,
                 modified: None,
             });
@@ -3055,6 +3086,7 @@ fn read_build_pdf(path: &Path) -> std::io::Result<PdfSnapshot> {
         return Ok(PdfSnapshot {
             bytes: None,
             kept_on_disk: true,
+            backup: None,
             len,
             modified,
         });
@@ -3064,6 +3096,7 @@ fn read_build_pdf(path: &Path) -> std::io::Result<PdfSnapshot> {
         return Ok(PdfSnapshot {
             bytes: None,
             kept_on_disk: true,
+            backup: None,
             len: data.len() as u64,
             modified,
         });
@@ -3071,8 +3104,36 @@ fn read_build_pdf(path: &Path) -> std::io::Result<PdfSnapshot> {
     Ok(PdfSnapshot {
         bytes: Some(data),
         kept_on_disk: false,
+        backup: None,
         len,
         modified,
+    })
+}
+
+fn preserve_kept_pdf(path: &Path, snapshot: &mut PdfSnapshot) -> std::io::Result<()> {
+    if !snapshot.kept_on_disk {
+        return Ok(());
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut name = std::ffi::OsString::from(".");
+    name.push(path.file_name().unwrap_or_default());
+    name.push(format!(".pitex-restore-{}", std::process::id()));
+    let backup = parent.join(name);
+    if let Err(error) = std::fs::copy(path, &backup) {
+        let _ = std::fs::remove_file(&backup);
+        return Err(error);
+    }
+    snapshot.backup = Some(backup);
+    Ok(())
+}
+
+fn restore_kept_pdf(output: &Path, previous: &PdfSnapshot) -> std::io::Result<()> {
+    let Some(backup) = &previous.backup else {
+        return Err(std::io::Error::other("missing pdf backup"));
+    };
+    std::fs::rename(backup, output).or_else(|_| {
+        std::fs::copy(backup, output)?;
+        std::fs::remove_file(backup)
     })
 }
 
