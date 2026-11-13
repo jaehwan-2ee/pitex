@@ -153,7 +153,7 @@ Proposed fix. Build `lineRange` from `textView.string`, and clamp it to that str
 - Severity: crash, by using up memory, if one stdout line is very large
 - Confidence: high that the buffer is uncapped. The out-of-memory crash was not run.
 - Reachable: yes, if the agent writes a long line with no newline, or one newline only at the end of a huge line
-- Fixed in this change: yes. An unterminated stdout line past 4 MiB is dropped, and bytes are ignored until the next newline.
+- Fixed in this change: yes. A stdout line past 4 MiB is dropped through its newline, including a finished line, and the next line at or under the cap is kept.
 
 `PiAgentProcess` appends every stdout chunk and removes bytes only when it sees a newline. The buffer is `Mac/Sources/Features/PiAgentProcess.swift` lines 512 to 522.
 

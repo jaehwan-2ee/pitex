@@ -1,17 +1,14 @@
 import Foundation
 
-/// Splits an agent stdout stream into LF-delimited lines.
-/// A line with no newline is kept only up to `maxUnterminatedBytes`.
-/// Past that, the partial line is dropped and bytes are ignored until the next newline.
 public struct AgentStdoutAssembler: Equatable, Sendable {
-    public static let defaultMaxUnterminatedBytes = 4 * 1024 * 1024
+    public static let defaultMaxLineBytes = 4 * 1024 * 1024
 
-    public let maxUnterminatedBytes: Int
+    public let maxLineBytes: Int
     public private(set) var buffered = Data()
     private var skippingToNewline = false
 
-    public init(maxUnterminatedBytes: Int = defaultMaxUnterminatedBytes) {
-        self.maxUnterminatedBytes = maxUnterminatedBytes
+    public init(maxLineBytes: Int = defaultMaxLineBytes) {
+        self.maxLineBytes = maxLineBytes
     }
 
     public mutating func append(_ chunk: Data) -> [Data] {
@@ -26,7 +23,7 @@ public struct AgentStdoutAssembler: Equatable, Sendable {
             }
             guard let newline = chunk[index...].firstIndex(of: 0x0a) else {
                 buffered.append(chunk[index...])
-                if buffered.count > maxUnterminatedBytes {
+                if buffered.count > maxLineBytes {
                     buffered.removeAll(keepingCapacity: true)
                     skippingToNewline = true
                 }
@@ -34,7 +31,7 @@ public struct AgentStdoutAssembler: Equatable, Sendable {
             }
             buffered.append(chunk[index..<newline])
             index = chunk.index(after: newline)
-            if buffered.count > maxUnterminatedBytes {
+            if buffered.count > maxLineBytes {
                 buffered.removeAll(keepingCapacity: true)
                 continue
             }
