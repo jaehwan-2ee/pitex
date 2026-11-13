@@ -1,4 +1,5 @@
 import AppKit
+import AppPorts
 import BuildCore
 import Foundation
 
@@ -447,7 +448,7 @@ final class PiAgentProcess: AgentSession, @unchecked Sendable {
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
     private let ioQueue = DispatchQueue(label: "dev.pitex.pi-process")
-    private var stdoutBuffer = Data()
+    private var stdoutAssembler = AgentStdoutAssembler()
     private var stderrTail = Data()
     private let continuation: AsyncStream<PiRPCEvent>.Continuation
     private var didFinish = false
@@ -511,21 +512,15 @@ final class PiAgentProcess: AgentSession, @unchecked Sendable {
 
     private func consumeStdout(_ chunk: Data) {
         ioQueue.async { [self] in
-            stdoutBuffer.append(chunk)
-            drainStdout()
+            emitStdoutLines(stdoutAssembler.append(chunk))
         }
     }
 
-    /// Must run on `ioQueue`. Emits one event per complete LF-delimited line.
-    private func drainStdout() {
-        while let newline = stdoutBuffer.firstIndex(of: 0x0a) {
-            var line = stdoutBuffer.subdata(in: stdoutBuffer.startIndex..<newline)
-            stdoutBuffer.removeSubrange(stdoutBuffer.startIndex...newline)
-            if line.last == 0x0d { line.removeLast() }
-            guard !line.isEmpty, let object = PiJSON.decode(line) else { continue }
-            if let event = PiRPCEvent(object) {
-                continuation.yield(event)
-            }
+    /// Must run on `ioQueue`.
+    private func emitStdoutLines(_ lines: [Data]) {
+        for line in lines {
+            guard let object = PiJSON.decode(line), let event = PiRPCEvent(object) else { continue }
+            continuation.yield(event)
         }
     }
 
@@ -546,8 +541,7 @@ final class PiAgentProcess: AgentSession, @unchecked Sendable {
             stderrPipe.fileHandleForReading.readabilityHandler = nil
             let remaining = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
             if !remaining.isEmpty {
-                stdoutBuffer.append(remaining)
-                drainStdout()
+                emitStdoutLines(stdoutAssembler.append(remaining))
             }
             continuation.finish()
             onExitHandler?()
