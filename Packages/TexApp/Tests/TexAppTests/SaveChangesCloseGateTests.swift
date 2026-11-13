@@ -9,11 +9,8 @@ final class SaveChangesCloseGateTests: XCTestCase {
     private final class State: @unchecked Sendable {
         var text = "dirty"
         var response: NSApplication.ModalResponse?
-        var alertWindow: NSWindow?
         var windowVisibleDuringAlert = false
         var delivered = false
-        var attempts = 0
-        var armed = true
     }
 
     func testCancelClickOnWindowCloseKeepsTheWindowAndBuffer() {
@@ -78,10 +75,29 @@ final class SaveChangesCloseGateTests: XCTestCase {
                     dontSaveTitle: "저장 안 함",
                     cancelTitle: "취소"
                 )
-                state.alertWindow = alert.window
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        state.windowVisibleDuringAlert = window.isVisible
+                        switch deliver {
+                        case .click(let title):
+                            guard let content = alert.window.contentView,
+                                  let button = Self.button(titled: title, in: content) else { return }
+                            state.delivered = true
+                            Self.sendClick(to: button)
+                        case .escape:
+                            state.delivered = true
+                            Self.sendEscape(to: alert.window)
+                        }
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    MainActor.assumeIsolated {
+                        guard state.response == nil else { return }
+                        NSApp.stopModal(withCode: .abort)
+                    }
+                }
                 let response = SaveChangesAlert.response(for: alert)
                 state.response = response
-                state.armed = false
                 switch SaveChangesAlert.choice(for: response) {
                 case .cancel:
                     return false
@@ -98,15 +114,11 @@ final class SaveChangesCloseGateTests: XCTestCase {
         gate.attach(to: window)
         let closeButton = window.standardWindowButton(.closeButton)
         XCTAssertNotNil(closeButton)
-        let holder = Holder(delivery: deliver, window: window, state: state)
-        Self.schedule(holder)
-        Self.watch(state)
         closeButton?.performClick(nil)
         let start = Date()
-        while state.armed && Date().timeIntervalSince(start) < 3 {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        while state.response == nil && Date().timeIntervalSince(start) < 4 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         }
-        state.armed = false
         return Outcome(
             window: window,
             text: state.text,
@@ -114,56 +126,6 @@ final class SaveChangesCloseGateTests: XCTestCase {
             windowVisibleDuringAlert: state.windowVisibleDuringAlert,
             delivered: state.delivered
         )
-    }
-
-    private final class Holder: @unchecked Sendable {
-        let delivery: Delivery
-        let window: NSWindow
-        let state: State
-        init(delivery: Delivery, window: NSWindow, state: State) {
-            self.delivery = delivery
-            self.window = window
-            self.state = state
-        }
-    }
-
-    private static func watch(_ state: State) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            MainActor.assumeIsolated {
-                guard state.armed else { return }
-                NSApp.stopModal(withCode: .abort)
-                if state.armed { watch(state) }
-            }
-        }
-    }
-
-    private static func schedule(_ holder: Holder) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-            MainActor.assumeIsolated {
-                let state = holder.state
-                guard state.armed else { return }
-                guard let modal = state.alertWindow, modal.isVisible, modal !== holder.window,
-                      let content = modal.contentView else {
-                    if state.armed { schedule(holder) }
-                    return
-                }
-                state.windowVisibleDuringAlert = holder.window.isVisible
-                switch holder.delivery {
-                case .click(let title):
-                    guard let button = button(titled: title, in: content) else {
-                        state.attempts += 1
-                        if state.attempts < 40 { schedule(holder) }
-                        else { NSApp.stopModal(withCode: .abort) }
-                        return
-                    }
-                    state.delivered = true
-                    sendClick(to: button)
-                case .escape:
-                    state.delivered = true
-                    sendEscape(to: modal)
-                }
-            }
-        }
     }
 
     private static func button(titled title: String, in view: NSView) -> NSButton? {
