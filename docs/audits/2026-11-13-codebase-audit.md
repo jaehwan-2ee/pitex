@@ -500,7 +500,7 @@ The other `delegate = self` assignments are not the view assigning itself:
 
 `SessionTextView.validateUserInterfaceItem` calls `super` after handling find actions (`EditorMacAdapter.swift` lines 33 to 38). That is not the split view calling itself.
 
-`WorkspaceWindowCloseDelegate.responds(to:)` forwards to the previous window delegate (`PitexApp.swift` lines 3330 to 3336). The delegate is not the window. After `close()` the workspace has no project, so the second `windowShouldClose` returns at the `hasProject` check (`PitexApp.swift` line 3387) instead of sticking on `closeRequested`.
+`SaveChangesCloseGate` forwards to the previous window delegate. The gate is not the window. After `close()` the workspace has no project, so the gate is removed and the window's own delegate accepts the close.
 
 `BuildSupport.swift` lines 832 to 840 call `try! ShellAuthority(...)` with `source: .userConfiguration`, `approvedByUser: true`, and a non-empty disclosure. `ShellAuthority.init` throws only when the source is not built-in and the user has not approved it, or when the disclosure is empty (`BuildCore.swift` lines 67 to 69). Those arguments do not throw.
 

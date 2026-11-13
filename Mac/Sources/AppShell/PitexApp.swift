@@ -247,6 +247,7 @@ final class WorkspaceModel: ObservableObject {
         didSet {
             window?.title = projectURL?.lastPathComponent ?? AppIdentity.current.appName
             rebuildProjectTree()
+            syncWindowCloseDelegate()
         }
     }
     @Published private(set) var projectFiles: [URL] = [] {
@@ -487,14 +488,15 @@ final class WorkspaceModel: ObservableObject {
 
     /// The window hosting this workspace — set by `WorkspaceWindow` so a
     /// Finder open routed here can bring it forward.
-    private var windowCloseDelegate: WorkspaceWindowCloseDelegate?
+    private var windowCloseDelegate: SaveChangesCloseGate?
+    var isPromptingSave: Bool { windowCloseDelegate?.isPrompting ?? false }
     weak var window: NSWindow? {
         didSet {
             // Weak + non-published: publish the attachment so the menu's
             // Close gate re-evaluates — deferred one actor turn because
             // WindowReader calls this inside SwiftUI's view update.
             if oldValue !== window {
-                windowCloseDelegate?.restoreOriginalDelegate()
+                windowCloseDelegate?.restore()
                 windowCloseDelegate = nil
                 syncWindowCloseDelegate()
                 Task { @MainActor [weak self] in self?.objectWillChange.send() }
@@ -509,18 +511,22 @@ final class WorkspaceModel: ObservableObject {
             if presentOnAttach, window != nil { present() }
         }
     }
-    /// Local scenes keep SwiftUI's native window delegate so LaunchServices
-    /// recognizes and reuses them. Only SSH sessions need the save gate.
     private func syncWindowCloseDelegate() {
-        guard remote != nil, let window else {
-            windowCloseDelegate?.restoreOriginalDelegate()
+        guard let window, hasProject else {
+            windowCloseDelegate?.restore()
             windowCloseDelegate = nil
             return
         }
         guard windowCloseDelegate == nil else { return }
-        let delegate = WorkspaceWindowCloseDelegate(workspace: self, window: window)
-        windowCloseDelegate = delegate
-        window.delegate = delegate
+        let gate = SaveChangesCloseGate(
+            shouldPrompt: { [weak self] in self?.hasProject == true },
+            confirm: { [weak self] in
+                guard let self else { return false }
+                return await self.close() != nil
+            }
+        )
+        gate.attach(to: window)
+        windowCloseDelegate = gate
     }
 
     /// Set by `present()` while no NSWindow is attached yet (a window just
@@ -3165,12 +3171,10 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
 
-    /// Closing the editor window while quit is already waiting on the save
-    /// alert must not start a second termination. That second call returns
-    /// terminateLater and never replies, so Cancel cannot end the alert.
+    /// Starting last-window termination while the save alert is modal leaves Cancel inside terminateLater.
     @MainActor
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !terminationInFlight
+        !terminationInFlight && !WorkspaceWindows.live.contains { $0.isPromptingSave }
     }
 
     /// Quit asks before dropping unsaved local text, and waits for a save that is already queued.
@@ -3350,48 +3354,6 @@ enum WorkspaceWindows {
         } else {
             pending.append(url)
         }
-    }
-}
-
-/// Hold a remote window open while the forced manual save runs. Forward
-/// every other delegate callback to SwiftUI's original window delegate.
-@MainActor
-private final class WorkspaceWindowCloseDelegate: NSObject, NSWindowDelegate {
-    weak var workspace: WorkspaceModel?
-    nonisolated(unsafe) private weak var original: (any NSWindowDelegate)?
-    private weak var guardedWindow: NSWindow?
-    private var closeRequested = false
-
-    init(workspace: WorkspaceModel, window: NSWindow) {
-        self.workspace = workspace
-        self.guardedWindow = window
-        self.original = window.delegate
-    }
-
-    func restoreOriginalDelegate() {
-        guard let window = guardedWindow, window.delegate === self else { return }
-        window.delegate = original
-    }
-
-    nonisolated override func responds(to selector: Selector!) -> Bool {
-        super.responds(to: selector) || (original?.responds(to: selector) ?? false)
-    }
-
-    nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
-        original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
-    }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard original?.windowShouldClose?(sender) ?? true else { return false }
-        guard let workspace, workspace.hasProject else { return true }
-        guard !closeRequested else { return false }
-        closeRequested = true
-        Task { @MainActor in
-            defer { self.closeRequested = false }
-            guard await workspace.close() != nil else { return }
-            sender.performClose(nil)
-        }
-        return false
     }
 }
 
