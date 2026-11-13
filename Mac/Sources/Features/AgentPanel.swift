@@ -94,7 +94,7 @@ struct AgentPanel: View {
             }
             .labelsHidden()
             .frame(maxWidth: 320)
-            .disabled(!coordinator.catalogMenu.acceptsPicks || coordinator.isUpdatingModelSettings)
+            .disabled(!coordinator.catalogMenu.acceptsPicks)
             .accessibilityIdentifier("pitex.assistantModel")
 
             if coordinator.connection == .ready, !coordinator.thinkingLevels.isEmpty {

@@ -1747,6 +1747,15 @@ impl AgentCoordinator {
         match effect {
             crate::catalog::PickEffect::None => {}
             crate::catalog::PickEffect::SetModel(model) => {
+                if let Some(ticket) = self.switch_ticket.as_mut() {
+                    if ticket.backend == self.agent_provider {
+                        ticket.model = Some(model.clone());
+                        store.set_ai_default_model(&model.id);
+                        self.preferred_model_id = None;
+                        self.ui_revision += 1;
+                        return;
+                    }
+                }
                 store.set_ai_default_model(&model.id);
                 self.preferred_model_id = Some(model.id.clone());
                 self.select_model(&Self::from_catalog(model));
@@ -1860,7 +1869,7 @@ impl AgentCoordinator {
             active_backend: &self.agent_provider,
             current: self.current_model.as_ref().map(Self::to_catalog),
             generation: self.catalog_generation,
-            accepts_picks: self.switch_ticket.is_none() && !self.is_updating_model_settings,
+            accepts_picks: !self.is_updating_model_settings,
         }
     }
 
@@ -4955,6 +4964,74 @@ mod session_history_tests {
         );
         agent.stop();
         assert!(!agent.is_running, "stop after the switch stays idle");
+    }
+
+    #[test]
+    fn a_second_pick_during_a_switch_replaces_the_ticket_model() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.note_catalog_report("pi", Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]));
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![
+                catalog_model("claude-haiku", "claude", "Haiku"),
+                catalog_model("claude-sonnet", "claude", "Sonnet"),
+            ]),
+        );
+        let haiku = agent
+            .catalog_menu("en")
+            .rows
+            .iter()
+            .find(|row| row.id.model_id == "claude-haiku")
+            .unwrap()
+            .id
+            .clone();
+        let generation = agent.catalog_generation();
+        agent.apply_catalog(
+            &crate::catalog::SelectionIntent::Row(haiku),
+            generation,
+            &mut store,
+            "switched",
+        );
+        let sonnet = agent
+            .catalog_menu("en")
+            .rows
+            .iter()
+            .find(|row| row.id.model_id == "claude-sonnet")
+            .unwrap()
+            .id
+            .clone();
+        let generation = agent.catalog_generation();
+        agent.apply_catalog(
+            &crate::catalog::SelectionIntent::Row(sonnet),
+            generation,
+            &mut store,
+            "switched",
+        );
+        assert!(agent.model_requests.is_empty());
+        assert_eq!(
+            agent
+                .switch_ticket
+                .as_ref()
+                .and_then(|ticket| ticket.model.as_ref())
+                .map(|model| model.id.as_str()),
+            Some("claude-sonnet")
+        );
+        let models = json!({
+            "type": "response",
+            "command": "get_available_models",
+            "success": true,
+            "data": {"models": [
+                {"id": "claude-haiku", "provider": "claude", "name": "Haiku"},
+                {"id": "claude-sonnet", "provider": "claude", "name": "Sonnet"}
+            ]}
+        });
+        agent.handle(&response(models));
+        assert!(agent.switch_ticket.is_none());
+        assert_eq!(
+            agent.model_requests,
+            vec![("claude".into(), "claude-sonnet".into())]
+        );
     }
 
     #[test]

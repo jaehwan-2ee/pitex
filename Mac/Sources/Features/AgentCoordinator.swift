@@ -114,7 +114,14 @@ final class AgentCoordinator: ObservableObject {
     /// Both the effective level and the model's choices come from pi.
     @Published private(set) var thinkingLevel = "off"
     @Published private(set) var thinkingLevels: [String] = []
-    @Published private(set) var isUpdatingModelSettings = false
+    /// `get_state` publishes the menu while this is true. Clearing it has to
+    /// publish again, or the model popup stays disabled after the reply.
+    @Published private(set) var isUpdatingModelSettings = false {
+        didSet {
+            guard oldValue != isUpdatingModelSettings else { return }
+            publishCatalog()
+        }
+    }
     @Published var statusMessage: String?
     /// The Codex CLI approval the panel is showing. Later requests wait in
     /// `approvalQueue`. pi never sets this; its extension prompts stay
@@ -294,6 +301,15 @@ final class AgentCoordinator: ObservableObject {
         ) else { return }
         switch plan {
         case .setModel(let model):
+            if var ticket = switchTicket, ticket.backend == sessionBackend {
+                ticket.model = model
+                switchTicket = ticket
+                settings.aiDefaultModel = model.id
+                preferredModelID = nil
+                currentModel = Self.descriptor(from: model)
+                publishCatalog()
+                return
+            }
             settings.aiDefaultModel = model.id
             preferredModelID = model.id
             if let descriptor = Self.descriptor(from: model) {
@@ -896,7 +912,7 @@ final class AgentCoordinator: ObservableObject {
             activeBackend: sessionBackend,
             current: currentModel.map(Self.catalogModel(from:)),
             generation: catalogGeneration,
-            acceptsPicks: switchTicket == nil && !isUpdatingModelSettings
+            acceptsPicks: !isUpdatingModelSettings
         )
     }
 

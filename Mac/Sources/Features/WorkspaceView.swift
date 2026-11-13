@@ -687,10 +687,36 @@ private struct WorkspaceSplitView: NSViewRepresentable {
     }
 }
 
+/// The split view must not be its own delegate. AppKit's sidebar category
+/// answers `respondsToSelector:` by loading the weak delegate and asking it
+/// again, which recurses until the stack overflows when the delegate is the
+/// split view. Menu validation and Send both walk that path.
+private final class LayoutDelegate: NSObject, NSSplitViewDelegate {
+    weak var split: WorkspaceNativeSplitView?
+
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        split?.minimumDividerPosition(dividerIndex) ?? proposedMinimumPosition
+    }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        split?.maximumDividerPosition(dividerIndex) ?? proposedMaximumPosition
+    }
+}
+
 /// A frame-based outer split: hosted content cannot install intrinsic-size
 /// constraints that redistribute the columns when PDFKit becomes WebKit.
 /// NSSplitView still owns divider drawing, hit testing, and mouse tracking.
-private final class WorkspaceNativeSplitView: NSSplitView, NSSplitViewDelegate {
+private final class WorkspaceNativeSplitView: NSSplitView {
     private enum Pane: Hashable {
         case sidebar, center, inspector
 
@@ -711,12 +737,20 @@ private final class WorkspaceNativeSplitView: NSSplitView, NSSplitViewDelegate {
     private var placing = false
     private var trackingDivider = false
 
+    private let layoutDelegate: LayoutDelegate
+
     init(state: WorkspacePaneLayoutState) {
         self.state = state
+        layoutDelegate = LayoutDelegate()
         super.init(frame: .zero)
         isVertical = true
         dividerStyle = .thin
-        delegate = self
+        layoutDelegate.split = self
+        delegate = layoutDelegate
+    }
+
+    deinit {
+        delegate = nil
     }
 
     @available(*, unavailable)
@@ -826,8 +860,8 @@ private final class WorkspaceNativeSplitView: NSSplitView, NSSplitViewDelegate {
     override func setPosition(_ position: CGFloat, ofDividerAt dividerIndex: Int) {
         guard panes.indices.contains(dividerIndex), panes.indices.contains(dividerIndex + 1) else { return }
         let before = visibleWidths()
-        let minimum = splitView(self, constrainMinCoordinate: 0, ofSubviewAt: dividerIndex)
-        let maximum = splitView(self, constrainMaxCoordinate: bounds.maxX, ofSubviewAt: dividerIndex)
+        let minimum = minimumDividerPosition(dividerIndex)
+        let maximum = maximumDividerPosition(dividerIndex)
         let wasTracking = trackingDivider
         trackingDivider = true
         super.setPosition(max(minimum, min(maximum, position)), ofDividerAt: dividerIndex)
@@ -856,15 +890,11 @@ private final class WorkspaceNativeSplitView: NSSplitView, NSSplitViewDelegate {
         )
     }
 
-    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
-
-    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat,
-                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+    fileprivate func minimumDividerPosition(_ dividerIndex: Int) -> CGFloat {
         arrangedSubviews[dividerIndex].frame.minX + panes[dividerIndex].minimum
     }
 
-    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+    fileprivate func maximumDividerPosition(_ dividerIndex: Int) -> CGFloat {
         arrangedSubviews[dividerIndex + 1].frame.maxX - panes[dividerIndex + 1].minimum - dividerThickness
     }
 }
