@@ -83,6 +83,12 @@
 "command.project" = "项目";
 "command.open" = "打开…";
 "command.close" = "关闭";
+"close.save" = "保存";
+"close.dont_save" = "不保存";
+"close.cancel" = "取消";
+"close.unsaved_one" = "是否要保存对“%@”所做的更改？";
+"close.unsaved_many" = "是否要保存对 %d 个文稿所做的更改？";
+"close.unsaved_detail" = "如果不保存，您的更改将丢失。";
 "command.build" = "构建";
 "command.cancel_build" = "取消构建";
 "command.settings" = "设置…";

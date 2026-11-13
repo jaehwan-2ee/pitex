@@ -82,6 +82,12 @@
 "command.project" = "Dự án";
 "command.open" = "Mở…";
 "command.close" = "Đóng";
+"close.save" = "Lưu";
+"close.dont_save" = "Không lưu";
+"close.cancel" = "Hủy";
+"close.unsaved_one" = "Bạn có muốn lưu các thay đổi trong “%@”?";
+"close.unsaved_many" = "Bạn có muốn lưu các thay đổi của %d tài liệu?";
+"close.unsaved_detail" = "Các thay đổi sẽ mất nếu bạn không lưu.";
 "command.build" = "Biên dịch";
 "command.cancel_build" = "Hủy biên dịch";
 "command.settings" = "Cài đặt…";

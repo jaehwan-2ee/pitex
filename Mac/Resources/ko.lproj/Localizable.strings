@@ -82,6 +82,12 @@
 "command.project" = "프로젝트";
 "command.open" = "열기…";
 "command.close" = "닫기";
+"close.save" = "저장";
+"close.dont_save" = "저장 안 함";
+"close.cancel" = "취소";
+"close.unsaved_one" = "“%@”의 변경 내용을 저장할까요?";
+"close.unsaved_many" = "문서 %d개의 변경 내용을 저장할까요?";
+"close.unsaved_detail" = "저장하지 않으면 변경 내용이 사라집니다.";
 "command.build" = "빌드";
 "command.cancel_build" = "빌드 취소";
 "command.settings" = "설정…";

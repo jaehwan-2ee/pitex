@@ -285,9 +285,10 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
             guard region.headerLine + 1 < lineStarts.count else { continue }
             let first = lineStarts[region.hiddenLineRange.lowerBound]
             let lastLine = min(region.hiddenLineRange.upperBound, lineStarts.count - 1)
-            let end = lastLine + 1 < lineStarts.count ? lineStarts[lastLine + 1] : (textView.string as NSString).length
-            guard end > first else { continue }
-            hiddenCharRanges.append(NSRange(location: first, length: end - first))
+            let limit = (textView.string as NSString).length
+            let end = lastLine + 1 < lineStarts.count ? lineStarts[lastLine + 1] : limit
+            guard let range = EditorMacAdapter.clampedCharacterRange(start: first, end: end, limit: limit) else { continue }
+            hiddenCharRanges.append(range)
             for line in region.hiddenLineRange.lowerBound...min(region.hiddenLineRange.upperBound, lineStarts.count - 1) {
                 lines.insert(line)
             }
@@ -325,8 +326,9 @@ final class FoldEngine: NSObject, NSLayoutManagerDelegate {
         for line in lines {
             let start = lineStarts[line]
             let end = line + 1 < lineStarts.count ? lineStarts[line + 1] : text.length
+            guard let range = EditorMacAdapter.clampedCharacterRange(start: start, end: end, limit: text.length) else { continue }
             let glyphs = layoutManager.glyphRange(
-                forCharacterRange: NSRange(location: start, length: max(end - start, 0)),
+                forCharacterRange: range,
                 actualCharacterRange: nil
             )
             for glyph in glyphs.location..<NSMaxRange(glyphs) {

@@ -788,31 +788,13 @@ final class WorkspaceModel: ObservableObject {
     /// Edit → Toggle Line Comment: inserts or removes a leading % on every
     /// line covered by the selection.
     func toggleLineComment() {
-        guard let textView = environment?.editor.textView,
-              let text = documentSnapshot?.text else { return }
-        let nsText = text as NSString
-        let range = textView.selectedRange()
-        guard range.location + range.length <= nsText.length else { return }
-        let lineRange = nsText.lineRange(for: range)
-        let block = nsText.substring(with: lineRange)
-        let lines = block.components(separatedBy: "\n")
-        let contentLines = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let allCommented = !contentLines.isEmpty && contentLines.allSatisfy {
-            $0.trimmingCharacters(in: .whitespaces).hasPrefix("%")
-        }
-        let transformed = lines.map { line -> String in
-            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return line }
-            if allCommented {
-                guard let percentIndex = line.firstIndex(of: "%") else { return line }
-                var result = line
-                result.remove(at: percentIndex)
-                if result.first == " " { result.removeFirst() }
-                return result
-            }
-            return "%" + line
-        }.joined(separator: "\n")
-        guard textView.shouldChangeText(in: lineRange, replacementString: transformed) else { return }
-        textView.replaceCharacters(in: lineRange, with: transformed)
+        guard let textView = environment?.editor.textView else { return }
+        let edit = EditorMacAdapter.lineCommentEdit(
+            text: textView.string,
+            selection: textView.selectedRange()
+        )
+        guard textView.shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+        textView.replaceCharacters(in: edit.range, with: edit.replacement)
         textView.didChangeText()
     }
 
@@ -1276,8 +1258,71 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
+    /// Save, Don't Save, or Cancel for unsaved local text.
+    /// Remote projects keep their own forced save. Returns true when the close may continue.
+    private func confirmLocalClose(matching url: URL?) async -> Bool {
+        guard remote == nil, let root = projectURL else { return true }
+        let generation = documentLoadGeneration
+        await environment?.editor.flushPendingChanges()
+        guard projectURL == root, documentLoadGeneration == generation else { return false }
+        var unsaved: [(path: String, name: String, state: DocumentSaveState)] = []
+        for session in registeredSessions {
+            let snapshot = await session.snapshot()
+            if let url {
+                guard (try? Self.relativePath(for: url, root: root)) == snapshot.path else { continue }
+            }
+            guard snapshot.saveState != .clean else { continue }
+            let raw = snapshot.path.rawValue
+            unsaved.append((raw, URL(fileURLWithPath: raw).lastPathComponent, snapshot.saveState))
+        }
+        let choice = unsaved.isEmpty ? nil : promptSaveChanges(names: unsaved.map(\.name))
+        guard projectURL == root, documentLoadGeneration == generation else { return false }
+        switch localCloseAction(saveStates: unsaved.map(\.state), choice: choice) {
+        case .stayOpen:
+            return false
+        case .closeWithoutSaving:
+            return true
+        case .saveThenClose:
+            if let problem = await persistDirtySessions(onlyPaths: Set(unsaved.map(\.path))) {
+                if projectURL == root { phase = .failed(problem) }
+                return false
+            }
+            return projectURL == root && documentLoadGeneration == generation
+        }
+    }
+
+    private func promptSaveChanges(names: [String]) -> LocalCloseChoice {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        if names.count == 1 {
+            alert.messageText = String(format: String(localized: "close.unsaved_one"), names[0])
+            alert.informativeText = String(localized: "close.unsaved_detail")
+        } else {
+            alert.messageText = String(format: String(localized: "close.unsaved_many"), names.count)
+            alert.informativeText = names.joined(separator: "\n") + "\n\n" + String(localized: "close.unsaved_detail")
+        }
+        alert.addButton(withTitle: String(localized: "close.save"))
+        alert.addButton(withTitle: String(localized: "close.dont_save"))
+        alert.addButton(withTitle: String(localized: "close.cancel"))
+        if alert.buttons.count > 2 {
+            alert.buttons[2].keyEquivalent = "\u{1b}"
+        }
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertSecondButtonReturn:
+            return .discard
+        default:
+            return .cancel
+        }
+    }
+
     func closeDocument(_ url: URL) async {
         guard let root = projectURL, !isClosing else { return }
+        if remote == nil {
+            guard await confirmLocalClose(matching: url) else { return }
+            guard projectURL == root, !isClosing else { return }
+        }
         let context = projectGeneration
         let savingRemote = remote != nil
         if savingRemote { isClosing = true }
@@ -1328,6 +1373,7 @@ final class WorkspaceModel: ObservableObject {
         if let closeTask { return await closeTask.value != nil }
         guard !isClosing else { return false }
         guard remote != nil, projectURL != nil else {
+            guard await confirmLocalClose(matching: nil) else { return false }
             await waitForPendingWrites()
             return true
         }
@@ -1357,6 +1403,10 @@ final class WorkspaceModel: ObservableObject {
     func close() async -> UUID? {
         if let closeTask { return await closeTask.value }
         guard !isClosing else { return nil }
+        if remote == nil {
+            guard await confirmLocalClose(matching: nil) else { return nil }
+            guard !isClosing else { return nil }
+        }
         isClosing = true
         let task = Task { @MainActor in
             defer { self.isClosing = false; self.closeTask = nil }
@@ -1979,11 +2029,12 @@ final class WorkspaceModel: ObservableObject {
     /// the same content the editor shows. Returns a user-facing problem when
     /// a document cannot be persisted (e.g. unresolved conflict).
     @discardableResult
-    func persistDirtySessions() async -> String? {
+    func persistDirtySessions(onlyPaths: Set<String>? = nil) async -> String? {
         guard let root = projectURL else { return nil }
         let generation = documentLoadGeneration
         for session in registeredSessions {
             let sessionSnapshot = await session.snapshot()
+            if let onlyPaths, !onlyPaths.contains(sessionSnapshot.path.rawValue) { continue }
             if sessionSnapshot.saveState == .conflicted {
                 return "The file \(sessionSnapshot.path.rawValue) has an unresolved external-change conflict. Resolve it before saving."
             }
@@ -3123,14 +3174,10 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// Quit must not cut an in-flight save short: while any workspace has
-    /// writes queued, termination defers until they have finished on disk.
+    /// Quit asks before dropping unsaved local text, and waits for a save that is already queued.
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminationInFlight else { return .terminateLater }
-        guard WorkspaceWindows.live.contains(where: { $0.hasPendingWrites || $0.remote != nil }) else {
-            return .terminateNow
-        }
         terminationInFlight = true
         Task { @MainActor in
             defer { self.terminationInFlight = false }
@@ -3337,7 +3384,7 @@ private final class WorkspaceWindowCloseDelegate: NSObject, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard original?.windowShouldClose?(sender) ?? true else { return false }
-        guard let workspace, workspace.remote != nil else { return true }
+        guard let workspace, workspace.hasProject else { return true }
         guard !closeRequested else { return false }
         closeRequested = true
         Task { @MainActor in

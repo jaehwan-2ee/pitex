@@ -2,7 +2,7 @@
 
 The goal is a ranked list of real crash and data-loss bugs in Pitex v1.1.1 (`a6bbed8766e7ae7c3a3e3f2b97272eabe4f13320`), plus a patch for any high-confidence crash or data-loss bug that is small enough to test here. The recent split-view crash is the pattern to hunt. AppKit called `responds(to:)` on a split view that was its own delegate, the call asked the delegate again, and menu validation from Spotlight overflowed the stack. A separate agent is changing redundant writes in `pitex-preview` `publish`. This report does not cover that change.
 
-This pull request does not change runtime code. No crash fix was both small and tested before the cutoff. The findings below are proposals.
+This pull request fixes the findings marked yes below. The preview helper's publish disk writes are unchanged. Mac AppKit paths still need the manual checks at the end of this report.
 
 The tree under review is main at v1.1.1. Swift is not installed in this environment, so Mac findings were not executed in the app. The preview helper was not rebuilt. The reproduction below uses the same standard-library call the helper makes.
 
@@ -91,7 +91,7 @@ Refusing the spawn in the parent would stop this one call path. The helper would
 - Severity: crash
 - Confidence: high that the range is unclamped. The AppKit exception was not executed here.
 - Reachable: yes, if a folded document is shortened and the editor view is dismantled before the fold recompute runs
-- Fixed in this change: no
+- Fixed in this change: yes. `clearHiddenGlyphs` and `applyFolds` clamp each character range to the live string and skip an empty range.
 
 `detach` is `Mac/Sources/Features/EditorFolding.swift` lines 80 to 88. It cancels the pending recompute, then clears hidden glyphs with the old line table.
 
@@ -119,7 +119,7 @@ Proposed fix. Clamp each start and end to `text.length` before building the rang
 - Severity: data-loss
 - Confidence: high on the code path. The app was not run.
 - Reachable: yes, with the default autosave setting
-- Fixed in this change: no
+- Fixed in this change: yes. Tab close, File → Close, ⌘W, the window close button, and quit ask Save, Don't Save, or Cancel when a local session is dirty or conflicted. Cancel leaves it open. Remote close still saves without that prompt.
 
 `autoSave` starts false (`SettingsView.swift` line 278). `closeDocument` writes the project only when `remote != nil` (`PitexApp.swift` lines 1282 to 1293). For a local file it waits for writes that are already queued (line 1298) and then removes the session. `DocumentSessionRegistry.close` only deletes the session from its map (`DocumentSessionRegistry.swift` lines 97 to 103). It does not write the file.
 
@@ -138,7 +138,7 @@ Proposed fix. Before `registry.close` and before `.terminateNow`, flush the edit
 - Severity: data-loss
 - Confidence: high that the command reads `documentSnapshot` and writes the text view. The keystroke race was not executed.
 - Reachable: yes, when the text view and `documentSnapshot` differ
-- Fixed in this change: no
+- Fixed in this change: yes. The command builds the line range from `textView.string` and clamps the selection to that string.
 
 `jumpTo` records the rule. The live text view is authoritative, and `documentSnapshot` trails edits made since the last flush (`PitexApp.swift` lines 1839 to 1840). `toggleLineComment` does not flush. It reads `documentSnapshot?.text` (line 792), builds `lineRange` from that string (line 796), and writes the text view (lines 814 to 815). Save As calls `flushPendingChanges` first (line 766). The comment command does not.
 
@@ -153,7 +153,7 @@ Proposed fix. Build `lineRange` from `textView.string`, and clamp it to that str
 - Severity: crash, by using up memory, if one stdout line is very large
 - Confidence: high that the buffer is uncapped. The out-of-memory crash was not run.
 - Reachable: yes, if the agent writes a long line with no newline, or one newline only at the end of a huge line
-- Fixed in this change: no
+- Fixed in this change: yes. An unterminated stdout line past 4 MiB is dropped, and bytes are ignored until the next newline.
 
 `PiAgentProcess` appends every stdout chunk and removes bytes only when it sees a newline. The buffer is `Mac/Sources/Features/PiAgentProcess.swift` lines 512 to 522.
 
@@ -182,7 +182,7 @@ Proposed fix. If `stdoutBuffer` grows past 4 MiB with no newline, drop that part
 - Severity: crash of the Mac app
 - Confidence: medium
 - Reachable: only if the custom-shell field contains a NUL. That path was not executed.
-- Fixed in this change: no
+- Fixed in this change: yes. A custom shell command that `BuildPreferences` rejects leaves the previous value in place.
 
 `BuildPreferences` rejects a custom shell command that contains a NUL.
 
@@ -525,8 +525,8 @@ The model-popup flag already publishes the catalog when it clears (`AgentCoordin
 Run these on a Mac before treating the proposals as fixed.
 
 1. Fold a region, delete most of the buffer, and switch documents before the fold debounce. The app should stay up. Today that path is finding 2.
-2. With autosave off, type into a local file and close the tab, press ⌘W, and quit. Each path should ask before discarding the edit. Today those paths are finding 3.
-3. Type one character and immediately toggle the line comment. The new character should remain. Today that path is finding 4.
-4. Feed `PiAgentProcess` a stdout pipe of more than 4 MiB with no newline. The process should stay up and the buffer should stop growing. That is finding 5.
-5. Paste a NUL into the custom-shell field, if the field accepts it. The app should keep the previous build settings. That is finding 6.
+2. With autosave off, type into a local file and close the tab, press ⌘W, close the window, and quit. Each path should ask Save, Don't Save, or Cancel. Cancel should leave the text in the editor. Finding 3.
+3. Type one character and immediately toggle the line comment. The new character should remain, with a `%` on that line. Finding 4.
+4. Feed `PiAgentProcess` a stdout pipe of more than 4 MiB with no newline. The process should stay up and the buffer should stop growing. Finding 5.
+5. Paste a NUL into the custom-shell field, if the field accepts it. The app should keep the previous build settings. Finding 6.
 6. Point embedded preview at a project directory whose name is not UTF-8, after the helper reads `args_os`. The helper should get past argument setup. Today that case is the panic in finding 1. The Mac driver `main` has the same `std::env::args()` call, so the Mac helper has the same startup panic once a non-Unicode argument reaches it.

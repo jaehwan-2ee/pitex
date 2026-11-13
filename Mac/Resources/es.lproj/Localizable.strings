@@ -83,6 +83,12 @@
 "command.project" = "Proyecto";
 "command.open" = "Abrir…";
 "command.close" = "Cerrar";
+"close.save" = "Guardar";
+"close.dont_save" = "No guardar";
+"close.cancel" = "Cancelar";
+"close.unsaved_one" = "¿Quieres guardar los cambios de “%@”?";
+"close.unsaved_many" = "¿Quieres guardar los cambios de %d documentos?";
+"close.unsaved_detail" = "Si no los guardas, los cambios se perderán.";
 "command.build" = "Compilar";
 "command.cancel_build" = "Cancelar compilación";
 "command.settings" = "Ajustes…";
