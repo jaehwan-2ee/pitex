@@ -5,6 +5,7 @@ Linux/target/
 Tools/Native/target/
 Windows/target/
 Windows/dist/
+Windows/uninstall-files.nsh
 DerivedData/
 *.xcuserstate
 *.xcuserdata/

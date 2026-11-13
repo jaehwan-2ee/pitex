@@ -221,7 +221,7 @@ Needs Mac verification. Confirm whether the SwiftUI text field can deliver a NUL
 - Severity: data-loss
 - Confidence: high for what the script requests. NSIS and `taskkill` were not executed here.
 - Reachable: yes. The installer shows a directory page, and uninstall uses the directory stored at install time.
-- Fixed in this change: no
+- Fixed in this change: yes. Uninstall deletes the copied files, removes a directory only when it is empty, and stops when this install's executable is still running.
 
 The uninstall section is `Windows/pitex.nsi` lines 95 to 99.
 
