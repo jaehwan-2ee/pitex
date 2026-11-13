@@ -133,6 +133,9 @@ and immediately when it is rejected as stale.
     until a newer matching publication (or `idle`) is bound.
   - `errors`/`first_error`: TeX errors in this pass (nonstop mode); the PDF
     is still valid.
+  - `bytes_written` is how many content bytes this publication passed to
+    `write`. A hard link of an unchanged PDF, log, or SyncTeX counts as 0.
+    Clients can ignore the field.
   - The helper keeps at most **4 unreleased publications**. When the limit
     is reached it skips intermediate snapshots and defers the newest
     complete one until a `release` arrives, so a client that stops
@@ -145,10 +148,12 @@ and immediately when it is rejected as stale.
   disable SyncTeX. An `idle` event cannot bind the old PDF to draft sources;
   a new publication at or after this generation clears the draft state.
 - `{"event":"idle","generation":7,"seq":12}` — the update changed nothing the
-  engine observed; complete publication `seq` is current for `generation`
-  (0 = none: no publication yet, the last pass failed, or it was partial).
-  The client advances the displayed publication's generation when `seq`
-  matches and may bind SyncTeX against that generation's identity.
+  engine observed, or a finished pass matched the PDF, log, and SyncTeX
+  already stored for complete publication `seq`. That pass does not create
+  a directory. `seq` is current for `generation` (0 = none: no publication
+  yet, the last pass failed, or it was partial). The client advances the
+  displayed publication's generation when `seq` matches and may bind
+  SyncTeX against that generation's identity.
 - `{"event":"error","code":"protocol|pdf|io|usage|no_engine|no_tex",
   "message":"..."}`.
 

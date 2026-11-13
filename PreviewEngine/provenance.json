@@ -60,7 +60,7 @@
    "license_in_file": "n/a (documentation)",
    "origin": "pitex",
    "path": "PROTOCOL.md",
-   "sha256": "7796dcb7c50bb0f39caaa4013cfbcb16246adc01c4f9bb3b2037916259bb80e5"
+   "sha256": "399fbf61c18e8eeb5556970e2ba2d9c59facb21ad3ff8b6bf1a826e0c8a201ce"
   },
   {
    "license_in_file": "n/a (documentation)",
@@ -410,7 +410,7 @@
    "license_in_file": "none-in-file",
    "origin": "pitex",
    "path": "src/bin/pitex-preview.rs",
-   "sha256": "984e789ab6e4b3a3d8a956cebac6765882226a87bcb05662cadab947308dd50a"
+   "sha256": "0023dc6a6fcd20c890748b83baa9fbb505c14d3bfe8566ba49df4eb55f819fc6"
   },
   {
    "license_in_file": "none-in-file",
@@ -491,7 +491,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/main.rs",
-   "sha256": "221062b21fc7d4574e819fbfb0959ee3293946b28eb1509527a1d6cdb918c046",
+   "sha256": "1d1414f5acdce9058981859321f40c03caeb5fee3cb45de989c899ab3952fa05",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/main.c",
@@ -1100,7 +1100,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/main.rs",
-   "sha256": "c2dd6a413bea2fcf7713e86005b6f62eea8f97c37d21771e39ffc4a02d52b2e5",
+   "sha256": "e369e3705effcdbc0121289d88dc8966d561718e01f900f261d85bbe2c234b0c",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/main.c",
@@ -1917,6 +1917,12 @@
    "origin": "pitex",
    "path": "src/shared/preview_diagnostics.rs",
    "sha256": "1ec3f23f743cf32c0bdaf56aac06e01092eae4bb889b908e57b3053eceefe711"
+  },
+  {
+   "license_in_file": "AGPL-3.0-or-later (Pitex)",
+   "origin": "pitex",
+   "path": "src/shared/publish_dedup.rs",
+   "sha256": "ea1e0408fe4f9476a47ecf0376f76ab8e8d80829f7a5aa702e1e03df4a3e1380"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
