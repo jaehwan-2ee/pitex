@@ -13,7 +13,7 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | Mac app, self-delegate and menu-validation class | Covered for the sites named below |
 | Mac app, `PiAgentProcess` stdout buffering | Covered |
 | Mac settings custom-shell binding | Covered |
-| Preview helper argument startup, Linux spawn path | Covered |
+| Preview helper arguments, the second-output abort, the PDF predictor division, and `remove_dir` | Covered |
 | Linux remote save, placeholder scan, build-log carry, agent stdout cap, second build | Covered |
 | Adapter line parsers named below | Covered |
 | `Tools/install-deb.sh`, one input-audit step, one release skill step | Covered |
@@ -22,11 +22,11 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | TexCore persistence, SSH, and sync | Not yet audited |
 | TexApp beyond the editor delegate assignment and `ShellAuthority` | Not yet audited |
 | Linux GTK UI and the rest of `pitex-shell` | Not yet audited |
-| Preview `publish`, unsafe blocks, and image decoders | Not yet audited |
+| Rest of preview `publish`, unsafe blocks, and image decoders | Not yet audited |
 | Rest of CI and release scripts | Not yet audited |
 | Retain cycles, main-thread UI calls, and force unwraps outside the sites below | Not yet audited |
 
-The Mac reviewer and the Windows reviewer finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The TexApp, preview, Linux, adapter, and CI reviewers had not returned by the last commit. Anything only they might still find is not yet audited.
+The Mac, Windows, and preview reviewers finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The TexApp, Linux, adapter, and CI reviewers had not returned by the last commit. Anything only they might still find is not yet audited.
 
 Numbers below follow the order a finding was confirmed. Severity is on each item.
 
@@ -269,6 +269,71 @@ The in-tree tests cover the drive letter and the uppercase `UNC` case (`lib.rs` 
 Trigger. Open a file whose canonical path is `\\?\Volume{guid}\...`. The shell receives a relative path.
 
 Proposed fix. Strip `\\?\` only for a drive letter and for `UNC` compared without case. Leave every other `\\?\` path unchanged. Add those two inputs to the existing tests. Not patched here, because this environment cannot run the Windows crate.
+
+### 9. A second `.log`, `.xdv`, `.dvi`, `.pdf`, or `.synctex` open aborts the preview process
+
+- Severity: crash
+- Confidence: high that the driver calls `abort` when that slot is already filled. The TeX engine was not run, so the sample document was not executed.
+- Reachable: yes if a second write with one of those extensions is recorded after the first.
+- Fixed in this change: no
+
+`PreviewEngine/src/linux/driver/engine_tex.rs` lines 1340 to 1395 abort when `st.document`, `st.synctex`, or `st.log` already has an entry and another open arrives for `xdv`, `dvi`, `pdf`, `synctex`, or `log`. The macOS twin prints the same "two log files" error at `PreviewEngine/src/macos/driver/engine_tex.rs` line 1396.
+
+```rust
+if !(*self_0).st.log.entry.is_null() {
+    fprintf(stderr, b"[error] two log files!\n\0" ...);
+    print_backtrace();
+    abort();
+}
+```
+
+Trigger. A document that opens a second file whose extension is one of those five after the engine has already opened the job log, the xdv, or the synctex file. One candidate is `\immediate\openout` of `notes.log`.
+
+Proposed fix. Keep the first log, output, and synctex handles, and treat a later write with the same extension as an ordinary auxiliary file. Do not call `abort`. Not patched here. The helper was not rebuilt.
+
+### 10. PDF predictor parameters divide by zero
+
+- Severity: crash
+- Confidence: high. The arithmetic was reproduced. A PDF was not fed through the helper.
+- Reachable: yes when a decoded stream reaches `apply_predictor` with these parameters.
+- Fixed in this change: no
+
+`apply_predictor` in `PreviewEngine/src/linux/shared/pdfread.rs` lines 1357 to 1364 computes the row length in `i32`, casts it to `usize`, and then divides by `row + 1`. Predictor values below 10 return earlier. Predictor 15 does not.
+
+For `Colors 1`, `BitsPerComponent 1`, and `Columns -15` the row length is `(-8 / 8)` as `usize`, which is `usize::MAX`. Adding 1 wraps to 0. `wrapping_div` then panics. A release build of that arithmetic exited 101:
+
+```
+bpp=1 row=18446744073709551615 row+1=0
+thread 'main' panicked at predictor_panic.rs:9:17:
+attempt to divide by zero
+```
+
+`get_image` calls the PDF reader for a file that starts with `%PDF-`. `get_int` returns the integer with no range check (`pdfread.rs` line 1026).
+
+Proposed fix. Reject `Colors`, `BitsPerComponent`, or `Columns` below 1, and return false when `row.wrapping_add(1)` is 0, before the division. Not patched here. The helper was not rebuilt.
+
+### 11. `remove_dir` deletes files through a directory symlink
+
+- Severity: data-loss
+- Confidence: high. The same `opendir` and `unlink` sequence deleted a file in the symlink target. The 4096-byte path truncation was not executed.
+- Reachable: yes when `{out}/p{seq}` is a symlink to another directory.
+- Fixed in this change: no
+
+`remove_dir` in `PreviewEngine/src/linux/driver/main.rs` lines 1380 to 1412 opens the path with `opendir`, unlinks each child, and then calls `rmdir`. `opendir` follows a directory symlink. `release` builds `{out}/p{seq}` with `snprintf` into a 4096-byte buffer and passes it to `remove_dir` without checking the return (`main.rs` lines 1776 to 1784).
+
+A stand-alone copy of that loop was run against a symlink:
+
+```
+p1 -> secret
+unlink .../p1/notes.txt -> 0
+rmdir -> -1
+```
+
+`notes.txt` inside `secret` was gone. `rmdir` of the symlink failed, so the symlink stayed.
+
+`snprintf` into the fixed buffer is also unchecked. A canonical `--out` path near 4096 bytes can make the formatted path collapse onto `--out` itself. That length was not executed here.
+
+Proposed fix. If `snprintf` does not fit, skip the deletion and report an I/O error. In `remove_dir`, `lstat` the path and unlink a symlink without following it. For a real directory, delete children through a descriptor opened with `O_NOFOLLOW` and `O_DIRECTORY`. Not patched here. Another change is already editing publish in this file, and the helper was not rebuilt.
 
 ## Checks that did not show a bug
 
