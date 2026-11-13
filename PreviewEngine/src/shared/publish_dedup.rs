@@ -1,3 +1,6 @@
+// Pitex-authored preview publication dedup. Copyright (c) 2026 Pitex contributors.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Decide whether a preview publication would rewrite bytes already on disk.
 //!
 //! The helper publishes by creating `pN/` and renaming it into place. Readers

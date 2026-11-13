@@ -1026,6 +1026,7 @@ static mut pending_complete: bool = false;
 static mut pending_generation: ::core::ffi::c_longlong = 0;
 static mut writer: *mut xdv2pdf = ::core::ptr::null::<xdv2pdf>() as *mut xdv2pdf;
 static mut publish_seq: ::core::ffi::c_int = 0;
+static mut force_publish: bool = false;
 static mut current_seq: ::core::ffi::c_int = 0;
 static mut generation: ::core::ffi::c_longlong = 0;
 static mut generation_start_ms: ::core::ffi::c_longlong = 0;
@@ -1517,6 +1518,7 @@ unsafe extern "C" fn publish(
         pbuf_free(&raw mut event);
         pbuf_free(&raw mut pdf);
         pbuf_free(&raw mut warnings);
+        force_publish = true;
         return true;
     }
     if err != 0 {
@@ -1573,8 +1575,9 @@ unsafe extern "C" fn publish(
         })
         .unwrap_or(false);
     let plan = crate::publish_dedup::plan(stamp, complete, alive, kept_copy.as_ref());
+    let publish_anyway = force_publish && complete;
     let (pdf_reuse, log_reuse, sync_reuse) = match plan {
-        crate::publish_dedup::Plan::Unchanged { idle_seq } => {
+        crate::publish_dedup::Plan::Unchanged { idle_seq } if !publish_anyway => {
             if let Some(idle_seq) = idle_seq {
                 current_seq = idle_seq;
                 let mut b: pbuf = pbuf {
@@ -1596,6 +1599,14 @@ unsafe extern "C" fn publish(
             pbuf_free(&raw mut pdf);
             pbuf_free(&raw mut warnings);
             return true_0 != 0;
+        }
+        crate::publish_dedup::Plan::Unchanged { .. } => {
+            let kept = kept_copy.as_ref().expect("an unchanged plan has a kept publication");
+            (
+                Some(kept.pdf.clone()),
+                Some(kept.log.clone()),
+                kept.stamp.has_sync.then(|| kept.sync.clone()),
+            )
         }
         crate::publish_dedup::Plan::Store {
             pdf_reuse,
@@ -1738,6 +1749,7 @@ unsafe extern "C" fn publish(
         if bytes_written > 0 {
             eprintln!("[publish] bytes_written={bytes_written} seq={seq}");
         }
+        force_publish = false;
     }
     let mut first: [::core::ffi::c_char; 512] = [0; 512];
     let mut errors: ::core::ffi::c_int = log_errors(

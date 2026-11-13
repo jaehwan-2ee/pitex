@@ -59,6 +59,8 @@ fn collect(session: &mut Session, generation: u64, timeout: Duration) -> Result<
         }
         if event["event"] == "published" || event["event"] == "idle" {
             events.push(event);
+        } else {
+            continue;
         }
         let last = events.last().unwrap();
         if last["event"] == "published" && last["complete"] == true && last["generation"] == generation
@@ -236,6 +238,52 @@ fn run() -> Result<()> {
             .iter()
             .any(|event| event["event"] == "idle" || event["bytes_written"] == 0),
         format!("trailing comment was not treated as unchanged: {trailing:?}"),
+    )?;
+
+    let draft = edited.replace("\\begin{document}", "\\pdfdraftmode=1\n\\begin{document}");
+    session.send(&json!({
+        "op": "update",
+        "generation": 5,
+        "files": [{"path": &main, "text": draft}],
+        "closed": []
+    }))?;
+    let draft_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if Instant::now() > draft_deadline {
+            return Err("draft mode produced no draft event".into());
+        }
+        let Some(event) = session.next_event(Duration::from_secs(1))? else {
+            continue;
+        };
+        if event["event"] == "draft" && event["generation"] == 5 {
+            break;
+        }
+        if matches!(event["event"].as_str(), Some("failed" | "error")) {
+            return Err(event.to_string().into());
+        }
+    }
+    session.send(&json!({
+        "op": "update",
+        "generation": 6,
+        "files": [{"path": &main, "text": edited}],
+        "closed": []
+    }))?;
+    let restored = collect(&mut session, 6, Duration::from_secs(60))?;
+    let published = restored
+        .iter()
+        .rev()
+        .find(|event| event["event"] == "published" && event["complete"] == true)
+        .ok_or("leaving draft mode did not publish")?;
+    let path = published["pdf"].as_str().ok_or("pdf path missing")?;
+    let pdf_len = fs::metadata(path)?.len();
+    ensure(
+        bytes_written(published)? < pdf_len,
+        format!("restoring the same pdf rewrote it: {published}"),
+    )?;
+    ensure(sha256(path)? == edit_hash, "draft restore replaced the pdf bytes")?;
+    ensure(
+        fs::metadata(path)?.ino() == edit_inode,
+        "draft restore did not hard-link the kept pdf",
     )?;
     Ok(())
 }
