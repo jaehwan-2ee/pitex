@@ -108,10 +108,10 @@ fn unlink_children_nofollow(path: &Path) -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
         loop {
-            *libc::__errno_location() = 0;
+            *errno_ptr() = 0;
             let entry = libc::readdir(dir);
             if entry.is_null() {
-                if *libc::__errno_location() != 0 {
+                if *errno_ptr() != 0 {
                     libc::closedir(dir);
                     return Err(io::Error::last_os_error());
                 }
@@ -127,6 +127,18 @@ fn unlink_children_nofollow(path: &Path) -> io::Result<()> {
         libc::closedir(dir);
     }
     std::fs::remove_dir(path)
+}
+
+#[cfg(unix)]
+fn errno_ptr() -> *mut i32 {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::__errno_location()
+    }
+    #[cfg(not(target_os = "linux"))]
+    unsafe {
+        libc::__error()
+    }
 }
 
 #[cfg(test)]
