@@ -53,6 +53,19 @@ final class SaveChangesCloseGateTests: XCTestCase {
         var delivered: Bool
     }
 
+    private final class Prompt: @unchecked Sendable {
+        let window: NSWindow
+        let alert: NSAlert
+        let state: State
+        let deliver: Delivery
+        init(window: NSWindow, alert: NSAlert, state: State, deliver: Delivery) {
+            self.window = window
+            self.alert = alert
+            self.state = state
+            self.deliver = deliver
+        }
+    }
+
     private func runClose(deliver: Delivery) -> Outcome {
         NSApp.setActivationPolicy(.accessory)
         let state = State()
@@ -75,24 +88,25 @@ final class SaveChangesCloseGateTests: XCTestCase {
                     dontSaveTitle: "저장 안 함",
                     cancelTitle: "취소"
                 )
+                let prompt = Prompt(window: window, alert: alert, state: state, deliver: deliver)
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        state.windowVisibleDuringAlert = window.isVisible
-                        switch deliver {
+                        prompt.state.windowVisibleDuringAlert = prompt.window.isVisible
+                        switch prompt.deliver {
                         case .click(let title):
-                            guard let content = alert.window.contentView,
+                            guard let content = prompt.alert.window.contentView,
                                   let button = Self.button(titled: title, in: content) else { return }
-                            state.delivered = true
+                            prompt.state.delivered = true
                             Self.sendClick(to: button)
                         case .escape:
-                            state.delivered = true
-                            Self.sendEscape(to: alert.window)
+                            prompt.state.delivered = true
+                            Self.sendEscape(to: prompt.alert.window)
                         }
                     }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     MainActor.assumeIsolated {
-                        guard state.response == nil else { return }
+                        guard prompt.state.response == nil else { return }
                         NSApp.stopModal(withCode: .abort)
                     }
                 }
