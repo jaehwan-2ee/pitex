@@ -52,11 +52,11 @@ public final class SaveChangesCloseGate: NSObject, NSWindowDelegate {
         return false
     }
 
-    nonisolated override func responds(to selector: Selector!) -> Bool {
+    public nonisolated override func responds(to selector: Selector!) -> Bool {
         super.responds(to: selector) || (original?.responds(to: selector) ?? false)
     }
 
-    nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
+    public nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
         original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
     }
 }
