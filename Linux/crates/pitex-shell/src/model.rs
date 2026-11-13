@@ -4903,7 +4903,7 @@ impl WorkspaceModel {
             return;
         }
         match event {
-            BuildEvent::Log(entry) => self.build_log_text.push_str(&entry.text),
+            BuildEvent::Log(entry) => append_build_log(&mut self.build_log_text, &entry.text),
             BuildEvent::Issue(record) => self.build_issues.push(record),
             BuildEvent::Lifecycle(_) | BuildEvent::StageStarted { .. } => {}
         }
@@ -5928,6 +5928,50 @@ mod open_bounds {
         let err = WorkspaceModel::initial_opened_document(true, &limited, Path::new("."), &mut resolver)
             .unwrap_err();
         assert!(matches!(err, WorkspaceOpenError::FolderTooLarge));
+    }
+}
+
+const MAX_BUILD_LOG_BYTES: usize = 4 * 1024 * 1024;
+
+fn append_build_log(log: &mut String, text: &str) {
+    append_build_log_capped(log, text, MAX_BUILD_LOG_BYTES);
+}
+
+fn append_build_log_capped(log: &mut String, text: &str, limit: usize) {
+    if log.len() >= limit {
+        return;
+    }
+    let mark = "\n[build log truncated]\n";
+    let room = limit - log.len();
+    if text.len() <= room {
+        log.push_str(text);
+        return;
+    }
+    let keep = room.saturating_sub(mark.len());
+    let mut end = keep.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    log.push_str(&text[..end]);
+    log.push_str(mark);
+}
+
+#[cfg(test)]
+mod build_log_cap {
+    use super::append_build_log_capped;
+
+    #[test]
+    fn the_build_log_stops_at_the_cap_and_drops_the_rest() {
+        let mut log = String::new();
+        append_build_log_capped(&mut log, "hello", 32);
+        assert_eq!(log, "hello");
+        append_build_log_capped(&mut log, "éééééééééé", 12);
+        assert!(log.contains("[build log truncated]"));
+        assert!(log.len() <= 12 + "\n[build log truncated]\n".len());
+        let stopped = log.clone();
+        append_build_log_capped(&mut log, "more", 12);
+        assert_eq!(log, stopped);
+        assert!(log.is_char_boundary(log.len()));
     }
 }
 

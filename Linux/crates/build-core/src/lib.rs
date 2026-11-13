@@ -2303,33 +2303,32 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
                 return Err(error);
             }
         };
-        let mut preexisting_pdf: Option<Vec<u8>> = None;
-        if output_url.exists() {
-            match std::fs::read(&output_url) {
-                Ok(data) => preexisting_pdf = Some(data),
-                Err(_) => {
-                    let lifecycle = BuildLifecycle::Failed {
-                        exit_code: None,
-                        finished_at_milliseconds: now_milliseconds(),
-                    };
-                    let _ = self.finish(
-                        &id,
-                        lifecycle,
-                        BuildArtifactDisposition::NoPDF {
-                            partial_output_was_discarded: false,
-                        },
-                    );
-                    return Err(BuildOrchestratorError::ProcessError(
-                        "Unable to preserve the existing PDF before building".into(),
-                    ));
-                }
+        let mut preexisting = match read_build_pdf(&output_url) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                let lifecycle = BuildLifecycle::Failed {
+                    exit_code: None,
+                    finished_at_milliseconds: now_milliseconds(),
+                };
+                let _ = self.finish(
+                    &id,
+                    lifecycle,
+                    BuildArtifactDisposition::NoPDF {
+                        partial_output_was_discarded: false,
+                    },
+                );
+                return Err(BuildOrchestratorError::ProcessError(
+                    "Unable to preserve the existing PDF before building".into(),
+                ));
             }
-        }
+        };
         {
             let state = self.state.lock().unwrap();
             if state.last_successful_pdf_path.as_deref() == Some(output_url.as_path()) {
                 if let Some(last) = &state.last_successful_pdf {
-                    preexisting_pdf = Some(last.clone());
+                    preexisting.bytes = Some(last.clone());
+                    preexisting.kept_on_disk = false;
+                    preexisting.len = last.len() as u64;
                 }
             }
         }
@@ -2395,7 +2394,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
         let mut stage_failure = run_result.err();
 
         self.flush_parser(&id);
-        let partial = output_changed(&output_url, preexisting_pdf.as_deref());
+        let partial = output_changed(&output_url, &preexisting);
         let cancelled = self
             .state
             .lock()
@@ -2408,7 +2407,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
         if cancelled {
             let disposition = self.restore_for_build(
                 &id,
-                preexisting_pdf.as_deref(),
+                &preexisting,
                 &output_url,
                 partial,
             )?;
@@ -2420,7 +2419,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
         if let Some(failure) = stage_failure.take() {
             let disposition = self.restore_for_build(
                 &id,
-                preexisting_pdf.as_deref(),
+                &preexisting,
                 &output_url,
                 partial,
             )?;
@@ -2431,15 +2430,11 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
             let _ = self.finish(&id, lifecycle, disposition);
             return Err(failure);
         }
-        let successful_data = match std::fs::read(&output_url) {
-            Ok(data) => data,
-            Err(_) => {
-                let disposition = self.restore_for_build(
-                    &id,
-                    preexisting_pdf.as_deref(),
-                    &output_url,
-                    partial,
-                )?;
+        let successful = match read_build_pdf(&output_url) {
+            Ok(PdfSnapshot { bytes: Some(data), kept_on_disk: false, .. }) => Some(data),
+            Ok(PdfSnapshot { kept_on_disk: true, .. }) => None,
+            _ => {
+                let disposition = self.restore_for_build(&id, &preexisting, &output_url, partial)?;
                 let lifecycle = BuildLifecycle::Failed {
                     exit_code: None,
                     finished_at_milliseconds: now_milliseconds(),
@@ -2448,10 +2443,9 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
                 return Err(BuildOrchestratorError::MissingPDF);
             }
         };
-
         {
             let mut state = self.state.lock().unwrap();
-            state.last_successful_pdf = Some(successful_data);
+            state.last_successful_pdf = successful;
             state.last_successful_pdf_path = Some(output_url.clone());
         }
         let lifecycle = BuildLifecycle::Succeeded {
@@ -2691,12 +2685,14 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
 
     fn restore(
         &self,
-        previous: Option<&[u8]>,
+        previous: &PdfSnapshot,
         output_url: &Path,
         partial: bool,
     ) -> Result<BuildArtifactDisposition, BuildOrchestratorError> {
         if partial {
-            let result = if let Some(previous) = previous {
+            let result = if previous.kept_on_disk {
+                Ok(())
+            } else if let Some(previous) = previous.bytes.as_deref() {
                 atomic_write(output_url, previous)
             } else if output_url.exists() {
                 remove_item(output_url)
@@ -2711,7 +2707,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
             let state = self.state.lock().unwrap();
             state.last_successful_pdf_path.as_deref() == Some(output_url)
         };
-        if previous.is_some() || had_last {
+        if previous.bytes.is_some() || previous.kept_on_disk || had_last {
             return Ok(BuildArtifactDisposition::PreservedLastSuccessfulPDF {
                 partial_output_was_discarded: partial,
             });
@@ -2724,7 +2720,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
     fn restore_for_build(
         &self,
         id: &BuildID,
-        previous: Option<&[u8]>,
+        previous: &PdfSnapshot,
         output_url: &Path,
         partial: bool,
     ) -> Result<BuildArtifactDisposition, BuildOrchestratorError> {
@@ -2735,7 +2731,7 @@ impl<E: BuildProcessExecuting> BuildOrchestrator<E> {
                     exit_code: None,
                     finished_at_milliseconds: now_milliseconds(),
                 };
-                let disposition = if previous.is_none() {
+                let disposition = if previous.bytes.is_none() && !previous.kept_on_disk {
                     BuildArtifactDisposition::NoPDF {
                         partial_output_was_discarded: partial,
                     }
@@ -3031,9 +3027,67 @@ fn mirror_tex_subdirectories(root: &Path, output_url: &Path) -> Result<(), Build
     Ok(())
 }
 
-fn output_changed(url: &Path, previous: Option<&[u8]>) -> bool {
-    let current = std::fs::read(url).ok();
-    current.as_deref() != previous
+pub const MAX_BUILD_PDF_BYTES: u64 = 50 * 1024 * 1024;
+
+struct PdfSnapshot {
+    bytes: Option<Vec<u8>>,
+    kept_on_disk: bool,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+fn read_build_pdf(path: &Path) -> std::io::Result<PdfSnapshot> {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PdfSnapshot {
+                bytes: None,
+                kept_on_disk: false,
+                len: 0,
+                modified: None,
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let modified = meta.modified().ok();
+    let len = meta.len();
+    if len > MAX_BUILD_PDF_BYTES {
+        return Ok(PdfSnapshot {
+            bytes: None,
+            kept_on_disk: true,
+            len,
+            modified,
+        });
+    }
+    let data = std::fs::read(path)?;
+    if data.len() as u64 > MAX_BUILD_PDF_BYTES {
+        return Ok(PdfSnapshot {
+            bytes: None,
+            kept_on_disk: true,
+            len: data.len() as u64,
+            modified,
+        });
+    }
+    Ok(PdfSnapshot {
+        bytes: Some(data),
+        kept_on_disk: false,
+        len,
+        modified,
+    })
+}
+
+fn output_changed(url: &Path, previous: &PdfSnapshot) -> bool {
+    let current = match read_build_pdf(url) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return previous.bytes.is_some() || previous.kept_on_disk,
+    };
+    if previous.kept_on_disk && current.kept_on_disk {
+        return current.len != previous.len || current.modified != previous.modified;
+    }
+    if current.kept_on_disk || previous.kept_on_disk {
+        return true;
+    }
+    current.bytes.as_deref() != previous.bytes.as_deref()
 }
 
 // ===========================================================================

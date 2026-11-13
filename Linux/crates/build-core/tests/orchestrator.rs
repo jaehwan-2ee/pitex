@@ -1168,3 +1168,60 @@ fn stage_started_cancellation_prevents_executor() {
     assert_eq!(fake.request_count(), 0);
     assert!(!fixture.output_url.exists());
 }
+
+#[test]
+fn a_pdf_over_the_cap_stays_on_disk_and_the_build_succeeds() {
+    let fixture = Fixture::new(&[]);
+    let file = std::fs::File::create(&fixture.output_url).unwrap();
+    file.set_len(MAX_BUILD_PDF_BYTES + 1).unwrap();
+    let fake = Arc::new(FakeExecutor::new(vec![Behavior::Success {
+        chunks: vec![],
+        pdf: None,
+    }]));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(fake));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::Stages(vec![BuildStagePlan {
+                tool: BuildToolStage::Pdflatex,
+            }]),
+        )
+        .unwrap();
+    let outcome = orchestrator
+        .build(BuildID::new("huge").unwrap(), EventRecorder::new().handler())
+        .unwrap();
+    assert!(matches!(outcome.lifecycle, BuildLifecycle::Succeeded { .. }));
+    assert_eq!(
+        std::fs::metadata(&fixture.output_url).unwrap().len(),
+        MAX_BUILD_PDF_BYTES + 1
+    );
+    assert!(orchestrator.successful_pdf().is_none());
+}
+
+#[test]
+fn a_failed_build_leaves_a_pdf_over_the_cap_on_disk() {
+    let fixture = Fixture::new(&[]);
+    let file = std::fs::File::create(&fixture.output_url).unwrap();
+    file.set_len(MAX_BUILD_PDF_BYTES + 1).unwrap();
+    let fake = Arc::new(FakeExecutor::new(vec![Behavior::Failure {
+        exit_code: 1,
+        chunks: vec![],
+        partial_pdf: None,
+    }]));
+    let orchestrator = BuildOrchestrator::new(FakeExecutorRef(fake));
+    orchestrator
+        .select(
+            fixture.target.clone(),
+            BuildPipeline::Stages(vec![BuildStagePlan {
+                tool: BuildToolStage::Pdflatex,
+            }]),
+        )
+        .unwrap();
+    assert!(orchestrator
+        .build(BuildID::new("huge-fail").unwrap(), EventRecorder::new().handler())
+        .is_err());
+    assert_eq!(
+        std::fs::metadata(&fixture.output_url).unwrap().len(),
+        MAX_BUILD_PDF_BYTES + 1
+    );
+}
