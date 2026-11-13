@@ -9,6 +9,7 @@ final class SaveChangesCloseGateTests: XCTestCase {
     private final class State: @unchecked Sendable {
         var text = "dirty"
         var response: NSApplication.ModalResponse?
+        var alertWindow: NSWindow?
         var windowVisibleDuringAlert = false
         var delivered = false
         var attempts = 0
@@ -77,6 +78,7 @@ final class SaveChangesCloseGateTests: XCTestCase {
                     dontSaveTitle: "저장 안 함",
                     cancelTitle: "취소"
                 )
+                state.alertWindow = alert.window
                 let response = SaveChangesAlert.response(for: alert)
                 state.response = response
                 state.armed = false
@@ -98,12 +100,7 @@ final class SaveChangesCloseGateTests: XCTestCase {
         XCTAssertNotNil(closeButton)
         let holder = Holder(delivery: deliver, window: window, state: state)
         Self.schedule(holder)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            MainActor.assumeIsolated {
-                guard state.armed, NSApp.modalWindow != nil else { return }
-                NSApp.stopModal(withCode: .abort)
-            }
-        }
+        Self.watch(state)
         closeButton?.performClick(nil)
         let start = Date()
         while state.armed && Date().timeIntervalSince(start) < 3 {
@@ -130,12 +127,22 @@ final class SaveChangesCloseGateTests: XCTestCase {
         }
     }
 
+    private static func watch(_ state: State) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            MainActor.assumeIsolated {
+                guard state.armed else { return }
+                NSApp.stopModal(withCode: .abort)
+                if state.armed { watch(state) }
+            }
+        }
+    }
+
     private static func schedule(_ holder: Holder) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
             MainActor.assumeIsolated {
                 let state = holder.state
                 guard state.armed else { return }
-                guard let modal = NSApp.modalWindow, modal !== holder.window,
+                guard let modal = state.alertWindow, modal.isVisible, modal !== holder.window,
                       let content = modal.contentView else {
                     if state.armed { schedule(holder) }
                     return
