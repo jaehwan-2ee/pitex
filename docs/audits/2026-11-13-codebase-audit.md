@@ -40,7 +40,7 @@ Severity order is crash, then data loss, then wrong behavior, then minor. Data-l
 - Severity: crash of `pitex-preview` (and the same startup code in the XeTeX `main`)
 - Confidence: high
 - Reachable: yes, when a spawned path is not Unicode
-- Fixed in this change: no
+- Fixed in this change: yes. The preview and XeTeX mains read `args_os` and keep the original bytes, so a non-UTF-8 directory name does not panic at startup.
 
 `pitex-preview` starts by iterating `std::env::args()`. That iterator panics if any argument is not Unicode. Rust records the panic as an unwrap of the invalid argument. The Linux driver entry is `PreviewEngine/src/linux/driver/main.rs` lines 7152 to 7158.
 
@@ -276,7 +276,7 @@ Proposed fix. Strip `\\?\` only for a drive letter and for `UNC` compared withou
 - Severity: crash
 - Confidence: high that the driver calls `abort` when that slot is already filled. The TeX engine was not run, so the sample document was not executed.
 - Reachable: yes if a second write with one of those extensions is recorded after the first.
-- Fixed in this change: no
+- Fixed in this change: yes. The first xdv, dvi, pdf, synctex, or log open owns that slot. A later open is an ordinary file and does not abort.
 
 `PreviewEngine/src/linux/driver/engine_tex.rs` lines 1340 to 1395 abort when `st.document`, `st.synctex`, or `st.log` already has an entry and another open arrives for `xdv`, `dvi`, `pdf`, `synctex`, or `log`. The macOS twin prints the same "two log files" error at `PreviewEngine/src/macos/driver/engine_tex.rs` line 1396.
 
@@ -297,7 +297,7 @@ Proposed fix. Keep the first log, output, and synctex handles, and treat a later
 - Severity: crash
 - Confidence: high. The arithmetic was reproduced. A PDF was not fed through the helper.
 - Reachable: yes when a decoded stream reaches `apply_predictor` with these parameters.
-- Fixed in this change: no
+- Fixed in this change: yes. Colors, bits per component, or columns below 1, or a row that cannot be formed, skip the predictor instead of dividing.
 
 `apply_predictor` in `PreviewEngine/src/linux/shared/pdfread.rs` lines 1357 to 1364 computes the row length in `i32`, casts it to `usize`, and then divides by `row + 1`. Predictor values below 10 return earlier. Predictor 15 does not.
 
@@ -318,7 +318,7 @@ Proposed fix. Reject `Colors`, `BitsPerComponent`, or `Columns` below 1, and ret
 - Severity: data-loss
 - Confidence: high. The same `opendir` and `unlink` sequence deleted a file in the symlink target. The 4096-byte path truncation was not executed.
 - Reachable: yes when `{out}/p{seq}` is a symlink to another directory.
-- Fixed in this change: no
+- Fixed in this change: yes. `remove_dir` unlinks a directory symlink and leaves the target. A path that does not fit the buffer is not deleted.
 
 `remove_dir` in `PreviewEngine/src/linux/driver/main.rs` lines 1380 to 1412 opens the path with `opendir`, unlinks each child, and then calls `rmdir`. `opendir` follows a directory symlink. `release` builds `{out}/p{seq}` with `snprintf` into a 4096-byte buffer and passes it to `remove_dir` without checking the return (`main.rs` lines 1776 to 1784).
 
@@ -500,7 +500,7 @@ The other `delegate = self` assignments are not the view assigning itself:
 
 `SessionTextView.validateUserInterfaceItem` calls `super` after handling find actions (`EditorMacAdapter.swift` lines 33 to 38). That is not the split view calling itself.
 
-`WorkspaceWindowCloseDelegate.responds(to:)` forwards to the previous window delegate (`PitexApp.swift` lines 3330 to 3336). The delegate is not the window. After a remote close, `close()` clears `remote` before `performClose`, so the second `windowShouldClose` returns at the `remote != nil` check (`PitexApp.swift` lines 3338 to 3348 and 1357 to 1373) instead of sticking on `closeRequested`.
+`WorkspaceWindowCloseDelegate.responds(to:)` forwards to the previous window delegate (`PitexApp.swift` lines 3330 to 3336). The delegate is not the window. After `close()` the workspace has no project, so the second `windowShouldClose` returns at the `hasProject` check (`PitexApp.swift` line 3387) instead of sticking on `closeRequested`.
 
 `BuildSupport.swift` lines 832 to 840 call `try! ShellAuthority(...)` with `source: .userConfiguration`, `approvedByUser: true`, and a non-empty disclosure. `ShellAuthority.init` throws only when the source is not built-in and the user has not approved it, or when the disclosure is empty (`BuildCore.swift` lines 67 to 69). Those arguments do not throw.
 
@@ -524,9 +524,9 @@ The model-popup flag already publishes the catalog when it clears (`AgentCoordin
 
 Run these on a Mac before treating the proposals as fixed.
 
-1. Fold a region, delete most of the buffer, and switch documents before the fold debounce. The app should stay up. Today that path is finding 2.
+1. Fold a region, delete most of the buffer, and switch documents before the fold debounce. The app should stay up. Finding 2 clamps the range. This check is still manual.
 2. With autosave off, type into a local file and close the tab, press ⌘W, close the window, and quit. Each path should ask Save, Don't Save, or Cancel. Cancel should leave the text in the editor. Finding 3.
 3. Type one character and immediately toggle the line comment. The new character should remain, with a `%` on that line. Finding 4.
 4. Feed `PiAgentProcess` a stdout pipe of more than 4 MiB with no newline. The process should stay up and the buffer should stop growing. Finding 5.
 5. Paste a NUL into the custom-shell field, if the field accepts it. The app should keep the previous build settings. Finding 6.
-6. Point embedded preview at a project directory whose name is not UTF-8, after the helper reads `args_os`. The helper should get past argument setup. Today that case is the panic in finding 1. The Mac driver `main` has the same `std::env::args()` call, so the Mac helper has the same startup panic once a non-Unicode argument reaches it.
+6. Point embedded preview at a project directory whose name is not UTF-8. The helper should get past argument setup. Finding 1 reads `args_os` in the Mac driver too. This check is still manual.

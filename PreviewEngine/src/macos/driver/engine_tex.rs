@@ -1339,75 +1339,45 @@ unsafe extern "C" fn answer_query(mut self_0: *mut tex_engine, mut q: *mut query
                                                 b"pdf\0" as *const u8 as *const ::core::ffi::c_char,
                                             ) == 0 as ::core::ffi::c_int
                                         {
-                                            if !(*self_0).st.document.entry.is_null() {
-                                                fprintf(
-                                                    __stderrp,
-                                                    b"[error] two outputs!\n\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                );
-                                                fprintf(
-                                                    __stderrp,
-                                                    b"Aborting from driver/engine_tex.c:647\n\0"
-                                                        as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                );
-                                                print_backtrace();
-                                                abort();
-                                            }
+                                            if pitex_preview_engine::claims_primary_slot(
+                                                ::std::ffi::CStr::from_ptr(ext).to_bytes(),
+                                                (*self_0).st.document.entry.is_null(),
+                                            ) {
                                             log_filecell(
                                                 (*self_0).log,
                                                 &raw mut (*self_0).st.document,
                                             );
                                             (*self_0).st.document.entry = e;
                                             xdv_index_reset((*self_0).dvi);
+                                            }
                                         } else if strcmp(
                                             ext,
                                             b"synctex\0" as *const u8 as *const ::core::ffi::c_char,
                                         ) == 0 as ::core::ffi::c_int
                                         {
-                                            if !(*self_0).st.synctex.entry.is_null() {
-                                                fprintf(
-                                                    __stderrp,
-                                                    b"[error] two synctex!\n\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                );
-                                                fprintf(
-                                                    __stderrp,
-                                                    b"Aborting from driver/engine_tex.c:658\n\0"
-                                                        as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                );
-                                                print_backtrace();
-                                                abort();
-                                            }
+                                            if pitex_preview_engine::claims_primary_slot(
+                                                ::std::ffi::CStr::from_ptr(ext).to_bytes(),
+                                                (*self_0).st.synctex.entry.is_null(),
+                                            ) {
                                             log_filecell(
                                                 (*self_0).log,
                                                 &raw mut (*self_0).st.synctex,
                                             );
                                             (*self_0).st.synctex.entry = e;
+                                            }
                                         } else if strcmp(
                                             ext,
                                             b"log\0" as *const u8 as *const ::core::ffi::c_char,
                                         ) == 0 as ::core::ffi::c_int
                                         {
-                                            if !(*self_0).st.log.entry.is_null() {
-                                                fprintf(
-                                                    __stderrp,
-                                                    b"[error] two log files!\n\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                );
-                                                fprintf(
-                                                    __stderrp,
-                                                    b"Aborting from driver/engine_tex.c:668\n\0"
-                                                        as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                );
-                                                print_backtrace();
-                                                abort();
-                                            }
+                                            if pitex_preview_engine::claims_primary_slot(
+                                                ::std::ffi::CStr::from_ptr(ext).to_bytes(),
+                                                (*self_0).st.log.entry.is_null(),
+                                            ) {
                                             log_filecell((*self_0).log, &raw mut (*self_0).st.log);
                                             (*self_0).st.log.entry = e;
                                             (*self_0).log_entry = e;
+                                            }
                                         }
                                     }
                                 }

@@ -1379,38 +1379,10 @@ unsafe extern "C" fn write_file(
     return close(fd) == 0 as ::core::ffi::c_int;
 }
 unsafe extern "C" fn remove_dir(mut dir: *const ::core::ffi::c_char) {
-    let mut d: *mut DIR = opendir(dir);
-    if !d.is_null() {
-        let mut de: *mut dirent = ::core::ptr::null_mut::<dirent>();
-        loop {
-            de = readdir(d);
-            if de.is_null() {
-                break;
-            }
-            if strcmp(
-                &raw mut (*de).d_name as *mut ::core::ffi::c_char,
-                b".\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0
-                || strcmp(
-                    &raw mut (*de).d_name as *mut ::core::ffi::c_char,
-                    b"..\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0
-            {
-                continue;
-            }
-            let mut p: [::core::ffi::c_char; 4096] = [0; 4096];
-            snprintf(
-                &raw mut p as *mut ::core::ffi::c_char,
-                ::core::mem::size_of::<[::core::ffi::c_char; 4096]>() as size_t,
-                b"%s/%s\0" as *const u8 as *const ::core::ffi::c_char,
-                dir,
-                &raw mut (*de).d_name as *mut ::core::ffi::c_char,
-            );
-            unlink(&raw mut p as *mut ::core::ffi::c_char);
-        }
-        closedir(d);
+    if dir.is_null() {
+        return;
     }
-    rmdir(dir);
+    let _ = pitex_preview_engine::remove_c_directory(::std::ffi::CStr::from_ptr(dir).to_bytes());
 }
 unsafe extern "C" fn cap_log_file() {
     let mut st: stat = stat {
@@ -1900,14 +1872,25 @@ unsafe extern "C" fn release(mut seq: ::core::ffi::c_int) {
             && artifacts[i as usize].seq == seq
         {
             let mut dir: [::core::ffi::c_char; 4096] = [0; 4096];
-            snprintf(
+            let written = snprintf(
                 &raw mut dir as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<[::core::ffi::c_char; 4096]>() as size_t,
                 b"%s/p%d\0" as *const u8 as *const ::core::ffi::c_char,
                 &raw mut cfg.out as *mut ::core::ffi::c_char,
                 seq,
             );
-            remove_dir(&raw mut dir as *mut ::core::ffi::c_char);
+            if pitex_preview_engine::c_printf_fits(
+                written,
+                ::core::mem::size_of::<[::core::ffi::c_char; 4096]>(),
+            ) {
+                remove_dir(&raw mut dir as *mut ::core::ffi::c_char);
+            } else {
+                fprintf(
+                    stderr,
+                    b"[error] artifact path does not fit\n\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                );
+            }
             artifacts[i as usize].used = false_0 != 0;
         }
         i += 1;
@@ -7276,13 +7259,7 @@ unsafe fn main_0(
 }
 pub const PATH_MAX: ::core::ffi::c_int = 4096 as ::core::ffi::c_int;
 pub fn main() {
-    let mut args_strings: Vec<Vec<u8>> = ::std::env::args()
-        .map(|arg| {
-            ::std::ffi::CString::new(arg)
-                .expect("Failed to convert argument into CString.")
-                .into_bytes_with_nul()
-        })
-        .collect();
+    let mut args_strings: Vec<Vec<u8>> = pitex_preview_engine::c_arg_strings();
     let mut args_ptrs: Vec<*mut ::core::ffi::c_char> = args_strings
         .iter_mut()
         .map(|arg| arg.as_mut_ptr() as *mut ::core::ffi::c_char)
