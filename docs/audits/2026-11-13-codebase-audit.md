@@ -32,7 +32,7 @@ Numbers below follow the order a finding was confirmed. Severity is on each item
 
 ## Findings
 
-Severity order is crash, then data loss, then wrong behavior, then minor. Nothing below is a confirmed data-loss bug.
+Severity order is crash, then data loss, then wrong behavior, then minor. Data-loss items were read in the source or reproduced outside the app. None of them was run inside Pitex.
 
 ### 1. Preview helper panics when an argument is not Unicode
 
