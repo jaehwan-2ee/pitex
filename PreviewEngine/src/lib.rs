@@ -1,7 +1,3 @@
-//! Small helpers for the embedded preview driver.
-//! The generated driver calls these so a non-Unicode argument, a second
-//! output, a bad predictor, or a directory symlink cannot abort the process.
-
 use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
@@ -16,15 +12,8 @@ pub fn c_string_bytes(arg: &OsStr) -> Vec<u8> {
     bytes
 }
 
-#[cfg(unix)]
 fn os_bytes(arg: &OsStr) -> Vec<u8> {
-    use std::os::unix::ffi::OsStrExt;
-    arg.as_bytes().to_vec()
-}
-
-#[cfg(not(unix))]
-fn os_bytes(arg: &OsStr) -> Vec<u8> {
-    arg.to_string_lossy().into_owned().into_bytes()
+    arg.as_encoded_bytes().to_vec()
 }
 
 /// True when `snprintf` wrote a full string into a buffer of `cap` bytes.
@@ -38,8 +27,6 @@ pub fn claims_primary_slot(extension: &[u8], slot_empty: bool) -> bool {
     slot_empty && matches!(extension, b"xdv" | b"dvi" | b"pdf" | b"synctex" | b"log")
 }
 
-/// Row length for a PDF predictor, or `None` when the parameters cannot
-/// describe a row. Negative components and a zero stride both refuse.
 pub fn predictor_dimensions(colors: i32, bpc: i32, columns: i32) -> Option<(usize, usize)> {
     if colors < 1 || bpc < 1 || columns < 1 {
         return None;
