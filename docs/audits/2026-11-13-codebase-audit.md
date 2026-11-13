@@ -384,7 +384,7 @@ Proposed fix. On a local dirty session, flush and ask before the window closes a
 - Severity: crash, by allocation, if the PDF is larger than the process can hold
 - Confidence: high that the reads are uncapped. The allocation failure was not run.
 - Reachable: yes when `main.pdf` already exists and a build starts.
-- Fixed in this change: no
+- Fixed in this change: yes. A PDF over 50 MiB is left on disk and its path is published. The build does not read it into memory.
 
 Before the engine runs, an existing output is read with `std::fs::read` and kept as `preexisting_pdf` (`Linux/crates/build-core/src/lib.rs` lines 2306 to 2309). A successful build reads the output again (line 2434). `output_changed` reads it a third time (lines 3034 to 3036). A read error fails the build. There is no size check.
 
@@ -397,7 +397,7 @@ Proposed fix. Use the existing 50 MiB cap for these three reads, leave a larger 
 - Severity: crash, by allocation, if the build command writes without stopping
 - Confidence: high that each chunk is appended. A runaway command was not run.
 - Reachable: yes. The build command is user-editable.
-- Fixed in this change: no
+- Fixed in this change: yes. `build_log_text` stops at 4 MiB and drops the rest.
 
 `apply_build_event` appends every log chunk to `build_log_text` (`model.rs` line 4893). Git status stops at 4 MiB and kills the child. The build log has no such stop. Cancel still leaves the bytes already copied in the string.
 
@@ -408,7 +408,7 @@ Proposed fix. Cap `build_log_text` the way git status is capped, and drop the re
 - Severity: data-loss
 - Confidence: high. A stand-alone `/bin/sh -c` with the same `child.kill()` wrote the file after the signal. The full bridge was not driven.
 - Reachable: yes when an approved terminal command backgrounds a writer and the user stops the turn.
-- Fixed in this change: no
+- Fixed in this change: yes. Each terminal is its own process group. Stop sends SIGKILL to that group and waits.
 
 `startTerminal` spawns `terminalSpawnSpec` with no process group (`Mac/Resources/PitexAgent/bridge/grok-adapter.ts` lines 1014 to 1020). An empty argv becomes `/bin/sh -c` plus the command (lines 360 to 369). `abort` calls `killTerminals` (lines 638 to 643). That sends `child.kill()`, which is SIGTERM to the shell, then drops the handle (lines 1129 to 1138).
 
@@ -423,7 +423,7 @@ Proposed fix. Put each terminal in its own process group and SIGKILL that group,
 - Severity: data-loss
 - Confidence: high that `onNotification` has no cancel flag. The CLI was not run here.
 - Reachable: yes if the CLI sends `session/update` after `session/cancel`.
-- Fixed in this change: no
+- Fixed in this change: yes. Abort ignores session updates until the next prompt, so a late update does not emit `agent_start`.
 
 `completeTurn` sets `running` to false and emits the events from `closeTurn` (`grok-adapter.ts` lines 837 to 845). `closeTurn` ends with `agent_end` and sets `turnOpen` to false (`grok-map.ts` lines 441 to 446). `onNotification` still records the update and maps it (lines 848 to 860). There is no cancelled check. `ensureTurn` emits a new `agent_start` when `turnOpen` is false (lines 143 to 147). `recordSessionUpdate` appends an `agent_message_chunk` to the history (lines 773 to 775).
 
@@ -434,7 +434,7 @@ Proposed fix. Set an ignore flag at the start of `abort` and return from `onNoti
 - Severity: data-loss
 - Confidence: high for the missing request id. The two-thread race was not run here.
 - Reachable: yes when a session switch starts a second `get_messages` before the first read returns.
-- Fixed in this change: no
+- Fixed in this change: yes. Each `get_messages` carries an id. A reply that is not the latest id does not replace the transcript.
 
 `cli.ts` handles each stdin line without waiting for the previous command (lines 44 to 57). Codex `getMessages` sends `thread/read` for `this.threadId` and awaits it (`codex-adapter.ts` lines 498 to 504). `switchSession` overwrites `this.threadId` (lines 480 to 496). Mac `get_messages` replaces `transcript` with no request id (`AgentCoordinator.swift` lines 1356 to 1357). Model-settings responses already require a matching id (lines 1280 to 1284). Linux does the same replace (`agent.rs` lines 2689 to 2696).
 
@@ -445,7 +445,7 @@ Proposed fix. Ignore a `get_messages` response whose id is not the latest reques
 - Severity: data-loss
 - Confidence: high that the cap breaks before the newline and then parses the prefix. A cargo run of the reader was not done.
 - Reachable: yes if one stdout line is larger than 4 MiB.
-- Fixed in this change: no
+- Fixed in this change: yes. A line over 4 MiB is discarded through its newline, and the next line is parsed.
 
 The stdout reader in `agent.rs` lines 927 to 959 stops the inner read when `line.len()` passes 4 MiB, without consuming the newline (lines 937 to 939). It then parses that prefix with `serde_json::from_slice` (line 950). A prefix that is not JSON is dropped. The next read starts at the following byte, so the rest of the long line and later lines are separate parses. The oversized event is lost.
 
@@ -458,7 +458,7 @@ Proposed fix. When the cap trips before a newline, discard bytes through the nex
 - Severity: data-loss
 - Confidence: high that `abort` does not bump `generation`. A child that exits on SIGINT produces no further stdout.
 - Reachable: yes when the child writes another line after SIGINT.
-- Fixed in this change: no
+- Fixed in this change: yes. Abort bumps the generation and clears the turn, so later stdout is ignored.
 
 `abort` sends SIGINT and responds success (`agy-adapter.ts` lines 635 to 644). It does not increment `generation` and does not clear `turnActive`. Stdout is ingested while `generation` is unchanged (lines 441 to 443). `newSession` does increment `generation` and calls `stopChild` (lines 654 to 657).
 
@@ -469,7 +469,7 @@ Proposed fix. In `abort`, increment `generation`, set `turnActive` to false, the
 - Severity: wrong-behavior
 - Confidence: high for the flag. The CLI was not run.
 - Reachable: yes when a tool is still open and the prompt result is `end_turn`.
-- Fixed in this change: no
+- Fixed in this change: yes. A tool that never finished ends with `isError`.
 
 `closeTurn` sets `isError` only when `stopReason` is `cancelled` or `refusal` (`grok-map.ts` lines 419 to 425). A tool that never reached `completed` still ends with `isError: false` on a normal stop.
 
@@ -480,7 +480,7 @@ Proposed fix. Set `isError: true` when the tool never completed. Not patched her
 - Severity: wrong-behavior
 - Confidence: medium. The mapper does this. The Claude SDK was not run.
 - Reachable: yes if `content_block_stop` arrives before `partial_json` is valid JSON.
-- Fixed in this change: no
+- Fixed in this change: yes. A torn tool JSON does not start the tool.
 
 On `content_block_stop`, a `JSON.parse` failure sets `args` to `{}` and calls `startTool` (`claude-map.ts` lines 524 to 537). `startTool` returns before emitting when `toolStarted` is already set (lines 379 to 384), so a later full `tool_use` does not emit a new start.
 
