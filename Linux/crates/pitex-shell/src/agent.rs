@@ -4936,6 +4936,10 @@ mod session_history_tests {
                 .map(|ticket| ticket.backend.as_str()),
             Some("claude")
         );
+        assert!(
+            agent.catalog_menu("en").accepts_picks,
+            "the model menu stays openable while the switch waits for the new session's model list"
+        );
 
         let models = json!({
             "type": "response",
