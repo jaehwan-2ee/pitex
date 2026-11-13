@@ -82,8 +82,6 @@ pub enum CloseStep {
     Stay,
 }
 
-/// A clean session closes. Unsaved text asks, and the answer decides
-/// whether the write happens before the close.
 pub fn close_step(states: &[DocumentSaveState], choice: Option<CloseChoice>) -> CloseStep {
     let unsaved = states.iter().any(|state| *state != DocumentSaveState::Clean);
     if !unsaved {

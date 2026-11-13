@@ -377,7 +377,6 @@ export function killProcessGroup(child: ChildProcess): void {
       process.kill(-pid, "SIGKILL");
       return;
     } catch {
-      // The process never became a group leader. Fall through to the process.
     }
   }
   try {

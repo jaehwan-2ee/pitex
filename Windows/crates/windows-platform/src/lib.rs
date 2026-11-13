@@ -350,9 +350,6 @@ fn shell_target(value: &std::ffi::OsStr) -> Result<Vec<u16>, ()> {
     if wide.contains(&0) {
         return Err(());
     }
-    // Canonical Windows paths use the verbatim prefix, which the shell
-    // association resolver does not understand. A drive or UNC prefix is
-    // rewritten. A volume GUID keeps the prefix. Every other unit stays.
     wide = app_ports::verbatim_shell_path(&wide);
     wide.push(0);
     Ok(wide)

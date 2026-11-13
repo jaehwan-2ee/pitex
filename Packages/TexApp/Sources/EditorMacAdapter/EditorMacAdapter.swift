@@ -671,7 +671,6 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         return LineCommentEdit(range: lineRange, replacement: transformed)
     }
 
-    /// A character range that stays inside `limit`. Empty after clamping.
     public static func clampedCharacterRange(start: Int, end: Int, limit: Int) -> NSRange? {
         guard limit >= 0 else { return nil }
         let lower = min(max(start, 0), limit)

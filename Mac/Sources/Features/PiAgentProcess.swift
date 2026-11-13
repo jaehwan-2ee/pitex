@@ -516,7 +516,6 @@ final class PiAgentProcess: AgentSession, @unchecked Sendable {
         }
     }
 
-    /// Must run on `ioQueue`.
     private func emitStdoutLines(_ lines: [Data]) {
         for line in lines {
             guard let object = PiJSON.decode(line), let event = PiRPCEvent(object) else { continue }

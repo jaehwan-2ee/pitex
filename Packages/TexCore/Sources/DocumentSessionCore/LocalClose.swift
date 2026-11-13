@@ -12,9 +12,6 @@ public enum LocalCloseAction: Equatable, Sendable {
     case stayOpen
 }
 
-/// A local close may drop text only after the user says so.
-/// Clean sessions close with no prompt. Dirty and conflicted sessions stay
-/// open until the user picks Save or Don't Save.
 public func localCloseAction(
     saveStates: [DocumentSaveState],
     choice: LocalCloseChoice?
