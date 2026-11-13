@@ -419,11 +419,17 @@
    "sha256": "ae5c2c2be5344fba7726d4c67cf07d4ba740bf8a1a9bf2132a5586086c2408ab"
   },
   {
+   "license_in_file": "none-in-file",
+   "origin": "pitex",
+   "path": "src/lib.rs",
+   "sha256": "48d8a175a1000018b8fa29ae750bdc0934eb2ef95038a2138fc264378bda8390"
+  },
+  {
    "license_in_file": "MIT",
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/driver/engine_tex.rs",
-   "sha256": "ff94552294cc6b328bab2269595711f61d1d7ad684cbfe57ae43f3cf456e8ee5",
+   "sha256": "7f31b612f0bfb3a252c0f5650b386f9c432987034ab318ef14b34f622f18881c",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/engine_tex.c",
@@ -491,7 +497,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/main.rs",
-   "sha256": "1d1414f5acdce9058981859321f40c03caeb5fee3cb45de989c899ab3952fa05",
+   "sha256": "0aacd12b8f8a3fe6340f483cf58a5b90c165c609c8cbcd686bd71e7e0e2ec42b",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/main.c",
@@ -611,7 +617,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/shared/pdfread.rs",
-   "sha256": "79b42f05a348756390f409eeb2293b73b014b4c48c82cfc4dec9607c5906763b",
+   "sha256": "cb557ea45547cc1f6687d1f81ffaddc55f19fe55eafe1f576e94260b5fbabcb3",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "shared/pdfread.c",
@@ -984,7 +990,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/main/main.rs",
-   "sha256": "5b41502ec53670b34aa7d0c9b924323dc9bc3007741f513e9ff396197e25222e",
+   "sha256": "de322a9211cd3a8111a8f19f085c41649fc6bca3e82e97191ebacb70529123c4",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/main/main.c",
@@ -1032,7 +1038,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/driver/engine_tex.rs",
-   "sha256": "a68b2eea0780c825d4aed9139284595e708c5f8ebb83c7f2f9c8e85b1a6ca2b2",
+   "sha256": "44c1de3186c718ddb70aac105e4157cf06039b2dd44cb4d074e22a392c5993a5",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/engine_tex.c",
@@ -1100,7 +1106,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/main.rs",
-   "sha256": "e369e3705effcdbc0121289d88dc8966d561718e01f900f261d85bbe2c234b0c",
+   "sha256": "a9791c5dac71e63eb27c3cb65f50afd1035d095fb32ee7f0ba9c4b1a5a4ba571",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/main.c",
@@ -1220,7 +1226,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/shared/pdfread.rs",
-   "sha256": "7c92f29f8474568f7da3615e30a30fd01f9d0ef0533dc905ddc7d5b66dbe6399",
+   "sha256": "e137fdeef4073979cd32cc2d22b5f41e6803623298bf8a5c0f9c98da735ef25a",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "shared/pdfread.c",
@@ -1593,7 +1599,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/main/main.rs",
-   "sha256": "69ce886ad4051dfa22e89890952f03eec664e187f758d5097aae1e987b275b90",
+   "sha256": "3a5944d0d16a29f0d28169a6763a0433e91f4667f7f848701fe89be6a3f5fd65",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/main/main.c",
