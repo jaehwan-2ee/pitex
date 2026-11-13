@@ -25,7 +25,7 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | Rest of CI and release scripts | Not yet audited |
 | Retain cycles, main-thread UI calls, and force unwraps outside the sites below | Not yet audited |
 
-Seven area reviewers were still running at 12:28 UTC and had not returned reports. Their notes are not used here. Anything they might still find is not yet audited.
+The Mac reviewer finished. The fold, close, and comment findings below are that pass, re-checked against the source in this checkout. The other six reviewers had not returned by the time this report was committed. Anything only they might still find is not yet audited.
 
 ## Findings
 
@@ -82,7 +82,69 @@ Proposed fix. In each of those four `main` functions, read `std::env::args_os()`
 
 Refusing the spawn in the parent would stop this one call path. The helper would still panic for any other caller.
 
-### 2. Mac agent stdout grows without a cap
+### 2. Fold detach asks the layout manager for a character range past the buffer
+
+- Severity: crash
+- Confidence: high that the range is unclamped. The AppKit exception was not executed here.
+- Reachable: yes, if a folded document is shortened and the editor view is dismantled before the fold recompute runs
+- Fixed in this change: no
+
+`detach` is `Mac/Sources/Features/EditorFolding.swift` lines 80 to 88. It cancels the pending recompute, then clears hidden glyphs with the old line table.
+
+```swift
+func detach() {
+    recomputeTask?.cancel()
+    recomputeTask = nil
+    if let observer { NotificationCenter.default.removeObserver(observer) }
+    observer = nil
+    if let layoutManager = textView?.layoutManager {
+        clearHiddenGlyphs(layoutManager: layoutManager)
+    }
+```
+
+Edits do not recompute immediately. The text-change observer waits `EditorTiming.analysisDebounce` (`EditorFolding.swift` lines 69 to 74). `clearHiddenGlyphs` builds an `NSRange` from `lineStarts` and does not clamp `start` to the current string (`EditorFolding.swift` lines 325 to 330). `applyFolds` uses the same unclamped `glyphRange` call at line 306.
+
+Switching documents dismantles the editor view. `EditorContainerView.dismantleNSView` calls `foldEngine?.detach()` at line 206. The workspace keys that view by editor identity (`WorkspaceView.swift` line 451).
+
+Trigger. Fold a region, delete most of the document so a stored line offset is past the new string, then switch documents before the debounce fires. `glyphRange(forCharacterRange:)` is then called with a location past the storage.
+
+Proposed fix. Clamp each start and end to `text.length` before building the range, in both `clearHiddenGlyphs` and `applyFolds`. Skip the line when the clamped length is empty. Needs a Mac test that shortens a folded buffer and detaches the view.
+
+### 3. Local close and quit drop unsaved editor text
+
+- Severity: data-loss
+- Confidence: high on the code path. The app was not run.
+- Reachable: yes, with the default autosave setting
+- Fixed in this change: no
+
+`autoSave` starts false (`SettingsView.swift` line 278). `closeDocument` writes the project only when `remote != nil` (`PitexApp.swift` lines 1282 to 1293). For a local file it waits for writes that are already queued (line 1298) and then removes the session. `DocumentSessionRegistry.close` only deletes the session from its map (`DocumentSessionRegistry.swift` lines 97 to 103). It does not write the file.
+
+Quit takes the same local path. `applicationShouldTerminate` returns `.terminateNow` when no workspace has pending writes and none is remote (`PitexApp.swift` lines 3131 to 3132). `prepareForTermination` for a local project only waits for queued writes (lines 1330 to 1332). `applicationWillTerminate` stops the preview helper and the agent (lines 3151 to 3158) and does not save documents.
+
+The tab close button calls `closeDocument` (`WorkspaceView.swift` line 344). File → Close calls `performCloseCommand`, which calls `close()` when a project is open (`PitexApp.swift` lines 692 to 696). `close` saves an SSH project (lines 1363 to 1371) and then `tearDownWorkspace` closes every session without a local save (lines 1461 to 1464).
+
+`saveAll` is the path that does call `persistDirtySessions` for a local project (lines 1177 to 1178). Close and quit do not call it.
+
+Trigger. Leave autosave off. Type into a local file. Close the tab, choose File → Close, or quit, before an explicit Save. The new text is not written and no save dialog runs.
+
+Proposed fix. Before `registry.close` and before `.terminateNow`, flush the editor and ask Save, Don't Save, or Cancel when a local session is dirty. Reuse the SSH flush for the Save choice. This is a behavior change in the close path. It needs a Mac test of tab close, ⌘W, and quit. It was not patched here.
+
+### 4. Toggle Line Comment edits the live buffer from the trailing snapshot
+
+- Severity: data-loss
+- Confidence: high that the command reads `documentSnapshot` and writes the text view. The keystroke race was not executed.
+- Reachable: yes, when the text view and `documentSnapshot` differ
+- Fixed in this change: no
+
+`jumpTo` records the rule. The live text view is authoritative, and `documentSnapshot` trails edits made since the last flush (`PitexApp.swift` lines 1839 to 1840). `toggleLineComment` does not flush. It reads `documentSnapshot?.text` (line 792), builds `lineRange` from that string (line 796), and writes the text view (lines 814 to 815). Save As calls `flushPendingChanges` first (line 766). The comment command does not.
+
+The editor submits text on a task that suspends at `await session.submit` (`EditorMacAdapter.swift` lines 518 to 531). The main actor can run ⌘/ during that wait. The menu item is installed at `PitexApp.swift` lines 3023 to 3024.
+
+Trigger. Type a character and press the line-comment shortcut before the snapshot catches the text view. The command applies a range from the old string to the live buffer. Characters that exist only in the view can be overwritten. If the snapshot is longer than the view, `replaceCharacters(in:with:)` can be asked for a range past the view.
+
+Proposed fix. Build `lineRange` from `textView.string`, and clamp it to that string before `replaceCharacters`. A flush before the edit matches Save As, and the clamp is still required when a disk reload has published a snapshot the view has not applied yet. Needs a Mac test. Not patched here.
+
+### 5. Mac agent stdout grows without a cap
 
 - Severity: crash, by using up memory, if one stdout line is very large
 - Confidence: high that the buffer is uncapped. The out-of-memory crash was not run.
@@ -111,7 +173,7 @@ Trigger. An agent CLI writes a multi-megabyte JSON line, or a stream with no new
 
 Proposed fix. If `stdoutBuffer` grows past 4 MiB with no newline, drop that partial line and wait for the next newline, matching the Linux reader. Add a Mac test that feeds a pipe more than the cap with no newline and asserts the buffer stays bounded. This environment has no Swift toolchain, so the test was not added.
 
-### 3. A settings binding uses `try!` on a throwing preferences value
+### 6. A settings binding uses `try!` on a throwing preferences value
 
 - Severity: crash of the Mac app
 - Confidence: medium
@@ -186,8 +248,11 @@ The model-popup flag already publishes the catalog when it clears (`AgentCoordin
 
 ## Mac-only verification
 
-Run these on a Mac before treating finding 2 or finding 3 as fixed.
+Run these on a Mac before treating the proposals as fixed.
 
-1. Feed `PiAgentProcess` a stdout pipe of more than 4 MiB with no newline. The process should stay up and the buffer should stop growing.
-2. Paste a NUL into the custom-shell field, if the field accepts it. The app should keep the previous build settings.
-3. Point embedded preview at a project directory whose name is not UTF-8, after the helper reads `args_os`. The helper should get past argument setup. Today that case is the panic in finding 1. The Mac driver `main` has the same `std::env::args()` call, so the Mac helper has the same startup panic once a non-Unicode argument reaches it.
+1. Fold a region, delete most of the buffer, and switch documents before the fold debounce. The app should stay up. Today that path is finding 2.
+2. With autosave off, type into a local file and close the tab, press ⌘W, and quit. Each path should ask before discarding the edit. Today those paths are finding 3.
+3. Type one character and immediately toggle the line comment. The new character should remain. Today that path is finding 4.
+4. Feed `PiAgentProcess` a stdout pipe of more than 4 MiB with no newline. The process should stay up and the buffer should stop growing. That is finding 5.
+5. Paste a NUL into the custom-shell field, if the field accepts it. The app should keep the previous build settings. That is finding 6.
+6. Point embedded preview at a project directory whose name is not UTF-8, after the helper reads `args_os`. The helper should get past argument setup. Today that case is the panic in finding 1. The Mac driver `main` has the same `std::env::args()` call, so the Mac helper has the same startup panic once a non-Unicode argument reaches it.
