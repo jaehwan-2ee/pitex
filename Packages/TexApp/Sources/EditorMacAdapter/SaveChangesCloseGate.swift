@@ -49,20 +49,26 @@ public final class SaveChangesCloseGate: NSObject {
 
     @objc public func closeClicked(_ sender: Any?) {
         guard let window = guardedWindow else { return }
+        Task { @MainActor in
+            await self.beginClose(of: window, sender: sender)
+        }
+    }
+
+    @discardableResult
+    public func beginClose(of window: NSWindow, sender: Any?) async -> Bool {
         guard shouldPrompt() else {
             window.performClose(sender)
-            return
+            return true
         }
-        guard !closeInFlight else { return }
+        guard !closeInFlight else { return false }
         closeInFlight = true
         isPrompting = true
-        Task { @MainActor in
-            let accepted = await self.confirm()
-            self.isPrompting = false
-            self.closeInFlight = false
-            guard accepted else { return }
-            window.performClose(sender)
-        }
+        let accepted = await confirm()
+        isPrompting = false
+        closeInFlight = false
+        guard accepted else { return false }
+        window.performClose(sender)
+        return true
     }
 }
 #endif

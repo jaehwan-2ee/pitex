@@ -13,8 +13,8 @@ final class SaveChangesCloseGateTests: XCTestCase {
         var delivered = false
     }
 
-    func testCancelClickOnWindowCloseKeepsTheWindowAndBuffer() {
-        let outcome = runClose(deliver: .click("취소"))
+    func testCancelClickOnWindowCloseKeepsTheWindowAndBuffer() async {
+        let outcome = await runClose(deliver: .click("취소"))
         XCTAssertTrue(outcome.delivered)
         XCTAssertTrue(outcome.windowVisibleDuringAlert)
         XCTAssertEqual(outcome.response, .alertThirdButtonReturn)
@@ -22,8 +22,8 @@ final class SaveChangesCloseGateTests: XCTestCase {
         XCTAssertEqual(outcome.text, "dirty")
     }
 
-    func testEscapeOnWindowCloseKeepsTheWindowAndBuffer() {
-        let outcome = runClose(deliver: .escape)
+    func testEscapeOnWindowCloseKeepsTheWindowAndBuffer() async {
+        let outcome = await runClose(deliver: .escape)
         XCTAssertTrue(outcome.delivered)
         XCTAssertTrue(outcome.windowVisibleDuringAlert)
         XCTAssertEqual(outcome.response, .alertThirdButtonReturn)
@@ -31,8 +31,8 @@ final class SaveChangesCloseGateTests: XCTestCase {
         XCTAssertEqual(outcome.text, "dirty")
     }
 
-    func testDontSaveOnWindowCloseDropsTheBufferAndCloses() {
-        let outcome = runClose(deliver: .click("저장 안 함"))
+    func testDontSaveOnWindowCloseDropsTheBufferAndCloses() async {
+        let outcome = await runClose(deliver: .click("저장 안 함"))
         XCTAssertTrue(outcome.delivered)
         XCTAssertTrue(outcome.windowVisibleDuringAlert)
         XCTAssertEqual(outcome.response, .alertSecondButtonReturn)
@@ -66,7 +66,7 @@ final class SaveChangesCloseGateTests: XCTestCase {
         }
     }
 
-    private func runClose(deliver: Delivery) -> Outcome {
+    private func runClose(deliver: Delivery) async -> Outcome {
         NSApp.setActivationPolicy(.accessory)
         let state = State()
         let window = NSWindow(
@@ -128,11 +128,9 @@ final class SaveChangesCloseGateTests: XCTestCase {
         gate.attach(to: window)
         let closeButton = window.standardWindowButton(.closeButton)
         XCTAssertNotNil(closeButton)
-        closeButton?.performClick(nil)
-        let start = Date()
-        while state.response == nil && Date().timeIntervalSince(start) < 4 {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        }
+        XCTAssertTrue(closeButton?.target === gate)
+        XCTAssertEqual(closeButton?.action, #selector(SaveChangesCloseGate.closeClicked(_:)))
+        await gate.beginClose(of: window, sender: closeButton)
         return Outcome(
             window: window,
             text: state.text,
