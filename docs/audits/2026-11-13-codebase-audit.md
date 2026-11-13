@@ -246,7 +246,7 @@ Proposed fix. Delete only the files the installer copied, and remove `$INSTDIR` 
 - Severity: wrong-behavior
 - Confidence: high for the string rewrite. `ShellExecuteW` was not called.
 - Reachable: yes for a `\\?\Volume{...}` path. A lowercase `unc` prefix is reachable only if the path was not already spelled `UNC`.
-- Fixed in this change: no
+- Fixed in this change: yes. A drive letter and a UNC prefix drop `\\?\`. A volume GUID keeps it.
 
 `shell_target` in `Windows/crates/windows-platform/src/lib.rs` lines 348 to 366 always drops a leading `\\?\`. It rewrites the remainder only when the next units are the exact string `UNC\`.
 

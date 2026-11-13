@@ -351,16 +351,9 @@ fn shell_target(value: &std::ffi::OsStr) -> Result<Vec<u16>, ()> {
         return Err(());
     }
     // Canonical Windows paths use the verbatim prefix, which the shell
-    // association resolver does not understand. Normalize only that
-    // prefix, retaining every other UTF-16 code unit unchanged.
-    let prefix: Vec<u16> = "\\\\?\\".encode_utf16().collect();
-    if wide.starts_with(&prefix) {
-        let unc: Vec<u16> = "UNC\\".encode_utf16().collect();
-        wide.drain(..prefix.len());
-        if wide.starts_with(&unc) {
-            wide.splice(..unc.len(), "\\\\".encode_utf16());
-        }
-    }
+    // association resolver does not understand. A drive or UNC prefix is
+    // rewritten. A volume GUID keeps the prefix. Every other unit stays.
+    wide = app_ports::verbatim_shell_path(&wide);
     wide.push(0);
     Ok(wide)
 }
@@ -556,6 +549,11 @@ mod windows_platform_tests {
             ),
             (r"\\?\C:\논문\draft.pdf", r"C:\논문\draft.pdf"),
             (r"\\?\UNC\server\논문\draft.pdf", r"\\server\논문\draft.pdf"),
+            (r"\\?\unc\server\share\draft.pdf", r"\\server\share\draft.pdf"),
+            (
+                r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\draft.pdf",
+                r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\draft.pdf",
+            ),
             ("ms-settings:defaultapps", "ms-settings:defaultapps"),
         ] {
             let wide = shell_target(std::ffi::OsStr::new(target)).unwrap();

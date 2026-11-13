@@ -249,3 +249,84 @@ mod partial_edit_tests {
         assert_eq!(edit.range.length, 0);
     }
 }
+
+/// The `\\?\` prefix is for the Windows API. A shell association only
+/// understands a drive path or a UNC path, and a volume GUID must keep
+/// the prefix or the shell treats it as a relative name.
+pub fn verbatim_shell_path(wide: &[u16]) -> Vec<u16> {
+    const PREFIX: [u16; 4] = [
+        b'\\' as u16,
+        b'\\' as u16,
+        b'?' as u16,
+        b'\\' as u16,
+    ];
+    if !wide.starts_with(&PREFIX) {
+        return wide.to_vec();
+    }
+    let rest = &wide[PREFIX.len()..];
+    if rest.len() >= 2 && ascii_letter(rest[0]) && rest[1] == b':' as u16 {
+        return rest.to_vec();
+    }
+    if rest.len() >= 4
+        && ascii_upper(rest[0]) == b'U' as u16
+        && ascii_upper(rest[1]) == b'N' as u16
+        && ascii_upper(rest[2]) == b'C' as u16
+        && rest[3] == b'\\' as u16
+    {
+        let mut out = vec![b'\\' as u16, b'\\' as u16];
+        out.extend_from_slice(&rest[4..]);
+        return out;
+    }
+    wide.to_vec()
+}
+
+fn ascii_letter(unit: u16) -> bool {
+    (b'A' as u16..=b'Z' as u16).contains(&unit) || (b'a' as u16..=b'z' as u16).contains(&unit)
+}
+
+fn ascii_upper(unit: u16) -> u16 {
+    if (b'a' as u16..=b'z' as u16).contains(&unit) {
+        unit - 32
+    } else {
+        unit
+    }
+}
+
+#[cfg(test)]
+mod verbatim_shell_path_tests {
+    use super::verbatim_shell_path;
+
+    fn units(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    #[test]
+    fn drive_letter_and_unc_drop_the_verbatim_prefix() {
+        assert_eq!(
+            verbatim_shell_path(&units(r"\\?\C:\논문\draft.pdf")),
+            units(r"C:\논문\draft.pdf")
+        );
+        assert_eq!(
+            verbatim_shell_path(&units(r"\\?\UNC\server\논문\draft.pdf")),
+            units(r"\\server\논문\draft.pdf")
+        );
+        assert_eq!(
+            verbatim_shell_path(&units(r"\\?\unc\server\share\draft.pdf")),
+            units(r"\\server\share\draft.pdf")
+        );
+    }
+
+    #[test]
+    fn a_volume_guid_keeps_the_verbatim_prefix() {
+        let path = r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\draft.pdf";
+        assert_eq!(verbatim_shell_path(&units(path)), units(path));
+    }
+
+    #[test]
+    fn a_path_without_the_prefix_is_unchanged() {
+        let path = r"C:\논문 & 100%\draft (1).pdf";
+        assert_eq!(verbatim_shell_path(&units(path)), units(path));
+        let settings = "ms-settings:defaultapps";
+        assert_eq!(verbatim_shell_path(&units(settings)), units(settings));
+    }
+}
