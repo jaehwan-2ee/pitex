@@ -67,6 +67,36 @@ pub enum DocumentSaveState {
     Conflicted,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseStep {
+    Close,
+    Ask,
+    SaveThenClose,
+    Stay,
+}
+
+/// A clean session closes. Unsaved text asks, and the answer decides
+/// whether the write happens before the close.
+pub fn close_step(states: &[DocumentSaveState], choice: Option<CloseChoice>) -> CloseStep {
+    let unsaved = states.iter().any(|state| *state != DocumentSaveState::Clean);
+    if !unsaved {
+        return CloseStep::Close;
+    }
+    match choice {
+        None => CloseStep::Ask,
+        Some(CloseChoice::Save) => CloseStep::SaveThenClose,
+        Some(CloseChoice::Discard) => CloseStep::Close,
+        Some(CloseChoice::Cancel) => CloseStep::Stay,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DocumentSnapshot {
     #[serde(rename = "documentID")]

@@ -371,6 +371,24 @@ fn text_neutral_mutations_apply_at_the_current_revision_only() {
 }
 
 #[test]
+fn close_step_asks_before_unsaved_text_is_dropped() {
+    assert_eq!(close_step(&[DocumentSaveState::Clean], None), CloseStep::Close);
+    assert_eq!(close_step(&[DocumentSaveState::Dirty], None), CloseStep::Ask);
+    assert_eq!(
+        close_step(&[DocumentSaveState::Conflicted], Some(CloseChoice::Cancel)),
+        CloseStep::Stay
+    );
+    assert_eq!(
+        close_step(&[DocumentSaveState::Dirty], Some(CloseChoice::Save)),
+        CloseStep::SaveThenClose
+    );
+    assert_eq!(
+        close_step(&[DocumentSaveState::Dirty], Some(CloseChoice::Discard)),
+        CloseStep::Close
+    );
+}
+
+#[test]
 fn replace_bytes_replaces_a_longer_file_and_leaves_its_neighbor() {
     let root = temp_root();
     let dest = root.join("draft.tex");

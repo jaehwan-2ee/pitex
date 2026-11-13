@@ -371,7 +371,7 @@ Proposed fix. Write Save As and the PDF export through the same temp file, fsync
 - Severity: data-loss
 - Confidence: high for the close and quit paths. The window was not run.
 - Reachable: yes with autosave left off, one local edit, then close the window or quit.
-- Fixed in this change: no
+- Fixed in this change: yes. A local dirty or conflicted session asks Save, Don't Save, or Cancel before the tab, the project, the window, or quit closes it. A failed file switch reports the error and leaves the editor up.
 
 `connect_close_request` lets a local window close proceed (`app_ui.rs` lines 5975 to 5978). An SSH window starts `begin_remote_save` instead. `application` shutdown waits for writes already in flight and does not flush a dirty buffer (`app_ui.rs` lines 5836 to 5848). `model.close` says pending edits die and removes the sessions (`model.rs` lines 2351 to 2364).
 

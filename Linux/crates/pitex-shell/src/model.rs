@@ -2591,9 +2591,23 @@ impl WorkspaceModel {
     /// `persistDirtySessions` — saves every dirty session; returns a
     /// user-facing problem string when one cannot persist.
     pub fn persist_dirty_sessions(&mut self) -> Option<String> {
+        self.persist_dirty_sessions_matching(|_| true)
+    }
+
+    pub fn persist_dirty_sessions_matching(
+        &mut self,
+        keep: impl Fn(&Path) -> bool,
+    ) -> Option<String> {
         let root = self.project_url.clone()?;
         for session in self.registered_sessions.clone() {
             let snapshot = session.snapshot();
+            if snapshot.save_state == DocumentSaveState::Clean {
+                continue;
+            }
+            let file_url = root.join(snapshot.path.raw_value());
+            if !keep(&file_url) {
+                continue;
+            }
             if snapshot.save_state == DocumentSaveState::Conflicted {
                 return Some(format!(
                     "The file {} has an unresolved external-change conflict. Resolve it before saving.",
@@ -2603,7 +2617,6 @@ impl WorkspaceModel {
             if snapshot.save_state != DocumentSaveState::Dirty {
                 continue;
             }
-            let file_url = root.join(snapshot.path.raw_value());
             // Synchronous — builds and agent runs need the files on disk
             // before they start — but serialized behind any in-flight save.
             match self.writes.write(&session, &file_url, false) {
