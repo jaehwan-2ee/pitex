@@ -97,7 +97,7 @@ final class SaveChangesCloseGateTests: XCTestCase {
                             guard let content = prompt.alert.window.contentView,
                                   let button = Self.button(titled: title, in: content) else { return }
                             prompt.state.delivered = true
-                            Self.sendClick(to: button)
+                            button.performClick(nil)
                         case .escape:
                             prompt.state.delivered = true
                             Self.sendEscape(to: prompt.alert.window)
@@ -146,27 +146,6 @@ final class SaveChangesCloseGateTests: XCTestCase {
             if let button = button(titled: title, in: subview) { return button }
         }
         return nil
-    }
-
-    private static func sendClick(to button: NSButton) {
-        guard let window = button.window else { return }
-        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
-        func event(_ type: NSEvent.EventType) -> NSEvent? {
-            NSEvent.mouseEvent(
-                with: type,
-                location: point,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber,
-                context: nil,
-                eventNumber: 1,
-                clickCount: 1,
-                pressure: 1
-            )
-        }
-        guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return }
-        NSApp.postEvent(down, atStart: false)
-        NSApp.postEvent(up, atStart: false)
     }
 
     private static func sendEscape(to window: NSWindow) {
