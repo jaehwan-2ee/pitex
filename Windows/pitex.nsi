@@ -92,11 +92,25 @@ Section "Install"
     "EstimatedSize" $0
 SectionEnd
 
+; The copied tree, one Delete per file. RMDir runs only when the
+; directory is empty, so a file the installer did not copy stays.
+!system 'node uninstall-files.mjs "dist\${ZIPROOT}" > uninstall-files.nsh'
+
 Section "Uninstall"
-  nsExec::ExecToStack 'taskkill /F /IM ${BINARY}'
+  ; This install's executable holds its files. Other copies of ${BINARY}
+  ; are a different process and are left running.
+  nsExec::ExecToStack 'powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq ''$INSTDIR\bin\${BINARY}'' }) { exit 1 } else { exit 0 }"'
   Pop $0
-  RMDir /r "$INSTDIR"
-  RMDir /r "$SMPROGRAMS\${NAME}"
+  Pop $1
+  ${If} $0 != "0"
+    MessageBox MB_ICONSTOP "Close ${NAME} before uninstalling it."
+    Abort
+  ${EndIf}
+  !include "uninstall-files.nsh"
+  Delete "$INSTDIR\uninstall.exe"
+  Delete "$SMPROGRAMS\${NAME}\${NAME}.lnk"
+  Delete "$SMPROGRAMS\${NAME}\Uninstall ${NAME}.lnk"
+  RMDir "$SMPROGRAMS\${NAME}"
   Delete "$DESKTOP\${NAME}.lnk"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${REGKEY}"
   DeleteRegKey HKCU "Software\${REGKEY}"

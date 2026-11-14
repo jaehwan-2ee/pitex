@@ -1978,13 +1978,7 @@ pub const O_CREAT: ::core::ffi::c_int = 0o100 as ::core::ffi::c_int;
 pub const true_0: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const false_0: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub fn main() {
-    let mut args_strings: Vec<Vec<u8>> = ::std::env::args()
-        .map(|arg| {
-            ::std::ffi::CString::new(arg)
-                .expect("Failed to convert argument into CString.")
-                .into_bytes_with_nul()
-        })
-        .collect();
+    let mut args_strings: Vec<Vec<u8>> = pitex_preview_engine::c_arg_strings();
     let mut args_ptrs: Vec<*mut ::core::ffi::c_char> = args_strings
         .iter_mut()
         .map(|arg| arg.as_mut_ptr() as *mut ::core::ffi::c_char)

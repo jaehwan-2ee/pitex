@@ -634,12 +634,27 @@ export class AgyAdapter implements CliAdapter {
 
   private abort(host: AdapterHost, id?: string): void {
     this.pending = [];
-    if (this.turnActive && this.child && this.child.exitCode === null) {
+    const child = this.child;
+    const wasActive = this.turnActive;
+    this.generation += 1;
+    this.turnActive = false;
+    if (wasActive && child && child.exitCode === null) {
       try {
-        this.child.kill("SIGINT");
+        child.kill("SIGINT");
       } catch {
         // The process can exit between the check and the signal.
       }
+      this.host?.emit({
+        type: "agent_end",
+        messages: [
+          {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "interrupted",
+            content: [],
+          },
+        ],
+      });
     }
     host.respond("abort", true, {}, undefined, id);
   }

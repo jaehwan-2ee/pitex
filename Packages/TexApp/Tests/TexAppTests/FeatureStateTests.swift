@@ -31,6 +31,20 @@ final class FeatureStateTests: XCTestCase {
         }
     }
 
+    func testNulCustomShellKeepsThePreviousPreferences() throws {
+        let current = try BuildPreferences(
+            shellExecution: .custom(command: "latexmk"),
+            customShellAcknowledged: true
+        )
+        XCTAssertNil(current.replacingCustomShell(command: "latex\0mk"))
+        let cleared = try XCTUnwrap(current.replacingCustomShell(command: ""))
+        XCTAssertEqual(cleared.shellExecution, .disabled)
+        XCTAssertFalse(cleared.customShellAcknowledged)
+        let renamed = try XCTUnwrap(current.replacingCustomShell(command: "xelatex"))
+        XCTAssertEqual(renamed.shellExecution, .custom(command: "xelatex"))
+        XCTAssertTrue(renamed.customShellAcknowledged)
+    }
+
     func testChangingCustomShellRequiresFreshAcknowledgement() throws {
         var build = try BuildPreferences().selectingShellExecution(.custom(command: "latexmk main.tex"))
         XCTAssertFalse(build.customShellAcknowledged)

@@ -83,6 +83,12 @@
 "command.project" = "Проект";
 "command.open" = "Открыть…";
 "command.close" = "Закрыть";
+"close.save" = "Сохранить";
+"close.dont_save" = "Не сохранять";
+"close.cancel" = "Отмена";
+"close.unsaved_one" = "Сохранить изменения в документе «%@»?";
+"close.unsaved_many" = "Сохранить изменения в %d документах?";
+"close.unsaved_detail" = "Несохраненные изменения будут потеряны.";
 "command.build" = "Собрать";
 "command.cancel_build" = "Отменить сборку";
 "command.settings" = "Настройки…";

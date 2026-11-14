@@ -2449,13 +2449,12 @@ impl WorkspaceModel {
     }
 
     /// File → Save As…
-    pub fn save_as(&mut self, url: PathBuf, sink: Sender<WorkspaceMessage>) {
-        let Some(snapshot) = self.document_snapshot.clone() else { return };
+    pub fn save_as(&mut self, url: PathBuf, sink: Sender<WorkspaceMessage>) -> Option<String> {
+        let Some(snapshot) = self.document_snapshot.clone() else { return None };
         {
             let _write_gate = remote_core::MirrorWrites::shared().ticket();
-            if let Err(e) = std::fs::write(&url, &snapshot.text) {
-                self.phase = WorkspacePhase::Failed(e.to_string());
-                return;
+            if let Err(error) = AtomicDocumentStore::replace_bytes(snapshot.text.as_bytes(), &url) {
+                return Some(error);
             }
         }
         if let Some(root) = self.project_url.clone() {
@@ -2468,6 +2467,7 @@ impl WorkspaceModel {
                 self.activate_document(url, sink);
             }
         }
+        None
     }
 
     /// Edit → Toggle Line Comment: returns the (UTF-16 range, replacement)
@@ -2591,9 +2591,23 @@ impl WorkspaceModel {
     /// `persistDirtySessions` — saves every dirty session; returns a
     /// user-facing problem string when one cannot persist.
     pub fn persist_dirty_sessions(&mut self) -> Option<String> {
+        self.persist_dirty_sessions_matching(|_| true)
+    }
+
+    pub fn persist_dirty_sessions_matching(
+        &mut self,
+        keep: impl Fn(&Path) -> bool,
+    ) -> Option<String> {
         let root = self.project_url.clone()?;
         for session in self.registered_sessions.clone() {
             let snapshot = session.snapshot();
+            if snapshot.save_state == DocumentSaveState::Clean {
+                continue;
+            }
+            let file_url = root.join(snapshot.path.raw_value());
+            if !keep(&file_url) {
+                continue;
+            }
             if snapshot.save_state == DocumentSaveState::Conflicted {
                 return Some(format!(
                     "The file {} has an unresolved external-change conflict. Resolve it before saving.",
@@ -2603,7 +2617,6 @@ impl WorkspaceModel {
             if snapshot.save_state != DocumentSaveState::Dirty {
                 continue;
             }
-            let file_url = root.join(snapshot.path.raw_value());
             // Synchronous — builds and agent runs need the files on disk
             // before they start — but serialized behind any in-flight save.
             match self.writes.write(&session, &file_url, false) {
@@ -4890,7 +4903,7 @@ impl WorkspaceModel {
             return;
         }
         match event {
-            BuildEvent::Log(entry) => self.build_log_text.push_str(&entry.text),
+            BuildEvent::Log(entry) => append_build_log(&mut self.build_log_text, &entry.text),
             BuildEvent::Issue(record) => self.build_issues.push(record),
             BuildEvent::Lifecycle(_) | BuildEvent::StageStarted { .. } => {}
         }
@@ -5915,6 +5928,50 @@ mod open_bounds {
         let err = WorkspaceModel::initial_opened_document(true, &limited, Path::new("."), &mut resolver)
             .unwrap_err();
         assert!(matches!(err, WorkspaceOpenError::FolderTooLarge));
+    }
+}
+
+const MAX_BUILD_LOG_BYTES: usize = 4 * 1024 * 1024;
+
+fn append_build_log(log: &mut String, text: &str) {
+    append_build_log_capped(log, text, MAX_BUILD_LOG_BYTES);
+}
+
+fn append_build_log_capped(log: &mut String, text: &str, limit: usize) {
+    if log.len() >= limit {
+        return;
+    }
+    let mark = "\n[build log truncated]\n";
+    let room = limit - log.len();
+    if text.len() <= room {
+        log.push_str(text);
+        return;
+    }
+    let keep = room.saturating_sub(mark.len());
+    let mut end = keep.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    log.push_str(&text[..end]);
+    log.push_str(mark);
+}
+
+#[cfg(test)]
+mod build_log_cap {
+    use super::append_build_log_capped;
+
+    #[test]
+    fn the_build_log_stops_at_the_cap_and_drops_the_rest() {
+        let mut log = String::new();
+        append_build_log_capped(&mut log, "hello", 32);
+        assert_eq!(log, "hello");
+        append_build_log_capped(&mut log, "éééééééééé", 12);
+        assert!(log.contains("[build log truncated]"));
+        assert!(log.len() <= 12 + "\n[build log truncated]\n".len());
+        let stopped = log.clone();
+        append_build_log_capped(&mut log, "more", 12);
+        assert_eq!(log, stopped);
+        assert!(log.is_char_boundary(log.len()));
     }
 }
 

@@ -324,7 +324,7 @@ import Foundation
     try run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-I", products,
              "-module-cache-path", directory + "/cache", source] +
             ["PiAuthStore.swift", "PiAgentProcess.swift", "PiRPC.swift"].map { features + "/" + $0 } +
-            ["BuildCore", "TexDomain"].map { products + "/" + $0 + ".o" } + ["-o", check])
+            ["AppPorts", "BuildCore", "TexDomain"].map { products + "/" + $0 + ".o" } + ["-o", check])
     try run([check], environment: environment)
 
     let auth = agent + "/auth.json"

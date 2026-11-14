@@ -1354,13 +1354,10 @@ unsafe extern "C" fn apply_predictor(
     if predictor < 10 as ::core::ffi::c_int {
         return predictor == 1 as ::core::ffi::c_int;
     }
-    let mut bpp: size_t = ((colors * bpc + 7 as ::core::ffi::c_int)
-        / 8 as ::core::ffi::c_int) as size_t;
-    let mut row: size_t = ((colors * bpc * columns + 7 as ::core::ffi::c_int)
-        / 8 as ::core::ffi::c_int) as size_t;
-    if bpp == 0 as size_t || row == 0 as size_t {
-        return false_0 != 0;
-    }
+    let (mut bpp, mut row) = match pitex_preview_engine::predictor_dimensions(colors, bpc, columns) {
+        Some(dims) => dims,
+        None => return false_0 != 0,
+    };
     let mut nrows: size_t = (*data).len.wrapping_div(row.wrapping_add(1 as size_t));
     let mut out: *mut ::core::ffi::c_uchar = malloc(
         nrows.wrapping_mul(row).wrapping_add(1 as size_t),

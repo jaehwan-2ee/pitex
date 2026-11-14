@@ -2,7 +2,7 @@
 
 The goal is a ranked list of real crash and data-loss bugs in Pitex v1.1.1 (`a6bbed8766e7ae7c3a3e3f2b97272eabe4f13320`), plus a patch for any high-confidence crash or data-loss bug that is small enough to test here. The recent split-view crash is the pattern to hunt. AppKit called `responds(to:)` on a split view that was its own delegate, the call asked the delegate again, and menu validation from Spotlight overflowed the stack. A separate agent is changing redundant writes in `pitex-preview` `publish`. This report does not cover that change.
 
-This pull request does not change runtime code. No crash fix was both small and tested before the cutoff. The findings below are proposals.
+This pull request fixes the findings marked yes below. The preview helper's publish disk writes are unchanged. Mac AppKit paths still need the manual checks at the end of this report.
 
 The tree under review is main at v1.1.1. Swift is not installed in this environment, so Mac findings were not executed in the app. The preview helper was not rebuilt. The reproduction below uses the same standard-library call the helper makes.
 
@@ -42,7 +42,7 @@ Severity order is crash, then data loss, then wrong behavior, then minor. Data-l
 - Severity: crash of `pitex-preview` (and the same startup code in the XeTeX `main`)
 - Confidence: high
 - Reachable: yes, when a spawned path is not Unicode
-- Fixed in this change: no
+- Fixed in this change: yes. The preview and XeTeX mains read `args_os` and keep the original bytes, so a non-UTF-8 directory name does not panic at startup.
 
 `pitex-preview` starts by iterating `std::env::args()`. That iterator panics if any argument is not Unicode. Rust records the panic as an unwrap of the invalid argument. The Linux driver entry is `PreviewEngine/src/linux/driver/main.rs` lines 7152 to 7158.
 
@@ -93,7 +93,7 @@ Refusing the spawn in the parent would stop this one call path. The helper would
 - Severity: crash
 - Confidence: high that the range is unclamped. The AppKit exception was not executed here.
 - Reachable: yes, if a folded document is shortened and the editor view is dismantled before the fold recompute runs
-- Fixed in this change: no
+- Fixed in this change: yes. `clearHiddenGlyphs` and `applyFolds` clamp each character range to the live string and skip an empty range.
 
 `detach` is `Mac/Sources/Features/EditorFolding.swift` lines 80 to 88. It cancels the pending recompute, then clears hidden glyphs with the old line table.
 
@@ -121,7 +121,7 @@ Proposed fix. Clamp each start and end to `text.length` before building the rang
 - Severity: data-loss
 - Confidence: high on the code path. The app was not run.
 - Reachable: yes, with the default autosave setting
-- Fixed in this change: no
+- Fixed in this change: yes. Tab close, File → Close, ⌘W, the window close button, and quit ask Save, Don't Save, or Cancel when a local session is dirty or conflicted. Cancel leaves it open. Remote close still saves without that prompt.
 
 `autoSave` starts false (`SettingsView.swift` line 278). `closeDocument` writes the project only when `remote != nil` (`PitexApp.swift` lines 1282 to 1293). For a local file it waits for writes that are already queued (line 1298) and then removes the session. `DocumentSessionRegistry.close` only deletes the session from its map (`DocumentSessionRegistry.swift` lines 97 to 103). It does not write the file.
 
@@ -140,7 +140,7 @@ Proposed fix. Before `registry.close` and before `.terminateNow`, flush the edit
 - Severity: data-loss
 - Confidence: high that the command reads `documentSnapshot` and writes the text view. The keystroke race was not executed.
 - Reachable: yes, when the text view and `documentSnapshot` differ
-- Fixed in this change: no
+- Fixed in this change: yes. The command builds the line range from `textView.string` and clamps the selection to that string.
 
 `jumpTo` records the rule. The live text view is authoritative, and `documentSnapshot` trails edits made since the last flush (`PitexApp.swift` lines 1839 to 1840). `toggleLineComment` does not flush. It reads `documentSnapshot?.text` (line 792), builds `lineRange` from that string (line 796), and writes the text view (lines 814 to 815). Save As calls `flushPendingChanges` first (line 766). The comment command does not.
 
@@ -155,7 +155,7 @@ Proposed fix. Build `lineRange` from `textView.string`, and clamp it to that str
 - Severity: crash, by using up memory, if one stdout line is very large
 - Confidence: high that the buffer is uncapped. The out-of-memory crash was not run.
 - Reachable: yes, if the agent writes a long line with no newline, or one newline only at the end of a huge line
-- Fixed in this change: no
+- Fixed in this change: yes. A stdout line past 4 MiB is dropped through its newline, including a finished line, and the next line at or under the cap is kept.
 
 `PiAgentProcess` appends every stdout chunk and removes bytes only when it sees a newline. The buffer is `Mac/Sources/Features/PiAgentProcess.swift` lines 512 to 522.
 
@@ -184,7 +184,7 @@ Proposed fix. If `stdoutBuffer` grows past 4 MiB with no newline, drop that part
 - Severity: crash of the Mac app
 - Confidence: medium
 - Reachable: only if the custom-shell field contains a NUL. That path was not executed.
-- Fixed in this change: no
+- Fixed in this change: yes. A custom shell command that `BuildPreferences` rejects leaves the previous value in place.
 
 `BuildPreferences` rejects a custom shell command that contains a NUL.
 
@@ -223,7 +223,7 @@ Needs Mac verification. Confirm whether the SwiftUI text field can deliver a NUL
 - Severity: data-loss
 - Confidence: high for what the script requests. NSIS and `taskkill` were not executed here.
 - Reachable: yes. The installer shows a directory page, and uninstall uses the directory stored at install time.
-- Fixed in this change: no
+- Fixed in this change: yes. Uninstall deletes the copied files, removes a directory only when it is empty, and stops when this install's executable is still running.
 
 The uninstall section is `Windows/pitex.nsi` lines 95 to 99.
 
@@ -248,7 +248,7 @@ Proposed fix. Delete only the files the installer copied, and remove `$INSTDIR` 
 - Severity: wrong-behavior
 - Confidence: high for the string rewrite. `ShellExecuteW` was not called.
 - Reachable: yes for a `\\?\Volume{...}` path. A lowercase `unc` prefix is reachable only if the path was not already spelled `UNC`.
-- Fixed in this change: no
+- Fixed in this change: yes. A drive letter and a UNC prefix drop `\\?\`. A volume GUID keeps it.
 
 `shell_target` in `Windows/crates/windows-platform/src/lib.rs` lines 348 to 366 always drops a leading `\\?\`. It rewrites the remainder only when the next units are the exact string `UNC\`.
 
@@ -278,7 +278,7 @@ Proposed fix. Strip `\\?\` only for a drive letter and for `UNC` compared withou
 - Severity: crash
 - Confidence: high that the driver calls `abort` when that slot is already filled. The TeX engine was not run, so the sample document was not executed.
 - Reachable: yes if a second write with one of those extensions is recorded after the first.
-- Fixed in this change: no
+- Fixed in this change: yes. The first xdv, dvi, pdf, synctex, or log open owns that slot. A later open is an ordinary file and does not abort.
 
 `PreviewEngine/src/linux/driver/engine_tex.rs` lines 1340 to 1395 abort when `st.document`, `st.synctex`, or `st.log` already has an entry and another open arrives for `xdv`, `dvi`, `pdf`, `synctex`, or `log`. The macOS twin prints the same "two log files" error at `PreviewEngine/src/macos/driver/engine_tex.rs` line 1396.
 
@@ -299,7 +299,7 @@ Proposed fix. Keep the first log, output, and synctex handles, and treat a later
 - Severity: crash
 - Confidence: high. The arithmetic was reproduced. A PDF was not fed through the helper.
 - Reachable: yes when a decoded stream reaches `apply_predictor` with these parameters.
-- Fixed in this change: no
+- Fixed in this change: yes. Colors, bits per component, or columns below 1, or a row that cannot be formed, skip the predictor instead of dividing.
 
 `apply_predictor` in `PreviewEngine/src/linux/shared/pdfread.rs` lines 1357 to 1364 computes the row length in `i32`, casts it to `usize`, and then divides by `row + 1`. Predictor values below 10 return earlier. Predictor 15 does not.
 
@@ -320,7 +320,7 @@ Proposed fix. Reject `Colors`, `BitsPerComponent`, or `Columns` below 1, and ret
 - Severity: data-loss
 - Confidence: high. The same `opendir` and `unlink` sequence deleted a file in the symlink target. The 4096-byte path truncation was not executed.
 - Reachable: yes when `{out}/p{seq}` is a symlink to another directory.
-- Fixed in this change: no
+- Fixed in this change: yes. `remove_dir` unlinks a directory symlink and leaves the target. A path that does not fit the buffer is not deleted.
 
 `remove_dir` in `PreviewEngine/src/linux/driver/main.rs` lines 1380 to 1412 opens the path with `opendir`, unlinks each child, and then calls `rmdir`. `opendir` follows a directory symlink. `release` builds `{out}/p{seq}` with `snprintf` into a 4096-byte buffer and passes it to `remove_dir` without checking the return (`main.rs` lines 1776 to 1784).
 
@@ -343,7 +343,7 @@ Proposed fix. If `snprintf` does not fit, skip the deletion and report an I/O er
 - Severity: crash
 - Confidence: high that `refresh_assistant` unwraps `agent` after `ensure_agent` has refused to create one. The GTK timeout was not run.
 - Reachable: yes during an SSH close while a transcript render is already scheduled.
-- Fixed in this change: no
+- Fixed in this change: yes. `refresh_assistant` returns when the agent is gone, so a deferred render during a remote close does not panic.
 
 `refresh_assistant` in `Linux/crates/pitex-shell/src/app_ui.rs` lines 4242 to 4246 calls `ensure_agent` and then `self.agent.as_mut().unwrap()`. `ensure_agent` returns immediately while `closing_remote_workspace()` is true (line 2743) and does not recreate the agent. That flag is set when `pending_remote_save` or `queued_remote_save` is any remote action except Build (lines 233 to 235 and 3463 to 3466). `begin_remote_save` for a closing action calls `shutdown_agent`, which sets `agent` to `None` (lines 3480 to 3482 and 1593 to 1596). File → Close on a remote project takes that path (lines 2075 to 2078).
 
@@ -358,7 +358,7 @@ Proposed fix. After `ensure_agent`, return when `self.agent` is `None`. Not patc
 - Severity: data-loss
 - Confidence: high that both calls use `std::fs::write`. A full disk was not simulated.
 - Reachable: yes. Save As can target the open document. Save PDF can target an existing file.
-- Fixed in this change: no
+- Fixed in this change: yes. Save As and Save PDF write a temp file, sync it, and rename it over the destination. A failed PDF write is shown.
 
 `save_as` writes the editor snapshot with `std::fs::write` (`Linux/crates/pitex-shell/src/model.rs` lines 2452 to 2459). That opens the destination with truncation before the bytes are written. On `Err` it stores `WorkspacePhase::Failed` and returns, so a failed write can leave a shorter file. The failure path returns before `activate_document`.
 
@@ -373,7 +373,7 @@ Proposed fix. Write Save As and the PDF export through the same temp file, fsync
 - Severity: data-loss
 - Confidence: high for the close and quit paths. The window was not run.
 - Reachable: yes with autosave left off, one local edit, then close the window or quit.
-- Fixed in this change: no
+- Fixed in this change: yes. A local dirty or conflicted session asks Save, Don't Save, or Cancel before the tab, the project, the window, or quit closes it. A failed file switch reports the error and leaves the editor up.
 
 `connect_close_request` lets a local window close proceed (`app_ui.rs` lines 5975 to 5978). An SSH window starts `begin_remote_save` instead. `application` shutdown waits for writes already in flight and does not flush a dirty buffer (`app_ui.rs` lines 5836 to 5848). `model.close` says pending edits die and removes the sessions (`model.rs` lines 2351 to 2364).
 
@@ -386,7 +386,7 @@ Proposed fix. On a local dirty session, flush and ask before the window closes a
 - Severity: crash, by allocation, if the PDF is larger than the process can hold
 - Confidence: high that the reads are uncapped. The allocation failure was not run.
 - Reachable: yes when `main.pdf` already exists and a build starts.
-- Fixed in this change: no
+- Fixed in this change: yes. A PDF over 50 MiB stays on disk and its path is published. The build copies that file aside and puts it back if the build fails. It does not read the file into memory.
 
 Before the engine runs, an existing output is read with `std::fs::read` and kept as `preexisting_pdf` (`Linux/crates/build-core/src/lib.rs` lines 2306 to 2309). A successful build reads the output again (line 2434). `output_changed` reads it a third time (lines 3034 to 3036). A read error fails the build. There is no size check.
 
@@ -399,7 +399,7 @@ Proposed fix. Use the existing 50 MiB cap for these three reads, leave a larger 
 - Severity: crash, by allocation, if the build command writes without stopping
 - Confidence: high that each chunk is appended. A runaway command was not run.
 - Reachable: yes. The build command is user-editable.
-- Fixed in this change: no
+- Fixed in this change: yes. `build_log_text` stops at 4 MiB and drops the rest.
 
 `apply_build_event` appends every log chunk to `build_log_text` (`model.rs` line 4893). Git status stops at 4 MiB and kills the child. The build log has no such stop. Cancel still leaves the bytes already copied in the string.
 
@@ -410,7 +410,7 @@ Proposed fix. Cap `build_log_text` the way git status is capped, and drop the re
 - Severity: data-loss
 - Confidence: high. A stand-alone `/bin/sh -c` with the same `child.kill()` wrote the file after the signal. The full bridge was not driven.
 - Reachable: yes when an approved terminal command backgrounds a writer and the user stops the turn.
-- Fixed in this change: no
+- Fixed in this change: yes. Each terminal is its own process group. Stop sends SIGKILL to that group and waits.
 
 `startTerminal` spawns `terminalSpawnSpec` with no process group (`Mac/Resources/PitexAgent/bridge/grok-adapter.ts` lines 1014 to 1020). An empty argv becomes `/bin/sh -c` plus the command (lines 360 to 369). `abort` calls `killTerminals` (lines 638 to 643). That sends `child.kill()`, which is SIGTERM to the shell, then drops the handle (lines 1129 to 1138).
 
@@ -425,7 +425,7 @@ Proposed fix. Put each terminal in its own process group and SIGKILL that group,
 - Severity: data-loss
 - Confidence: high that `onNotification` has no cancel flag. The CLI was not run here.
 - Reachable: yes if the CLI sends `session/update` after `session/cancel`.
-- Fixed in this change: no
+- Fixed in this change: yes. Abort ignores session updates until the next prompt, so a late update does not emit `agent_start`.
 
 `completeTurn` sets `running` to false and emits the events from `closeTurn` (`grok-adapter.ts` lines 837 to 845). `closeTurn` ends with `agent_end` and sets `turnOpen` to false (`grok-map.ts` lines 441 to 446). `onNotification` still records the update and maps it (lines 848 to 860). There is no cancelled check. `ensureTurn` emits a new `agent_start` when `turnOpen` is false (lines 143 to 147). `recordSessionUpdate` appends an `agent_message_chunk` to the history (lines 773 to 775).
 
@@ -436,7 +436,7 @@ Proposed fix. Set an ignore flag at the start of `abort` and return from `onNoti
 - Severity: data-loss
 - Confidence: high for the missing request id. The two-thread race was not run here.
 - Reachable: yes when a session switch starts a second `get_messages` before the first read returns.
-- Fixed in this change: no
+- Fixed in this change: yes. Each `get_messages` carries an id. A reply that is not the latest id does not replace the transcript.
 
 `cli.ts` handles each stdin line without waiting for the previous command (lines 44 to 57). Codex `getMessages` sends `thread/read` for `this.threadId` and awaits it (`codex-adapter.ts` lines 498 to 504). `switchSession` overwrites `this.threadId` (lines 480 to 496). Mac `get_messages` replaces `transcript` with no request id (`AgentCoordinator.swift` lines 1356 to 1357). Model-settings responses already require a matching id (lines 1280 to 1284). Linux does the same replace (`agent.rs` lines 2689 to 2696).
 
@@ -447,7 +447,7 @@ Proposed fix. Ignore a `get_messages` response whose id is not the latest reques
 - Severity: data-loss
 - Confidence: high that the cap breaks before the newline and then parses the prefix. A cargo run of the reader was not done.
 - Reachable: yes if one stdout line is larger than 4 MiB.
-- Fixed in this change: no
+- Fixed in this change: yes. A line over 4 MiB is discarded through its newline, and the next line is parsed.
 
 The stdout reader in `agent.rs` lines 927 to 959 stops the inner read when `line.len()` passes 4 MiB, without consuming the newline (lines 937 to 939). It then parses that prefix with `serde_json::from_slice` (line 950). A prefix that is not JSON is dropped. The next read starts at the following byte, so the rest of the long line and later lines are separate parses. The oversized event is lost.
 
@@ -460,7 +460,7 @@ Proposed fix. When the cap trips before a newline, discard bytes through the nex
 - Severity: data-loss
 - Confidence: high that `abort` does not bump `generation`. A child that exits on SIGINT produces no further stdout.
 - Reachable: yes when the child writes another line after SIGINT.
-- Fixed in this change: no
+- Fixed in this change: yes. Abort bumps the generation and clears the turn, so later stdout is ignored.
 
 `abort` sends SIGINT and responds success (`agy-adapter.ts` lines 635 to 644). It does not increment `generation` and does not clear `turnActive`. Stdout is ingested while `generation` is unchanged (lines 441 to 443). `newSession` does increment `generation` and calls `stopChild` (lines 654 to 657).
 
@@ -471,7 +471,7 @@ Proposed fix. In `abort`, increment `generation`, set `turnActive` to false, the
 - Severity: wrong-behavior
 - Confidence: high for the flag. The CLI was not run.
 - Reachable: yes when a tool is still open and the prompt result is `end_turn`.
-- Fixed in this change: no
+- Fixed in this change: yes. A tool that never finished ends with `isError`.
 
 `closeTurn` sets `isError` only when `stopReason` is `cancelled` or `refusal` (`grok-map.ts` lines 419 to 425). A tool that never reached `completed` still ends with `isError: false` on a normal stop.
 
@@ -482,7 +482,7 @@ Proposed fix. Set `isError: true` when the tool never completed. Not patched her
 - Severity: wrong-behavior
 - Confidence: medium. The mapper does this. The Claude SDK was not run.
 - Reachable: yes if `content_block_stop` arrives before `partial_json` is valid JSON.
-- Fixed in this change: no
+- Fixed in this change: yes. A torn tool JSON does not start the tool.
 
 On `content_block_stop`, a `JSON.parse` failure sets `args` to `{}` and calls `startTool` (`claude-map.ts` lines 524 to 537). `startTool` returns before emitting when `toolStarted` is already set (lines 379 to 384), so a later full `tool_use` does not emit a new start.
 
@@ -596,7 +596,7 @@ The other `delegate = self` assignments are not the view assigning itself:
 
 `SessionTextView.validateUserInterfaceItem` calls `super` after handling find actions (`EditorMacAdapter.swift` lines 33 to 38). That is not the split view calling itself.
 
-`WorkspaceWindowCloseDelegate.responds(to:)` forwards to the previous window delegate (`PitexApp.swift` lines 3330 to 3336). The delegate is not the window. After a remote close, `close()` clears `remote` before `performClose`, so the second `windowShouldClose` returns at the `remote != nil` check (`PitexApp.swift` lines 3338 to 3348 and 1357 to 1373) instead of sticking on `closeRequested`.
+The red close button is hooked by `SaveChangesCloseGate`. The window keeps SwiftUI's delegate, so LaunchServices can still reuse it. After `close()` clears the project, the gate restores the button and `performClose` uses that delegate.
 
 `BuildSupport.swift` lines 832 to 840 call `try! ShellAuthority(...)` with `source: .userConfiguration`, `approvedByUser: true`, and a non-empty disclosure. `ShellAuthority.init` throws only when the source is not built-in and the user has not approved it, or when the disclosure is empty (`BuildCore.swift` lines 67 to 69). Those arguments do not throw.
 
@@ -620,9 +620,9 @@ The model-popup flag already publishes the catalog when it clears (`AgentCoordin
 
 Run these on a Mac before treating the proposals as fixed.
 
-1. Fold a region, delete most of the buffer, and switch documents before the fold debounce. The app should stay up. Today that path is finding 2.
-2. With autosave off, type into a local file and close the tab, press ⌘W, and quit. Each path should ask before discarding the edit. Today those paths are finding 3.
-3. Type one character and immediately toggle the line comment. The new character should remain. Today that path is finding 4.
-4. Feed `PiAgentProcess` a stdout pipe of more than 4 MiB with no newline. The process should stay up and the buffer should stop growing. That is finding 5.
-5. Paste a NUL into the custom-shell field, if the field accepts it. The app should keep the previous build settings. That is finding 6.
-6. Point embedded preview at a project directory whose name is not UTF-8, after the helper reads `args_os`. The helper should get past argument setup. Today that case is the panic in finding 1. The Mac driver `main` has the same `std::env::args()` call, so the Mac helper has the same startup panic once a non-Unicode argument reaches it.
+1. Fold a region, delete most of the buffer, and switch documents before the fold debounce. The app should stay up. Finding 2 clamps the range. This check is still manual.
+2. With autosave off, type into a local file and close the tab, press ⌘W, close the window, and quit. Each path should ask Save, Don't Save, or Cancel. Cancel should leave the text in the editor. Finding 3.
+3. Type one character and immediately toggle the line comment. The new character should remain, with a `%` on that line. Finding 4.
+4. Feed `PiAgentProcess` a stdout pipe of more than 4 MiB with no newline. The process should stay up and the buffer should stop growing. Finding 5.
+5. Paste a NUL into the custom-shell field, if the field accepts it. The app should keep the previous build settings. Finding 6.
+6. Point embedded preview at a project directory whose name is not UTF-8. The helper should get past argument setup. Finding 1 reads `args_os` in the Mac driver too. This check is still manual.

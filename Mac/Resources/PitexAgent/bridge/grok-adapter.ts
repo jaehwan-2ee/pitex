@@ -369,6 +369,23 @@ export function terminalSpawnSpec(
   return { command: "/bin/sh", args: ["-c", command], verbatim: false };
 }
 
+/** SIGKILL the terminal's process group. The shell and a background child share that group. */
+export function killProcessGroup(child: ChildProcess): void {
+  const pid = child.pid;
+  if (pid && process.platform !== "win32") {
+    try {
+      process.kill(-pid, "SIGKILL");
+      return;
+    } catch {
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // Already exited.
+  }
+}
+
 function terminalEnv(base: NodeJS.ProcessEnv, requested: unknown): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
   if (!Array.isArray(requested)) return env;
@@ -412,6 +429,7 @@ export class GrokAdapter implements CliAdapter {
   private terminalAlways = false;
   private commands: Json[] = [];
   private running = false;
+  private ignoreUpdates = false;
   private suppressUserChunks = false;
   private suppressLive = false;
   private acceptClose = false;
@@ -609,6 +627,7 @@ export class GrokAdapter implements CliAdapter {
     }
     pushUserMessage(this.history, message);
     this.suppressUserChunks = true;
+    this.ignoreUpdates = false;
     this.running = true;
     const pending = this.rpc?.request(
       "session/prompt",
@@ -636,16 +655,18 @@ export class GrokAdapter implements CliAdapter {
   }
 
   private async abort(host: AdapterHost, id?: string): Promise<void> {
+    this.ignoreUpdates = true;
     this.denyOutstanding("cancelled");
-    this.killTerminals();
+    await this.killTerminals();
     if (this.rpc && this.sessionId) this.rpc.notify("session/cancel", { sessionId: this.sessionId });
     if (this.running) this.completeTurn("cancelled");
     host.respond("abort", true, {}, undefined, id);
   }
 
   private async newSession(host: AdapterHost, id?: string): Promise<void> {
+    this.ignoreUpdates = true;
     this.denyOutstanding("cancelled");
-    this.killTerminals();
+    await this.killTerminals();
     if (this.rpc && this.sessionId && this.running) {
       this.rpc.notify("session/cancel", { sessionId: this.sessionId });
     }
@@ -659,6 +680,7 @@ export class GrokAdapter implements CliAdapter {
   }
 
   private async switchSession(command: PiCommand, host: AdapterHost): Promise<void> {
+    this.ignoreUpdates = false;
     const sessionPath = command.sessionPath ?? "";
     const sessionId = threadIdFor(this.sessionDir, sessionPath);
     if (!sessionId) {
@@ -846,6 +868,7 @@ export class GrokAdapter implements CliAdapter {
   }
 
   private onNotification(method: string, params: Json): void {
+    if (this.ignoreUpdates) return;
     if (method !== "session/update") return;
     const update = asObject(params.update);
     if (!update) return;
@@ -1015,6 +1038,7 @@ export class GrokAdapter implements CliAdapter {
       cwd,
       env: terminalEnv(this.env, env),
       shell: false,
+      detached: true,
       windowsHide: true,
       windowsVerbatimArguments: launch.verbatim,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1126,16 +1150,23 @@ export class GrokAdapter implements CliAdapter {
     this.spawnTerminal(pending.rpcId, params, cwd, commandText);
   }
 
-  private killTerminals(): void {
+  private async killTerminals(): Promise<void> {
+    const waits: Promise<void>[] = [];
     for (const term of this.terminals.values()) {
       if (term.exited) continue;
-      try {
-        term.child.kill();
-      } catch {
-        // Already exited.
-      }
+      killProcessGroup(term.child);
+      waits.push(
+        new Promise((resolve) => {
+          const timer = setTimeout(resolve, 500);
+          term.child.once("exit", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        })
+      );
     }
     this.terminals.clear();
+    await Promise.all(waits);
   }
 }
 

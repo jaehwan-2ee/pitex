@@ -369,3 +369,53 @@ fn text_neutral_mutations_apply_at_the_current_revision_only() {
     }
     assert_eq!(session.snapshot(), conflicted);
 }
+
+#[test]
+fn close_step_asks_before_unsaved_text_is_dropped() {
+    assert_eq!(close_step(&[DocumentSaveState::Clean], None), CloseStep::Close);
+    assert_eq!(close_step(&[DocumentSaveState::Dirty], None), CloseStep::Ask);
+    assert_eq!(
+        close_step(&[DocumentSaveState::Conflicted], Some(CloseChoice::Cancel)),
+        CloseStep::Stay
+    );
+    assert_eq!(
+        close_step(&[DocumentSaveState::Dirty], Some(CloseChoice::Save)),
+        CloseStep::SaveThenClose
+    );
+    assert_eq!(
+        close_step(&[DocumentSaveState::Dirty], Some(CloseChoice::Discard)),
+        CloseStep::Close
+    );
+}
+
+#[test]
+fn replace_bytes_replaces_a_longer_file_and_leaves_its_neighbor() {
+    let root = temp_root();
+    let dest = root.join("draft.tex");
+    let neighbor = root.join("other.tex");
+    std::fs::write(&dest, b"original-and-longer").unwrap();
+    std::fs::write(&neighbor, b"keep").unwrap();
+
+    AtomicDocumentStore::replace_bytes(b"new", &dest).unwrap();
+
+    assert_eq!(std::fs::read(&dest).unwrap(), b"new");
+    assert_eq!(std::fs::read(&neighbor).unwrap(), b"keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn replace_bytes_renames_over_the_destination_and_leaves_a_symlink_target() {
+    let root = temp_root();
+    let target = root.join("target.txt");
+    let link = root.join("link.txt");
+    std::fs::write(&target, b"original-and-longer").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    AtomicDocumentStore::replace_bytes(b"new", &link).unwrap();
+
+    assert_eq!(std::fs::read(&link).unwrap(), b"new");
+    assert_eq!(std::fs::read(&target).unwrap(), b"original-and-longer");
+    assert!(std::fs::read_dir(&root).unwrap().all(|entry| {
+        !entry.unwrap().file_name().to_string_lossy().contains(".tmp")
+    }));
+}

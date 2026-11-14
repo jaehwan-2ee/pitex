@@ -1430,16 +1430,8 @@ struct SettingsView: View {
                 return ""
             },
             set: { newValue in
-                store.updateBuild {
-                    let execution: ShellExecutionPreference = newValue.isEmpty ? .disabled : .custom(command: newValue)
-                    return try! BuildPreferences(
-                        engine: $0.build.engine,
-                        maximumPasses: $0.build.maximumPasses,
-                        stopsAfterFirstError: $0.build.stopsAfterFirstError,
-                        shellExecution: execution,
-                        customShellAcknowledged: newValue.isEmpty ? false : $0.build.customShellAcknowledged
-                    )
-                }
+                guard let updated = store.settings.build.replacingCustomShell(command: newValue) else { return }
+                store.updateBuild { _ in updated }
             }
         )
     }

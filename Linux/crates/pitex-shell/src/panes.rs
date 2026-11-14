@@ -1513,8 +1513,13 @@ pub fn build_preview_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4
                     s.pdf_display_name()
                 };
                 let window = b.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+                let state = state.clone();
                 compat::save_file(window.as_ref(), "Save PDF", Some(name.as_str()), move |path| {
-                    let _ = std::fs::write(path, &data);
+                    if let Err(error) = document_session_core::AtomicDocumentStore::replace_bytes(&data, &path) {
+                        if let Ok(st) = state.try_borrow() {
+                            st.toast(&error);
+                        }
+                    }
                 });
             }
         });

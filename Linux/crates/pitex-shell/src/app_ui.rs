@@ -15,7 +15,9 @@ use app_ports::DocumentMutationResult;
 use linux_platform::LinuxEnvironment as PlatformEnvironment;
 #[cfg(windows)]
 use windows_platform::WindowsEnvironment as PlatformEnvironment;
-use document_session_core::{DocumentMutation, DocumentSaveState, DocumentSession};
+use document_session_core::{
+    close_step, CloseChoice, CloseStep, DocumentMutation, DocumentSaveState, DocumentSession,
+};
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, glib};
 use libadwaita as adw;
@@ -233,6 +235,14 @@ impl RemoteSaveAction {
     fn closes_workspace(&self) -> bool {
         !matches!(self, Self::Build)
     }
+}
+
+#[derive(Clone)]
+enum LocalCloseTarget {
+    Window,
+    Project,
+    Document(PathBuf),
+    Exit,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1782,10 +1792,11 @@ impl AppState {
                     let save_remote = st.model.remote.is_some()
                         && st.model.project_url.as_ref().is_some_and(|root| path.starts_with(root));
                     if let Some(tx) = st.tx.clone() {
-                        st.model.save_as(path, tx);
-                    }
-                    if save_remote && !matches!(st.model.phase, WorkspacePhase::Failed(_)) {
-                        st.begin_remote_save(RemoteSaveAction::Build);
+                        if let Some(error) = st.model.save_as(path, tx) {
+                            st.toast(&error);
+                        } else if save_remote {
+                            st.begin_remote_save(RemoteSaveAction::Build);
+                        }
                     }
                     st.refresh_after_document_change();
                 }
@@ -1815,7 +1826,129 @@ impl AppState {
             self.begin_remote_save(RemoteSaveAction::CloseDocument(url));
             return;
         }
-        self.close_document_after_save(url);
+        self.confirm_local_close(LocalCloseTarget::Document(url));
+    }
+
+    fn local_unsaved(&self, only: Option<&Path>) -> Vec<PathBuf> {
+        let Some(root) = self.model.project_url.clone() else {
+            return Vec::new();
+        };
+        self.model
+            .registered_sessions
+            .iter()
+            .filter_map(|session| {
+                let snapshot = session.snapshot();
+                if snapshot.save_state == DocumentSaveState::Clean {
+                    return None;
+                }
+                let url = root.join(snapshot.path.raw_value());
+                if only.is_some_and(|only| only != url) {
+                    return None;
+                }
+                Some(url)
+            })
+            .collect()
+    }
+
+    fn confirm_local_close(&mut self, target: LocalCloseTarget) {
+        let only = match &target {
+            LocalCloseTarget::Document(url) => Some(url.as_path()),
+            _ => None,
+        };
+        let unsaved = self.local_unsaved(only);
+        let states: Vec<_> = unsaved.iter().map(|_| DocumentSaveState::Dirty).collect();
+        if close_step(&states, None) == CloseStep::Close {
+            self.finish_local_close(target, false);
+            return;
+        }
+        self.present_unsaved_dialog(target, unsaved);
+    }
+
+    fn finish_local_close(&mut self, target: LocalCloseTarget, save: bool) {
+        if save {
+            let only = match &target {
+                LocalCloseTarget::Document(url) => Some(url.clone()),
+                _ => None,
+            };
+            if let Some(error) = self
+                .model
+                .persist_dirty_sessions_matching(|url| only.as_ref().is_none_or(|only| only == url))
+            {
+                self.toast(&error);
+                return;
+            }
+        }
+        match target {
+            LocalCloseTarget::Window => {
+                self.allow_window_close = true;
+                glib::idle_add_local_once(|| {
+                    UI.with(|ui| {
+                        if let Some(window) = ui.window.borrow().as_ref() {
+                            window.close();
+                        }
+                    });
+                });
+            }
+            LocalCloseTarget::Project => self.close_after_save(),
+            LocalCloseTarget::Document(url) => self.close_document_after_save(url),
+            LocalCloseTarget::Exit => std::process::exit(0),
+        }
+    }
+
+    #[allow(deprecated)]
+    fn present_unsaved_dialog(&self, target: LocalCloseTarget, unsaved: Vec<PathBuf>) {
+        let lang = self.language;
+        let window = UI.with(|ui| ui.window.borrow().clone());
+        let message = if unsaved.len() == 1 {
+            let name = unsaved[0]
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            tr1(lang, "close.unsaved_one", &name)
+        } else {
+            crate::l10n::trn(lang, "close.unsaved_many", &[&unsaved.len().to_string()])
+        };
+        let dialog = gtk4::MessageDialog::new(
+            window.as_ref().map(|window| window.upcast_ref::<gtk4::Window>()),
+            gtk4::DialogFlags::MODAL,
+            gtk4::MessageType::Question,
+            gtk4::ButtonsType::None,
+            &message,
+        );
+        dialog.set_secondary_text(Some(&tr(lang, "close.unsaved_detail")));
+        dialog.add_button(&tr(lang, "close.save"), gtk4::ResponseType::Accept);
+        dialog.add_button(&tr(lang, "close.dont_save"), gtk4::ResponseType::Reject);
+        dialog.add_button(&tr(lang, "close.cancel"), gtk4::ResponseType::Cancel);
+        dialog.connect_response(move |dialog, response| {
+            let choice = match response {
+                gtk4::ResponseType::Accept => Some(CloseChoice::Save),
+                gtk4::ResponseType::Reject => Some(CloseChoice::Discard),
+                _ => Some(CloseChoice::Cancel),
+            };
+            let states = vec![DocumentSaveState::Dirty; unsaved.len().max(1)];
+            let step = close_step(&states, choice);
+            STATE.with(|slot| {
+                if let Some(state) = slot.borrow().as_ref() {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        match step {
+                            CloseStep::SaveThenClose => st.finish_local_close(target.clone(), true),
+                            CloseStep::Close => st.finish_local_close(target.clone(), false),
+                            CloseStep::Stay | CloseStep::Ask => {}
+                        }
+                    }
+                }
+            });
+            dialog.close();
+        });
+        dialog.present();
+    }
+
+    fn leave_for_update(&mut self) {
+        if self.model.remote.is_some() {
+            self.begin_remote_save(RemoteSaveAction::ExitForUpdate);
+            return;
+        }
+        self.confirm_local_close(LocalCloseTarget::Exit);
     }
 
     fn close_document_after_save(&mut self, url: PathBuf) {
@@ -2077,7 +2210,7 @@ impl AppState {
             self.begin_remote_save(RemoteSaveAction::CloseProject);
             return;
         }
-        self.close_after_save();
+        self.confirm_local_close(LocalCloseTarget::Project);
     }
 
     fn close_after_save(&mut self) {
@@ -4241,6 +4374,11 @@ impl AppState {
 
     pub fn refresh_assistant(&mut self) {
         self.ensure_agent();
+        // A remote close shuts the agent down and refuses to create another
+        // one. A transcript render scheduled before that close still runs.
+        if self.agent.is_none() {
+            return;
+        }
         self.sync_assistant_visibility();
         let lang = self.language;
         let agent = self.agent.as_mut().unwrap();
@@ -4663,8 +4801,12 @@ impl AppState {
                 // `activateDocument`'s catch publishes `.failed` — the
                 // workspace never went through a loading phase first.
                 Err(e) => {
-                    self.model.phase = crate::model::WorkspacePhase::Failed(e);
-                    self.refresh_phase();
+                    if self.model.project_url.is_some() {
+                        self.toast(&e);
+                    } else {
+                        self.model.phase = crate::model::WorkspacePhase::Failed(e);
+                        self.refresh_phase();
+                    }
                 }
             },
             WorkspaceMessage::PdfLoaded { hash, info } => {
@@ -5028,11 +5170,7 @@ pub(crate) fn request_exit_for_update() {
             let slot = slot.borrow();
             let Some(state) = slot.as_ref() else { std::process::exit(0) };
             let Ok(mut st) = state.try_borrow_mut() else { return true };
-            if st.model.remote.is_some() {
-                st.begin_remote_save(RemoteSaveAction::ExitForUpdate);
-            } else {
-                std::process::exit(0);
-            }
+            st.leave_for_update();
             false
         });
         if retry { request_exit_for_update(); }
@@ -5922,11 +6060,7 @@ fn build_window(app: &adw::Application, app_version: &str) {
                 match result {
                     Ok(Some((info, outcome))) => match outcome {
                         crate::update::InstallOutcome::ExitRequested => {
-                            if st.model.remote.is_some() {
-                                st.begin_remote_save(RemoteSaveAction::ExitForUpdate);
-                            } else {
-                                std::process::exit(0);
-                            }
+                            st.leave_for_update();
                         }
                         crate::update::InstallOutcome::AwaitingRestart => {
                             st.toast(&crate::l10n::tr1(
@@ -5974,10 +6108,19 @@ fn build_chrome(
         let state = state.clone();
         window.connect_close_request(move |_| {
             let Ok(mut st) = state.try_borrow_mut() else { return glib::Propagation::Stop };
-            if st.allow_window_close || st.model.remote.is_none() {
+            if st.allow_window_close {
                 return glib::Propagation::Proceed;
             }
-            st.begin_remote_save(RemoteSaveAction::CloseWindow);
+            if st.model.remote.is_some() {
+                st.begin_remote_save(RemoteSaveAction::CloseWindow);
+                return glib::Propagation::Stop;
+            }
+            let unsaved = st.local_unsaved(None);
+            let states: Vec<_> = unsaved.iter().map(|_| DocumentSaveState::Dirty).collect();
+            if close_step(&states, None) == CloseStep::Close {
+                return glib::Propagation::Proceed;
+            }
+            st.present_unsaved_dialog(LocalCloseTarget::Window, unsaved);
             glib::Propagation::Stop
         });
     }
@@ -7774,6 +7917,26 @@ for line in sys.stdin:
         texture.save_to_png(&out).unwrap();
         eprintln!("diff screenshot written to {out}");
         window.close();
+    }
+}
+
+#[cfg(test)]
+mod assistant_close_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_assistant_returns_when_a_remote_close_removed_the_agent() {
+        adw::init().unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut state = AppState::new(
+            crate::settings::SettingsStore::new(crate::settings::Preferences::standard()),
+            tx,
+            "test".into(),
+        );
+        state.pending_remote_save = Some(RemoteSaveAction::CloseWindow);
+        state.agent = None;
+        state.refresh_assistant();
+        assert!(state.agent.is_none());
     }
 }
 

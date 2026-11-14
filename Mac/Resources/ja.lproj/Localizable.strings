@@ -82,6 +82,12 @@
 "command.project" = "プロジェクト";
 "command.open" = "開く…";
 "command.close" = "閉じる";
+"close.save" = "保存";
+"close.dont_save" = "保存しない";
+"close.cancel" = "キャンセル";
+"close.unsaved_one" = "“%@”への変更を保存しますか？";
+"close.unsaved_many" = "%d個の書類への変更を保存しますか？";
+"close.unsaved_detail" = "保存しないと、変更は失われます。";
 "command.build" = "ビルド";
 "command.cancel_build" = "ビルドをキャンセル";
 "command.settings" = "設定…";

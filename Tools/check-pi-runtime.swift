@@ -394,7 +394,7 @@ do {
     let features = repository.appendingPathComponent("Mac/Sources/Features")
     try run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "6", "-I", products.path, source.path]
         + ["PiAgentProcess.swift", "PiAuthStore.swift", "PiRPC.swift"].map { features.appendingPathComponent($0).path }
-        + ["BuildCore", "TexDomain"].map { products.appendingPathComponent($0 + ".o").path } + ["-o", program.path])
+        + ["AppPorts", "BuildCore", "TexDomain"].map { products.appendingPathComponent($0 + ".o").path } + ["-o", program.path])
     for mode in ["bun", "node"] {
         let work = root.appendingPathComponent(mode)
         try files.createDirectory(at: work, withIntermediateDirectories: false)

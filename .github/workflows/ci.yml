@@ -333,7 +333,7 @@ jobs:
         with:
           node-version: '24'
       - uses: oven-sh/setup-bun@v2
-      - run: cargo test --workspace
+      - run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test --workspace
         working-directory: Linux
       - name: Allow unprivileged user namespaces for the WebKit sandbox
         # WebKitGTK's bubblewrap sandbox needs unprivileged userns; the GitHub
@@ -408,7 +408,7 @@ jobs:
       - run: cargo build -p pitex --no-default-features --features markdown-preview,equation-preview,embedded-preview
         working-directory: Linux
       - name: Unit tests (22.04 feature set)
-        run: cargo test --workspace --exclude pitex --no-default-features --features markdown-preview,equation-preview,embedded-preview
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test --workspace --exclude pitex --no-default-features --features markdown-preview,equation-preview,embedded-preview
         working-directory: Linux
       - name: Rust IBus compatibility adapter
         run: cargo test -p pitex --no-default-features --features embedded-preview ibus_compat

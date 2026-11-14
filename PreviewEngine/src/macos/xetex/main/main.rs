@@ -1915,13 +1915,7 @@ unsafe fn main_0(
     return 1 as ::core::ffi::c_int;
 }
 pub fn main() {
-    let mut args_strings: Vec<Vec<u8>> = ::std::env::args()
-        .map(|arg| {
-            ::std::ffi::CString::new(arg)
-                .expect("Failed to convert argument into CString.")
-                .into_bytes_with_nul()
-        })
-        .collect();
+    let mut args_strings: Vec<Vec<u8>> = pitex_preview_engine::c_arg_strings();
     let mut args_ptrs: Vec<*mut ::core::ffi::c_char> = args_strings
         .iter_mut()
         .map(|arg| arg.as_mut_ptr() as *mut ::core::ffi::c_char)

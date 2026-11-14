@@ -82,6 +82,12 @@
 "command.project" = "Project";
 "command.open" = "Open…";
 "command.close" = "Close";
+"close.save" = "Save";
+"close.dont_save" = "Don't Save";
+"close.cancel" = "Cancel";
+"close.unsaved_one" = "Do you want to save the changes made to “%@”?";
+"close.unsaved_many" = "Do you want to save the changes to %d documents?";
+"close.unsaved_detail" = "Your changes will be lost if you do not save them.";
 "command.build" = "Build";
 "command.cancel_build" = "Cancel Build";
 "command.settings" = "Settings…";

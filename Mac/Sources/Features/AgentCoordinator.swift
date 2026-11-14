@@ -202,6 +202,7 @@ final class AgentCoordinator: ObservableObject {
     private var deltaFlushTask: Task<Void, Never>?
     private var prepareTask: Task<Void, Never>?
     private var modelSettingsRequestID: String?
+    private var messagesRequestID: String?
     /// Watches `PiPaths.agentDirectory` so auth/model/settings edits made in
     /// pi's own flows (or by hand) restart the agent without an app relaunch.
     private struct ConfigFileState: Equatable {
@@ -1350,10 +1351,11 @@ final class AgentCoordinator: ObservableObject {
             sendModelSettings(.getState)
         case "switch_session":
             if event.responseData?["cancelled"] as? Bool != true {
-                sendSilently(.getMessages)
+                requestMessages()
             }
             sendModelSettings(.getState)
         case "get_messages":
+            guard event.string("id") == messagesRequestID else { return }
             transcript = transcriptEntries(from: event.responseData?["messages"] as? [[String: Any]] ?? [])
             sendSilently(.getSessionStats)
         default:
@@ -1640,6 +1642,12 @@ final class AgentCoordinator: ObservableObject {
 
     private func sendSilently(_ command: PiRPCCommand) {
         try? process?.send(command)
+    }
+
+    private func requestMessages() {
+        let id = UUID().uuidString
+        messagesRequestID = id
+        try? process?.send(.getMessages, id: id)
     }
 
     private func toolSummary(name: String, args: [String: Any]?) -> String {

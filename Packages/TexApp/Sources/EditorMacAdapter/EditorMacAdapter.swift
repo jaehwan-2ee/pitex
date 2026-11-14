@@ -638,6 +638,16 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         let start = map(selection.location)
         return NSRange(location: start, length: map(NSMaxRange(selection)) - start)
     }
+
+    /// Comments or uncomments the lines touched by `selection` in `text`.
+    /// The selection is clamped to `text` before the line range is built.
+    public nonisolated static func lineCommentEdit(text: String, selection: NSRange) -> LineCommentEdit {
+        EditorText.lineCommentEdit(text: text, selection: selection)
+    }
+
+    public nonisolated static func clampedCharacterRange(start: Int, end: Int, limit: Int) -> NSRange? {
+        EditorText.clampedCharacterRange(start: start, end: end, limit: limit)
+    }
 }
 
 #else
@@ -648,6 +658,14 @@ public final class EditorMacAdapter {
 
     public static func make(session: any DocumentSessionPort) async throws -> EditorMacAdapter {
         throw PlatformPortError.unavailable(feature: "TextKit editor adapter", platform: "non-macOS")
+    }
+
+    public nonisolated static func lineCommentEdit(text: String, selection: NSRange) -> LineCommentEdit {
+        EditorText.lineCommentEdit(text: text, selection: selection)
+    }
+
+    public nonisolated static func clampedCharacterRange(start: Int, end: Int, limit: Int) -> NSRange? {
+        EditorText.clampedCharacterRange(start: start, end: end, limit: limit)
     }
 }
 #endif

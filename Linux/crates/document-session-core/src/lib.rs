@@ -67,6 +67,34 @@ pub enum DocumentSaveState {
     Conflicted,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseStep {
+    Close,
+    Ask,
+    SaveThenClose,
+    Stay,
+}
+
+pub fn close_step(states: &[DocumentSaveState], choice: Option<CloseChoice>) -> CloseStep {
+    let unsaved = states.iter().any(|state| *state != DocumentSaveState::Clean);
+    if !unsaved {
+        return CloseStep::Close;
+    }
+    match choice {
+        None => CloseStep::Ask,
+        Some(CloseChoice::Save) => CloseStep::SaveThenClose,
+        Some(CloseChoice::Discard) => CloseStep::Close,
+        Some(CloseChoice::Cancel) => CloseStep::Stay,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DocumentSnapshot {
     #[serde(rename = "documentID")]
@@ -690,6 +718,32 @@ impl AtomicDocumentStore {
                 path: url.to_string_lossy().into_owned(),
             },
         }
+    }
+
+    /// Replaces `url` by writing a temp file, syncing it, and renaming it
+    /// over the destination. A failed write leaves the destination as it was.
+    pub fn replace_bytes(bytes: &[u8], url: &Path) -> Result<(), String> {
+        let parent = url.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        let file_name = url
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "document".to_string());
+        let temporary = parent.join(format!(".{file_name}.pitex-{}.tmp", uuid_v4()));
+        let written = (|| -> Result<(), StoreError> {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .map_err(classify_io)?;
+            file.write_all(bytes).map_err(classify_io)?;
+            file.sync_all().map_err(classify_io)?;
+            std::fs::rename(&temporary, url).map_err(classify_io)?;
+            synchronize_directory(&parent)?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(&temporary);
+        written.map_err(|_| format!("The file {} could not be saved.", url.display()))
     }
 }
 
