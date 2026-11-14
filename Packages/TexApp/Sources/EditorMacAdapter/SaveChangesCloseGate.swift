@@ -56,14 +56,51 @@ public final class SaveChangesCloseGate: NSObject {
 
     @discardableResult
     public func beginClose(of window: NSWindow, sender: Any?) async -> Bool {
+        switch claim(window, sender: sender) {
+        case .closed:
+            return true
+        case .busy:
+            return false
+        case .prompt:
+            return complete(await confirm(), window: window, sender: sender)
+        }
+    }
+
+    /// Same close decision as `beginClose`. `decide` runs on the caller's stack.
+    @discardableResult
+    public func performGuardedClose(
+        of window: NSWindow,
+        sender: Any?,
+        decide: @MainActor () -> Bool
+    ) -> Bool {
+        switch claim(window, sender: sender) {
+        case .closed:
+            return true
+        case .busy:
+            return false
+        case .prompt:
+            return complete(decide(), window: window, sender: sender)
+        }
+    }
+
+    private enum Claim {
+        case closed
+        case busy
+        case prompt
+    }
+
+    private func claim(_ window: NSWindow, sender: Any?) -> Claim {
         guard shouldPrompt() else {
             window.performClose(sender)
-            return true
+            return .closed
         }
-        guard !closeInFlight else { return false }
+        guard !closeInFlight else { return .busy }
         closeInFlight = true
         isPrompting = true
-        let accepted = await confirm()
+        return .prompt
+    }
+
+    private func complete(_ accepted: Bool, window: NSWindow, sender: Any?) -> Bool {
         isPrompting = false
         closeInFlight = false
         guard accepted else { return false }
