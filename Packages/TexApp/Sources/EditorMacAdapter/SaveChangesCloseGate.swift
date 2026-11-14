@@ -15,13 +15,16 @@ public final class SaveChangesCloseGate: NSObject {
     private weak var originalTarget: AnyObject?
     private var originalAction: Selector?
     private let shouldPrompt: @MainActor () -> Bool
+    private let allowsImmediateClose: @MainActor () -> Bool
     private let confirm: @MainActor () async -> Bool
 
     public init(
         shouldPrompt: @escaping @MainActor () -> Bool,
+        allowsImmediateClose: @escaping @MainActor () -> Bool = { false },
         confirm: @escaping @MainActor () async -> Bool
     ) {
         self.shouldPrompt = shouldPrompt
+        self.allowsImmediateClose = allowsImmediateClose
         self.confirm = confirm
     }
 
@@ -49,6 +52,13 @@ public final class SaveChangesCloseGate: NSObject {
 
     @objc public func closeClicked(_ sender: Any?) {
         guard let window = guardedWindow else { return }
+        // Quit closes windows on the main thread inside `reply`. A Task
+        // scheduled here cannot run until that reply returns, so the quit waits forever.
+        if allowsImmediateClose() {
+            restore()
+            window.performClose(sender)
+            return
+        }
         Task { @MainActor in
             await self.beginClose(of: window, sender: sender)
         }

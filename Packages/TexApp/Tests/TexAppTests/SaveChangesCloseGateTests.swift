@@ -47,6 +47,27 @@ final class SaveChangesCloseGateTests: XCTestCase {
         }
     }
 
+    func testQuitClosesWithoutWaitingForThePrompt() {
+        withModalTimeout {
+            var prompted = false
+            let window = makeWindow()
+            let gate = SaveChangesCloseGate(
+                shouldPrompt: { true },
+                allowsImmediateClose: { true },
+                confirm: {
+                    prompted = true
+                    return false
+                }
+            )
+            window.orderFront(nil)
+            gate.attach(to: window)
+            gate.closeClicked(window.standardWindowButton(.closeButton))
+            XCTAssertFalse(prompted)
+            XCTAssertFalse(window.isVisible)
+            XCTAssertFalse(window.standardWindowButton(.closeButton)?.target === gate)
+        }
+    }
+
     func testCancelClickOnWindowCloseKeepsTheWindowAndBuffer() {
         let outcome = runClose(deliver: .click(2))
         XCTAssertTrue(outcome.delivered)
@@ -204,9 +225,11 @@ final class SaveChangesCloseGateTests: XCTestCase {
                 return false
             case .discard:
                 state.text = ""
+                gate.restore()
                 return true
             case .save:
                 state.text = "saved"
+                gate.restore()
                 return true
             }
         }

@@ -520,6 +520,7 @@ final class WorkspaceModel: ObservableObject {
         guard windowCloseDelegate == nil else { return }
         let gate = SaveChangesCloseGate(
             shouldPrompt: { [weak self] in self?.hasProject == true },
+            allowsImmediateClose: { PitexAppDelegate.terminationIsInFlight },
             confirm: { [weak self] in
                 guard let self else { return false }
                 return await self.close() != nil
@@ -3121,6 +3122,7 @@ private struct WorkspaceCommandContent: Commands {
 }
 
 final class PitexAppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor static var terminationIsInFlight = false
     @MainActor private var terminationInFlight = false
     /// LaunchServices caches the Dock/Finder icon keyed by the app bundle's
     /// modification date — a drag-copied update preserves it, so a new icon
@@ -3182,8 +3184,12 @@ final class PitexAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminationInFlight else { return .terminateLater }
         terminationInFlight = true
+        Self.terminationIsInFlight = true
         Task { @MainActor in
-            defer { self.terminationInFlight = false }
+            defer {
+                self.terminationInFlight = false
+                Self.terminationIsInFlight = false
+            }
             var prepared: [WorkspaceModel] = []
             for workspace in WorkspaceWindows.live {
                 if await workspace.prepareForTermination(keepFrozen: true) == false {

@@ -272,6 +272,7 @@ let check = ##"""
 import AppKit
 import Combine
 import CoreGraphics
+import EditorMacAdapter
 import PDFKit
 import RemoteCore
 
@@ -379,7 +380,9 @@ import RemoteCore
             workspace.settings.updateBuild { try! $0.build.selectingShellExecution(.custom(command: "true")).acknowledgingCustomShell() }
             await workspace.open(mirror.root)
             try require(workspace.remote != nil && workspace.environment != nil, "SSH mirror did not open")
-            try require(nativeWindow.delegate != nil && nativeWindow.delegate !== nativeDelegate,
+            try require(nativeWindow.delegate === nativeDelegate,
+                        "SSH must keep the native window delegate")
+            try require(nativeWindow.standardWindowButton(.closeButton)?.target is SaveChangesCloseGate,
                         "Opening SSH in an existing native window must install the save gate")
             try require(workspace.embeddedPreviewEnabled, "SSH local embedded preview is disabled")
             workspace.buildCommandText = "sleep 1; cat main.tex > saved-by-build.txt; cp fixture.pdf main.pdf"
@@ -471,6 +474,8 @@ import RemoteCore
             try require(closed != nil && workspace.projectURL == nil, "Successful forced Save did not close")
             try require(nativeWindow.delegate === nativeDelegate,
                         "Closing SSH must restore the existing native window delegate")
+            try require(!(nativeWindow.standardWindowButton(.closeButton)?.target is SaveChangesCloseGate),
+                        "Closing SSH must restore the close button")
             try require(try await remote() == tex("CloseMarker"), "Close discarded the final unsaved edit")
             print("PASS project close forces final save and remote upload")
 
