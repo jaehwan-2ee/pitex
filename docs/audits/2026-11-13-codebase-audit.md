@@ -19,15 +19,17 @@ The tree under review is main at v1.1.1. Swift is not installed in this environm
 | `Tools/install-deb.sh`, one input-audit step, one release skill step | Covered |
 | Windows uninstaller and `shell_target` | Covered |
 | Rest of the Windows app | Not yet audited |
-| TexCore persistence, SSH, and sync | Not yet audited |
-| TexApp beyond the editor delegate assignment and `ShellAuthority` | Not yet audited |
+| TexCore pull, fetch, and resolve downloads | Covered |
+| TexApp editor rejection fallback | Covered |
+| Rest of TexCore persistence and TexApp | Not yet audited |
 | Linux assistant refresh during SSH close, Save As, Save PDF, local close, and the uncapped build PDF and log | Covered |
 | Rest of the Linux GTK UI | Not yet audited |
 | Rest of preview `publish`, unsafe blocks, and image decoders | Not yet audited |
-| Rest of CI and release scripts | Not yet audited |
+| Nightly tag move, asset cleanup, input-audit summary, SSH preview skip, and the source-bundle check | Covered |
+| Other workflow jobs outside the sites below | Not yet audited |
 | Retain cycles, main-thread UI calls, and force unwraps outside the sites below | Not yet audited |
 
-The Mac, Windows, preview, Linux, and adapter reviewers finished. Their crash and data-loss notes below were re-checked against the source in this checkout. The TexApp and CI reviewers had not returned by the last commit. Anything only they might still find is not yet audited.
+The Mac, Windows, preview, Linux, adapter, TexApp, and CI reviewers finished. Their crash and data-loss notes below were re-checked against the source in this checkout. Anything outside the sites named above is not yet audited.
 
 Numbers below follow the order a finding was confirmed. Severity is on each item.
 
@@ -486,6 +488,100 @@ On `content_block_stop`, a `JSON.parse` failure sets `args` to `{}` and calls `s
 
 Proposed fix. On parse failure, do not call `startTool`. Not patched here.
 
+### 24. Pull can install a short tar snapshot and record it as the baseline
+
+- Severity: data-loss
+- Confidence: high that the received bytes are placed without a check against the listing hash. GNU tar 1.35 on this machine archived 200000 bytes of a file that was 4200000 bytes when tar returned, and tar exited 0.
+- Reachable: yes when a remote file changes between the hash listing and `tar -cf`.
+- Fixed in this change: no
+
+`download` runs `tarOut` with `client.run`, not `runChecked` (`Packages/TexCore/Sources/RemoteCore/RemoteSync.swift` lines 807 to 813). `run` returns a non-zero status and throws only on 255 (`SSHClient.swift` lines 187 to 199). A non-empty archive is kept. The comment on line 807 says a non-zero tar exit can still leave a usable archive.
+
+`pull` places those bytes when the local hash is still the pre-download hash, then sets `manifest[path]` to the hash of the received file (lines 559 to 568). Nothing compares that hash to `remote[path]` from the listing. `fetch` places the same way with no local-hash re-check (lines 685 to 696). `resolve` with keep-remote does the same (lines 758 to 766).
+
+`SyncPlanner.pull` downloads again when the remote hash differs from the manifest and the local hash still equals the manifest (lines 199 to 202). If the editor then saves a different local copy, both sides differ, so pull records a conflict (lines 203 to 204). `resolve(keepLocal: true)` uploads the local bytes over the remote file (lines 722 to 730). That upload is what would replace the remote tail.
+
+Proposed fix. If the received hash is not the listing hash, skip `place` and do not update the manifest. Not patched here. Swift is not installed.
+
+### 25. A rejected editor submit replaces the text view and drops the in-flight keystroke
+
+- Severity: data-loss
+- Confidence: medium. The fallback is written in the adapter. The keystroke and the disk change were not interleaved here.
+- Reachable: yes when a submit is in flight and the session text changes.
+- Fixed in this change: no
+
+`EditorMacAdapter` submits on a task and, on `.rejected`, rebases only when `current.text == committed.text` and `attempts < 3`. Any other rejection calls `apply(current)` (`Packages/TexApp/Sources/EditorMacAdapter/EditorMacAdapter.swift` lines 537 to 548). The comment at lines 520 to 527 says that fallback drops the in-flight keystroke. `apply` sets `desiredText` to the snapshot text and replaces the text storage (lines 570 to 577). After that, `desiredText == committed.text`, so the follow-up `submitPendingChangeIfNeeded` does not resubmit the typed characters.
+
+`processDiskChange` adopts the file when `saveState == .clean` (`PitexApp.swift` lines 1951 to 1956). A keystroke that has not reached `DocumentSession.apply` still leaves the session clean, so a watcher event during the await can resolve the session to the disk text and make `submit` return `.rejected`.
+
+Proposed fix. On a divergent rejection, keep the text still in the view and resubmit that diff, or surface a conflict. Not patched here.
+
+### 26. Nightly moves the tag before the assets exist, and the next run treats that as done
+
+- Severity: data-loss
+- Confidence: high for the step order and the skip. A failed publish was not run on GitHub.
+- Reachable: yes when any command after the tag move exits non-zero.
+- Fixed in this change: no
+
+Publish moves `refs/tags/nightly` to HEAD (`.github/workflows/nightly.yml` lines 145 to 154) and uploads `dist/*` in the next step (line 172). The gate exits 0 without writing `version` when the tag already points at HEAD and `force` is not set (lines 56 to 58). An empty version skips build and publish. A red upload can leave the tag and the release notes on the new commit while the assets are still the previous upload. The next scheduled run is green and does not replace those assets.
+
+Proposed fix. Move the tag after a successful upload. Treat "tag equals HEAD" as published only when the nightly manifest commit matches and the asset names for that version are present. Not patched here.
+
+### 27. A failed nightly asset listing still exits 0
+
+- Severity: data-loss
+- Confidence: high that a failed `gh release view` does not fail the step. Which of two same-suffix assets the updater downloads was not run.
+- Reachable: yes if the asset list fails after the upload in the same step.
+- Fixed in this change: no
+
+The cleanup is an `if` assignment with stderr discarded (`nightly.yml` lines 174 to 180). `set -euo pipefail` does not abort a command that fails in an `if` test. Old assets stay. New and old assets can share a suffix such as `windows-amd64-setup.exe`. `latest_release` keeps the first asset whose name ends with that suffix (`Linux/crates/pitex-shell/src/update.rs` lines 124 to 134). After finding 26, the next nightly does not retry the cleanup once the tag matches HEAD.
+
+Proposed fix. Fail the step when the asset list fails. Not patched here.
+
+### 28. The input-method audit stays green when the audit reports failures
+
+- Severity: wrong-behavior
+- Confidence: high. The session exit is discarded, and the summary line is printed before that exit.
+- Reachable: yes on a manual dispatch of the input-method audit.
+- Fixed in this change: no
+
+The session ends with `|| true` (`.github/workflows/input-audit.yml` line 83). The next check is `grep -q '^INPUT_AUDIT_SUMMARY '` (line 94). `Tools/audit-ibus-capslock.py` prints that prefix and then exits 1 when `failures` is non-zero (lines 193 to 194). A log that says `"failures": 3` still satisfies the grep.
+
+Proposed fix. Fail unless the summary JSON has `"failures": 0`. Not patched here.
+
+### 29. The macOS SSH preview step succeeds when `gh release view` fails
+
+- Severity: wrong-behavior
+- Confidence: high. Any non-zero status takes the `exit 0` branch.
+- Reachable: yes on the macOS CI job.
+- Fixed in this change: no
+
+`ci.yml` lines 176 to 178 treat every failed `gh release view` as "no published release" and exit 0. Auth failures, rate limits, and 5xx take the same path. The SSH preview fixture does not run.
+
+Proposed fix. Exit 0 only for a confirmed missing release. Any other `gh` status should fail the step. Not patched here.
+
+### 30. `verify-release-surface` passes when the source bundle is absent
+
+- Severity: wrong-behavior
+- Confidence: high that a missing file returns before any bundle check. Whether that early return was meant to be optional was not established.
+- Reachable: yes. The gates job runs this tool, and no workflow runs `Tools/create-source-bundle.mjs`.
+- Fixed in this change: no
+
+`validateBundle` returns immediately when the path is not a file (`Tools/verify-release-surface.mjs` lines 65 to 66). A missing SBOM is a hard failure. A missing `Artifacts/source-bundle.tar.gz` is not. The tar, gzip, and manifest checks never run on CI.
+
+Proposed fix. Fail when an explicit bundle path is not a file. Failing the default path also requires the gates job to create the bundle, so that half is not a one-line change. Not patched here.
+
+### 31. A tag publish cannot recover when the release already exists
+
+- Severity: wrong-behavior
+- Confidence: medium. The workflow has one `gh release create` and no upload or edit fallback. `gh release create` was not re-run.
+- Reachable: yes on a re-run of a `v*` publish after the release or its draft already exists.
+- Fixed in this change: no
+
+`release.yml` lines 824 to 825 are the only release mutation. There is no `release view` followed by upload. A second create fails because the tag already has a release.
+
+Proposed fix. If `gh release view` succeeds, upload with `--clobber` and edit the notes. Create only when the release is missing. Not patched here.
+
 ## Checks that did not show a bug
 
 These are the places that looked like the split-view crash, or like an obvious panic, and did not survive a walk of the call.
@@ -516,7 +612,7 @@ The red close button is hooked by `SaveChangesCloseGate`. The window keeps Swift
 
 Malformed adapter lines are skipped in `cli.ts` lines 47 to 52, `jsonrpc.ts` lines 127 to 132, `grok-adapter.ts` lines 262 to 267, `agy-adapter.ts` lines 508 to 514, and `claude-map.ts` lines 529 to 535. `loadIndex` returns an empty index when the file is missing or invalid (`session-index.ts` lines 30 to 39).
 
-`Tools/install-deb.sh` line 24 builds the temp directory with `mktemp` before the exit trap removes it. The input-audit step that ends a command with `|| true` (`.github/workflows/input-audit.yml` line 83) still requires `INPUT_AUDIT_SUMMARY` on the next lines. The release skill unpack (`.github/workflows/release.yml` lines 670 to 674) runs under the Actions default `bash -e`, so a failed `node` check fails the step.
+`Tools/install-deb.sh` line 24 builds the temp directory with `mktemp` before the exit trap removes it. The release skill unpack (`.github/workflows/release.yml` lines 670 to 674) runs under the Actions default `bash -e`, so a failed `node` check fails the step. The input-audit `|| true` is finding 28. The summary line is not a failure check.
 
 The model-popup flag already publishes the catalog when it clears (`AgentCoordinator.swift` lines 117 to 123). That was not re-opened.
 
