@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use build_core::{
     DirectCommandPlan, EnvironmentPolicy, ProcessRunner, ProcessTermination,
@@ -115,6 +115,59 @@ fn file_stamp(path: &Path) -> Result<FileStamp, SyncTeXSupportError> {
     Ok((m.file_size(), m.last_write_time()))
 }
 
+pub fn companion_usable(pdf: &Path) -> bool {
+    let pdf_mtime = std::fs::metadata(pdf).and_then(|meta| meta.modified()).ok();
+    [pdf.with_extension("synctex.gz"), pdf.with_extension("synctex")]
+        .into_iter()
+        .any(|candidate| companion_file_usable(&candidate, pdf_mtime))
+}
+
+fn companion_file_usable(path: &Path, pdf_mtime: Option<SystemTime>) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() || meta.len() == 0 {
+        return false;
+    }
+    if let (Some(pdf_mtime), Ok(sync_mtime)) = (pdf_mtime, meta.modified()) {
+        if sync_mtime
+            .checked_add(Duration::from_secs(2))
+            .is_some_and(|limit| limit < pdf_mtime)
+        {
+            return false;
+        }
+    }
+    companion_has_input(path)
+}
+
+fn companion_has_input(path: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut compressed = Vec::new();
+    let _ = file.take(262_144).read_to_end(&mut compressed);
+    let text = if path.extension().and_then(|ext| ext.to_str()) == Some("gz") {
+        let mut decoded = Vec::new();
+        let decoder = flate2::read::GzDecoder::new(compressed.as_slice());
+        let _ = decoder.take(262_144).read_to_end(&mut decoded);
+        if decoded.is_empty() {
+            return false;
+        }
+        String::from_utf8_lossy(&decoded).into_owned()
+    } else {
+        String::from_utf8_lossy(&compressed).into_owned()
+    };
+    text.lines().any(|line| {
+        let Some(body) = line.strip_prefix("Input:") else {
+            return false;
+        };
+        let Some((tag, recorded)) = body.split_once(':') else {
+            return false;
+        };
+        tag.trim().parse::<i64>().is_ok() && !recorded.trim().is_empty()
+    })
+}
+
 /// `SyncTeXRunner` — resolves the tool once, runs queries, normalizes output.
 pub struct SyncTeXRunner {
     runner: ProcessRunner,
@@ -147,7 +200,6 @@ impl SyncTeXRunner {
         build_id: &str,
         main_relative: &str,
     ) -> Result<SyncTeXBinding, SyncTeXSupportError> {
-        self.resolved_tool()?;
         let root = standardize(project_root.to_path_buf());
         let pdf = standardize(pdf_url.to_path_buf());
         self.digest_cache.lock().unwrap().clear();

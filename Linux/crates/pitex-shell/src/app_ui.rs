@@ -2232,6 +2232,7 @@ impl AppState {
     pub fn pin_target_action(&mut self) {
         self.model.toggle_pinned_build_target();
         self.restart_embedded_preview();
+        self.arm_embedded_timer();
         self.refresh_sidebar();
         self.refresh_pdf_ui();
     }
@@ -4768,6 +4769,7 @@ impl AppState {
                     self.install_watchers();
                     self.refresh_phase();
                     self.refresh_git();
+                    self.arm_embedded_timer();
                 }
                 Err(e) => {
                     // `open()`'s catch runs `await close()` — including the
@@ -4793,6 +4795,7 @@ impl AppState {
                     self.model.apply_activate(activated);
                     self.attach_session(session);
                     self.refresh_after_document_change();
+                    self.arm_embedded_timer();
                     // A clean open changed the all-open-source identity.
                     self.model.request_embedded_refresh(&self.store);
                     self.model.request_embedded_restart(&self.store);
@@ -6963,6 +6966,7 @@ fn build_sidebar(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::Widget 
             let Ok(mut s) = state.try_borrow_mut() else { return };
             s.model.toggle_pinned_build_target();
             s.restart_embedded_preview();
+            s.arm_embedded_timer();
             s.refresh_sidebar();
             s.refresh_pdf_ui();
         });
