@@ -349,7 +349,10 @@ jobs:
       - name: Stage WebView2 loader for native renderer acceptance
         run: |
           loader=''
-          for candidate in Windows/target/debug/build/webview2-com-sys-*/out/x64/WebView2Loader.dll; do
+          for candidate in \
+            Windows/target/debug/build/webview2-com-sys-*/out/x64/WebView2Loader.dll \
+            Windows/target/debug/build/webview2-com-sys/*/out/x64/WebView2Loader.dll
+          do
             if [ -f "$candidate" ] && { [ -z "$loader" ] || [ "$candidate" -nt "$loader" ]; }; then
               loader="$candidate"
             fi

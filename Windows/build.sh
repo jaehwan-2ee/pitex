@@ -52,7 +52,10 @@ cp "$HERE/target/preview-engine/release/pitex-preview.exe" "$BIN/"
 # guarantee between unrelated build scripts, so resolve the vendored DLL
 # deterministically (newest match wins).
 LOADER=""
-for candidate in "$HERE"/target/release/build/webview2-com-sys-*/out/x64/WebView2Loader.dll; do
+for candidate in \
+    "$HERE"/target/release/build/webview2-com-sys-*/out/x64/WebView2Loader.dll \
+    "$HERE"/target/release/build/webview2-com-sys/*/out/x64/WebView2Loader.dll
+do
     if [ -f "$candidate" ] && { [ -z "$LOADER" ] || [ "$candidate" -nt "$LOADER" ]; }; then
         LOADER="$candidate"
     fi
@@ -61,7 +64,7 @@ if [ -z "$LOADER" ] && [ -f "$HERE/target/release/WebView2Loader.dll" ]; then
     LOADER="$HERE/target/release/WebView2Loader.dll"
 fi
 if [ -z "$LOADER" ]; then
-    echo "error: WebView2Loader.dll not found under target/release/build/webview2-com-sys-*/out/x64/" >&2
+    echo "error: WebView2Loader.dll not found under target/release/build/webview2-com-sys*/out/x64/" >&2
     echo "       (nor pre-staged in target/release) — is markdown-preview enabled?" >&2
     exit 1
 fi
