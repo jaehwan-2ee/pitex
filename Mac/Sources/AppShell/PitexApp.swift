@@ -2850,12 +2850,22 @@ final class WorkspaceModel: ObservableObject {
         let scanRoot = root.standardizedFileURL
         var rootInfo = stat()
         guard stat(scanRoot.path, &rootInfo) == 0 else { throw WorkspaceOpenError.unreadableProject }
+        if let denied = PlatformPortError.projectDirectoryAccessError(at: scanRoot) {
+            throw denied
+        }
         var seenDirectories: Set<String> = ["\(rootInfo.st_dev):\(rootInfo.st_ino)"]
+        let rootListing = RootListingFailure(scanRoot)
         guard let enumerator = FileManager.default.enumerator(
             at: scanRoot,
             includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { failedURL, _ in
+                rootListing.note(failedURL)
+            }
         ) else { throw WorkspaceOpenError.unreadableProject }
+        if rootListing.failed {
+            throw PlatformPortError.accessDenied(scanRoot)
+        }
         var files: [URL] = []
         var seenFiles = Set<URL>()
         var entries = 0
@@ -2865,6 +2875,9 @@ final class WorkspaceModel: ObservableObject {
         var limited = false
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]
         while let url = enumerator.nextObject() as? URL {
+            if rootListing.failed {
+                throw PlatformPortError.accessDenied(scanRoot)
+            }
             entries += 1
             if entries > Self.maxScanEntries {
                 limited = true
@@ -2909,6 +2922,9 @@ final class WorkspaceModel: ObservableObject {
                 url, files: &files, seenFiles: &seenFiles,
                 sources: &sources, figures: &figures, limited: &limited
             )
+        }
+        if rootListing.failed {
+            throw PlatformPortError.accessDenied(scanRoot)
         }
         if !isDirectory {
             let sel = selected.standardizedFileURL
@@ -2986,6 +3002,23 @@ extension Notification.Name {
     // syncTeXHighlightRequested lives in Preview.swift next
     // to its observer.
     static let syncTeXInverseRequested = Notification.Name("pitex.syncTeXInverse")
+}
+
+private final class RootListingFailure: @unchecked Sendable {
+    let rootPath: String
+    var failed = false
+
+    init(_ root: URL) {
+        rootPath = root.standardizedFileURL.path
+    }
+
+    func note(_ url: URL) -> Bool {
+        if url.standardizedFileURL.path == rootPath {
+            failed = true
+            return false
+        }
+        return true
+    }
 }
 
 private enum WorkspaceOpenError: LocalizedError {

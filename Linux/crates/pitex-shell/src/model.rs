@@ -243,6 +243,8 @@ pub enum WorkspaceOpenError {
     /// The walk stopped before it found a source file.
     FolderTooLarge,
     UnreadableProject,
+    /// The directory exists and this process cannot list it.
+    AccessDenied(String),
     InvalidUtf8,
     OutsideProject,
     ChangedWhileOpening,
@@ -261,6 +263,10 @@ impl std::fmt::Display for WorkspaceOpenError {
             Self::UnreadableProject => {
                 write!(f, "The selected project could not be enumerated.")
             }
+            Self::AccessDenied(path) => write!(
+                f,
+                "Pitex cannot access {path}. Choose the folder again with Open."
+            ),
             Self::InvalidUtf8 => write!(f, "The selected source is not valid UTF-8."),
             Self::OutsideProject => {
                 write!(f, "The selected source is outside the project root.")
@@ -5322,6 +5328,9 @@ impl WorkspaceModel {
             directories += 1;
             let read = match std::fs::read_dir(&dir) {
                 Ok(read) => read,
+                Err(_) if dir == root && root_meta.is_dir() => {
+                    return Err(WorkspaceOpenError::AccessDenied(root.display().to_string()));
+                }
                 Err(_) if dir == root => return Err(WorkspaceOpenError::UnreadableProject),
                 Err(_) => continue,
             };

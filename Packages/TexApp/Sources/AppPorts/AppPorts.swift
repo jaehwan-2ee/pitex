@@ -7,6 +7,7 @@ public enum PlatformPortError: Error, Equatable, Sendable {
     case staleCapability(URL)
     case processLaunchFailed(executable: URL, reason: String)
     case operationInProgress(String)
+    case staticCodeChanged
 }
 
 extension PlatformPortError: LocalizedError {
@@ -24,8 +25,86 @@ extension PlatformPortError: LocalizedError {
             "Pitex could not run \(executable.path). \(reason)"
         case let .operationInProgress(name):
             "\(name) is already running."
+        case .staticCodeChanged:
+            "Pitex was updated or changed on disk while it was running. Quit and reopen Pitex, then open the project again."
         }
     }
+
+    private static let errSecCSStaticCodeChanged = -67_034
+
+    public static func bookmarkAccessFailure(_ error: Error, url: URL) -> PlatformPortError {
+        let changed = nsErrorChain(error).contains { nsError in
+            nsError.domain == NSOSStatusErrorDomain && nsError.code == Self.errSecCSStaticCodeChanged
+        }
+        if changed {
+            return .staticCodeChanged
+        }
+        return .accessDenied(url)
+    }
+
+    public static func bookmarkFailureLogLine(_ error: Error) -> String {
+        nsErrorChain(error)
+            .map { "\($0.domain):\($0.code)" }
+            .joined(separator: " ")
+    }
+
+    public static func projectDirectoryAccessError(at url: URL) -> PlatformPortError? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return nil
+        }
+        if !FileManager.default.isReadableFile(atPath: url.path) {
+            return .accessDenied(url)
+        }
+        let rootPath = url.standardizedFileURL.path
+        let denied = RootListingDenied()
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles],
+            errorHandler: { failedURL, _ in
+                if failedURL.standardizedFileURL.path == rootPath {
+                    denied.value = true
+                    return false
+                }
+                return true
+            }
+        ) else {
+            return .accessDenied(url)
+        }
+        _ = enumerator.nextObject()
+        if denied.value {
+            return .accessDenied(url)
+        }
+        return nil
+    }
+
+    private static func nsErrorChain(_ error: Error) -> [NSError] {
+        var chain: [NSError] = []
+        var pending: [Error] = [error]
+        var seen = 0
+        while let next = pending.popLast(), seen < 8 {
+            seen += 1
+            let nsError = next as NSError
+            chain.append(nsError)
+            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                pending.append(underlying)
+            }
+            if let many = nsError.userInfo["NSMultipleUnderlyingErrorsKey"] as? [Any] {
+                for item in many {
+                    if let underlying = item as? Error {
+                        pending.append(underlying)
+                    }
+                }
+            }
+        }
+        return chain
+    }
+}
+
+private final class RootListingDenied: @unchecked Sendable {
+    var value = false
 }
 
 public enum FileCapabilityAccess: String, Codable, Sendable {
