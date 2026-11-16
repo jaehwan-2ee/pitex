@@ -4,7 +4,9 @@
 //! forever otherwise), while symlinked *files* still resolve like
 //! `isRegularFileKey`.
 
-use pitex_shell::model::{standardize, WorkspaceModel, MAX_LISTED_FIGURES, MAX_SCAN_DIRECTORIES};
+use pitex_shell::model::{
+    standardize, WorkspaceModel, WorkspaceOpenError, MAX_LISTED_FIGURES, MAX_SCAN_DIRECTORIES,
+};
 use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -262,6 +264,42 @@ impl Drop for ModeGuard {
             let _ = std::fs::set_permissions(&self.0, perms);
         }
     }
+}
+
+#[test]
+fn an_unreadable_project_directory_names_the_path() {
+    let root = temp_dir("locked-root");
+    std::fs::write(root.join("main.tex"), "\\documentclass{article}").unwrap();
+    let mut perms = std::fs::metadata(&root).unwrap().permissions();
+    perms.set_mode(0);
+    std::fs::set_permissions(&root, perms).unwrap();
+    let _guard = ModeGuard(root.clone());
+    let name = root.file_name().unwrap().to_string_lossy().into_owned();
+    if effective_uid_is_root() {
+        let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+        assert!(scan.files.iter().any(|path| path.ends_with("main.tex")));
+    } else {
+        match WorkspaceModel::discover_tex_files(&root, &root, true) {
+            Err(err) => {
+                let message = err.to_string();
+                assert!(matches!(err, WorkspaceOpenError::AccessDenied(_)), "{message}");
+                assert!(message.contains(&name), "{message}");
+                assert!(!message.contains("no .tex"), "{message}");
+            }
+            Ok(_) => panic!("mode 000 project directory {name} was listed as a normal folder"),
+        }
+    }
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_readable_directory_without_tex_is_not_an_access_error() {
+    let root = temp_dir("empty-readable");
+    std::fs::write(root.join("notes.txt"), "x").unwrap();
+    let scan = WorkspaceModel::discover_tex_files(&root, &root, true).unwrap();
+    assert!(scan.files.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
