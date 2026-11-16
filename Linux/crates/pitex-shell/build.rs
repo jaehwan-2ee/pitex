@@ -82,50 +82,70 @@ fn copy_webview2_loader() {
         Ok("x86") => "x86",
         _ => "x64",
     };
-    // OUT_DIR = target/<profile>/build/pitex-shell-<hash>/out — climb to
-    // target/<profile>.
-    let Some(profile_dir) = std::path::Path::new(&out_dir)
-        .ancestors()
-        .nth(3)
-        .map(|p| p.to_path_buf())
-    else {
-        return;
-    };
-    let Ok(builds) = std::fs::read_dir(profile_dir.join("build")) else {
-        return;
-    };
-    // Several webview2-com-sys build dirs can coexist (feature-set
-    // variants) — read_dir order is arbitrary, so take the newest.
-    let loader = builds
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("webview2-com-sys-")
-        })
-        .map(|entry| {
-            entry
-                .path()
-                .join("out")
-                .join(arch)
-                .join("WebView2Loader.dll")
-        })
-        .filter(|path| path.is_file())
-        .max_by_key(|path| {
-            std::fs::metadata(path)
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-        });
-    let Some(loader) = loader else {
+    let out_dir = PathBuf::from(out_dir);
+    // Cargo 1.100 nests the unit hash (`build/<pkg>/<hash>/out`). Older
+    // toolchains use `build/<pkg>-<hash>/out`.
+    let Some(loader) = find_webview2_loader(&out_dir, arch) else {
         println!(
             "cargo:warning=WebView2Loader.dll not found under webview2-com-sys OUT_DIR; the preview will show the runtime-unavailable page"
         );
         return;
     };
-    for dir in [profile_dir.clone(), profile_dir.join("deps")] {
+    let mut dirs = vec![out_dir.clone()];
+    if let Some(profile_dir) = profile_dir(&out_dir) {
+        dirs.push(profile_dir.clone());
+        dirs.push(profile_dir.join("deps"));
+    }
+    for dir in dirs {
         if dir.is_dir() {
             let _ = std::fs::copy(&loader, dir.join("WebView2Loader.dll"));
         }
     }
+}
+
+fn profile_dir(out_dir: &Path) -> Option<PathBuf> {
+    let mut cursor = out_dir.parent()?;
+    for _ in 0..4 {
+        if cursor.file_name()?.to_str()? == "build" {
+            return cursor.parent().map(|path| path.to_path_buf());
+        }
+        cursor = cursor.parent()?;
+    }
+    None
+}
+
+fn find_webview2_loader(out_dir: &Path, arch: &str) -> Option<PathBuf> {
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut consider = |path: PathBuf| {
+        if !path.is_file() {
+            return;
+        }
+        let modified = std::fs::metadata(&path)
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        if best.as_ref().map(|(time, _)| modified > *time).unwrap_or(true) {
+            best = Some((modified, path));
+        }
+    };
+    for ancestor in out_dir.ancestors().take(6) {
+        let Ok(entries) = std::fs::read_dir(ancestor.join("build")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with("webview2-com-sys") {
+                continue;
+            }
+            let path = entry.path();
+            consider(path.join("out").join(arch).join("WebView2Loader.dll"));
+            let Ok(children) = std::fs::read_dir(&path) else {
+                continue;
+            };
+            for child in children.flatten() {
+                consider(child.path().join("out").join(arch).join("WebView2Loader.dll"));
+            }
+        }
+    }
+    best.map(|(_, path)| path)
 }

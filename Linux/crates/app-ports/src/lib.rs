@@ -20,7 +20,29 @@ pub enum PlatformPortError {
 }
 impl fmt::Display for PlatformPortError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::Unavailable { feature, platform } => {
+                write!(f, "{feature} is not available on {platform}.")
+            }
+            Self::InvalidCapability => write!(
+                f,
+                "Pitex does not have a usable permission for this folder. Choose the folder again with Open."
+            ),
+            Self::AccessDenied(path) => write!(
+                f,
+                "Pitex cannot access {}. Choose the folder again with Open.",
+                path.display()
+            ),
+            Self::StaleCapability(path) => write!(
+                f,
+                "The saved permission for {} is out of date. Choose the folder again with Open.",
+                path.display()
+            ),
+            Self::ProcessLaunchFailed { executable, reason } => {
+                write!(f, "Pitex could not run {}. {reason}", executable.display())
+            }
+            Self::OperationInProgress(name) => write!(f, "{name} is already running."),
+        }
     }
 }
 impl std::error::Error for PlatformPortError {}
@@ -328,5 +350,21 @@ mod verbatim_shell_path_tests {
         assert_eq!(verbatim_shell_path(&units(path)), units(path));
         let settings = "ms-settings:defaultapps";
         assert_eq!(verbatim_shell_path(&units(settings)), units(settings));
+    }
+}
+
+#[cfg(test)]
+mod platform_port_error_tests {
+    use super::PlatformPortError;
+    use std::path::PathBuf;
+
+    #[test]
+    fn access_denied_names_the_folder_and_the_next_step() {
+        let error = PlatformPortError::AccessDenied(PathBuf::from("/Users/me/paper"));
+        let message = error.to_string();
+        assert!(message.contains("/Users/me/paper"), "{message}");
+        assert!(message.contains("Open"), "{message}");
+        assert!(!message.contains("AccessDenied"), "{message}");
+        assert!(!message.contains("PlatformPortError"), "{message}");
     }
 }

@@ -507,12 +507,16 @@ jobs:
       - name: Stage WebView2 loader for native preview tests
         run: |
           loader=''
-          for candidate in target/debug/build/webview2-com-sys-*/out/x64/WebView2Loader.dll; do
+          for candidate in \
+            target/debug/build/webview2-com-sys-*/out/x64/WebView2Loader.dll \
+            target/debug/build/webview2-com-sys/*/out/x64/WebView2Loader.dll
+          do
             if [ -f "$candidate" ] && { [ -z "$loader" ] || [ "$candidate" -nt "$loader" ]; }; then
               loader="$candidate"
             fi
           done
           test -n "$loader"
+          mkdir -p target/debug/deps
           cp "$loader" target/debug/WebView2Loader.dll
           cp "$loader" target/debug/deps/WebView2Loader.dll
         working-directory: Windows

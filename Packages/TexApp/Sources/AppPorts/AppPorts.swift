@@ -9,6 +9,25 @@ public enum PlatformPortError: Error, Equatable, Sendable {
     case operationInProgress(String)
 }
 
+extension PlatformPortError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .unavailable(feature, platform):
+            "\(feature) is not available on \(platform)."
+        case .invalidCapability:
+            "Pitex does not have a usable permission for this folder. Choose the folder again with Open."
+        case let .accessDenied(url):
+            "Pitex cannot access \(url.path). Choose the folder again with Open."
+        case let .staleCapability(url):
+            "The saved permission for \(url.path) is out of date. Choose the folder again with Open."
+        case let .processLaunchFailed(executable, reason):
+            "Pitex could not run \(executable.path). \(reason)"
+        case let .operationInProgress(name):
+            "\(name) is already running."
+        }
+    }
+}
+
 public enum FileCapabilityAccess: String, Codable, Sendable {
     case readOnly
     case readWrite
