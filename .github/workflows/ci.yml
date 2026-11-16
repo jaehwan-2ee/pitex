@@ -516,6 +516,7 @@ jobs:
             fi
           done
           test -n "$loader"
+          mkdir -p target/debug/deps
           cp "$loader" target/debug/WebView2Loader.dll
           cp "$loader" target/debug/deps/WebView2Loader.dll
         working-directory: Windows

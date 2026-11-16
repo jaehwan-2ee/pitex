@@ -358,6 +358,7 @@ jobs:
             fi
           done
           test -n "$loader"
+          mkdir -p Windows/target/debug/deps
           cp "$loader" Windows/target/debug/WebView2Loader.dll
           cp "$loader" Windows/target/debug/deps/WebView2Loader.dll
       - name: Native Windows MathJax popup acceptance
