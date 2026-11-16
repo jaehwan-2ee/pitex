@@ -5,24 +5,45 @@ import Foundation
 import AppKit
 import OSLog
 
-final class MacSecurityScopedURL: SecurityScopedResource, @unchecked Sendable {
-    private let url: NSURL
+private let fileCapabilityLog = Logger(subsystem: "app.pitex.desktop", category: "file-capability")
 
-    init(_ url: URL) {
-        self.url = url as NSURL
+final class StartedSecurityScopes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: [UUID: NSURL] = [:]
+
+    func begin(_ url: URL) -> UUID? {
+        let scoped = url as NSURL
+        guard scoped.startAccessingSecurityScopedResource() else { return nil }
+        let id = UUID()
+        lock.lock()
+        urls[id] = scoped
+        lock.unlock()
+        return id
     }
 
-    func startAccessing() -> Bool {
-        url.startAccessingSecurityScopedResource()
+    func end(_ id: UUID) -> Bool {
+        lock.lock()
+        let scoped = urls.removeValue(forKey: id)
+        lock.unlock()
+        guard let scoped else { return false }
+        scoped.stopAccessingSecurityScopedResource()
+        return true
     }
 
-    func stopAccessing() {
-        url.stopAccessingSecurityScopedResource()
+    deinit {
+        let leftover: [NSURL]
+        lock.lock()
+        leftover = Array(urls.values)
+        urls.removeAll()
+        lock.unlock()
+        for scoped in leftover {
+            scoped.stopAccessingSecurityScopedResource()
+        }
     }
 }
 
 public actor MacFileCapabilityBroker: FileCapabilityBroker {
-    private let session = SecurityScopeSession(ledger: .shared)
+    private let scopes = StartedSecurityScopes()
 
     public init() {}
 
@@ -45,7 +66,10 @@ public actor MacFileCapabilityBroker: FileCapabilityBroker {
             )
             return FileCapability(bookmark: bookmark, access: access)
         } catch {
-            throw PlatformPortError.accessDenied(url)
+            let failure = PlatformPortError.bookmarkAccessFailure(error, url: url)
+            let line = PlatformPortError.bookmarkFailureLogLine(error)
+            fileCapabilityLog.error("bookmarkData failed \(line, privacy: .public)")
+            throw failure
         }
     }
 
@@ -68,13 +92,9 @@ public actor MacFileCapabilityBroker: FileCapabilityBroker {
         guard !isStale else {
             throw PlatformPortError.staleCapability(url)
         }
-        let path = url.standardizedFileURL.path
-        guard let id = SecurityScopeLedger.shared.begin(path: path, makeResource: {
-            MacSecurityScopedURL(url)
-        }) else {
+        guard let id = scopes.begin(url) else {
             throw PlatformPortError.accessDenied(url)
         }
-        session.track(id)
         let fileManager = FileManager.default
         let hasRequestedAccess = switch capability.access {
         case .readOnly:
@@ -83,17 +103,16 @@ public actor MacFileCapabilityBroker: FileCapabilityBroker {
             fileManager.isReadableFile(atPath: url.path) && fileManager.isWritableFile(atPath: url.path)
         }
         guard hasRequestedAccess else {
-            session.relinquish(id)
+            _ = scopes.end(id)
             throw PlatformPortError.accessDenied(url)
         }
         return FileAccessLease(id: id, url: url, access: capability.access)
     }
 
     public func endAccess(_ lease: FileAccessLease) async throws {
-        guard session.owns(lease.id) else {
+        guard scopes.end(lease.id) else {
             throw PlatformPortError.invalidCapability
         }
-        session.relinquish(lease.id)
     }
 }
 

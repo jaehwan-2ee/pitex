@@ -17,6 +17,7 @@ pub enum PlatformPortError {
     StaleCapability(PathBuf),
     ProcessLaunchFailed { executable: PathBuf, reason: String },
     OperationInProgress(String),
+    StaticCodeChanged,
 }
 impl fmt::Display for PlatformPortError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -42,6 +43,10 @@ impl fmt::Display for PlatformPortError {
                 write!(f, "Pitex could not run {}. {reason}", executable.display())
             }
             Self::OperationInProgress(name) => write!(f, "{name} is already running."),
+            Self::StaticCodeChanged => write!(
+                f,
+                "Pitex was updated or changed on disk while it was running. Quit and reopen Pitex, then open the project again."
+            ),
         }
     }
 }
@@ -366,5 +371,16 @@ mod platform_port_error_tests {
         assert!(message.contains("Open"), "{message}");
         assert!(!message.contains("AccessDenied"), "{message}");
         assert!(!message.contains("PlatformPortError"), "{message}");
+    }
+
+    #[test]
+    fn static_code_changed_tells_the_user_to_reopen_pitex() {
+        let message = PlatformPortError::StaticCodeChanged.to_string();
+        assert_eq!(
+            message,
+            "Pitex was updated or changed on disk while it was running. Quit and reopen Pitex, then open the project again."
+        );
+        assert!(!message.contains("permission"), "{message}");
+        assert!(!message.contains("folder"), "{message}");
     }
 }
