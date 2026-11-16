@@ -5,8 +5,24 @@ import Foundation
 import AppKit
 import OSLog
 
+final class MacSecurityScopedURL: SecurityScopedResource, @unchecked Sendable {
+    private let url: NSURL
+
+    init(_ url: URL) {
+        self.url = url as NSURL
+    }
+
+    func startAccessing() -> Bool {
+        url.startAccessingSecurityScopedResource()
+    }
+
+    func stopAccessing() {
+        url.stopAccessingSecurityScopedResource()
+    }
+}
+
 public actor MacFileCapabilityBroker: FileCapabilityBroker {
-    private var activeURLs: [UUID: URL] = [:]
+    private let session = SecurityScopeSession(ledger: .shared)
 
     public init() {}
 
@@ -52,9 +68,13 @@ public actor MacFileCapabilityBroker: FileCapabilityBroker {
         guard !isStale else {
             throw PlatformPortError.staleCapability(url)
         }
-        guard url.startAccessingSecurityScopedResource() else {
+        let path = url.standardizedFileURL.path
+        guard let id = SecurityScopeLedger.shared.begin(path: path, makeResource: {
+            MacSecurityScopedURL(url)
+        }) else {
             throw PlatformPortError.accessDenied(url)
         }
+        session.track(id)
         let fileManager = FileManager.default
         let hasRequestedAccess = switch capability.access {
         case .readOnly:
@@ -63,19 +83,17 @@ public actor MacFileCapabilityBroker: FileCapabilityBroker {
             fileManager.isReadableFile(atPath: url.path) && fileManager.isWritableFile(atPath: url.path)
         }
         guard hasRequestedAccess else {
-            url.stopAccessingSecurityScopedResource()
+            session.relinquish(id)
             throw PlatformPortError.accessDenied(url)
         }
-        let lease = FileAccessLease(id: UUID(), url: url, access: capability.access)
-        activeURLs[lease.id] = url
-        return lease
+        return FileAccessLease(id: id, url: url, access: capability.access)
     }
 
     public func endAccess(_ lease: FileAccessLease) async throws {
-        guard let url = activeURLs.removeValue(forKey: lease.id) else {
+        guard session.owns(lease.id) else {
             throw PlatformPortError.invalidCapability
         }
-        url.stopAccessingSecurityScopedResource()
+        session.relinquish(lease.id)
     }
 }
 
