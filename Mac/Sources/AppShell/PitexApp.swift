@@ -351,6 +351,7 @@ final class WorkspaceModel: ObservableObject {
     /// buffer updates independently of the build slot; its progress is
     /// `embeddedPreviewStatus`, never `buildState`.
     let embeddedPreview = EmbeddedPreviewState()
+    var synctexRecoveryArmed = false
     @Published var embeddedPreviewStatus: EmbeddedPreviewStatus = .off
     /// Settings/import → scheduler sync (enable flag and delay changes).
     private var liveSettingsObserver: AnyCancellable?
@@ -1438,6 +1439,7 @@ final class WorkspaceModel: ObservableObject {
         liveCompileTask?.cancel()
         liveCompileTask = nil
         performLiveRequests(liveScheduler.invalidate())
+        synctexRecoveryArmed = false
         stopEmbeddedPreview(resetContext: true)
         // The popped-out preview renders this workspace's retained PDF —
         // it must not outlive the project it belongs to.
@@ -1683,32 +1685,42 @@ final class WorkspaceModel: ObservableObject {
         // An editing preview is session-owned (its artifacts may already be
         // released) — it is never re-read as a project build output.
         if let retained = retainedPDF, retained.isEmbeddedPreview, retained.sourceTarget == relative { return }
-        // The retained artifact wins for its own target — a live build's
-        // PDF hides under .pitex-live and must not fall back to the manual
-        // sibling beside the source.
-        let name: String
-        if let retained = retainedPDF, retained.sourceTarget == relative {
-            name = retained.artifactPath
-        } else if let latest = latestBuiltPDFName,
-                  latest == Self.livePDFPath(forSourcePath: relative) {
-            name = latest
+        let keepRetained = retainedPDF?.sourceTarget == relative
+        let names: [String]
+        if keepRetained, let retained = retainedPDF {
+            names = [retained.artifactPath]
         } else {
-            name = (relative as NSString).deletingPathExtension + ".pdf"
+            var candidates: [String] = []
+            if let latest = latestBuiltPDFName { candidates.append(latest) }
+            let live = Self.livePDFPath(forSourcePath: relative)
+            if !candidates.contains(live) { candidates.append(live) }
+            let sibling = (relative as NSString).deletingPathExtension + ".pdf"
+            if !candidates.contains(sibling) { candidates.append(sibling) }
+            let usable = candidates.filter {
+                synctexCompanionUsable(pdfURL: root.appendingPathComponent($0))
+            }
+            names = usable + candidates.filter { !usable.contains($0) }
         }
-        if latestBuiltPDFName == name, syncTeXBinding != nil { return }
-        let pdf = root.appendingPathComponent(name)
-        var pdfInfo = stat()
-        let pdfFits = stat(pdf.path, &pdfInfo) == 0 && pdfInfo.st_size <= off_t(Self.maxPreviewPDFBytes)
-        guard pdfFits, let data = try? Data(contentsOf: pdf),
-              data.count <= Self.maxPreviewPDFBytes, data.starts(with: Data("%PDF".utf8)) else {
-            if latestBuiltPDFName != name {
-                latestBuiltPDFName = nil
+        guard let name = names.first(where: { candidate in
+            let url = root.appendingPathComponent(candidate)
+            var info = stat()
+            guard stat(url.path, &info) == 0, info.st_size <= off_t(Self.maxPreviewPDFBytes),
+                  let bytes = try? Data(contentsOf: url),
+                  bytes.count <= Self.maxPreviewPDFBytes,
+                  bytes.starts(with: Data("%PDF".utf8)) else { return false }
+            return true
+        }) else {
+            if latestBuiltPDFName == nil {
                 syncTeXBinding = nil
                 buildState = .unavailable("Build the main document to create its PDF preview.")
                 syncTeXState = .unavailable("SyncTeX requires a completed build of the main document.")
             }
             return
         }
+        let pdf = root.appendingPathComponent(name)
+        guard let data = try? Data(contentsOf: pdf),
+              data.count <= Self.maxPreviewPDFBytes,
+              data.starts(with: Data("%PDF".utf8)) else { return }
         if let retained = retainedPDF, retained.artifactPath == name {
             guard data == retained.data else {
                 // A failed/cancelled build may have left a torn artifact at
@@ -1718,16 +1730,25 @@ final class WorkspaceModel: ObservableObject {
                 syncTeXState = .unavailable("SyncTeX is unavailable until a successful build produces matching metadata.")
                 return
             }
-            // Same bytes are already retained — nothing to republish.
-            // A lazy restore after a failed/cancelled/superseded run keeps
-            // the honest status and never binds metadata that run may have
-            // overwritten; binding resumes only on an accepted success.
-            return
+            if syncTeXBinding != nil { return }
+        } else {
+            retainedPDF = RetainedPDF(data: data, artifactPath: name, sourceTarget: relative)
+            latestBuiltPDFName = name
+            buildState = .succeeded(pdf: data, log: buildLogText)
         }
-        retainedPDF = RetainedPDF(data: data, artifactPath: name, sourceTarget: relative)
-        latestBuiltPDFName = name
-        buildState = .succeeded(pdf: data, log: buildLogText)
-        await refreshSyncTeXBinding(pdfURL: pdf, sourceRelativePath: relative)
+        let usable = synctexCompanionUsable(pdfURL: pdf)
+        if usable || keepRetained {
+            await refreshSyncTeXBinding(pdfURL: pdf, sourceRelativePath: relative)
+        }
+        if !usable && !keepRetained {
+            armSynctexRecovery()
+        }
+    }
+
+    private func armSynctexRecovery() {
+        guard !synctexRecoveryArmed else { return }
+        synctexRecoveryArmed = true
+        requestEmbeddedPreviewFlush()
     }
 
     func invalidateSyncTeXForBuild() {

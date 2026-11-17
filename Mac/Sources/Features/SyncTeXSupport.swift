@@ -36,6 +36,54 @@ struct SyncTeXBinding: Sendable, Equatable {
     let sourcePaths: [String: URL]
 }
 
+func synctexCompanionUsable(pdfURL: URL) -> Bool {
+    let plain = pdfURL.deletingPathExtension().appendingPathExtension("synctex")
+    let gz = plain.appendingPathExtension("gz")
+    let pdfDate = (try? pdfURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    return [gz, plain].contains { synctexCompanionFileUsable($0, pdfDate: pdfDate) }
+}
+
+private func synctexCompanionFileUsable(_ url: URL, pdfDate: Date?) -> Bool {
+    let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
+    guard values?.isRegularFile == true, let size = values?.fileSize, size > 0 else { return false }
+    if let pdfDate, let syncDate = values?.contentModificationDate,
+       syncDate.addingTimeInterval(2) < pdfDate {
+        return false
+    }
+    return synctexCompanionHasInput(url)
+}
+
+private func synctexCompanionHasInput(_ url: URL) -> Bool {
+    let text: String
+    if url.pathExtension == "gz" {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+        process.arguments = ["-dc", url.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        let data = pipe.fileHandleForReading.readData(ofLength: 262_144)
+        if process.isRunning { process.terminate() }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 || !data.isEmpty,
+              let decoded = String(data: data, encoding: .utf8) else { return false }
+        text = decoded
+    } else {
+        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]),
+              let decoded = String(data: data.prefix(262_144), encoding: .utf8) else { return false }
+        text = decoded
+    }
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) where line.hasPrefix("Input:") {
+        let body = line.dropFirst("Input:".count)
+        guard let separator = body.firstIndex(of: ":"),
+              Int(body[..<separator].trimmingCharacters(in: .whitespaces)) != nil else { continue }
+        let recorded = body[body.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+        if !recorded.isEmpty { return true }
+    }
+    return false
+}
+
 /// Runs the `synctex` command-line tool and normalizes its raw output into the
 /// strict record shape SyncTeXQueryParser validates. Raw CLI output carries
 /// extra fields and no binding metadata, so normalization:

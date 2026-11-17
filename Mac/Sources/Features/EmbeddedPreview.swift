@@ -427,6 +427,7 @@ extension WorkspaceModel {
     /// compiler backend, including for an SSH project's local mirror.
     func syncEmbeddedPreview() {
         guard !embeddedPreviewEnabled else { return }
+        if synctexRecoveryArmed { return }
         if embeddedPreview.session != nil || embeddedPreview.timer != nil { stopEmbeddedPreview(resetContext: false) }
         embeddedPreview.restartAfterTargetChange = false
         setEmbeddedPreviewStatus(.off)
@@ -437,6 +438,7 @@ extension WorkspaceModel {
     /// SyncTeX binding goes with the artifacts. `resetContext` also drops
     /// the final-build floor (workspace close, build target change).
     func stopEmbeddedPreview(resetContext: Bool) {
+        synctexRecoveryArmed = false
         let state = embeddedPreview
         state.timer?.cancel()
         state.timer = nil
@@ -494,7 +496,7 @@ extension WorkspaceModel {
     /// helper re-stats everything TeX read then. Manual builds read the
     /// disk directly and are unaffected.
     func requestEmbeddedPreviewFlush(force: Bool = false) {
-        guard embeddedPreviewEnabled, projectURL != nil else { return }
+        guard projectURL != nil, embeddedPreviewEnabled || synctexRecoveryArmed else { return }
         if force { embeddedPreview.forceNextFlush = true }
         guard embeddedPreview.timer == nil else { return }
         armEmbeddedPreviewTimer(milliseconds: Self.embeddedCoalesceMs)
@@ -590,7 +592,7 @@ extension WorkspaceModel {
     }
 
     private func flushEmbeddedPreviewOnce() async {
-        guard embeddedPreviewEnabled, case .ready = phase, let root = projectURL else { return }
+        guard embeddedPreviewEnabled || synctexRecoveryArmed, case .ready = phase, let root = projectURL else { return }
         // Taken before the first await: a forced request arriving meanwhile belongs to the next flush.
         let force = embeddedPreview.forceNextFlush
         embeddedPreview.forceNextFlush = false
@@ -602,7 +604,7 @@ extension WorkspaceModel {
             return
         }
         guard let captured = await collectEmbeddedSources(root: root),
-              embeddedPreviewEnabled, projectGeneration == context, projectURL == root,
+              (embeddedPreviewEnabled || synctexRecoveryArmed), projectGeneration == context, projectURL == root,
               buildSourceRelativePath() == main else { return }
         let state = embeddedPreview
         if let session = state.session, session.mainRelative != main || session.root != root {

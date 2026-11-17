@@ -1319,6 +1319,7 @@ pub struct WorkspaceModel {
     /// buffer updates independently of the build slot above; its progress
     /// is `embedded.status`, never `build_state`.
     pub embedded: crate::embedded_preview::EmbeddedPreview,
+    synctex_recovery_armed: bool,
     /// `(path, content hash)` of the committed text the last live note
     /// recorded. Save/snapshot republishes carry the same hash — only a
     /// real text change may queue a live build.
@@ -1494,6 +1495,7 @@ impl WorkspaceModel {
             orphaned_runs: Vec::new(),
             live: LiveCompileScheduler::new(),
             embedded: crate::embedded_preview::EmbeddedPreview::default(),
+            synctex_recovery_armed: false,
             live_edit_signature: None,
             live_context_key: None,
             live_composing: Cell::new(false),
@@ -3609,22 +3611,12 @@ impl WorkspaceModel {
             }?;
             bytes.starts_with(b"%PDF").then_some(bytes)
         };
-        // The artifact on screen and the SyncTeX binding are always the
-        // SAME file — never mixed pairs whose page geometry can differ.
-        // A retained artifact restores itself or reports Unavailable;
-        // only the very first restore may pick a different candidate, and
-        // then it publishes that candidate's bytes + artifact + metadata
-        // together (the sibling pair when the live output has no
-        // `.synctex`).
-        let selected: Vec<String> = if let Some(retained) = &self.retained_pdf {
-            vec![retained.artifact.clone()]
+        let keep_retained = self.retained_pdf.is_some();
+        let selected: Vec<String> = if keep_retained {
+            vec![self.retained_pdf.as_ref().unwrap().artifact.clone()]
         } else {
-            let has_metadata = |n: &String| {
-                let p = root.join(n);
-                p.with_extension("synctex.gz").exists() || p.with_extension("synctex").exists()
-            };
             let mut ordered = names.clone();
-            ordered.sort_by_key(|n| !has_metadata(n));
+            ordered.sort_by_key(|n| !crate::synctex::companion_usable(&root.join(n)));
             ordered
         };
         let mut data = None;
@@ -3661,7 +3653,13 @@ impl WorkspaceModel {
                 // never lazily rebind onto them; a fresh successful build
                 // binds explicitly.
                 if !matches!(self.build_state, WorkspaceBuildState::Failed(_)) {
-                    self.refresh_synctex_binding(pdf);
+                    let usable = crate::synctex::companion_usable(&pdf);
+                    if usable || keep_retained {
+                        self.refresh_synctex_binding(pdf);
+                    }
+                    if !usable && !keep_retained {
+                        self.arm_synctex_recovery();
+                    }
                 }
             }
             _ => {
@@ -4435,10 +4433,20 @@ impl WorkspaceModel {
             && self.registered_sessions.iter().any(|s| root.join(s.path().raw_value()).as_path() == path)
     }
 
+    fn arm_synctex_recovery(&mut self) {
+        if self.synctex_recovery_armed {
+            return;
+        }
+        self.synctex_recovery_armed = true;
+        if crate::embedded_preview::SUPPORTED {
+            self.embedded.request_flush(self.live_now_ms());
+        }
+    }
+
     /// The coalescing timer fired: stream the newest buffers now. Never
     /// waits for the helper's current work — it rolls back and restarts.
     pub fn flush_embedded_preview(&mut self, store: &SettingsStore) {
-        if !self.embedded_wanted(store) {
+        if !self.embedded_wanted(store) && !self.synctex_recovery_armed {
             self.stop_embedded();
             return;
         }
@@ -4563,6 +4571,7 @@ impl WorkspaceModel {
     /// Workspace/target change: stop and forget final-build floors.
     fn reset_embedded_context(&mut self) {
         self.drop_editing_preview_binding();
+        self.synctex_recovery_armed = false;
         self.embedded.reset_context();
     }
 
