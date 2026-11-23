@@ -68,6 +68,11 @@ final class SettingsStore: ObservableObject {
     @Published var switchToPDFOnBuild: Bool {
         didSet { UserDefaults.standard.set(switchToPDFOnBuild, forKey: "pitex.pref.build.switchToPDFOnBuild") }
     }
+    /// `pitex.pref.preview.separateWindow` — a project opens with its
+    /// preview already in its own window. Off keeps the inline pane.
+    @Published var previewInSeparateWindow: Bool {
+        didSet { UserDefaults.standard.set(previewInSeparateWindow, forKey: "pitex.pref.preview.separateWindow") }
+    }
     @Published var jumpToCursorAfterBuild: Bool {
         didSet { UserDefaults.standard.set(jumpToCursorAfterBuild, forKey: "pitex.pref.build.jumpToCursorAfterBuild") }
     }
@@ -265,6 +270,7 @@ final class SettingsStore: ObservableObject {
         settings = .safeDefaults
         customShellExecutable = "/bin/zsh"
         switchToPDFOnBuild = true
+        previewInSeparateWindow = false
         jumpToCursorAfterBuild = true
         liveCompileEnabled = false
         liveCompileDelayMilliseconds = 700
@@ -311,6 +317,7 @@ final class SettingsStore: ObservableObject {
         let defaults = UserDefaults.standard
         customShellExecutable = defaults.string(forKey: "customShellExecutable") ?? "/bin/zsh"
         switchToPDFOnBuild = defaults.object(forKey: "pitex.pref.build.switchToPDFOnBuild") as? Bool ?? true
+        previewInSeparateWindow = defaults.bool(forKey: "pitex.pref.preview.separateWindow")
         jumpToCursorAfterBuild = defaults.object(forKey: "pitex.pref.build.jumpToCursorAfterBuild") as? Bool ?? true
         liveCompileEnabled = defaults.bool(forKey: "pitex.pref.build.liveCompileEnabled")
         let liveDelay = defaults.object(forKey: "pitex.pref.build.liveCompileDelayMilliseconds") as? Int ?? 700
@@ -579,6 +586,7 @@ struct SettingsView: View {
             }
             Section("settings.compile.behavior") {
                 Toggle("settings.compile.switch_pdf", isOn: $store.switchToPDFOnBuild)
+                Toggle("settings.compile.preview_window", isOn: $store.previewInSeparateWindow)
                 Toggle("settings.compile.jump_cursor", isOn: $store.jumpToCursorAfterBuild)
                 Toggle("settings.compile.stop_error", isOn: stopOnErrorBinding)
                 Stepper(

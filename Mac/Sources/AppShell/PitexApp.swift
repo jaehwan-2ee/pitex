@@ -936,6 +936,7 @@ final class WorkspaceModel: ObservableObject {
             // The pi subprocess stays unspawned until the Assistant panel
             // first appears (AgentPanel's .task calls prepare()).
             phase = .ready
+            if settings.previewInSeparateWindow { detachPreview() }
             syncLiveScheduler()
             await restoreBuiltPreview()
             recordRecent(selectedURL)
