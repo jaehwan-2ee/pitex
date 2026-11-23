@@ -156,7 +156,7 @@ import SyncTeXCore
             let background = band[band.count / 2]
             let ink = columns.map { x in rows.map { abs(luminance(x, $0) - background) }.max() ?? 0 }
             var clusters: [(end: Int, contrast: Double)] = []
-            var gap = Int.max
+            var gap = columns.count  // no cluster yet; never overflows
             for (index, value) in ink.enumerated() {
                 guard value > 0.03 else { gap += 1; continue }
                 if gap <= Int(2 * scale), let last = clusters.last {
