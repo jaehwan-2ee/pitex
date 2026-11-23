@@ -123,46 +123,45 @@ import SyncTeXCore
         try await settle()
         // A disabled PDF toolbar button must look disabled: the main window's themed
         // foreground once kept Back/Forward at full contrast inline, while the
-        // detached window dimmed them. With no link history, Back is disabled and
-        // must stand out from its background clearly less than Download does.
+        // detached window dimmed them. With no link history Back is disabled, so its
+        // icon must stand out from the toolbar clearly less than Download does.
+        // SwiftUI's buttons are not NSAccessibility children here, so the icons are
+        // found by pixels: the row right above the PDF holds, from the right,
+        // Detach, Download, Open Externally, Forward and Back.
         func requireDisabledLooksDisabled(_ root: NSView, _ stage: String) {
-            func find(_ node: Any, _ id: String) -> NSAccessibilityProtocol? {
-                guard let node = node as? NSAccessibilityProtocol else { return nil }
-                if node.accessibilityIdentifier() == id { return node }
-                for child in node.accessibilityChildren() ?? [] {
-                    if let hit = find(child, id) { return hit }
-                }
-                return nil
-            }
             root.layoutSubtreeIfNeeded()
+            let pdfView = descendants(root).compactMap { $0 as? PDFView }.first!
             let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds)!
             root.cacheDisplay(in: root.bounds, to: bitmap)
             let scale = CGFloat(bitmap.pixelsWide) / root.bounds.width
-            func contrast(_ id: String) -> (Double, Bool) {
-                guard let node = find(root, id) else {
-                    print("FAIL", "\(stage): no accessibility element \(id)"); fflush(nil); exit(1)
-                }
-                let local = root.convert(root.window!.convertFromScreen(node.accessibilityFrame()), from: nil)
-                let top = root.isFlipped ? local.minY : root.bounds.height - local.maxY
-                let x0 = Int(local.minX * scale), y0 = Int(top * scale)
-                let x1 = Int(local.maxX * scale), y1 = Int((top + local.height) * scale)
-                func luminance(_ x: Int, _ y: Int) -> Double {
-                    guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
-                    return 0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
-                }
-                let background = luminance(x0 + 1, y0 + 1)
-                var most = 0.0
-                for y in y0..<max(y0 + 1, y1) {
-                    for x in x0..<max(x0 + 1, x1) { most = max(most, abs(luminance(x, y) - background)) }
-                }
-                return (most, node.isAccessibilityEnabled())
+            let frame = pdfView.convert(pdfView.bounds, to: root)
+            let pdfTop = root.isFlipped ? frame.minY : root.bounds.height - frame.maxY
+            let rows = Int((pdfTop - 22) * scale)..<Int((pdfTop - 6) * scale)
+            let columns = Int(frame.minX * scale)..<Int(frame.maxX * scale)
+            func luminance(_ x: Int, _ y: Int) -> Double {
+                guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
+                return 0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
             }
-            let (back, backEnabled) = contrast("pitex.pdf.back")
-            let (download, downloadEnabled) = contrast("pitex.pdf.download")
-            require(!backEnabled && downloadEnabled,
-                    "\(stage): Back must be disabled with no history and Download enabled")
+            let band = columns.flatMap { x in rows.map { luminance(x, $0) } }.sorted()
+            let background = band[band.count / 2]
+            let ink = columns.map { x in rows.map { abs(luminance(x, $0) - background) }.max() ?? 0 }
+            var clusters: [(end: Int, contrast: Double)] = []
+            var gap = Int.max
+            for (index, value) in ink.enumerated() {
+                guard value > 0.03 else { gap += 1; continue }
+                if gap <= Int(2 * scale), let last = clusters.last {
+                    clusters[clusters.count - 1] = (index, max(last.contrast, value))
+                } else {
+                    clusters.append((index, value))
+                }
+                gap = 0
+            }
+            let fromRight = clusters.reversed().map(\.contrast)
+            require(fromRight.count >= 5,
+                    "\(stage): expected 5 toolbar icons above the PDF, found \(fromRight.count): \(fromRight)")
+            let (download, back) = (fromRight[1], fromRight[4])
             require(back < download * 0.6,
-                    "\(stage): disabled Back contrast \(back) must be well below enabled Download \(download)")
+                    "\(stage): disabled Back contrast \(back) must be well below enabled Download \(download); icons \(fromRight)")
             print("PASS \(stage): disabled Back contrast \(back) vs enabled Download \(download)")
         }
         let pdf = descendants(host).compactMap { $0 as? PDFView }.first!
