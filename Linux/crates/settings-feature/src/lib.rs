@@ -128,13 +128,12 @@ impl BuildPreferences {
         )
     }
     pub fn acknowledging_custom_shell(&self) -> Result<Self, SettingsValidationError> {
-        let acknowledged = matches!(self.shell_execution, ShellExecutionPreference::Custom { .. });
         Self::new(
             self.engine,
             self.maximum_passes,
             self.stops_after_first_error,
             self.shell_execution.clone(),
-            acknowledged,
+            true,
         )
     }
 }

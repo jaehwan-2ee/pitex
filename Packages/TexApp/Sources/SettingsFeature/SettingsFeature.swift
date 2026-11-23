@@ -101,21 +101,14 @@ public struct BuildPreferences: Codable, Equatable, Sendable {
             maximumPasses: maximumPasses,
             stopsAfterFirstError: stopsAfterFirstError,
             shellExecution: execution,
-            customShellAcknowledged: command.isEmpty ? false : customShellAcknowledged
+            customShellAcknowledged: customShellAcknowledged
         )
     }
 
+    /// The approval covers every custom command run through the login shell
+    /// (the console build command and ⌃⌘B), not only the fallback command.
     public func acknowledgingCustomShell() throws -> Self {
-        guard case .custom = shellExecution else {
-            return try Self(
-                engine: engine,
-                maximumPasses: maximumPasses,
-                stopsAfterFirstError: stopsAfterFirstError,
-                shellExecution: shellExecution,
-                customShellAcknowledged: false
-            )
-        }
-        return try Self(
+        try Self(
             engine: engine,
             maximumPasses: maximumPasses,
             stopsAfterFirstError: stopsAfterFirstError,

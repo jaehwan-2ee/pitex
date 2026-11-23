@@ -39,7 +39,7 @@ final class FeatureStateTests: XCTestCase {
         XCTAssertNil(current.replacingCustomShell(command: "latex\0mk"))
         let cleared = try XCTUnwrap(current.replacingCustomShell(command: ""))
         XCTAssertEqual(cleared.shellExecution, .disabled)
-        XCTAssertFalse(cleared.customShellAcknowledged)
+        XCTAssertTrue(cleared.customShellAcknowledged)
         let renamed = try XCTUnwrap(current.replacingCustomShell(command: "xelatex"))
         XCTAssertEqual(renamed.shellExecution, .custom(command: "xelatex"))
         XCTAssertTrue(renamed.customShellAcknowledged)
@@ -54,6 +54,15 @@ final class FeatureStateTests: XCTestCase {
 
         build = try build.selectingShellExecution(.custom(command: "xelatex main.tex"))
         XCTAssertFalse(build.customShellAcknowledged)
+    }
+
+    func testShellApprovalHoldsWithoutAFallbackCommand() throws {
+        let approved = try BuildPreferences().acknowledgingCustomShell()
+        XCTAssertEqual(approved.shellExecution, .disabled)
+        XCTAssertTrue(approved.customShellAcknowledged)
+
+        let withFallback = try XCTUnwrap(approved.replacingCustomShell(command: "latexmk"))
+        XCTAssertTrue(withFallback.customShellAcknowledged)
     }
 
     func testProjectPermissionFailureCanRecoverByRequestingAgain() {

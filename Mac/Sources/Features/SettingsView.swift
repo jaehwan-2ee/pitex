@@ -1449,7 +1449,7 @@ struct SettingsView: View {
             get: { store.settings.build.customShellAcknowledged },
             set: { newValue in
                 store.updateBuild {
-                    if case .custom = $0.build.shellExecution, newValue {
+                    if newValue {
                         return try! $0.build.acknowledgingCustomShell()
                     }
                     return try! BuildPreferences(
