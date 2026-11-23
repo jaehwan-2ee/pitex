@@ -10,6 +10,7 @@
 | Send selection to assistant | `⌘⇧A` | `Ctrl+Shift+A` |
 | Send assistant message | `⌘⏎` | — |
 | Toggle line comment | `⌘/` | `Ctrl+/` |
+| Indent / outdent selected lines | `⇥` / `⇧⇥` | — |
 | Save / Save As / Save All | `⌘S` / `⌘⇧S` / `⌘⌥S` | `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Alt+S` |
 | New / Open / Close | `⌘N` / `⌘O` / `⌘W` | `Ctrl+N` / `Ctrl+O` / `Ctrl+W` |
 | Find | `⌘F` | `Ctrl+F` |
