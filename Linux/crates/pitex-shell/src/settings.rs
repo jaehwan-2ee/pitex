@@ -1230,31 +1230,23 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// `customCommandBinding` semantics — an empty field disables the
-    /// execution and clears the acknowledgement; a command preserves it.
+    /// `selecting_shell_execution` asks for a fresh approval; the approval
+    /// itself holds with or without a fallback command.
     #[test]
     fn shell_execution_binding_semantics() {
-        // `selecting_shell_execution` clears the acknowledgement on every
-        // selection change — the settings layer's own guard.
         let custom = ShellExecutionPreference::Custom {
             command: "make".into(),
         };
         let build = BuildPreferences::safe_defaults()
-            .selecting_shell_execution(custom.clone())
+            .selecting_shell_execution(custom)
             .unwrap();
         assert!(!build.custom_shell_acknowledged);
-        // `acknowledging_custom_shell` latches only while `.custom` is set.
-        let mut build = build.acknowledging_custom_shell().unwrap();
-        assert!(build.custom_shell_acknowledged);
-        build.shell_execution = ShellExecutionPreference::Disabled;
-        let build = BuildPreferences::new(
-            build.engine,
-            build.maximum_passes,
-            build.stops_after_first_error,
-            build.shell_execution.clone(),
-            false,
-        )
-        .unwrap();
-        assert!(!build.custom_shell_acknowledged);
+        assert!(build.acknowledging_custom_shell().unwrap().custom_shell_acknowledged);
+
+        let approved = BuildPreferences::safe_defaults()
+            .acknowledging_custom_shell()
+            .unwrap();
+        assert_eq!(approved.shell_execution, ShellExecutionPreference::Disabled);
+        assert!(approved.custom_shell_acknowledged);
     }
 }

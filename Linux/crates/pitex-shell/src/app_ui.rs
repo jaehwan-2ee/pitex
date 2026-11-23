@@ -757,27 +757,21 @@ impl AppState {
         self.store.update_settings(next);
     }
 
-    /// `shellAckBinding` — the acknowledgement only latches while a custom
-    /// shell command is configured (`acknowledgingCustomShell`).
+    /// `shellAckBinding` — the approval covers every custom command run
+    /// through the login shell, so it does not depend on the fallback command.
     pub fn update_shell_acknowledgement(&mut self, acknowledged: bool) {
         let mut next: PersistedSettings = self.store.settings.clone();
-        next.build.custom_shell_acknowledged = acknowledged
-            && matches!(
-                next.build.shell_execution,
-                ShellExecutionPreference::Custom { .. }
-            );
+        next.build.custom_shell_acknowledged = acknowledged;
         self.store.update_settings(next);
         self.refresh_shell_warning();
     }
 
     /// `customCommandBinding` — an empty field disables the login-shell
-    /// fallback and clears the acknowledgement; a non-empty command keeps
-    /// whatever acknowledgement state was already stored.
+    /// fallback; the acknowledgement is left as the user set it.
     pub fn set_shell_execution(&mut self, command: &str) {
         let mut next: PersistedSettings = self.store.settings.clone();
         if command.is_empty() {
             next.build.shell_execution = ShellExecutionPreference::Disabled;
-            next.build.custom_shell_acknowledged = false;
         } else {
             next.build.shell_execution = ShellExecutionPreference::Custom {
                 command: command.to_string(),
