@@ -116,6 +116,31 @@ private final class SessionTextView: NSTextView {
         super.doCommand(by: selector)
     }
 
+    /// Tab indents every line of a multi-line selection; otherwise it types a tab.
+    override func insertTab(_ sender: Any?) {
+        let text = string as NSString
+        guard !hasMarkedText(),
+              text.rangeOfCharacter(from: .newlines, options: [], range: selectedRange()).location != NSNotFound
+        else { return super.insertTab(sender) }
+        shiftSelectedLines(outdent: false)
+    }
+
+    /// Shift+Tab outdents the selected lines (or the caret's line) instead of moving focus.
+    override func insertBacktab(_ sender: Any?) {
+        guard !hasMarkedText() else { return super.insertBacktab(sender) }
+        shiftSelectedLines(outdent: true)
+    }
+
+    private func shiftSelectedLines(outdent: Bool) {
+        let edit = EditorText.lineIndentEdit(text: string, selection: selectedRange(), outdent: outdent)
+        if edit.replacement != (string as NSString).substring(with: edit.range) {
+            guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+            replaceCharacters(in: edit.range, with: edit.replacement)
+            didChangeText()
+        }
+        setSelectedRange(edit.selection)
+    }
+
     override var rangeForUserCompletion: NSRange {
         userCompletionRange?() ?? super.rangeForUserCompletion
     }
@@ -645,6 +670,11 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         EditorText.lineCommentEdit(text: text, selection: selection)
     }
 
+    /// Tab / Shift+Tab on the lines touched by `selection`; see `EditorText.lineIndentEdit`.
+    public nonisolated static func lineIndentEdit(text: String, selection: NSRange, outdent: Bool) -> LineIndentEdit {
+        EditorText.lineIndentEdit(text: text, selection: selection, outdent: outdent)
+    }
+
     public nonisolated static func clampedCharacterRange(start: Int, end: Int, limit: Int) -> NSRange? {
         EditorText.clampedCharacterRange(start: start, end: end, limit: limit)
     }
@@ -662,6 +692,11 @@ public final class EditorMacAdapter {
 
     public nonisolated static func lineCommentEdit(text: String, selection: NSRange) -> LineCommentEdit {
         EditorText.lineCommentEdit(text: text, selection: selection)
+    }
+
+    /// Tab / Shift+Tab on the lines touched by `selection`; see `EditorText.lineIndentEdit`.
+    public nonisolated static func lineIndentEdit(text: String, selection: NSRange, outdent: Bool) -> LineIndentEdit {
+        EditorText.lineIndentEdit(text: text, selection: selection, outdent: outdent)
     }
 
     public nonisolated static func clampedCharacterRange(start: Int, end: Int, limit: Int) -> NSRange? {
