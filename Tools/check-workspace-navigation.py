@@ -121,8 +121,53 @@ import SyncTeXCore
         split.setPosition(240, ofDividerAt: 0)
         split.setPosition(835, ofDividerAt: 1)
         try await settle()
+        // A disabled PDF toolbar button must look disabled: the main window's themed
+        // foreground once kept Back/Forward at full contrast inline, while the
+        // detached window dimmed them. With no link history, Back is disabled and
+        // must stand out from its background clearly less than Download does.
+        func requireDisabledLooksDisabled(_ root: NSView, _ stage: String) {
+            func find(_ node: Any, _ id: String) -> NSAccessibilityProtocol? {
+                guard let node = node as? NSAccessibilityProtocol else { return nil }
+                if node.accessibilityIdentifier() == id { return node }
+                for child in node.accessibilityChildren() ?? [] {
+                    if let hit = find(child, id) { return hit }
+                }
+                return nil
+            }
+            root.layoutSubtreeIfNeeded()
+            let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds)!
+            root.cacheDisplay(in: root.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / root.bounds.width
+            func contrast(_ id: String) -> (Double, Bool) {
+                guard let node = find(root, id) else {
+                    print("FAIL", "\(stage): no accessibility element \(id)"); fflush(nil); exit(1)
+                }
+                let local = root.convert(root.window!.convertFromScreen(node.accessibilityFrame()), from: nil)
+                let top = root.isFlipped ? local.minY : root.bounds.height - local.maxY
+                let x0 = Int(local.minX * scale), y0 = Int(top * scale)
+                let x1 = Int(local.maxX * scale), y1 = Int((top + local.height) * scale)
+                func luminance(_ x: Int, _ y: Int) -> Double {
+                    guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
+                    return 0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
+                }
+                let background = luminance(x0 + 1, y0 + 1)
+                var most = 0.0
+                for y in y0..<max(y0 + 1, y1) {
+                    for x in x0..<max(x0 + 1, x1) { most = max(most, abs(luminance(x, y) - background)) }
+                }
+                return (most, node.isAccessibilityEnabled())
+            }
+            let (back, backEnabled) = contrast("pitex.pdf.back")
+            let (download, downloadEnabled) = contrast("pitex.pdf.download")
+            require(!backEnabled && downloadEnabled,
+                    "\(stage): Back must be disabled with no history and Download enabled")
+            require(back < download * 0.6,
+                    "\(stage): disabled Back contrast \(back) must be well below enabled Download \(download)")
+            print("PASS \(stage): disabled Back contrast \(back) vs enabled Download \(download)")
+        }
         let pdf = descendants(host).compactMap { $0 as? PDFView }.first!
         let document = pdf.document!
+        requireDisabledLooksDisabled(host, "inline preview toolbar")
         let existingNote = PDFAnnotation(bounds: NSRect(x: 20, y: 20, width: 50, height: 10), forType: .highlight, withProperties: nil)
         document.page(at: 0)!.addAnnotation(existingNote)
         let originalAnnotations = (0..<document.pageCount).flatMap { document.page(at: $0)!.annotations }
@@ -370,6 +415,7 @@ import SyncTeXCore
         require(!descendants(host).contains { $0 is PDFView },
                 "The inline preview must unmount while detached")
         let detachedPDF = descendants(detached.contentView!).compactMap { $0 as? PDFView }.first!
+        requireDisabledLooksDisabled(detached.contentView!, "detached preview toolbar")
         require(detachedPDF !== pdf && detachedPDF.document?.pageCount == document.pageCount,
                 "The detached window must host its own PDFView over the same document")
 

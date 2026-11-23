@@ -110,6 +110,7 @@ struct Preview: View {
                     } label: {
                         Label("preview.back", systemImage: "chevron.backward")
                             .labelStyle(.iconOnly)
+                            .dimmedWhenDisabled()
                     }
                     .buttonStyle(.borderless)
                     .disabled(!linkHistory.canGoBack)
@@ -120,6 +121,7 @@ struct Preview: View {
                     } label: {
                         Label("preview.forward", systemImage: "chevron.forward")
                             .labelStyle(.iconOnly)
+                            .dimmedWhenDisabled()
                     }
                     .buttonStyle(.borderless)
                     .disabled(!linkHistory.canGoForward)
@@ -129,6 +131,7 @@ struct Preview: View {
                         openPDFExternally()
                     } label: {
                         Image(systemName: "arrow.up.forward.app")
+                            .dimmedWhenDisabled()
                     }
                     .buttonStyle(.borderless)
                     .disabled(!retained.isEmbeddedPreview && pdfFileURL == nil)
@@ -370,6 +373,21 @@ struct Preview: View {
         case .current: "Source and PDF revisions match."
         case let .stale(reason), let .ambiguous(reason), let .unavailable(reason): reason
         }
+    }
+}
+
+private extension View {
+    /// The main window sets an explicit theme foreground color, and a borderless button
+    /// keeps an explicit color when disabled, so inline it never looked disabled.
+    func dimmedWhenDisabled() -> some View { modifier(DimmedWhenDisabled()) }
+}
+
+private struct DimmedWhenDisabled: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled { content } else { content.foregroundStyle(.tertiary) }
     }
 }
 
