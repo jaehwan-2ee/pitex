@@ -148,9 +148,18 @@ import SyncTeXCore
             let columns = pixels(frame.minX, frame.maxX, bitmap.pixelsWide)
             print("[toolbar] \(stage): pdf \(frame) top=\(pdfTop) scale=\(scale) rows=\(rows) columns=\(columns)"); fflush(nil)
             require(!rows.isEmpty && !columns.isEmpty, "\(stage): toolbar band is empty")
+            func luma(_ c: NSColor) -> Double {
+                0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
+            }
+            // A pane with no background of its own caches as transparent pixels; the
+            // window draws its background behind them, so composite over that color.
+            var windowLuma = 1.0
+            root.effectiveAppearance.performAsCurrentDrawingAppearance {
+                if let c = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) { windowLuma = luma(c) }
+            }
             func luminance(_ x: Int, _ y: Int) -> Double {
-                guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
-                return 0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
+                guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return windowLuma }
+                return c.alphaComponent * luma(c) + (1 - c.alphaComponent) * windowLuma
             }
             let band = columns.flatMap { x in rows.map { luminance(x, $0) } }.sorted()
             let background = band[band.count / 2]
@@ -167,6 +176,10 @@ import SyncTeXCore
                 gap = 0
             }
             let fromRight = clusters.reversed().map(\.contrast)
+            if fromRight.count < 5 {
+                let profile = stride(from: 0, to: ink.count, by: 4).map { String(min(9, Int(ink[$0] * 10))) }.joined()
+                print("[toolbar] \(stage): background \(background) window \(windowLuma) ink/4px \(profile)"); fflush(nil)
+            }
             require(fromRight.count >= 5,
                     "\(stage): expected 5 toolbar icons above the PDF, found \(fromRight.count): \(fromRight)")
             let (download, back) = (fromRight[1], fromRight[4])
