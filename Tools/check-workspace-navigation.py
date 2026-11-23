@@ -121,8 +121,75 @@ import SyncTeXCore
         split.setPosition(240, ofDividerAt: 0)
         split.setPosition(835, ofDividerAt: 1)
         try await settle()
+        // A disabled PDF toolbar button must look disabled: the main window's themed
+        // foreground once kept Back/Forward at full contrast inline, while the
+        // detached window dimmed them. With no link history Back is disabled, so its
+        // icon must stand out from the toolbar clearly less than Download does.
+        // SwiftUI's buttons are not NSAccessibility children here, so the icons are
+        // found by pixels: the row right above the PDF holds, from the right,
+        // Detach, Download, Open Externally, Forward and Back.
+        func requireDisabledLooksDisabled(_ root: NSView, _ stage: String) {
+            root.layoutSubtreeIfNeeded()
+            print("[toolbar] \(stage): root \(root.bounds) flipped=\(root.isFlipped)"); fflush(nil)
+            guard let pdfView = descendants(root).compactMap({ $0 as? PDFView }).first,
+                  root.bounds.width > 0,
+                  let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds),
+                  bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0
+            else { return require(false, "\(stage): no PDF view or no toolbar bitmap") }
+            root.cacheDisplay(in: root.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / root.bounds.width
+            let frame = pdfView.convert(pdfView.bounds, to: root)
+            let pdfTop = root.isFlipped ? frame.minY : root.bounds.height - frame.maxY
+            func pixels(_ from: CGFloat, _ to: CGFloat, _ limit: Int) -> Range<Int> {
+                let low = min(max(Int(from * scale), 0), limit), high = min(max(Int(to * scale), 0), limit)
+                return low..<max(low, high)
+            }
+            let rows = pixels(pdfTop - 22, pdfTop - 6, bitmap.pixelsHigh)
+            let columns = pixels(frame.minX, frame.maxX, bitmap.pixelsWide)
+            print("[toolbar] \(stage): pdf \(frame) top=\(pdfTop) scale=\(scale) rows=\(rows) columns=\(columns)"); fflush(nil)
+            require(!rows.isEmpty && !columns.isEmpty, "\(stage): toolbar band is empty")
+            func luma(_ c: NSColor) -> Double {
+                0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
+            }
+            // A pane with no background of its own caches as transparent pixels; the
+            // window draws its background behind them, so composite over that color.
+            var windowLuma = 1.0
+            root.effectiveAppearance.performAsCurrentDrawingAppearance {
+                if let c = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) { windowLuma = luma(c) }
+            }
+            func luminance(_ x: Int, _ y: Int) -> Double {
+                guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return windowLuma }
+                return c.alphaComponent * luma(c) + (1 - c.alphaComponent) * windowLuma
+            }
+            let band = columns.flatMap { x in rows.map { luminance(x, $0) } }.sorted()
+            let background = band[band.count / 2]
+            let ink = columns.map { x in rows.map { abs(luminance(x, $0) - background) }.max() ?? 0 }
+            var clusters: [(end: Int, contrast: Double)] = []
+            var gap = columns.count  // no cluster yet; never overflows
+            for (index, value) in ink.enumerated() {
+                guard value > 0.03 else { gap += 1; continue }
+                if gap <= Int(2 * scale), let last = clusters.last {
+                    clusters[clusters.count - 1] = (index, max(last.contrast, value))
+                } else {
+                    clusters.append((index, value))
+                }
+                gap = 0
+            }
+            let fromRight = clusters.reversed().map(\.contrast)
+            if fromRight.count < 5 {
+                let profile = stride(from: 0, to: ink.count, by: 4).map { String(min(9, Int(ink[$0] * 10))) }.joined()
+                print("[toolbar] \(stage): background \(background) window \(windowLuma) ink/4px \(profile)"); fflush(nil)
+            }
+            require(fromRight.count >= 5,
+                    "\(stage): expected 5 toolbar icons above the PDF, found \(fromRight.count): \(fromRight)")
+            let (download, back) = (fromRight[1], fromRight[4])
+            require(back < download * 0.6,
+                    "\(stage): disabled Back contrast \(back) must be well below enabled Download \(download); icons \(fromRight)")
+            print("PASS \(stage): disabled Back contrast \(back) vs enabled Download \(download)")
+        }
         let pdf = descendants(host).compactMap { $0 as? PDFView }.first!
         let document = pdf.document!
+        requireDisabledLooksDisabled(host, "inline preview toolbar")
         let existingNote = PDFAnnotation(bounds: NSRect(x: 20, y: 20, width: 50, height: 10), forType: .highlight, withProperties: nil)
         document.page(at: 0)!.addAnnotation(existingNote)
         let originalAnnotations = (0..<document.pageCount).flatMap { document.page(at: $0)!.annotations }
@@ -370,6 +437,7 @@ import SyncTeXCore
         require(!descendants(host).contains { $0 is PDFView },
                 "The inline preview must unmount while detached")
         let detachedPDF = descendants(detached.contentView!).compactMap { $0 as? PDFView }.first!
+        requireDisabledLooksDisabled(detached.contentView!, "detached preview toolbar")
         require(detachedPDF !== pdf && detachedPDF.document?.pageCount == document.pageCount,
                 "The detached window must host its own PDFView over the same document")
 

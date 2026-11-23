@@ -39,6 +39,8 @@
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Mostrar selección en el PDF";
 "preview.synctex_inverse" = "Mostrar fuente";
+"preview.back" = "Atrás";
+"preview.forward" = "Adelante";
 "preview.open_external" = "Abrir en el visor de PDF predeterminado";
 "preview.download" = "Guardar una copia del PDF";
 "preview.detach" = "Abrir la vista previa en una ventana aparte";

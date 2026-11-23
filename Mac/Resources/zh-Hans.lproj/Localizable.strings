@@ -39,6 +39,8 @@
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "在 PDF 中显示所选内容";
 "preview.synctex_inverse" = "显示源代码";
+"preview.back" = "后退";
+"preview.forward" = "前进";
 "preview.open_external" = "在默认 PDF 查看器中打开";
 "preview.download" = "保存 PDF 副本";
 "preview.detach" = "在单独窗口中打开预览";
