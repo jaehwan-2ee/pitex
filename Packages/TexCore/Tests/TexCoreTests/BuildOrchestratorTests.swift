@@ -56,7 +56,7 @@ final class BuildOrchestratorTests: XCTestCase {
     func testMissingEngineEndsTheBuildWithAnActionableMessage() async throws {
         let fixture = try Fixture()
         let orchestrator = BuildOrchestrator(executor: RunnerExecutor(searchPath: "/nonexistent-tex:/also-missing"))
-        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.latexmk))
+        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.latexmkXeLaTeX))
         let events = EventRecorder()
 
         await XCTAssertThrowsErrorAsync(
@@ -64,7 +64,7 @@ final class BuildOrchestratorTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error.localizedDescription,
-                "No TeX engine found: latexmk is not in /nonexistent-tex, /also-missing. "
+                "No TeX engine found: latexmk, which runs xelatex, is not in /nonexistent-tex, /also-missing. "
                     + "Install MacTeX (https://tug.org/mactex/), or put the engine's full path in the build command."
             )
         }
@@ -80,17 +80,23 @@ final class BuildOrchestratorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: unusable) }
         let fix = " Install MacTeX (https://tug.org/mactex/), or put the engine's full path in the build command."
         XCTAssertEqual(
-            BuildProcessExecutorError.engineLaunchFailed("/missing/pdflatex", searchPath: "", code: ENOENT).localizedDescription,
+            BuildProcessExecutorError.engineLaunchFailed(
+                try DirectCommandPlan(executable: "/missing/pdflatex", arguments: []), searchPath: "", code: ENOENT
+            ).localizedDescription,
             "/missing/pdflatex does not exist." + fix
         )
         XCTAssertEqual(
-            BuildProcessExecutorError.engineLaunchFailed(unusable.path, searchPath: "", code: EACCES).localizedDescription,
+            BuildProcessExecutorError.engineLaunchFailed(
+                try DirectCommandPlan(executable: unusable.path, arguments: []), searchPath: "", code: EACCES
+            ).localizedDescription,
             "\(unusable.path) is not executable." + fix
         )
         XCTAssertEqual(
             BuildOrchestratorError.processFailed(stage: 0, exitCode: 127).localizedDescription,
             "Build failed (exit 127): a command in the build was not found. See the Build Log."
         )
+        XCTAssertTrue(BuildOrchestratorError.processFailed(stage: 0, exitCode: 127).isCommandNotFound)
+        XCTAssertFalse(BuildOrchestratorError.processFailed(stage: 0, exitCode: 1).isCommandNotFound)
     }
 
     func testParserHandlesEveryUTF8AndLineBoundarySplit() throws {
@@ -534,7 +540,7 @@ private struct RunnerExecutor: BuildProcessExecuting {
             guard case let .exited(code) = result.termination else { return BuildProcessResult(exitCode: 1) }
             return BuildProcessResult(exitCode: code)
         } catch let ProcessRunnerError.spawnFailed(code) {
-            throw BuildProcessExecutorError.engineLaunchFailed(plan.executable, searchPath: searchPath, code: code)
+            throw BuildProcessExecutorError.engineLaunchFailed(plan, searchPath: searchPath, code: code)
         }
     }
 
