@@ -130,14 +130,24 @@ import SyncTeXCore
         // Detach, Download, Open Externally, Forward and Back.
         func requireDisabledLooksDisabled(_ root: NSView, _ stage: String) {
             root.layoutSubtreeIfNeeded()
-            let pdfView = descendants(root).compactMap { $0 as? PDFView }.first!
-            let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds)!
+            print("[toolbar] \(stage): root \(root.bounds) flipped=\(root.isFlipped)"); fflush(nil)
+            guard let pdfView = descendants(root).compactMap({ $0 as? PDFView }).first,
+                  root.bounds.width > 0,
+                  let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds),
+                  bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0
+            else { return require(false, "\(stage): no PDF view or no toolbar bitmap") }
             root.cacheDisplay(in: root.bounds, to: bitmap)
             let scale = CGFloat(bitmap.pixelsWide) / root.bounds.width
             let frame = pdfView.convert(pdfView.bounds, to: root)
             let pdfTop = root.isFlipped ? frame.minY : root.bounds.height - frame.maxY
-            let rows = Int((pdfTop - 22) * scale)..<Int((pdfTop - 6) * scale)
-            let columns = Int(frame.minX * scale)..<Int(frame.maxX * scale)
+            func pixels(_ from: CGFloat, _ to: CGFloat, _ limit: Int) -> Range<Int> {
+                let low = min(max(Int(from * scale), 0), limit), high = min(max(Int(to * scale), 0), limit)
+                return low..<max(low, high)
+            }
+            let rows = pixels(pdfTop - 22, pdfTop - 6, bitmap.pixelsHigh)
+            let columns = pixels(frame.minX, frame.maxX, bitmap.pixelsWide)
+            print("[toolbar] \(stage): pdf \(frame) top=\(pdfTop) scale=\(scale) rows=\(rows) columns=\(columns)"); fflush(nil)
+            require(!rows.isEmpty && !columns.isEmpty, "\(stage): toolbar band is empty")
             func luminance(_ x: Int, _ y: Int) -> Double {
                 guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
                 return 0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
