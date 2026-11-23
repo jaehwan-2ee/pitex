@@ -781,10 +781,12 @@ extension WorkspaceModel {
 
         let buildPreferences = settings.settings.build
         let pipeline: BuildPipeline
-        // The console's build-command field drives the build: known presets
-        // map onto the direct engine stages, anything else runs through a
-        // login shell (which requires the custom-shell acknowledgement).
-        let commandText = buildCommandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The console's build-command field (or, when it is blank, the
+        // Settings fallback command) drives the build: known presets map onto
+        // the direct engine stages, anything else runs through a login shell
+        // (which requires the custom-shell acknowledgement).
+        let commandText = buildPreferences.buildCommand(field: buildCommandText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if let stage = Self.engineStage(forCommandPreset: commandText) {
             pipeline = .singlePass(stage)
         } else if !commandText.isEmpty {

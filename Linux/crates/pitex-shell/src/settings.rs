@@ -1249,4 +1249,16 @@ mod tests {
         assert_eq!(approved.shell_execution, ShellExecutionPreference::Disabled);
         assert!(approved.custom_shell_acknowledged);
     }
+
+    /// The fallback command stands in only for a blank build-command field.
+    #[test]
+    fn build_command_falls_back_only_when_field_is_blank() {
+        let none = BuildPreferences::safe_defaults();
+        assert_eq!(none.build_command(" "), " ");
+        let fallback = none
+            .selecting_shell_execution(ShellExecutionPreference::Custom { command: "make".into() })
+            .unwrap();
+        assert_eq!(fallback.build_command(" \n"), "make");
+        assert_eq!(fallback.build_command("xelatex {file}"), "xelatex {file}");
+    }
 }

@@ -4776,7 +4776,8 @@ impl WorkspaceModel {
         };
 
         let build_prefs = &store.settings.build;
-        let command_text = self.build_command_text.trim().to_string();
+        // A blank build-command field falls back to the Settings fallback command.
+        let command_text = build_prefs.build_command(&self.build_command_text).trim().to_string();
         let pipeline = if let Some(stage) = Self::engine_stage_for_preset(&command_text) {
             BuildPipeline::single_pass(stage)
         } else if !command_text.is_empty() {

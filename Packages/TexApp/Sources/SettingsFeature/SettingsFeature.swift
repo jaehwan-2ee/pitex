@@ -105,6 +105,13 @@ public struct BuildPreferences: Codable, Equatable, Sendable {
         )
     }
 
+    /// The command a build runs: the build-command field, or the fallback
+    /// command when that field is blank.
+    public func buildCommand(field: String) -> String {
+        guard field.allSatisfy(\.isWhitespace), case let .custom(command) = shellExecution else { return field }
+        return command
+    }
+
     /// The approval covers every custom command run through the login shell
     /// (the console build command and ⌃⌘B), not only the fallback command.
     public func acknowledgingCustomShell() throws -> Self {

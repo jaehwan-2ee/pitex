@@ -65,6 +65,13 @@ final class FeatureStateTests: XCTestCase {
         XCTAssertTrue(withFallback.customShellAcknowledged)
     }
 
+    func testBuildCommandFallsBackOnlyWhenTheFieldIsBlank() throws {
+        XCTAssertEqual(BuildPreferences.safeDefaults.buildCommand(field: " "), " ")
+        let fallback = try BuildPreferences().selectingShellExecution(.custom(command: "make"))
+        XCTAssertEqual(fallback.buildCommand(field: " \n"), "make")
+        XCTAssertEqual(fallback.buildCommand(field: "xelatex {file}"), "xelatex {file}")
+    }
+
     func testProjectPermissionFailureCanRecoverByRequestingAgain() {
         var state = ProjectFeatureState()
         state.beginPermissionRequest()
