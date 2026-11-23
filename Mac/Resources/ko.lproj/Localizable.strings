@@ -273,6 +273,7 @@
 "settings.compile.commands_note" = "{file}은 소스 파일 경로로 치환됩니다. 명령은 열린 프로젝트에 적용되며 새 프로젝트의 기본값이 됩니다.";
 "settings.compile.behavior" = "동작";
 "settings.compile.switch_pdf" = "빌드 성공 후 오른쪽 사이드바로 전환";
+"settings.compile.preview_window" = "프로젝트를 열 때 별도 창에서 미리보기 열기";
 "settings.compile.jump_cursor" = "빌드 후 커서 위치로 PDF 동기화";
 "settings.compile.stop_error" = "첫 오류 후 중지";
 "settings.compile.max_passes" = "최대 패스: %u";

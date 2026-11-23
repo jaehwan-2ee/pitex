@@ -273,6 +273,7 @@
 "settings.compile.commands_note" = "{file} mở rộng thành đường dẫn tệp nguồn. Lệnh áp dụng cho dự án đang mở và trở thành mặc định cho dự án mới.";
 "settings.compile.behavior" = "Hành vi";
 "settings.compile.switch_pdf" = "Chuyển sang thanh bên phải sau khi biên dịch thành công";
+"settings.compile.preview_window" = "Mở bản xem trước trong cửa sổ riêng khi mở dự án";
 "settings.compile.jump_cursor" = "Đồng bộ PDF tới vị trí con trỏ sau khi biên dịch";
 "settings.compile.stop_error" = "Dừng sau lỗi đầu tiên";
 "settings.compile.max_passes" = "Số lượt tối đa: %u";

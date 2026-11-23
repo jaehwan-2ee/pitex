@@ -273,6 +273,7 @@
 "settings.compile.commands_note" = "{file} раскрывается в путь к исходному файлу. Команды применяются к открытому проекту и становятся стандартными для новых проектов.";
 "settings.compile.behavior" = "Поведение";
 "settings.compile.switch_pdf" = "Переключаться на правую панель после успешной сборки";
+"settings.compile.preview_window" = "Открывать просмотр в отдельном окне при открытии проекта";
 "settings.compile.jump_cursor" = "Синхронизировать PDF с позицией курсора после сборки";
 "settings.compile.stop_error" = "Останавливаться после первой ошибки";
 "settings.compile.max_passes" = "Максимум проходов: %u";

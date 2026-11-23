@@ -273,6 +273,7 @@
 "settings.compile.commands_note" = "{file} expands to the source file path. Commands apply to the open project and become the default for new projects.";
 "settings.compile.behavior" = "Behavior";
 "settings.compile.switch_pdf" = "Switch to the right sidebar after a successful build";
+"settings.compile.preview_window" = "Open the preview in a separate window when a project opens";
 "settings.compile.jump_cursor" = "Sync PDF to the cursor position after a build";
 "settings.compile.stop_error" = "Stop after the first error";
 "settings.compile.max_passes" = "Maximum passes: %u";
