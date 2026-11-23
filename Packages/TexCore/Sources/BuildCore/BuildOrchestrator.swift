@@ -179,6 +179,38 @@ public protocol BuildProcessExecuting: Sendable {
 public enum BuildProcessExecutorError: Error, Equatable, Sendable {
     case toolNotFound(String)
     case launchFailed(String)
+
+    /// A TeX tool that could not start: what was looked for and how to fix
+    /// it. `searchPath` is the PATH a bare name was resolved against.
+    public static func engineLaunchFailed(_ plan: DirectCommandPlan, searchPath: String, code: Int32) -> Self {
+        // Presets run their engine through latexmk; name the engine the user picked too.
+        let engine = plan.arguments.contains("-pdfxe") ? "xelatex"
+            : plan.arguments.contains("-pdflua") ? "lualatex"
+            : plan.arguments.contains("-pdf") ? "pdflatex" : nil
+        let executable = plan.executable
+        let tool = (executable as NSString).lastPathComponent == "latexmk" && engine != nil
+            ? "\(executable), which runs \(engine!)," : executable
+        let fix = "Install MacTeX (https://tug.org/mactex/), or put the engine's full path in the build command."
+        let problem: String
+        switch (executable.contains("/"), code) {
+        case (true, ENOENT): problem = "\(executable) does not exist."
+        case (true, EACCES): problem = "\(executable) is not executable."
+        case (false, ENOENT), (false, EACCES):
+            let folders = searchPath.split(separator: ":").joined(separator: ", ")
+            problem = "No TeX engine found: \(tool) is not in \(folders)."
+        default: problem = "\(executable) could not be started: \(String(cString: strerror(code)))."
+        }
+        return .launchFailed("\(problem) \(fix)")
+    }
+}
+
+extension BuildProcessExecutorError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .toolNotFound(tool): "\(tool) was not found."
+        case let .launchFailed(message): message
+        }
+    }
 }
 
 public enum BuildOrchestratorError: Error, Equatable, Sendable {
@@ -195,6 +227,35 @@ public enum BuildOrchestratorError: Error, Equatable, Sendable {
     case artifactRestorationFailed
     case cancelled
     case noBuildRunning
+}
+
+extension BuildOrchestratorError {
+    /// Exit 127: the shell's "command not found".
+    public var isCommandNotFound: Bool {
+        if case .processFailed(_, 127) = self { return true }
+        return false
+    }
+}
+
+extension BuildOrchestratorError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .noSelection: "No build target is selected."
+        case .buildAlreadyRunning: "A build is already running."
+        case .emptyPipeline: "The build has no steps."
+        case .invalidProjectRoot: "The project folder is not usable for building."
+        case let .pathTraversal(path): "The build path \(path) leaves the project."
+        case let .undeclaredGeneratedPath(path): "The build may not write \(path)."
+        case .sourceDeletionRisk: "The build would overwrite or delete a source file."
+        case .processFailed where isCommandNotFound: "Build failed (exit 127): a command in the build was not found. See the Build Log."
+        case let .processFailed(_, exitCode): "Build failed (exit \(exitCode))."
+        case let .processError(message): message
+        case .missingPDF: "The build finished without producing a PDF."
+        case .artifactRestorationFailed: "The previous PDF could not be restored after the failed build."
+        case .cancelled: "Build cancelled."
+        case .noBuildRunning: "No build is running."
+        }
+    }
 }
 
 public enum BuildArtifactDisposition: Hashable, Codable, Sendable {
@@ -364,7 +425,7 @@ public actor BuildOrchestrator {
         } catch let error as BuildOrchestratorError {
             stageFailure = error
         } catch let error as BuildProcessExecutorError {
-            stageFailure = .processError(String(describing: error))
+            stageFailure = .processError(error.localizedDescription)
         } catch {
             stageFailure = .processError(String(describing: error))
         }

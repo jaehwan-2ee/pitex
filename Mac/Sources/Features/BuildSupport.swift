@@ -27,16 +27,22 @@ actor StreamingBuildExecutor: BuildProcessExecuting {
         let task = Task<BuildCore.ProcessResult, Error> {
             switch request.command {
             case let .direct(plan):
-                return try await runner.run(
-                    DirectCommandPlan(
-                        executable: plan.executable, arguments: plan.arguments,
-                        workingDirectory: plan.workingDirectory,
-                        environment: await Self.buildEnvironment(plan.environment)
-                    ),
-                    projectRoot: request.projectRoot,
-                    sourceDirectory: request.sourceDirectory,
-                    outputHandler: handler
-                )
+                let environment = await Self.buildEnvironment(plan.environment)
+                do {
+                    return try await runner.run(
+                        DirectCommandPlan(
+                            executable: plan.executable, arguments: plan.arguments,
+                            workingDirectory: plan.workingDirectory,
+                            environment: environment
+                        ),
+                        projectRoot: request.projectRoot,
+                        sourceDirectory: request.sourceDirectory,
+                        outputHandler: handler
+                    )
+                } catch let ProcessRunnerError.spawnFailed(code) {
+                    let searchPath = if case let .inherit(overrides) = environment { overrides["PATH"] ?? "" } else { "" }
+                    throw BuildProcessExecutorError.engineLaunchFailed(plan, searchPath: searchPath, code: code)
+                }
             case let .loginShell(plan):
                 return try await runner.runLoginShell(
                     LoginShellCommandPlan(
@@ -975,7 +981,15 @@ extension WorkspaceModel {
         } catch {
             flushBuildLog(for: token)
             if runStillCurrent(token, context: context, root: root) {
-                buildState = .failed(String(describing: error))
+                buildState = .failed(error.localizedDescription)
+                // Nothing ran (no TeX engine) or the shell could not find
+                // the command (exit 127, whose message points at the log):
+                // open the log instead of leaving the build silent.
+                let commandMissing = (error as? BuildOrchestratorError)?.isCommandNotFound == true
+                if !live, buildLogText.isEmpty || commandMissing {
+                    consoleSection = .log
+                    bottomPanelVisible = true
+                }
             }
         }
         finishScheduledRun(token)

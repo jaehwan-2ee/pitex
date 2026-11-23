@@ -51,6 +51,54 @@ final class BuildOrchestratorTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    /// No TeX on PATH: the build must end, failed, with a message that
+    /// names the engine, where it was looked for and how to fix it.
+    func testMissingEngineEndsTheBuildWithAnActionableMessage() async throws {
+        let fixture = try Fixture()
+        let orchestrator = BuildOrchestrator(executor: RunnerExecutor(searchPath: "/nonexistent-tex:/also-missing"))
+        try await orchestrator.select(target: fixture.target, pipeline: .singlePass(.latexmkXeLaTeX))
+        let events = EventRecorder()
+
+        await XCTAssertThrowsErrorAsync(
+            try await orchestrator.build(id: try BuildID(rawValue: "no-tex")) { await events.append($0) }
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "No TeX engine found: latexmk, which runs xelatex, is not in /nonexistent-tex, /also-missing. "
+                    + "Install MacTeX (https://tug.org/mactex/), or put the engine's full path in the build command."
+            )
+        }
+        let lifecycle = await orchestrator.lastOutcome()?.lifecycle
+        guard case .failed = lifecycle else { return XCTFail("Unexpected lifecycle: \(String(describing: lifecycle))") }
+        let current = await orchestrator.currentLifecycle()
+        XCTAssertNil(current)
+    }
+
+    func testUnlaunchableAbsoluteEngineNamesThePath() throws {
+        let unusable = FileManager.default.temporaryDirectory.appendingPathComponent("pdflatex-\(UUID().uuidString)")
+        try Data().write(to: unusable)
+        defer { try? FileManager.default.removeItem(at: unusable) }
+        let fix = " Install MacTeX (https://tug.org/mactex/), or put the engine's full path in the build command."
+        XCTAssertEqual(
+            BuildProcessExecutorError.engineLaunchFailed(
+                try DirectCommandPlan(executable: "/missing/pdflatex", arguments: []), searchPath: "", code: ENOENT
+            ).localizedDescription,
+            "/missing/pdflatex does not exist." + fix
+        )
+        XCTAssertEqual(
+            BuildProcessExecutorError.engineLaunchFailed(
+                try DirectCommandPlan(executable: unusable.path, arguments: []), searchPath: "", code: EACCES
+            ).localizedDescription,
+            "\(unusable.path) is not executable." + fix
+        )
+        XCTAssertEqual(
+            BuildOrchestratorError.processFailed(stage: 0, exitCode: 127).localizedDescription,
+            "Build failed (exit 127): a command in the build was not found. See the Build Log."
+        )
+        XCTAssertTrue(BuildOrchestratorError.processFailed(stage: 0, exitCode: 127).isCommandNotFound)
+        XCTAssertFalse(BuildOrchestratorError.processFailed(stage: 0, exitCode: 1).isCommandNotFound)
+    }
+
     func testParserHandlesEveryUTF8AndLineBoundarySplit() throws {
         let root = URL(fileURLWithPath: "/tmp/project")
         let bytes = Array("main.tex:12:4: warning: café 漢字\n".utf8)
@@ -467,6 +515,36 @@ final class BuildOrchestratorTests: XCTestCase {
         let outcome = try await orchestrator.build(id: try BuildID(rawValue: "retry"))
         XCTAssertEqual(outcome.artifactDisposition, .replacedWithSuccessfulPDF)
     }
+}
+
+/// The macOS executor's launch path: the real runner, an engine-less PATH,
+/// and a spawn failure reported as the engine message.
+private struct RunnerExecutor: BuildProcessExecuting {
+    let searchPath: String
+
+    func execute(
+        _ request: BuildProcessRequest,
+        output: @escaping @Sendable (BuildProcessOutput) async -> Void
+    ) async throws -> BuildProcessResult {
+        guard case let .direct(plan) = request.command else { throw BuildProcessExecutorError.launchFailed("direct only") }
+        do {
+            let result = try await ProcessRunner().run(
+                DirectCommandPlan(
+                    executable: plan.executable, arguments: plan.arguments,
+                    workingDirectory: plan.workingDirectory,
+                    environment: .inherit(overrides: ["PATH": searchPath])
+                ),
+                projectRoot: request.projectRoot,
+                sourceDirectory: request.sourceDirectory
+            )
+            guard case let .exited(code) = result.termination else { return BuildProcessResult(exitCode: 1) }
+            return BuildProcessResult(exitCode: code)
+        } catch let ProcessRunnerError.spawnFailed(code) {
+            throw BuildProcessExecutorError.engineLaunchFailed(plan, searchPath: searchPath, code: code)
+        }
+    }
+
+    func cancel(buildID: BuildID) async {}
 }
 
 private struct Fixture {

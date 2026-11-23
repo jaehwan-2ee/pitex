@@ -132,19 +132,9 @@ struct Preview: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 Divider()
-                if case let .failed(reason) = workspace.buildState {
-                    // The last-good PDF stays up but the failure is
-                    // still visible — details live in Build Log/Issues.
-                    Text(verbatim: reason)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .accessibilityIdentifier("pitex.preview.buildError")
-                    Divider()
-                }
+                // The last-good PDF stays up but the failure is still
+                // visible — details live in Build Log/Issues.
+                buildFailureLine
                 PDFDocumentView(
                     data: retained.data,
                     // Identity is the workspace + resolved source, NOT the
@@ -166,6 +156,7 @@ struct Preview: View {
                 .overlay(alignment: .top) { embeddedStatusOverlay }
             } else {
                 embeddedStatusLine
+                buildFailureLine
                 ContentUnavailableView(
                     "preview.no_pdf",
                     systemImage: "doc.richtext",
@@ -220,6 +211,22 @@ struct Preview: View {
                 .padding(.vertical, 1)
                 .background(Capsule().strokeBorder(tint))
                 .accessibilityIdentifier("pitex.preview.outputKind")
+        }
+    }
+
+    @ViewBuilder
+    private var buildFailureLine: some View {
+        if case let .failed(reason) = workspace.buildState {
+            Text(verbatim: reason)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .lineLimit(3)
+                .help(reason)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("pitex.preview.buildError")
+            Divider()
         }
     }
 
