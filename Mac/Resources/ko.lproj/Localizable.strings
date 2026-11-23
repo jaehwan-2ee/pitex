@@ -39,6 +39,8 @@
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "PDF에서 선택 항목 보기";
 "preview.synctex_inverse" = "소스 보기";
+"preview.back" = "뒤로";
+"preview.forward" = "앞으로";
 "preview.open_external" = "기본 PDF 뷰어에서 열기";
 "preview.download" = "PDF 사본 저장";
 "preview.detach" = "별도 창에서 미리보기 열기";

@@ -39,6 +39,8 @@
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "選択範囲をPDFで表示";
 "preview.synctex_inverse" = "ソースを表示";
+"preview.back" = "戻る";
+"preview.forward" = "進む";
 "preview.open_external" = "デフォルトのPDFビューアで開く";
 "preview.download" = "PDFのコピーを保存";
 "preview.detach" = "プレビューを別ウインドウで開く";

@@ -39,6 +39,8 @@
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Show Selection in PDF";
 "preview.synctex_inverse" = "Show Source";
+"preview.back" = "Back";
+"preview.forward" = "Forward";
 "preview.open_external" = "Open in Default PDF Viewer";
 "preview.download" = "Save a Copy of the PDF";
 "preview.detach" = "Open Preview in a Separate Window";

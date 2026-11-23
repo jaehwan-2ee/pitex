@@ -39,6 +39,8 @@
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Показать выделение в PDF";
 "preview.synctex_inverse" = "Показать источник";
+"preview.back" = "Назад";
+"preview.forward" = "Вперёд";
 "preview.open_external" = "Открыть в программе просмотра PDF по умолчанию";
 "preview.download" = "Сохранить копию PDF";
 "preview.detach" = "Открыть просмотр в отдельном окне";

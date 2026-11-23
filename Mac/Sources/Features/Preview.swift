@@ -14,6 +14,8 @@ struct Preview: View {
     @ObservedObject private var appearance = AppearanceSettings.shared
     /// The Markdown toolbar's Download reaches the live web view through it.
     @State private var markdownExport = MarkdownPDFExport()
+    /// The PDF toolbar's Back/Forward retrace jumps made through links.
+    @StateObject private var linkHistory = PDFLinkHistory()
     /// True inside the popped-out window — the toolbar's third button then
     /// offers Reattach instead of Detach.
     private let detached: Bool
@@ -104,6 +106,26 @@ struct Preview: View {
                     outputKindBadge(retained)
                     Spacer()
                     Button {
+                        linkHistory.goBack()
+                    } label: {
+                        Label("preview.back", systemImage: "chevron.backward")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!linkHistory.canGoBack)
+                    .help(String(localized: "preview.back"))
+                    .accessibilityIdentifier("pitex.pdf.back")
+                    Button {
+                        linkHistory.goForward()
+                    } label: {
+                        Label("preview.forward", systemImage: "chevron.forward")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!linkHistory.canGoForward)
+                    .help(String(localized: "preview.forward"))
+                    .accessibilityIdentifier("pitex.pdf.forward")
+                    Button {
                         openPDFExternally()
                     } label: {
                         Image(systemName: "arrow.up.forward.app")
@@ -154,6 +176,7 @@ struct Preview: View {
                     target: "\(workspace.projectGeneration.uuidString)/\(retained.sourceTarget)",
                     workspace: workspace,
                     highlightSync: settings.forwardSyncHighlight,
+                    linkHistory: linkHistory,
                     onInverseSync: { page, point in
                         Task { await workspace.syncInverse(page: page, point: point) }
                     }
@@ -367,6 +390,7 @@ private struct PDFDocumentView: NSViewRepresentable {
     /// window has its own PDF, and the notification is app-wide.
     let workspace: AnyObject
     var highlightSync = false
+    let linkHistory: PDFLinkHistory
     var onInverseSync: (Int, SyncTeXCore.PDFPoint) -> Void = { _, _ in }
 
     func makeNSView(context: Context) -> PDFView {
@@ -387,7 +411,10 @@ private struct PDFDocumentView: NSViewRepresentable {
             let consumed = MainActor.assumeIsolated {
                 // An interaction takes the swap cover away first, so a Cmd-click maps on the document beneath.
                 coordinator?.removeCoverOnInteraction(event)
-                return event.type == .leftMouseDown ? (coordinator?.handleSyncClick(event) ?? false) : false
+                guard event.type == .leftMouseDown, let coordinator else { return false }
+                if coordinator.handleSyncClick(event) { return true }
+                coordinator.recordLinkJump(event)
+                return false
             }
             return consumed ? nil : event
         }
@@ -397,6 +424,8 @@ private struct PDFDocumentView: NSViewRepresentable {
         context.coordinator.renderedTarget = target
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.highlightSync = highlightSync
+        context.coordinator.linkHistory = linkHistory
+        linkHistory.attach(view, target: target)
 
         NotificationCenter.default.addObserver(
             context.coordinator,
@@ -448,6 +477,7 @@ private struct PDFDocumentView: NSViewRepresentable {
         context.coordinator.clearSyncHighlight()
         context.coordinator.renderedData = data
         context.coordinator.renderedTarget = target
+        linkHistory.attach(view, target: target)
         // The swap cover: a still image of the outgoing pages over the content area, taken before the
         // document is replaced (after the highlight is cleared, so it never shows one the swap removes).
         context.coordinator.coverOutgoing(view, sameTarget: sameTarget)
@@ -508,6 +538,7 @@ private struct PDFDocumentView: NSViewRepresentable {
         /// position) from a target or workspace switch (reset).
         var renderedTarget = ""
         var syncMonitor: Any?
+        weak var linkHistory: PDFLinkHistory?
         /// The previously displayed document, kept alive one swap: PDFView
         /// decodes pages on background threads with weak document
         /// backrefs, so releasing it at swap time orphans in-flight pages.
@@ -550,6 +581,21 @@ private struct PDFDocumentView: NSViewRepresentable {
             // `index(for:)` is 0-based; `synctex edit` numbers pages from 1.
             onInverseSync((view.document?.index(for: page) ?? 0) + 1, point)
             return true
+        }
+
+        /// A plain click on a link inside the document records where the reader
+        /// was, before PDFView follows the link.
+        /// shortcut: recorded at mouse-down, so a press on a link that ends as a drag also adds an entry;
+        /// confirm the jump from PDFView's own navigation if that shows up in use.
+        func recordLinkJump(_ event: NSEvent) {
+            guard let view = pdfView, event.window === view.window else { return }
+            let location = view.convert(event.locationInWindow, from: nil)
+            guard view.bounds.contains(location),
+                  let page = view.page(for: location, nearest: false),
+                  let link = page.annotation(at: view.convert(location, to: page)),
+                  link.destination != nil || link.action is PDFActionGoTo
+            else { return }
+            linkHistory?.recordJump()
         }
 
         @objc func highlightRequested(_ notification: Notification) {
@@ -1036,6 +1082,59 @@ private struct MarkdownPreviewView: NSViewRepresentable {
                 webView.evaluateJavaScript(script, completionHandler: nil)
             }
         }
+    }
+}
+
+/// Back/forward through the PDF positions the reader left by following links.
+/// Positions are page index + point, so they survive a rebuild of the same
+/// target; a different target starts an empty history.
+@MainActor
+final class PDFLinkHistory: ObservableObject {
+    struct Position: Equatable {
+        let page: Int
+        let point: NSPoint
+    }
+
+    @Published private var history = NavigationHistory<Position>()
+    private weak var pdfView: PDFView?
+    private var target: String?
+
+    var canGoBack: Bool { history.canGoBack }
+    var canGoForward: Bool { history.canGoForward }
+
+    func attach(_ view: PDFView, target: String) {
+        pdfView = view
+        guard target != self.target else { return }
+        self.target = target
+        // Called from a SwiftUI view update, where publishing is not allowed.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.history = NavigationHistory() }
+        }
+    }
+
+    func recordJump() {
+        if let current = position() { history.jump(from: current) }
+    }
+
+    func goBack() { move { history.goBack(from: $0) } }
+    func goForward() { move { history.goForward(from: $0) } }
+
+    private func move(_ step: (Position) -> Position?) {
+        guard let view = pdfView, let document = view.document, document.pageCount > 0,
+              let current = position(), let next = step(current),
+              // The rebuilt document may be shorter — clamp the index.
+              let page = document.page(at: min(next.page, document.pageCount - 1))
+        else { return }
+        view.go(to: PDFDestination(page: page, at: next.point))
+    }
+
+    private func position() -> Position? {
+        guard let view = pdfView,
+              let destination = view.currentDestination,
+              let page = destination.page,
+              let index = view.document?.index(for: page), index != NSNotFound
+        else { return nil }
+        return Position(page: index, point: destination.point)
     }
 }
 

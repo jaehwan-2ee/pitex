@@ -39,6 +39,8 @@
 "preview.synctex" = "SyncTeX";
 "preview.synctex_forward" = "Hiển thị vùng chọn trong PDF";
 "preview.synctex_inverse" = "Hiển thị mã nguồn";
+"preview.back" = "Quay lại";
+"preview.forward" = "Tiến tới";
 "preview.open_external" = "Mở trong trình xem PDF mặc định";
 "preview.download" = "Lưu một bản sao PDF";
 "preview.detach" = "Mở bản xem trước trong cửa sổ riêng";
