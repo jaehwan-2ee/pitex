@@ -271,6 +271,7 @@
 "settings.compile.commands_note" = "{file} はソースファイルのパスに置き換わります。コマンドは開いているプロジェクトに適用され、新規プロジェクトのデフォルトになります。";
 "settings.compile.behavior" = "動作";
 "settings.compile.switch_pdf" = "ビルド成功後に右サイドバーへ切り替え";
+"settings.compile.preview_window" = "プロジェクトを開くときにプレビューを別ウインドウで開く";
 "settings.compile.jump_cursor" = "ビルド後にカーソル位置へ PDF を同期";
 "settings.compile.stop_error" = "最初のエラーで停止";
 "settings.compile.max_passes" = "最大パス数: %u";

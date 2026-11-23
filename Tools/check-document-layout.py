@@ -251,6 +251,7 @@ final class LayoutFixtureWindow: NSWindow {
         defer { window.orderOut(nil) }
         try await rendered(workspace, host, tex)
         let initial = try await stable(host, "fresh PDF workspace")
+        require(!workspace.previewDetached, "Preview must open inline by default", host)
         requireViewport(host, "fresh PDF workspace")
         require(initial.count == 3 && abs(initial[0] - 170) <= 1, "Fresh sidebar must be 170pt: \(initial)", host)
         capture(host, "fresh-pdf")
@@ -309,6 +310,16 @@ final class LayoutFixtureWindow: NSWindow {
         try await activate(workspace, host, tex, a, "first workspace cache remains A")
         await independent.close()
         secondWindow.orderOut(nil)
+        // pitex.pref.preview.separateWindow opens the project popped out.
+        workspace.settings.previewInSeparateWindow = true
+        let poppedOut = WorkspaceModel()
+        await poppedOut.open(tex)
+        require(poppedOut.previewDetached && poppedOut.detachedPreviewWindow?.isVisible == true,
+                "Separate-window preference did not open the preview popped out", host)
+        await poppedOut.close()
+        require(!poppedOut.previewDetached && poppedOut.detachedPreviewWindow == nil,
+                "Closing the project left its popped-out preview open", host)
+        workspace.settings.previewInSeparateWindow = false
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
 

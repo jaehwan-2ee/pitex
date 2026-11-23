@@ -271,6 +271,7 @@
 "settings.compile.commands_note" = "{file} 会展开为源文件路径。命令应用于当前打开的项目，并成为新项目的默认值。";
 "settings.compile.behavior" = "行为";
 "settings.compile.switch_pdf" = "构建成功后切换到右侧边栏";
+"settings.compile.preview_window" = "打开项目时在单独窗口中打开预览";
 "settings.compile.jump_cursor" = "构建后将 PDF 同步到光标位置";
 "settings.compile.stop_error" = "遇到第一个错误后停止";
 "settings.compile.max_passes" = "最大遍数：%u";
