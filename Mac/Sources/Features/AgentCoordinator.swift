@@ -128,10 +128,12 @@ final class AgentCoordinator: ObservableObject {
         }
     }
     @Published var statusMessage: String?
-    /// The Codex CLI approval the panel is showing. Later requests wait in
-    /// `approvalQueue`. pi never sets this; its extension prompts stay
-    /// auto-cancelled.
-    @Published private(set) var pendingApproval: AgentApprovalRequest?
+    /// The CLI approval card the panel is showing (tool, question, or plan).
+    /// Later requests wait in `approvalQueue`. pi never sets this; its
+    /// extension prompts stay auto-cancelled.
+    @Published private(set) var pendingApproval: AgentApprovalItem?
+    /// Bridge backends' permission mode; nil hides the picker (pi, Codex).
+    @Published private(set) var permissionMode: AgentPermissionMode?
     /// FIFO keyed by request id. Stop and new-session deny every entry.
     private var approvalQueue = AgentApprovalQueue()
     /// Whether the active document/selection is folded into each prompt's
@@ -273,6 +275,7 @@ final class AgentCoordinator: ObservableObject {
         flushDeltas()
         approvalQueue.clear()
         pendingApproval = nil
+        permissionMode = nil
         prepareTask?.cancel()
         eventTask?.cancel()
         process?.terminate()
@@ -673,6 +676,7 @@ final class AgentCoordinator: ObservableObject {
         isUpdatingModelSettings = false
         approvalQueue.clear()
         pendingApproval = nil
+        permissionMode = nil
         // A message cut off by the exit gets its final (non-streaming) render.
         finalizeEntries()
         guard !intentionalStop else { return }
@@ -771,13 +775,22 @@ final class AgentCoordinator: ObservableObject {
         try? process.send(.newSession)
     }
 
-    /// Answers the approval on screen. `decision` is `approve`, `deny`, or
-    /// `always_allow` — the bridge maps those onto the CLI's native reply.
-    /// The next queued request, if any, takes its place.
-    func respondToApproval(_ decision: String) {
-        guard let pending = approvalQueue.dequeueHead() else { return }
+    /// Answers card `id` with a button, question answers, or feedback. A card
+    /// the bridge already settled is ignored. The next queued request, if
+    /// any, takes its place.
+    func answerApproval(id: String, _ answer: AgentApprovalAnswer) {
+        guard let pending = approvalQueue.dequeueHead(id: id) else { return }
         showApprovalHead()
-        try? process?.send(.approvalResponse(id: pending.id, decision: decision))
+        try? process?.send(.approvalResponse(id: pending.id, answer: answer))
+    }
+
+    /// Picks a permission mode the bridge listed. The bridge answers with
+    /// `mode_changed`; a refused pick re-reads the state.
+    func selectPermissionMode(_ id: String) {
+        guard var mode = permissionMode, mode.id != id, mode.options.contains(where: { $0.id == id }) else { return }
+        mode.id = id
+        permissionMode = mode
+        try? process?.send(.setMode(modeID: id))
     }
 
     /// Stop and new-session must unblock every Codex request, including
@@ -786,7 +799,7 @@ final class AgentCoordinator: ObservableObject {
         let queued = approvalQueue.drain()
         pendingApproval = nil
         for item in queued {
-            try? process?.send(.approvalResponse(id: item.id, decision: "deny"))
+            try? process?.send(.approvalResponse(id: item.id, answer: AgentApprovalAnswer(decision: "deny")))
         }
     }
 
@@ -795,9 +808,7 @@ final class AgentCoordinator: ObservableObject {
             pendingApproval = nil
             return
         }
-        pendingApproval = AgentApprovalRequest(
-            id: head.id, kind: head.kind, title: head.title, detail: head.detail
-        )
+        pendingApproval = head
     }
 
     private func clearTranscript() {
@@ -1314,13 +1325,14 @@ final class AgentCoordinator: ObservableObject {
         case "extension_ui_request":
             handleExtensionUI(event)
         case "approval_request":
-            approvalQueue.enqueue(AgentApprovalItem(
-                id: event.string("id") ?? "",
-                kind: event.string("kind") ?? "command",
-                title: event.string("title") ?? "Approval",
-                detail: event.string("detail") ?? ""
-            ))
+            approvalQueue.enqueue(AgentApprovalItem(event: event.object))
             showApprovalHead()
+        case "approval_resolved":
+            // The bridge settled it (abort, turn end, exit): drop the card.
+            approvalQueue.remove(id: event.string("id") ?? "")
+            showApprovalHead()
+        case "mode_changed":
+            permissionMode = AgentPermissionMode(event.object["mode"])
         case "extension_error":
             let message = event.string("error") ?? "extension error"
             transcript.append(AgentTranscriptEntry(
@@ -1353,6 +1365,10 @@ final class AgentCoordinator: ObservableObject {
                 noteCatalogFailure(backend: sessionBackend, reason: event.responseError)
             }
             statusMessage = message
+            if event.responseCommand == "set_mode" {
+                // The picker showed the refused pick; read the mode back.
+                sendModelSettings(.getState)
+            }
             if let command = event.responseCommand, command == "prompt" {
                 transcript.append(AgentTranscriptEntry(
                     role: .notice, title: "Assistant", text: message, status: .failed
@@ -1370,6 +1386,7 @@ final class AgentCoordinator: ObservableObject {
             if let level = event.responseData?["thinkingLevel"] as? String {
                 thinkingLevel = level
             }
+            permissionMode = AgentPermissionMode(event.responseData?["mode"])
             sendModelSettings(.getAvailableThinkingLevels, id: modelSettingsRequestID)
         case "get_available_thinking_levels":
             modelSettingsRequestID = nil

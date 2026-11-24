@@ -59,8 +59,8 @@ final class AppleFMSession: AgentSession, @unchecked Sendable {
         case .abort:
             cancelTurn()
             emit(AppleFMEvents.response(command: "abort", id: id, success: true))
-        case let .approvalResponse(approvalID, decision):
-            resume(id: approvalID, decision: AppleFMApprovalDecision(wire: decision))
+        case let .approvalResponse(approvalID, answer):
+            resume(id: approvalID, decision: AppleFMApprovalDecision(wire: answer.decision))
             emit(AppleFMEvents.response(command: "approval_response", id: id, success: true))
         case .getState:
             emit(AppleFMEvents.state(contextTokens: contextTokens, id: id))
@@ -76,6 +76,9 @@ final class AppleFMSession: AgentSession, @unchecked Sendable {
             emit(AppleFMEvents.setModel(provider: provider, modelID: modelID, contextTokens: contextTokens, id: id))
         case let .setThinkingLevel(level):
             emit(AppleFMEvents.setThinkingLevel(level, id: id))
+        case .setMode:
+            // Apple FM reports no modes, so its picker never shows.
+            emit(AppleFMEvents.response(command: "set_mode", id: id, success: false))
         case .newSession:
             cancelTurn()
             models.reset()

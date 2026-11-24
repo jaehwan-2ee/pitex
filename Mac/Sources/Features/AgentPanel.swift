@@ -60,9 +60,15 @@ struct AgentPanel: View {
             }
 
             if let approval = coordinator.pendingApproval {
-                approvalRow(approval)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 4)
+                AgentApprovalCard(
+                    approval: approval, fontSize: settings.aiFontSize, projectRoot: coordinator.projectRoot(),
+                    openLink: { coordinator.openFile($0, $1) },
+                    answer: { coordinator.answerApproval(id: approval.id, $0) }
+                )
+                // A new request gets fresh picks and feedback.
+                .id(approval.id)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
             }
 
             composerRow
@@ -126,6 +132,25 @@ struct AgentPanel: View {
                 .disabled(coordinator.thinkingLevels.count < 2 || coordinator.isUpdatingModelSettings)
                 .help(String(localized: "assistant.reasoning_help"))
                 .accessibilityIdentifier("pitex.assistantReasoning")
+            }
+
+            // Ask before edits / Accept edits / Plan, when the backend reports modes.
+            if coordinator.connection == .ready, let mode = coordinator.permissionMode {
+                Picker(selection: Binding(get: { mode.id }, set: { coordinator.selectPermissionMode($0) })) {
+                    ForEach(mode.options) { option in
+                        Text(verbatim: Self.modeTitle(option)).tag(option.id)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .labelsHidden()
+                .fixedSize()
+                // Edits apply without asking: tint the picker so it stays noticed.
+                .padding(2)
+                .background(mode.autoAppliesEdits ? Color.orange.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .help(mode.autoAppliesEdits ? String(localized: "assistant.mode.edits_auto_help") : String(localized: "assistant.mode.help"))
+                .accessibilityLabel(Text("assistant.mode.help"))
+                .accessibilityIdentifier("pitex.assistantMode")
             }
 
             Spacer(minLength: 4)
@@ -234,38 +259,6 @@ struct AgentPanel: View {
     private var installRuntimeButton: some View {
         Button("settings.ai.install_runtime") { coordinator.installRuntime() }
             .accessibilityIdentifier("pitex.assistant.installRuntime")
-    }
-
-    private func approvalRow(_ approval: AgentApprovalRequest) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: approval.title)
-                .font(.callout.weight(.semibold))
-            if !approval.detail.isEmpty {
-                Text(verbatim: approval.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(6)
-                    .textSelection(.enabled)
-            }
-            HStack(spacing: 8) {
-                Button("assistant.approve") {
-                    coordinator.respondToApproval("approve")
-                }
-                .accessibilityIdentifier("pitex.assistant.approve")
-                Button("assistant.deny") {
-                    coordinator.respondToApproval("deny")
-                }
-                .accessibilityIdentifier("pitex.assistant.deny")
-                Button("assistant.always_allow") {
-                    coordinator.respondToApproval("always_allow")
-                }
-                .accessibilityIdentifier("pitex.assistant.alwaysAllow")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityIdentifier("pitex.assistant.approval")
     }
 
     /// Composer: attach button, rounded text field, circular send/stop.
@@ -498,6 +491,11 @@ struct AgentPanel: View {
                 )
             }
         )
+    }
+
+    static func modeTitle(_ option: AgentPermissionMode.Option) -> String {
+        guard let key = AgentPermissionMode.labelKey(id: option.id, label: option.label) else { return option.label }
+        return String(localized: String.LocalizationValue(key))
     }
 
     private var thinkingBinding: Binding<String> {
@@ -767,7 +765,7 @@ private struct AgentToolCard: View {
         }
     }
 
-    private static func diffLines(_ diff: String) -> [(text: String, color: Color?)] {
+    static func diffLines(_ diff: String) -> [(text: String, color: Color?)] {
         var lines: [(text: String, color: Color?)] = []
         for row in GitSupport.parseFileDiff(diff) {
             switch row {
@@ -801,6 +799,250 @@ private struct AgentToolCard: View {
         case .thought: return String(localized: "assistant.tool.thought")
         case .exit: return String(localized: "assistant.tool.exit")
         }
+    }
+}
+
+/// The approval card: a tool request with its diff or command, a question
+/// form, or a plan to review (M3 Markdown), over the buttons the bridge offered.
+private struct AgentApprovalCard: View {
+    let approval: AgentApprovalItem
+    let fontSize: Double
+    let projectRoot: URL?
+    let openLink: (URL, Int?) -> Void
+    let answer: (AgentApprovalAnswer) -> Void
+    /// Single-choice pick per question id (`otherTag` for "Other").
+    @State private var single: [String: String] = [:]
+    @State private var multi: [String: Set<String>] = [:]
+    @State private var otherOn: [String: Bool] = [:]
+    @State private var otherText: [String: String] = [:]
+    @State private var feedback = ""
+    private static let otherTag = "\u{0}other"
+    private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
+    private var monoFont: Font { .system(size: max(fontSize - 2, 9), design: .monospaced) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: title)
+                .font(.callout.weight(.semibold))
+            if approval.kind == "question", !approval.questions.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(approval.questions, id: \.id) { question in
+                            questionView(question)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 360)
+                .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("assistant.question.submit") {
+                        answer(AgentApprovalAnswer(decision: "approve", answers: answers))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(answers.count != approval.questions.count)
+                    .accessibilityIdentifier("pitex.assistant.question.submit")
+                    Button("assistant.question.dismiss") { answer(AgentApprovalAnswer(decision: "deny")) }
+                        .accessibilityIdentifier("pitex.assistant.deny")
+                }
+            } else {
+                if approval.kind == "plan" {
+                    ScrollView {
+                        AgentMarkdownView(text: approval.plan ?? approval.detail, streaming: false,
+                                          fontSize: fontSize, projectRoot: projectRoot, openLink: openLink)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 320)
+                    .fixedSize(horizontal: false, vertical: true)
+                    TextField("assistant.plan.feedback_placeholder", text: $feedback)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            // Return sends the feedback, like Keep planning.
+                            guard !feedback.isEmpty, let keep = approval.actions.first(where: { $0.id == "keep_planning" }) else { return }
+                            answer(.action(keep, legacy: false, message: feedback))
+                        }
+                        .accessibilityIdentifier("pitex.assistant.plan.feedback")
+                } else {
+                    toolBody
+                }
+                buttons
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("pitex.assistant.approval")
+    }
+
+    private var title: String {
+        switch approval.kind {
+        case "question": return String(localized: "assistant.question.title")
+        case "plan": return String(localized: "assistant.plan.title")
+        default: return approval.title
+        }
+    }
+
+    @ViewBuilder
+    private var toolBody: some View {
+        if let tool = approval.toolDetail, tool.kind == .shell, let command = tool.command {
+            Text(verbatim: "$ " + command)
+                .font(monoFont)
+                .textSelection(.enabled)
+        } else if let tool = approval.toolDetail, tool.kind == .edit || tool.kind == .write, let diff = tool.diff {
+            Text(verbatim: tool.displayPath(root: projectRoot))
+                .font(monoFont)
+                .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(AgentToolCard.diffLines(diff).enumerated()), id: \.offset) { _, line in
+                        Text(verbatim: line.text)
+                            .font(monoFont)
+                            .foregroundStyle(line.color == nil ? Color.secondary : Color.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(line.color ?? .clear)
+                    }
+                }
+                .textSelection(.enabled)
+            }
+            .frame(maxHeight: 220)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if !approval.detail.isEmpty {
+            Text(verbatim: approval.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(6)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var buttons: some View {
+        let legacy = approval.actions.isEmpty
+        return HStack(spacing: 8) {
+            ForEach(legacy ? AgentApprovalAction.legacy : approval.actions, id: \.id) { action in
+                let button = Button(role: action.variant == "danger" ? .destructive : nil) {
+                    answer(.action(action, legacy: legacy, message: approval.kind == "plan" ? feedback : nil))
+                } label: {
+                    Text(verbatim: action.labelKey.map { String(localized: String.LocalizationValue($0)) } ?? action.label)
+                }
+                .accessibilityIdentifier(Self.identifier(action))
+                if action.variant == "primary" {
+                    button.buttonStyle(.borderedProminent)
+                } else {
+                    button
+                }
+            }
+        }
+    }
+
+    private static func identifier(_ action: AgentApprovalAction) -> String {
+        switch action.id {
+        case "approve", "allow_once": return "pitex.assistant.approve"
+        case "deny", "reject_once": return "pitex.assistant.deny"
+        case "always_allow", "allow_always": return "pitex.assistant.alwaysAllow"
+        default: return "pitex.assistant.action.\(action.id)"
+        }
+    }
+
+    private func questionView(_ question: AgentApprovalQuestion) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !question.header.isEmpty {
+                Text(verbatim: question.header)
+                    .font(captionFont)
+                    .padding(.horizontal, 6)
+                    .background(Color.secondary.opacity(0.15), in: Capsule())
+            }
+            Text(verbatim: question.question)
+                .font(.system(size: fontSize))
+                .fixedSize(horizontal: false, vertical: true)
+            if question.multiSelect {
+                ForEach(question.options, id: \.label) { option in
+                    Toggle(isOn: Binding(
+                        get: { multi[question.id, default: []].contains(option.label) },
+                        set: { on in
+                            if on { multi[question.id, default: []].insert(option.label) } else { multi[question.id]?.remove(option.label) }
+                        }
+                    )) {
+                        optionLabel(option)
+                    }
+                    .toggleStyle(.checkbox)
+                }
+                if question.allowOther {
+                    Toggle("assistant.question.other", isOn: Binding(
+                        get: { otherOn[question.id] ?? false },
+                        set: { otherOn[question.id] = $0 }
+                    ))
+                    .toggleStyle(.checkbox)
+                    otherField(question)
+                }
+            } else {
+                Picker(selection: Binding(
+                    get: { single[question.id] },
+                    set: { single[question.id] = $0 }
+                )) {
+                    ForEach(question.options, id: \.label) { option in
+                        optionLabel(option).tag(Optional(option.label))
+                    }
+                    if question.allowOther {
+                        Text("assistant.question.other").tag(Optional(Self.otherTag))
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .labelsHidden()
+                .pickerStyle(.radioGroup)
+                .accessibilityLabel(Text(verbatim: question.question))
+                if question.allowOther {
+                    otherField(question)
+                }
+            }
+        }
+    }
+
+    private func optionLabel(_ option: AgentApprovalQuestion.Option) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(verbatim: option.label)
+            if !option.description.isEmpty {
+                Text(verbatim: option.description)
+                    .font(captionFont)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Typing an answer picks "Other".
+    private func otherField(_ question: AgentApprovalQuestion) -> some View {
+        TextField("assistant.question.other_placeholder", text: Binding(
+            get: { otherText[question.id] ?? "" },
+            set: { text in
+                otherText[question.id] = text
+                guard !text.isEmpty else { return }
+                if question.multiSelect { otherOn[question.id] = true } else { single[question.id] = Self.otherTag }
+            }
+        ))
+        .textFieldStyle(.roundedBorder)
+        .padding(.leading, 20)
+        .onSubmit {
+            // Return submits once every question has an answer.
+            let picked = answers
+            if picked.count == approval.questions.count { answer(AgentApprovalAnswer(decision: "approve", answers: picked)) }
+        }
+        .accessibilityIdentifier("pitex.assistant.question.other")
+    }
+
+    /// Question id → answer, only for questions that have one.
+    private var answers: [String: AgentApprovalAnswer.Value] {
+        var out: [String: AgentApprovalAnswer.Value] = [:]
+        for question in approval.questions {
+            let other = (otherText[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if question.multiSelect {
+                var labels = question.options.map(\.label).filter { multi[question.id, default: []].contains($0) }
+                if otherOn[question.id] == true, !other.isEmpty { labels.append(other) }
+                if !labels.isEmpty { out[question.id] = .many(labels) }
+            } else if let choice = single[question.id] {
+                if choice != Self.otherTag { out[question.id] = .one(choice) } else if !other.isEmpty { out[question.id] = .one(other) }
+            }
+        }
+        return out
     }
 }
 

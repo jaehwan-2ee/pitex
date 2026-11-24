@@ -184,10 +184,13 @@ pub struct UiHandles {
     pub agent_status_label: RefCell<Option<gtk4::Label>>,
     /// "<backend>: <reason>" for enabled backends that list no models.
     pub agent_catalog_notes: RefCell<Option<gtk4::Label>>,
-    /// Approve / deny / always-allow row for a CLI approval request.
+    /// The card for a CLI approval request (tool, question, or plan).
     pub agent_approval_box: RefCell<Option<gtk4::Box>>,
-    pub agent_approval_title: RefCell<Option<gtk4::Label>>,
-    pub agent_approval_detail: RefCell<Option<gtk4::Label>>,
+    /// The request the card was built for; rebuilt only when it changes,
+    /// so a half-filled question keeps its picks across refreshes.
+    pub agent_approval_shown: RefCell<Option<crate::agent::AgentApprovalRequest>>,
+    /// Permission mode picker (bridge backends that report modes).
+    pub agent_mode_picker: RefCell<Option<gtk4::DropDown>>,
     /// Right-aligned usage/context readout in the assistant controls row —
     /// populated from `get_session_stats`, hidden until stats arrive.
     pub agent_usage_label: RefCell<Option<gtk4::Label>>,
@@ -865,6 +868,7 @@ impl AppState {
                  .pitex-diff-fold {{ background-color: alpha(currentColor, 0.10); padding: 4px 0; }}
                  .pitex-diff-filehdr {{ background-color: alpha(currentColor, 0.08); border-radius: 0; }}
                  .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}
+                 .pitex-mode-edits > button {{ background-color: alpha(#e5a50a, 0.25); box-shadow: inset 0 0 0 1px alpha(#e5a50a, 0.8); }}
                  .pitex-md-code {{ background-color: alpha(currentColor, 0.06); border-radius: 6px; padding: 2px 8px 6px 8px; }}
                  .pitex-md-quote {{ border-left: 3px solid alpha(currentColor, 0.25); padding-left: 8px; }}
                  .pitex-md-cell {{ padding: 2px 0; border-bottom: 1px solid alpha(currentColor, 0.10); }}
@@ -4557,6 +4561,7 @@ impl AppState {
                 &agent.thinking_level,
                 agent.connection == crate::agent::Connection::Ready,
                 lang,
+                &agent.mode,
             ));
             if self.rendered_picker_key.replace(picker_key) != picker_key {
             if let Some(picker) = ui.agent_model_picker.borrow().as_ref() {
@@ -4587,6 +4592,26 @@ impl AppState {
                 picker.set_sensitive(levels.len() >= 2 && !agent.is_updating_model_settings);
                 if let Some(idx) = levels.iter().position(|l| *l == agent.thinking_level) {
                     picker.set_selected(idx as u32);
+                }
+            }
+            if let Some(picker) = ui.agent_mode_picker.borrow().as_ref() {
+                // Shown only when the backend reports modes (Claude Code, Antigravity).
+                let mode = agent.mode.as_ref().filter(|_| agent.connection == crate::agent::Connection::Ready);
+                picker.set_visible(mode.is_some());
+                if let Some(mode) = mode {
+                    let titles: Vec<String> = mode.options.iter().map(|(id, label)| mode_label(lang, id, label)).collect();
+                    picker.set_model(Some(&gtk4::StringList::new(&titles.iter().map(String::as_str).collect::<Vec<_>>())));
+                    if let Some(idx) = mode.options.iter().position(|(id, _)| *id == mode.id) {
+                        picker.set_selected(idx as u32);
+                    }
+                    // Edits apply without asking: tint the picker and say so.
+                    if mode.auto_applies_edits() {
+                        picker.add_css_class("pitex-mode-edits");
+                        picker.set_tooltip_text(Some(&tr(lang, "assistant.mode.edits_auto_help")));
+                    } else {
+                        picker.remove_css_class("pitex-mode-edits");
+                        picker.set_tooltip_text(Some(&tr(lang, "assistant.mode.help")));
+                    }
                 }
             }
             }
@@ -4639,18 +4664,18 @@ impl AppState {
             // Outside the transcript throttle so a streaming burst cannot
             // hide an approval that arrived in the same poll.
             if let Some(box_) = ui.agent_approval_box.borrow().as_ref() {
-                if let Some(pending) = &agent.pending_approval {
-                    box_.set_visible(true);
-                    if let Some(title) = ui.agent_approval_title.borrow().as_ref() {
-                        title.set_text(&pending.title);
+                let mut shown = ui.agent_approval_shown.borrow_mut();
+                if *shown != agent.pending_approval {
+                    while let Some(child) = box_.first_child() {
+                        box_.remove(&child);
                     }
-                    if let Some(detail) = ui.agent_approval_detail.borrow().as_ref() {
-                        detail.set_text(&pending.detail);
-                        detail.set_visible(!pending.detail.is_empty());
+                    if let Some(pending) = &agent.pending_approval {
+                        let font_size = self.store.ai_font_size();
+                        box_.append(&approval_card(pending, font_size, root.as_deref(), &chat_theme));
                     }
-                } else {
-                    box_.set_visible(false);
+                    *shown = agent.pending_approval.clone();
                 }
+                box_.set_visible(shown.is_some());
             }
         });
         self.refresh_selection_chip();
@@ -6159,6 +6184,307 @@ fn tool_card(
         });
     });
     expander.upcast()
+}
+
+/// Mode picker title: the localized name of a known mode, else the bridge's label.
+pub(crate) fn mode_label(lang: &str, id: &str, label: &str) -> String {
+    crate::agent::AgentMode::label_key(id, label).map(|key| tr(lang, key)).unwrap_or_else(|| label.to_string())
+}
+
+/// Localized button text for a known approval action id, else the bridge's label.
+fn approval_action_label(lang: &str, action: &crate::agent::ApprovalAction) -> String {
+    let key = match action.id.as_str() {
+        "approve" | "allow_once" => "assistant.approve",
+        "deny" | "reject_once" => "assistant.deny",
+        "always_allow" | "allow_always" => "assistant.always_allow",
+        "reject_always" => "assistant.always_deny",
+        "approve_plan" => "assistant.plan.approve",
+        "approve_plan_accept_edits" => "assistant.plan.approve_accept_edits",
+        "keep_planning" => "assistant.plan.keep_planning",
+        _ => return action.label.clone(),
+    };
+    tr(lang, key)
+}
+
+/// Sends the answer for card `id` on the next idle (the click handler may
+/// run while `AppState` is borrowed). A card settled meanwhile is ignored.
+fn answer_approval_card(id: String, answer: crate::agent::ApprovalAnswer) {
+    glib::idle_add_local_once(move || {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+        let Ok(mut s) = state.try_borrow_mut() else { return };
+        if let Some(agent) = s.agent.as_mut() {
+            agent.answer_approval(&id, answer);
+        }
+        s.refresh_assistant();
+    });
+}
+
+fn approval_button(lang: &str, action: &crate::agent::ApprovalAction) -> gtk4::Button {
+    let button = gtk4::Button::with_label(&approval_action_label(lang, action));
+    match action.variant.as_str() {
+        "primary" => button.add_css_class("suggested-action"),
+        "danger" => button.add_css_class("destructive-action"),
+        _ => {}
+    }
+    let name = match action.id.as_str() {
+        "approve" | "allow_once" => "pitex.assistant.approve".to_string(),
+        "deny" | "reject_once" => "pitex.assistant.deny".to_string(),
+        "always_allow" | "allow_always" => "pitex.assistant.alwaysAllow".to_string(),
+        id => format!("pitex.assistant.action.{id}"),
+    };
+    button.set_widget_name(&name);
+    button
+}
+
+/// One AskUserQuestion item's inputs; `answer` is None until something is picked or typed.
+struct QuestionInputs {
+    id: String,
+    choices: Vec<(gtk4::CheckButton, String)>,
+    other: Option<(gtk4::CheckButton, gtk4::Entry)>,
+}
+
+impl QuestionInputs {
+    fn answer(&self, multi: bool) -> Option<serde_json::Value> {
+        let mut picked: Vec<String> = self
+            .choices
+            .iter()
+            .filter(|(check, _)| check.is_active())
+            .map(|(_, label)| label.clone())
+            .collect();
+        if let Some((check, entry)) = &self.other {
+            let text = entry.text().trim().to_string();
+            if check.is_active() && !text.is_empty() {
+                picked.push(text);
+            }
+        }
+        match picked.len() {
+            0 => None,
+            _ if multi => Some(serde_json::json!(picked)),
+            _ => Some(serde_json::json!(picked.remove(0))),
+        }
+    }
+}
+
+/// The approval card: a tool request with its diff or command, a question
+/// form, or a plan to review, over the buttons the bridge offered.
+fn approval_card(
+    pending: &crate::agent::AgentApprovalRequest,
+    font_size: f64,
+    root: Option<&Path>,
+    theme: &crate::chat_view::ChatTheme,
+) -> gtk4::Widget {
+    let lang = language();
+    let caption_size = (font_size - 2.0).max(9.0);
+    let card = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    card.set_margin_start(8);
+    card.set_margin_end(8);
+    card.set_margin_top(6);
+    card.set_margin_bottom(6);
+    card.set_widget_name("pitex.assistant.approval");
+    let title_text = match pending.kind.as_str() {
+        "question" => tr(lang, "assistant.question.title"),
+        "plan" => tr(lang, "assistant.plan.title"),
+        _ => pending.title.clone(),
+    };
+    let title = gtk4::Label::new(Some(&title_text));
+    title.set_xalign(0.0);
+    title.set_wrap(true);
+    title.add_css_class("heading");
+    card.append(&title);
+    let scrolled = |child: &gtk4::Widget, max: i32| {
+        let scroll = gtk4::ScrolledWindow::new();
+        scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+        scroll.set_propagate_natural_height(true);
+        // A short console pane must not squeeze the options or the plan to nothing.
+        let (_, natural, _, _) = child.measure(gtk4::Orientation::Vertical, -1);
+        scroll.set_min_content_height(natural.min(160));
+        scroll.set_max_content_height(max);
+        scroll.set_child(Some(child));
+        scroll
+    };
+    let buttons = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+
+    if pending.kind == "question" && !pending.questions.is_empty() {
+        let inputs: Rc<RefCell<Vec<(QuestionInputs, bool)>>> = Rc::default();
+        let submit = gtk4::Button::with_label(&tr(lang, "assistant.question.submit"));
+        submit.add_css_class("suggested-action");
+        submit.set_widget_name("pitex.assistant.question.submit");
+        submit.set_sensitive(false);
+        let refresh: Rc<dyn Fn()> = {
+            let inputs = inputs.clone();
+            let submit = submit.clone();
+            Rc::new(move || {
+                let ready = inputs.borrow().iter().all(|(q, multi)| q.answer(*multi).is_some());
+                submit.set_sensitive(ready);
+            })
+        };
+        let form = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        for question in &pending.questions {
+            let block = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+            if !question.header.is_empty() {
+                let chip = gtk4::Label::new(Some(&question.header));
+                chip.add_css_class("pitex-diff-chip");
+                chip.set_halign(gtk4::Align::Start);
+                chip.set_attributes(Some(&font_attrs(caption_size)));
+                block.append(&chip);
+            }
+            let text = gtk4::Label::new(Some(&question.question));
+            text.set_xalign(0.0);
+            text.set_wrap(true);
+            text.set_attributes(Some(&font_attrs(font_size)));
+            block.append(&text);
+            let mut group: Option<gtk4::CheckButton> = None;
+            let mut choices = Vec::new();
+            let mut add_check = |label: &str, description: &str| {
+                let check = gtk4::CheckButton::with_label(label);
+                if !question.multi_select {
+                    if let Some(first) = &group {
+                        check.set_group(Some(first));
+                    } else {
+                        group = Some(check.clone());
+                    }
+                }
+                let refresh = refresh.clone();
+                check.connect_toggled(move |_| refresh());
+                block.append(&check);
+                if !description.is_empty() {
+                    let note = gtk4::Label::new(Some(description));
+                    note.set_xalign(0.0);
+                    note.set_wrap(true);
+                    note.set_margin_start(28);
+                    note.add_css_class("dim-label");
+                    note.set_attributes(Some(&font_attrs(caption_size)));
+                    block.append(&note);
+                }
+                check
+            };
+            for (label, description) in &question.options {
+                choices.push((add_check(label, description), label.clone()));
+            }
+            let other = question.allow_other.then(|| {
+                let check = add_check(&tr(lang, "assistant.question.other"), "");
+                let entry = gtk4::Entry::new();
+                entry.set_placeholder_text(Some(&tr(lang, "assistant.question.other_placeholder")));
+                entry.set_margin_start(28);
+                a11y(&entry, "pitex.assistant.question.other", "assistant.question.other");
+                let refresh = refresh.clone();
+                let toggle = check.clone();
+                entry.connect_changed(move |entry| {
+                    // Typing an answer picks "Other".
+                    if !entry.text().is_empty() && !toggle.is_active() {
+                        toggle.set_active(true);
+                    }
+                    refresh();
+                });
+                // Enter submits once every question has an answer.
+                let submit = submit.clone();
+                entry.connect_activate(move |_| {
+                    if submit.is_sensitive() {
+                        submit.emit_clicked();
+                    }
+                });
+                block.append(&entry);
+                (check, entry)
+            });
+            form.append(&block);
+            inputs.borrow_mut().push((QuestionInputs { id: question.id.clone(), choices, other }, question.multi_select));
+        }
+        card.append(&scrolled(form.upcast_ref(), 360));
+        let id = pending.id.clone();
+        {
+            let inputs = inputs.clone();
+            let id = pending.id.clone();
+            submit.connect_clicked(move |_| {
+                let mut answers = serde_json::Map::new();
+                for (q, multi) in inputs.borrow().iter() {
+                    if let Some(value) = q.answer(*multi) {
+                        answers.insert(q.id.clone(), value);
+                    }
+                }
+                answer_approval_card(id.clone(), crate::agent::ApprovalAnswer { decision: "approve".into(), answers, ..Default::default() });
+            });
+        }
+        let dismiss = gtk4::Button::with_label(&tr(lang, "assistant.question.dismiss"));
+        a11y(&dismiss, "pitex.assistant.deny", "assistant.question.dismiss");
+        dismiss.connect_clicked(move |_| answer_approval_card(id.clone(), crate::agent::ApprovalAnswer::decision("deny")));
+        buttons.append(&submit);
+        buttons.append(&dismiss);
+        card.append(&buttons);
+        return card.upcast();
+    }
+
+    let feedback = (pending.kind == "plan").then(|| {
+        let view = crate::chat_view::markdown_view(pending.plan.as_deref().unwrap_or(&pending.detail), false, font_size, root, theme);
+        card.append(&scrolled(&view, 320));
+        let entry = gtk4::Entry::new();
+        entry.set_placeholder_text(Some(&tr(lang, "assistant.plan.feedback_placeholder")));
+        a11y(&entry, "pitex.assistant.plan.feedback", "assistant.plan.feedback_placeholder");
+        card.append(&entry);
+        entry
+    });
+    if feedback.is_none() {
+        let tool = pending.tool.as_ref();
+        match tool.map(|t| t.kind.as_str()) {
+            Some("shell") if tool.and_then(|t| t.command.as_ref()).is_some() => {
+                card.append(&mono_label(&format!("$ {}", tool.and_then(|t| t.command.as_deref()).unwrap_or_default()), caption_size));
+            }
+            Some("edit" | "write") if tool.and_then(|t| t.diff.as_ref()).is_some() => {
+                let tool = tool.unwrap();
+                let path = mono_label(&tool.display_path(root), caption_size);
+                path.add_css_class("dim-label");
+                card.append(&path);
+                card.append(&scrolled(&tool_diff_view(tool.diff.as_deref().unwrap_or_default(), caption_size), 220));
+            }
+            _ if !pending.detail.is_empty() => {
+                let detail = gtk4::Label::new(Some(&pending.detail));
+                detail.set_xalign(0.0);
+                detail.set_wrap(true);
+                detail.set_lines(6);
+                detail.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                detail.add_css_class("dim-label");
+                card.append(&detail);
+            }
+            _ => {}
+        }
+    }
+    let legacy = pending.actions.is_empty();
+    let actions = if legacy {
+        let legacy = |id: &str, allow: bool, variant: &str| crate::agent::ApprovalAction {
+            id: id.into(),
+            label: String::new(),
+            allow,
+            variant: variant.into(),
+        };
+        // The order and colours the ACP cards use.
+        vec![legacy("approve", true, "primary"), legacy("always_allow", true, ""), legacy("deny", false, "danger")]
+    } else {
+        pending.actions.clone()
+    };
+    for action in actions {
+        let button = approval_button(lang, &action);
+        if let Some(entry) = feedback.as_ref().filter(|_| action.id == "keep_planning") {
+            // Enter in the feedback field sends it, like Keep planning.
+            let button = button.clone();
+            entry.connect_activate(move |entry| {
+                if !entry.text().trim().is_empty() {
+                    button.emit_clicked();
+                }
+            });
+        }
+        let feedback = feedback.clone();
+        let id = pending.id.clone();
+        button.connect_clicked(move |_| {
+            let message = feedback.as_ref().map(|entry| entry.text().to_string());
+            answer_approval_card(id.clone(), if legacy {
+                crate::agent::ApprovalAnswer::decision(&action.id)
+            } else {
+                crate::agent::ApprovalAnswer::action(&action, message)
+            });
+        });
+        buttons.append(&button);
+    }
+    card.append(&buttons);
+    card.upcast()
 }
 
 fn transcript_row(
@@ -8751,5 +9077,99 @@ mod tool_card_tests {
         entry.detail = "Latexmk: done".into();
         let rebuilt = transcript_row(&entry, 13.0, None, &Default::default()).downcast::<gtk4::Expander>().unwrap();
         assert!(rebuilt.is_expanded());
+    }
+}
+
+#[cfg(test)]
+mod approval_card_tests {
+    use super::*;
+    use crate::agent::{AgentApprovalRequest, ApprovalQuestion};
+
+    fn walk(widget: &gtk4::Widget, out: &mut Vec<gtk4::Widget>) {
+        out.push(widget.clone());
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            walk(&next, out);
+            child = next.next_sibling();
+        }
+    }
+
+    fn widgets(card: &gtk4::Widget) -> Vec<gtk4::Widget> {
+        let mut out = Vec::new();
+        walk(card, &mut out);
+        out
+    }
+
+    /// One test: GTK may be initialized from one thread only per process.
+    #[test]
+    #[ignore = "requires a GTK display (use xvfb-run)"]
+    fn approval_cards_render_and_gate_submit() {
+        gtk4::init().unwrap();
+        question_card_submits_only_when_every_question_is_answered();
+        plan_and_edit_cards_show_their_content_and_buttons();
+    }
+
+    /// Submit stays off until every question has an answer; "Other" counts once text is typed.
+    fn question_card_submits_only_when_every_question_is_answered() {
+        let question = |id: &str, multi: bool| ApprovalQuestion {
+            id: id.into(),
+            header: "Engine".into(),
+            question: format!("Question {id}?"),
+            options: vec![("pdfLaTeX".into(), "Fast".into()), ("LuaLaTeX".into(), String::new())],
+            multi_select: multi,
+            allow_other: true,
+        };
+        let pending = AgentApprovalRequest {
+            id: "q".into(),
+            kind: "question".into(),
+            questions: vec![question("0", false), question("1", true)],
+            ..Default::default()
+        };
+        let card = approval_card(&pending, 13.0, None, &Default::default());
+        let all = widgets(&card);
+        let submit = all.iter().find(|w| w.widget_name() == "pitex.assistant.question.submit").unwrap();
+        let checks: Vec<gtk4::CheckButton> = all.iter().filter_map(|w| w.clone().downcast::<gtk4::CheckButton>().ok()).collect();
+        assert_eq!(checks.len(), 6, "two options and Other per question");
+        let entries: Vec<gtk4::Entry> = all.iter().filter_map(|w| w.clone().downcast::<gtk4::Entry>().ok()).collect();
+        assert!(!submit.is_sensitive());
+        checks[1].set_active(true);
+        assert!(!submit.is_sensitive(), "the second question is still open");
+        entries[1].set_text("XeLaTeX");
+        assert!(checks[5].is_active(), "typing picks Other");
+        assert!(submit.is_sensitive());
+        // Single choice is a radio group.
+        checks[0].set_active(true);
+        assert!(!checks[1].is_active());
+    }
+
+    fn plan_and_edit_cards_show_their_content_and_buttons() {
+        let plan = AgentApprovalRequest::decode(
+            serde_json::json!({"id": "p", "kind": "plan", "title": "Review", "plan": "## Steps\n1. Edit intro",
+                "actions": [{"id": "approve_plan", "label": "x", "behavior": "allow", "variant": "primary"},
+                            {"id": "approve_plan_accept_edits", "label": "x", "behavior": "allow"},
+                            {"id": "keep_planning", "label": "x", "behavior": "deny"}]})
+            .as_object()
+            .unwrap(),
+        );
+        let all = widgets(&approval_card(&plan, 13.0, None, &Default::default()));
+        let buttons: Vec<String> = all
+            .iter()
+            .filter_map(|w| w.clone().downcast::<gtk4::Button>().ok())
+            .filter(|b| b.widget_name().starts_with("pitex.assistant.action."))
+            .filter_map(|b| b.label().map(|l| l.to_string()))
+            .collect();
+        assert_eq!(buttons, ["Approve plan", "Approve and accept edits", "Keep planning"]);
+        assert!(all.iter().any(|w| w.widget_name() == "pitex.assistant.plan.feedback"));
+        let edit = AgentApprovalRequest::decode(
+            serde_json::json!({"id": "e", "kind": "file", "title": "Edit files", "detail": "a.tex",
+                "toolDetail": {"kind": "edit", "path": "a.tex", "diff": "@@ -1 +1 @@\n-old\n+new"}})
+            .as_object()
+            .unwrap(),
+        );
+        let all = widgets(&approval_card(&edit, 13.0, None, &Default::default()));
+        let texts: Vec<String> = all.iter().filter_map(|w| w.clone().downcast::<gtk4::Label>().ok()).map(|l| l.text().to_string()).collect();
+        assert!(texts.contains(&"-old".to_string()) && texts.contains(&"+new".to_string()), "{texts:?}");
+        assert!(all.iter().any(|w| w.widget_name() == "pitex.assistant.approve"));
+        assert!(all.iter().any(|w| w.widget_name() == "pitex.assistant.alwaysAllow"));
     }
 }

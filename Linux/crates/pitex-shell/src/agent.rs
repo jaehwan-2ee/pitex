@@ -706,10 +706,15 @@ pub enum PiRPCCommand {
         id: String,
     },
     /// Reply to a CLI `approval_request`. `decision` is `approve`, `deny`,
-    /// or `always_allow`.
+    /// or `always_allow`; the card's button id, question answers, and
+    /// feedback text ride along when the card had them.
     ApprovalResponse {
         id: String,
-        decision: String,
+        answer: ApprovalAnswer,
+    },
+    /// Bridge backends: pick a permission mode from `get_state.mode.options`.
+    SetMode {
+        mode_id: String,
     },
     SwitchSession {
         path: String,
@@ -750,20 +755,202 @@ impl PiRPCCommand {
             Self::ExtensionUICancelled { id } => {
                 json!({"type": "extension_ui_response", "id": id, "cancelled": true})
             }
-            Self::ApprovalResponse { id, decision } => {
-                json!({"type": "approval_response", "id": id, "decision": decision})
+            Self::ApprovalResponse { id, answer } => {
+                let mut o = json!({"type": "approval_response", "id": id, "decision": answer.decision});
+                if let Some(action) = &answer.action_id {
+                    o["actionId"] = json!(action);
+                }
+                if !answer.answers.is_empty() {
+                    o["answers"] = Value::Object(answer.answers.clone());
+                }
+                if let Some(message) = answer.message.as_ref().filter(|m| !m.trim().is_empty()) {
+                    o["message"] = json!(message.trim());
+                }
+                o
             }
+            Self::SetMode { mode_id } => json!({"type": "set_mode", "modeId": mode_id}),
         }
     }
 }
 
 /// One CLI approval the transcript is waiting on. pi does not use this.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `kind` is command, file, permissions, plan, or question.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentApprovalRequest {
     pub id: String,
     pub kind: String,
     pub title: String,
     pub detail: String,
+    /// The typed tool detail (the edit diff, the command line).
+    pub tool: Option<ToolDetail>,
+    /// Buttons from the bridge; empty means Approve / Deny / Always allow.
+    pub actions: Vec<ApprovalAction>,
+    pub questions: Vec<ApprovalQuestion>,
+    /// Markdown of a plan to review.
+    pub plan: Option<String>,
+}
+
+/// One button on an approval card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalAction {
+    pub id: String,
+    pub label: String,
+    pub allow: bool,
+    /// primary, secondary, danger, or empty.
+    pub variant: String,
+}
+
+/// One AskUserQuestion item: choose an option (or several), or type "Other".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalQuestion {
+    pub id: String,
+    pub header: String,
+    pub question: String,
+    /// (label, description)
+    pub options: Vec<(String, String)>,
+    pub multi_select: bool,
+    pub allow_other: bool,
+}
+
+/// What the user picked on the card on screen.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ApprovalAnswer {
+    /// approve, deny, or always_allow.
+    pub decision: String,
+    pub action_id: Option<String>,
+    /// Question id → label string, or an array of labels for multi-select.
+    pub answers: Map<String, Value>,
+    pub message: Option<String>,
+}
+
+impl ApprovalAnswer {
+    pub fn decision(decision: &str) -> Self {
+        Self { decision: decision.to_string(), ..Default::default() }
+    }
+
+    /// A card button: its id goes along with the matching legacy decision.
+    pub fn action(action: &ApprovalAction, message: Option<String>) -> Self {
+        let decision = match action.id.as_str() {
+            "approve" | "deny" | "always_allow" => action.id.as_str(),
+            _ if action.allow => "approve",
+            _ => "deny",
+        };
+        Self { decision: decision.into(), action_id: Some(action.id.clone()), message, ..Default::default() }
+    }
+}
+
+impl AgentApprovalRequest {
+    pub fn decode(object: &Map<String, Value>) -> Self {
+        let text = |value: Option<&Value>| value.and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+        let array = |key: &str| object.get(key).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let id = text(object.get("id"));
+        let actions = array("actions")
+            .iter()
+            .filter_map(|row| {
+                let id = text(row.get("id"));
+                let behavior = text(row.get("behavior"));
+                if id.is_empty() || !matches!(behavior.as_str(), "allow" | "deny") {
+                    return None;
+                }
+                let label = text(row.get("label"));
+                Some(ApprovalAction {
+                    label: if label.is_empty() { id.clone() } else { label },
+                    id,
+                    allow: behavior == "allow",
+                    variant: text(row.get("variant")),
+                })
+            })
+            .collect();
+        let questions = array("questions")
+            .iter()
+            .filter_map(|row| {
+                let question = text(row.get("question"));
+                let id = text(row.get("id"));
+                if question.is_empty() || id.is_empty() {
+                    return None;
+                }
+                let options = row
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|options| {
+                        options
+                            .iter()
+                            .map(|o| (text(o.get("label")), text(o.get("description"))))
+                            .filter(|(label, _)| !label.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(ApprovalQuestion {
+                    id,
+                    header: text(row.get("header")),
+                    question,
+                    options,
+                    multi_select: row.get("multiSelect").and_then(|v| v.as_bool()).unwrap_or(false),
+                    allow_other: row.get("allowOther").and_then(|v| v.as_bool()).unwrap_or(false),
+                })
+            })
+            .collect();
+        let title = text(object.get("title"));
+        Self {
+            tool: object.get("toolDetail").and_then(|v| v.as_object()).and_then(|d| ToolDetail::decode(&id, d)),
+            id,
+            kind: Some(text(object.get("kind"))).filter(|k| !k.is_empty()).unwrap_or_else(|| "command".into()),
+            title: if title.is_empty() { "Approval".into() } else { title },
+            detail: text(object.get("detail")),
+            actions,
+            questions,
+            plan: object.get("plan").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()).map(|p| bounded(p, 32_000)),
+        }
+    }
+}
+
+/// The bridge's permission mode (`get_state.mode`, `mode_changed.mode`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AgentMode {
+    pub id: String,
+    /// (id, label) in the bridge's order.
+    pub options: Vec<(String, String)>,
+}
+
+impl AgentMode {
+    pub fn decode(value: Option<&Value>) -> Option<Self> {
+        let object = value?.as_object()?;
+        let id = object.get("id")?.as_str()?.to_string();
+        let options: Vec<(String, String)> = object
+            .get("options")?
+            .as_array()?
+            .iter()
+            .filter_map(|o| {
+                let id = o.get("id")?.as_str()?.to_string();
+                let label = o.get("label").and_then(|v| v.as_str()).unwrap_or(&id).to_string();
+                Some((id, label))
+            })
+            .collect();
+        (!options.is_empty()).then_some(Self { id, options })
+    }
+
+    /// Localization key for a mode (Claude's or agy's spelling), if known.
+    /// Only Claude's default asks before edits (the bridge labels it so);
+    /// agy's default edits project files without asking, so it reads "Default".
+    pub fn label_key(id: &str, label: &str) -> Option<&'static str> {
+        match id {
+            "default" if label == "Ask before edits" => Some("assistant.mode.default"),
+            "default" => Some("assistant.mode.cli_default"),
+            "acceptEdits" | "accept-edits" => Some("assistant.mode.accept_edits"),
+            "plan" => Some("assistant.mode.plan"),
+            _ => None,
+        }
+    }
+
+    /// Edits apply without asking (accept-edits, or agy's default): the
+    /// picker is tinted so it stays visible.
+    pub fn auto_applies_edits(&self) -> bool {
+        let label = self.options.iter().find(|(id, _)| *id == self.id).map_or("", |(_, label)| label.as_str());
+        matches!(
+            Self::label_key(&self.id, label),
+            Some("assistant.mode.accept_edits" | "assistant.mode.cli_default")
+        )
+    }
 }
 
 /// A decoded stdout line.
@@ -1508,8 +1695,12 @@ pub struct AgentCoordinator {
     /// because a unit test has no child process to capture stdin.
     #[cfg(test)]
     approval_sent: Vec<(String, String)>,
+    #[cfg(test)]
+    approval_wire: Vec<Value>,
     /// The approval the panel is showing. Further requests wait behind it.
     pub pending_approval: Option<AgentApprovalRequest>,
+    /// Bridge backends' permission mode; None hides the picker (pi).
+    pub mode: Option<AgentMode>,
     pub attach_active_document: bool,
     pub pending_composer_insertion: Option<String>,
     pub selection_attachment: Option<AgentSelectionAttachment>,
@@ -1644,7 +1835,10 @@ impl AgentCoordinator {
             approval_queue: VecDeque::new(),
             #[cfg(test)]
             approval_sent: Vec::new(),
+            #[cfg(test)]
+            approval_wire: Vec::new(),
             pending_approval: None,
+            mode: None,
             attach_active_document: store
                 .prefs()
                 .bool(Self::ATTACH_DOCUMENT_KEY)
@@ -1897,6 +2091,7 @@ impl AgentCoordinator {
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
         self.clear_approvals();
+        self.mode = None;
         // A message cut off by the exit gets its final (non-streaming) render.
         self.finalize_entries();
         if !self.intentional_stop {
@@ -1918,6 +2113,7 @@ impl AgentCoordinator {
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
         self.clear_approvals();
+        self.mode = None;
         self.finalize_entries();
         self.ui_revision += 1;
     }
@@ -2463,14 +2659,49 @@ impl AgentCoordinator {
         self.ui_revision += 1;
     }
 
-    /// Answers the approval on screen. `decision` is `approve`, `deny`, or
-    /// `always_allow`. The next queued request takes its place.
+    /// Answers the approval on screen with a bare decision (tests).
+    #[cfg(test)]
     pub fn respond_to_approval(&mut self, decision: &str) {
+        let Some(id) = self.approval_queue.front().map(|a| a.id.clone()) else { return };
+        self.answer_approval(&id, ApprovalAnswer::decision(decision));
+    }
+
+    /// Answers card `id` with a button, question answers, or feedback. A card
+    /// the bridge already settled is ignored, so the click cannot answer the
+    /// request queued behind it. The next queued request takes its place.
+    pub fn answer_approval(&mut self, id: &str, answer: ApprovalAnswer) {
+        if self.approval_queue.front().map(|a| a.id.as_str()) != Some(id) {
+            return;
+        }
         let Some(pending) = self.approval_queue.pop_front() else {
             return;
         };
         self.pending_approval = self.approval_queue.front().cloned();
-        self.send_approval(&pending.id, decision);
+        self.send_approval(&pending.id, answer);
+        self.ui_revision += 1;
+    }
+
+    /// The bridge settled a request itself (abort, turn end, process exit): drop its card.
+    fn approval_resolved(&mut self, id: &str) {
+        let before = self.approval_queue.len();
+        self.approval_queue.retain(|item| item.id != id);
+        if self.approval_queue.len() != before {
+            self.pending_approval = self.approval_queue.front().cloned();
+            self.ui_revision += 1;
+        }
+    }
+
+    /// Picks a permission mode the bridge listed. The bridge answers with
+    /// `mode_changed`; a refused pick re-reads the state.
+    pub fn select_mode(&mut self, id: &str) {
+        let Some(mode) = self.mode.as_mut() else { return };
+        if mode.id == id || !mode.options.iter().any(|(option, _)| option == id) {
+            return;
+        }
+        mode.id = id.to_string();
+        if let Some(process) = &self.process {
+            let _ = process.send(&PiRPCCommand::SetMode { mode_id: id.to_string() }, None);
+        }
         self.ui_revision += 1;
     }
 
@@ -2483,7 +2714,7 @@ impl AgentCoordinator {
         }
         self.pending_approval = None;
         for pending in &queued {
-            self.send_approval(&pending.id, "deny");
+            self.send_approval(&pending.id, ApprovalAnswer::decision("deny"));
         }
         self.ui_revision += 1;
     }
@@ -2502,17 +2733,16 @@ impl AgentCoordinator {
         self.pending_approval = self.approval_queue.front().cloned();
     }
 
-    fn send_approval(&mut self, id: &str, decision: &str) {
+    fn send_approval(&mut self, id: &str, answer: ApprovalAnswer) {
+        let command = PiRPCCommand::ApprovalResponse { id: id.to_string(), answer };
         #[cfg(test)]
-        self.approval_sent.push((id.to_string(), decision.to_string()));
+        {
+            let wire = command.object();
+            self.approval_sent.push((id.to_string(), wire["decision"].as_str().unwrap_or_default().to_string()));
+            self.approval_wire.push(wire);
+        }
         let Some(process) = &self.process else { return };
-        let _ = process.send(
-            &PiRPCCommand::ApprovalResponse {
-                id: id.to_string(),
-                decision: decision.to_string(),
-            },
-            None,
-        );
+        let _ = process.send(&command, None);
     }
 
     fn clear_transcript(&mut self) {
@@ -2777,13 +3007,11 @@ impl AgentCoordinator {
                 }
             }
             "extension_ui_request" => self.handle_extension_ui(event),
-            "approval_request" => {
-                self.note_approval(AgentApprovalRequest {
-                    id: event.string("id").unwrap_or_default(),
-                    kind: event.string("kind").unwrap_or_else(|| "command".into()),
-                    title: event.string("title").unwrap_or_else(|| "Approval".into()),
-                    detail: event.string("detail").unwrap_or_default(),
-                });
+            "approval_request" => self.note_approval(AgentApprovalRequest::decode(&event.object)),
+            "approval_resolved" => self.approval_resolved(&event.string("id").unwrap_or_default()),
+            "mode_changed" => {
+                self.mode = AgentMode::decode(event.object.get("mode"));
+                self.ui_revision += 1;
             }
             "extension_error" => {
                 let message = event.string("error").unwrap_or_else(|| "extension error".into());
@@ -2837,6 +3065,10 @@ impl AgentCoordinator {
                 self.note_catalog_report(&backend, Err(event.response_error()));
             }
             self.status_message = Some(message.clone());
+            if event.response_command().as_deref() == Some("set_mode") {
+                // The picker showed the refused pick; read the mode back.
+                self.send_model_settings(PiRPCCommand::GetState, None);
+            }
             if event.response_command().as_deref() == Some("prompt") {
                 self.push_entry(AgentTranscriptEntry {
                     role: TranscriptRole::Notice,
@@ -2859,6 +3091,7 @@ impl AgentCoordinator {
                     if let Some(level) = data.get("thinkingLevel").and_then(|v| v.as_str()) {
                         self.thinking_level = level.to_string();
                     }
+                    self.mode = AgentMode::decode(data.get("mode"));
                 }
                 self.send_model_settings(
                     PiRPCCommand::GetAvailableThinkingLevels,
@@ -5055,14 +5288,145 @@ mod session_history_tests {
         assert_eq!(pending.detail, "ls");
         agent.respond_to_approval("always_allow");
         assert!(agent.pending_approval.is_none());
-        let wire = PiRPCCommand::ApprovalResponse {
-            id: "42".into(),
-            decision: "always_allow".into(),
-        };
         assert_eq!(
-            wire.object(),
-            json!({"type": "approval_response", "id": "42", "decision": "always_allow"})
+            agent.approval_wire,
+            vec![json!({"type": "approval_response", "id": "42", "decision": "always_allow"})]
         );
+    }
+
+    fn event(value: Value) -> PiRPCEvent {
+        PiRPCEvent::new(value.as_object().unwrap().clone()).unwrap()
+    }
+
+    #[test]
+    fn approval_cards_decode_actions_questions_plan_and_tool_detail() {
+        let plan = AgentApprovalRequest::decode(
+            json!({
+                "type": "approval_request", "id": "p", "kind": "plan", "title": "Review the plan",
+                "detail": "## Plan", "plan": "## Plan\n1. Edit",
+                "actions": [
+                    {"id": "approve_plan", "label": "Approve plan", "behavior": "allow", "variant": "primary"},
+                    {"id": "bogus", "label": "x", "behavior": "maybe"},
+                    {"id": "keep_planning", "label": "Keep planning", "behavior": "deny"}
+                ]
+            })
+            .as_object()
+            .unwrap(),
+        );
+        assert_eq!(plan.kind, "plan");
+        assert_eq!(plan.plan.as_deref(), Some("## Plan\n1. Edit"));
+        assert_eq!(
+            plan.actions.iter().map(|a| (a.id.as_str(), a.allow, a.variant.as_str())).collect::<Vec<_>>(),
+            vec![("approve_plan", true, "primary"), ("keep_planning", false, "")],
+            "an action with an unknown behavior is dropped"
+        );
+        let question = AgentApprovalRequest::decode(
+            json!({
+                "id": "q", "kind": "question", "title": "Q",
+                "questions": [
+                    {"id": "0", "header": "Engine", "question": "Which engine?", "multiSelect": false, "allowOther": true,
+                     "options": [{"label": "pdfLaTeX", "description": "Fast"}, {"label": ""}, {"label": "LuaLaTeX"}]},
+                    {"id": "1", "header": "", "question": ""}
+                ]
+            })
+            .as_object()
+            .unwrap(),
+        );
+        assert_eq!(question.questions.len(), 1, "a question without text is dropped");
+        let q = &question.questions[0];
+        assert_eq!(q.options, vec![("pdfLaTeX".into(), "Fast".into()), ("LuaLaTeX".into(), String::new())]);
+        assert!(q.allow_other && !q.multi_select);
+        let edit = AgentApprovalRequest::decode(
+            json!({"id": "e", "kind": "file", "title": "Edit files", "detail": "a.tex",
+                   "toolDetail": {"kind": "edit", "path": "a.tex", "diff": "@@ -1 +1 @@\n-a\n+b"}})
+            .as_object()
+            .unwrap(),
+        );
+        let tool = edit.tool.expect("tool detail");
+        assert_eq!((tool.kind.as_str(), tool.diff.as_deref()), ("edit", Some("@@ -1 +1 @@\n-a\n+b")));
+        assert!(edit.actions.is_empty() && edit.plan.is_none());
+        // Old bridges and pi: only the original four fields.
+        let legacy = AgentApprovalRequest::decode(json!({"id": "1"}).as_object().unwrap());
+        assert_eq!((legacy.kind.as_str(), legacy.title.as_str()), ("command", "Approval"));
+    }
+
+    #[test]
+    fn card_answers_carry_the_action_answers_and_feedback() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&event(json!({"type": "approval_request", "id": "q", "kind": "question", "title": "Q",
+            "questions": [{"id": "0", "header": "H", "question": "Which?", "options": [{"label": "A"}], "multiSelect": true}]})));
+        agent.handle(&event(json!({"type": "approval_request", "id": "p", "kind": "plan", "title": "Plan", "plan": "x",
+            "actions": [{"id": "keep_planning", "label": "Keep planning", "behavior": "deny"}]})));
+        let mut answers = Map::new();
+        answers.insert("0".into(), json!(["A", "Other text"]));
+        agent.answer_approval("q", ApprovalAnswer { decision: "approve".into(), answers, ..Default::default() });
+        let keep = agent.pending_approval.clone().unwrap().actions[0].clone();
+        agent.answer_approval("p", ApprovalAnswer::action(&keep, Some("  Also the abstract. ".into())));
+        assert_eq!(
+            agent.approval_wire,
+            vec![
+                json!({"type": "approval_response", "id": "q", "decision": "approve", "answers": {"0": ["A", "Other text"]}}),
+                json!({"type": "approval_response", "id": "p", "decision": "deny", "actionId": "keep_planning",
+                       "message": "Also the abstract."}),
+            ]
+        );
+        let always = ApprovalAction { id: "always_allow".into(), label: String::new(), allow: true, variant: String::new() };
+        assert_eq!(ApprovalAnswer::action(&always, None).decision, "always_allow");
+        let once = ApprovalAction { id: "allow_once".into(), label: String::new(), allow: true, variant: String::new() };
+        assert_eq!(ApprovalAnswer::action(&once, None).decision, "approve");
+    }
+
+    #[test]
+    fn approval_resolved_drops_the_card_the_bridge_settled() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("1", "first"));
+        agent.handle(&approval_event("2", "second"));
+        agent.handle(&event(json!({"type": "approval_resolved", "id": "1", "outcome": "cancelled"})));
+        assert_eq!(agent.pending_approval.as_ref().map(|a| a.id.as_str()), Some("2"));
+        agent.handle(&event(json!({"type": "approval_resolved", "id": "9", "outcome": "cancelled"})));
+        agent.handle(&event(json!({"type": "approval_resolved", "id": "2", "outcome": "denied"})));
+        assert!(agent.pending_approval.is_none());
+        assert!(agent.approval_sent.is_empty(), "a settled card is never answered again");
+    }
+
+    #[test]
+    fn an_answer_for_a_settled_card_does_not_reach_the_next_request() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&approval_event("1", "question"));
+        agent.handle(&approval_event("2", "edit"));
+        agent.handle(&event(json!({"type": "approval_resolved", "id": "1", "outcome": "cancelled"})));
+        agent.answer_approval("1", ApprovalAnswer::decision("approve"));
+        assert!(agent.approval_sent.is_empty(), "the click on card 1 is dropped");
+        assert_eq!(agent.pending_approval.as_ref().map(|a| a.id.as_str()), Some("2"));
+        agent.answer_approval("2", ApprovalAnswer::decision("deny"));
+        assert_eq!(agent.approval_sent, vec![("2".into(), "deny".into())]);
+    }
+
+    #[test]
+    fn mode_comes_from_mode_changed_and_select_mode_only_picks_listed_modes() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        assert!(agent.mode.is_none(), "pi reports no mode: no picker");
+        agent.handle(&event(json!({"type": "mode_changed", "mode": {"id": "default", "options": [
+            {"id": "default", "label": "Ask before edits"}, {"id": "accept-edits"}, {"id": "plan", "label": "Plan"}]}})));
+        let mode = agent.mode.clone().expect("mode");
+        assert_eq!(mode.options[1], ("accept-edits".into(), "accept-edits".into()));
+        assert!(!mode.auto_applies_edits());
+        agent.select_mode("bypassPermissions");
+        assert_eq!(agent.mode.as_ref().unwrap().id, "default", "a mode the bridge did not list is ignored");
+        agent.select_mode("accept-edits");
+        assert!(agent.mode.as_ref().unwrap().auto_applies_edits());
+        assert_eq!(AgentMode::label_key("acceptEdits", "Accept edits"), Some("assistant.mode.accept_edits"));
+        assert_eq!(AgentMode::label_key("default", "Ask before edits"), Some("assistant.mode.default"));
+        assert_eq!(AgentMode::label_key("default", "Default"), Some("assistant.mode.cli_default"), "agy's default");
+        assert_eq!(AgentMode::label_key("auto", "Auto"), None);
+        let agy = AgentMode { id: "default".into(), options: vec![("default".into(), "Default".into())] };
+        assert!(agy.auto_applies_edits(), "agy's default edits without asking");
+        assert_eq!(
+            PiRPCCommand::SetMode { mode_id: "plan".into() }.object(),
+            json!({"type": "set_mode", "modeId": "plan"})
+        );
+        agent.handle(&event(json!({"type": "mode_changed", "mode": {"id": "x", "options": []}})));
+        assert!(agent.mode.is_none(), "no options: no picker");
     }
 
     #[test]

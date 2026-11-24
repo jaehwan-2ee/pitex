@@ -35,6 +35,17 @@ final class AgentApprovalQueueTests: XCTestCase {
         XCTAssertEqual(queue.head?.id, "2")
     }
 
+    func testAnswerForASettledCardDoesNotReachTheNextRequest() {
+        var queue = AgentApprovalQueue()
+        queue.enqueue(item("1", detail: "question"))
+        queue.enqueue(item("2", detail: "edit"))
+        queue.remove(id: "1")
+
+        XCTAssertNil(queue.dequeueHead(id: "1"))
+        XCTAssertEqual(queue.head?.id, "2")
+        XCTAssertEqual(queue.dequeueHead(id: "2")?.id, "2")
+    }
+
     func testStopDrainsEveryQueuedApprovalInOrder() {
         var queue = AgentApprovalQueue()
         queue.enqueue(item("7", detail: "edit"))

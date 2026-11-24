@@ -1081,6 +1081,25 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     ui.agent_reasoning_picker.replace(Some(reasoning.clone()));
     controls.append(&reasoning);
 
+    // Permission mode (Ask before edits / Accept edits / Plan); hidden unless the backend lists modes.
+    let mode_picker = gtk4::DropDown::from_strings(&[]);
+    mode_picker.set_visible(false);
+    compat::initial_tooltip(&mode_picker, &tr(lang, "assistant.mode.help"));
+    a11y(&mode_picker, "pitex.assistantMode", "assistant.mode.help");
+    {
+        let state = state.clone();
+        mode_picker.connect_selected_notify(move |dd| {
+            // Fails while refresh_assistant fills the list, so only user picks get here.
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            let Some(agent) = s.agent.as_mut() else { return };
+            let id = agent.mode.as_ref().and_then(|mode| mode.options.get(dd.selected() as usize)).map(|(id, _)| id.clone());
+            if let Some(id) = id {
+                agent.select_mode(&id);
+            }
+        });
+    }
+    ui.agent_mode_picker.replace(Some(mode_picker.clone()));
+
     let attach_label = gtk4::Label::new(Some(&tr(lang, "assistant.attach_document")));
     controls.append(&attach_label);
     let attach_toggle = gtk4::Switch::new();
@@ -1213,79 +1232,18 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     ui.selection_chip_label.replace(Some(chip_label.clone()));
     root.append(&chip);
 
-    // CLI approval — approve / deny / always allow. Hidden until a request arrives.
+    // CLI approval card (tool, question, or plan). Hidden until a request arrives;
+    // `refresh_assistant` builds its contents.
     let approval = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
     approval.set_margin_start(10);
     approval.set_margin_end(10);
     approval.set_margin_bottom(4);
     approval.set_visible(false);
     approval.add_css_class("card");
-    let approval_title = gtk4::Label::new(None);
-    approval_title.set_xalign(0.0);
-    approval_title.set_wrap(true);
-    approval_title.set_margin_start(8);
-    approval_title.set_margin_end(8);
-    approval_title.set_margin_top(6);
-    let approval_detail = gtk4::Label::new(None);
-    approval_detail.set_xalign(0.0);
-    approval_detail.set_wrap(true);
-    approval_detail.set_lines(6);
-    approval_detail.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    approval_detail.add_css_class("dim-label");
-    approval_detail.set_margin_start(8);
-    approval_detail.set_margin_end(8);
-    let approval_buttons = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    approval_buttons.set_margin_start(8);
-    approval_buttons.set_margin_end(8);
-    approval_buttons.set_margin_bottom(6);
-    let approve = gtk4::Button::with_label(&tr(lang, "assistant.approve"));
-    a11y(&approve, "pitex.assistant.approve", "assistant.approve");
-    let deny = gtk4::Button::with_label(&tr(lang, "assistant.deny"));
-    a11y(&deny, "pitex.assistant.deny", "assistant.deny");
-    let always = gtk4::Button::with_label(&tr(lang, "assistant.always_allow"));
-    a11y(&always, "pitex.assistant.alwaysAllow", "assistant.always_allow");
-    {
-        let state = state.clone();
-        approve.connect_clicked(move |_| {
-            let Ok(mut s) = state.try_borrow_mut() else { return };
-            if let Some(agent) = s.agent.as_mut() {
-                agent.respond_to_approval("approve");
-            }
-            s.refresh_assistant();
-        });
-    }
-    {
-        let state = state.clone();
-        deny.connect_clicked(move |_| {
-            let Ok(mut s) = state.try_borrow_mut() else { return };
-            if let Some(agent) = s.agent.as_mut() {
-                agent.respond_to_approval("deny");
-            }
-            s.refresh_assistant();
-        });
-    }
-    {
-        let state = state.clone();
-        always.connect_clicked(move |_| {
-            let Ok(mut s) = state.try_borrow_mut() else { return };
-            if let Some(agent) = s.agent.as_mut() {
-                agent.respond_to_approval("always_allow");
-            }
-            s.refresh_assistant();
-        });
-    }
-    approval_buttons.append(&approve);
-    approval_buttons.append(&deny);
-    approval_buttons.append(&always);
-    approval.append(&approval_title);
-    approval.append(&approval_detail);
-    approval.append(&approval_buttons);
     ui.agent_approval_box.replace(Some(approval.clone()));
-    ui.agent_approval_title.replace(Some(approval_title));
-    ui.agent_approval_detail.replace(Some(approval_detail));
     root.append(&approval);
 
-    // Composer: attach, entry, send/stop.
+    // Composer: attach, entry, permission mode, send/stop.
     let composer = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     composer.set_margin_start(10);
     composer.set_margin_end(10);
@@ -1318,6 +1276,8 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     }
     ui.agent_composer.replace(Some(entry.clone()));
     composer.append(&entry);
+    // Beside the composer, as in Claude Code and Paseo: the header row is already full.
+    composer.append(&mode_picker);
 
     // Slash-command completion — a popover on the entry listing
     // `get_commands` results matching the typed prefix (max 8 rows).
