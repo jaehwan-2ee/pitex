@@ -26,7 +26,7 @@ import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
-import type { AdapterHost, AdapterStartOptions, CliAdapter, ModeState, PiCommand } from "./adapter.ts";
+import { promptImages, type AdapterHost, type AdapterStartOptions, type CliAdapter, type ModeState, type PiCommand, type PiImage } from "./adapter.ts";
 import type { AcpProfile } from "./acp-profiles.ts";
 import { stopCodexChild } from "./codex-adapter.ts";
 import {
@@ -461,6 +461,8 @@ export class AcpAdapter implements CliAdapter {
   private selectedMode: string | null = null;
   private loadSession = false;
   private listSessions = false;
+  /** `promptCapabilities.image` from initialize. */
+  private imagePrompts = false;
   private systemPromptAppend = false;
   private pending = new Map<string, PendingApproval>();
   private terminals = new Map<string, LiveTerminal>();
@@ -473,7 +475,7 @@ export class AcpAdapter implements CliAdapter {
   private starting = false;
   private turn = 0;
   /** Prompts sent while a turn runs. Each one starts after the turn before it ends. */
-  private queue: string[] = [];
+  private queue: { message: string; images: PiImage[] }[] = [];
   /** Foreground commands still running in this turn (deferTurnOnRunningTools). */
   private openTools = new Set<string>();
   private deferredStop: string | null = null;
@@ -552,6 +554,7 @@ export class AcpAdapter implements CliAdapter {
     }
     const capabilities = asObject(init.agentCapabilities);
     this.loadSession = capabilities?.loadSession === true;
+    this.imagePrompts = asObject(capabilities?.promptCapabilities)?.image === true;
     const listing = asObject(capabilities?.sessionCapabilities)?.list;
     this.listSessions = listing !== undefined && listing !== null && listing !== false;
     const antigravity = asObject(asObject(capabilities?._meta)?.antigravity);
@@ -699,16 +702,21 @@ export class AcpAdapter implements CliAdapter {
       host.respond("prompt", false, undefined, "The prompt was empty.", command.id);
       return;
     }
+    const images = promptImages(command);
+    if (images.length > 0 && !this.imagePrompts) {
+      host.respond("prompt", false, undefined, `${this.displayName} does not accept images.`, command.id);
+      return;
+    }
     if (this.running || this.starting) {
-      this.queue.push(message);
+      this.queue.push({ message, images });
       host.respond("prompt", true, { queued: true }, undefined, command.id);
       return;
     }
-    await this.startTurn(message);
+    await this.startTurn(message, images);
     host.respond("prompt", true, {}, undefined, command.id);
   }
 
-  private async startTurn(message: string): Promise<void> {
+  private async startTurn(message: string, images: PiImage[] = []): Promise<void> {
     const turn = ++this.turn;
     this.starting = true;
     try {
@@ -738,7 +746,10 @@ export class AcpAdapter implements CliAdapter {
       "session/prompt",
       {
         sessionId: this.sessionId,
-        prompt: [{ type: "text", text: message }],
+        prompt: [
+          ...images.map((image) => ({ type: "image", mimeType: image.mimeType, data: image.data })),
+          { type: "text", text: message },
+        ],
       },
       PROMPT_TIMEOUT_MS
     );
@@ -1176,6 +1187,8 @@ export class AcpAdapter implements CliAdapter {
         : null,
       thinkingLevel: this.effort ?? (this.profile.modelSource === "config" ? null : "medium"),
       ...(this.modeState() ? { mode: this.modeState() } : {}),
+      // ACP has no steer: mid-turn text waits for the turn to end.
+      capabilities: { steer: false, images: this.imagePrompts },
     };
   }
 
@@ -1205,7 +1218,7 @@ export class AcpAdapter implements CliAdapter {
     }
     const next = this.queue.shift();
     if (next === undefined) return;
-    void this.startTurn(next).catch((error: unknown) => {
+    void this.startTurn(next.message, next.images).catch((error: unknown) => {
       this.queue = [];
       const text = error instanceof Error ? error.message : `${this.displayName} request failed.`;
       this.host?.emit({ type: "extension_error", error: text });

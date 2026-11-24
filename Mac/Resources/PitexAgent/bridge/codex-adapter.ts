@@ -435,6 +435,10 @@ export class CodexAdapter implements CliAdapter {
       host.respond("prompt", false, undefined, "The prompt was empty.", command.id);
       return;
     }
+    if (command.images?.length) {
+      host.respond("prompt", false, undefined, "Codex in Pitex does not accept images yet.", command.id);
+      return;
+    }
     if (!this.threadId) await this.openThread(null);
     if (!this.sessionPath) {
       this.sessionPath = joinSession(this.sessionDir, `codex-${randomUUID()}.jsonl`);
@@ -618,6 +622,8 @@ export class CodexAdapter implements CliAdapter {
           ? { id: this.modelId, provider: "codex", name: this.modelId }
           : null,
       thinkingLevel: this.effort ?? current?.defaultEffort ?? "medium",
+      // shortcut: Codex images (input type "image") are not wired; add them when the host offers Codex.
+      capabilities: { steer: true, images: false },
     };
   }
 

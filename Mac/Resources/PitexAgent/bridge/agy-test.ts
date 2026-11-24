@@ -93,7 +93,7 @@ const runCommand = (id, status) => ({
 
 function prompt(msg) {
   promptId = msg.id;
-  const text = msg.params.prompt[0].text;
+  const text = msg.params.prompt.find((block) => block.type === "text").text;
   if (text.startsWith("slow")) {
     // Measured on agy: after the command ends, the model takes seconds to reply, and a
     // usage_update can come before any reply text.
@@ -165,7 +165,7 @@ function handle(msg) {
         protocolVersion: 1,
         agentCapabilities: {
           loadSession: true,
-          promptCapabilities: { image: true },
+          promptCapabilities: { image: process.env.FAKE_NO_IMAGE !== "1" },
           sessionCapabilities: { list: {}, load: {}, resume: {}, close: {} },
           _meta: { antigravity: { tier: true, systemPrompt: { append: true } } },
         },
@@ -444,6 +444,7 @@ test("agy starts without authenticate, forces mode default, and reads models fro
           { id: "plan", label: "plan" },
         ],
       },
+      capabilities: { steer: false, images: true },
     });
     await adapter.handleCommand({ type: "get_available_thinking_levels", id: "levels" }, host);
     assert.deepEqual((response(responses, "levels").data as { levels: string[] }).levels, ["low", "high"]);
@@ -824,5 +825,39 @@ test("a missing or signed-out Antigravity CLI is reported without forwarding its
     assert.equal(traffic(signedOut.record).some((line) => line.method === "authenticate"), false);
   } finally {
     await shutdown(signedOut);
+  }
+});
+
+test("agy images go out as ACP image content ahead of the text; no image capability refuses them", async () => {
+  const booted = await boot();
+  const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+  try {
+    await booted.adapter.handleCommand({ type: "get_state", id: "state" }, booted.host);
+    assert.deepEqual((response(booted.responses, "state").data as Record<string, unknown>).capabilities, {
+      steer: false,
+      images: true,
+    });
+    await booted.adapter.handleCommand({ type: "prompt", id: "p", message: "fswrite colour?", images: [image] }, booted.host);
+    await waitUntil("prompt sent", () => traffic(booted.record).some((line) => line.method === "session/prompt"));
+    const sent = traffic(booted.record).find((line) => line.method === "session/prompt");
+    assert.deepEqual(sent?.params.prompt, [
+      { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+      { type: "text", text: "fswrite colour?" },
+    ]);
+  } finally {
+    await shutdown(booted);
+  }
+
+  const plain = await boot(prepare({ FAKE_NO_IMAGE: "1" }));
+  try {
+    await plain.adapter.handleCommand({ type: "get_state", id: "state" }, plain.host);
+    assert.equal((response(plain.responses, "state").data as { capabilities: { images: boolean } }).capabilities.images, false);
+    await plain.adapter.handleCommand({ type: "prompt", id: "p", message: "colour?", images: [image] }, plain.host);
+    const refused = response(plain.responses, "p");
+    assert.equal(refused.success, false);
+    assert.match(String(refused.error), /does not accept images/);
+    assert.equal(traffic(plain.record).some((line) => line.method === "session/prompt"), false);
+  } finally {
+    await shutdown(plain);
   }
 });
