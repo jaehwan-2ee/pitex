@@ -121,3 +121,78 @@ export async function createAdapter(id: string): Promise<CliAdapter> {
       );
   }
 }
+
+/** How a turn ended, on pi's `agent_end` (`outcome`). */
+export type TurnOutcome = "completed" | "failed" | "canceled";
+/** What the hosts word a failed turn by (`agent_end.code`). */
+export type ErrorCode = "signed_out" | "rate_limited" | "network" | "context_full" | "other";
+
+/** A provider's error text as one of the codes the hosts explain to the user. */
+export function errorCode(text: string): ErrorCode {
+  if (/prompt is too long|input is too long|context (window|length)|context_length|maximum context|too many tokens/i.test(text)) {
+    return "context_full";
+  }
+  if (/rate.?limit|\b429\b|too many requests|usage limit|quota|resource.?exhausted|limit reached|hit your limit/i.test(text)) {
+    return "rate_limited";
+  }
+  if (/not (logged|signed) in|\blog ?in\b|\bsign ?in\b|authenticat|unauthori[sz]ed|\bauth\b|oauth|api key|credential|\b401\b/i.test(text)) {
+    return "signed_out";
+  }
+  if (/network|ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|timed? ?out|offline|connection (error|refused|reset|closed)/i.test(text)) {
+    return "network";
+  }
+  return "other";
+}
+
+/** Marks pi's `agent_end` with how the turn ended; a failed one carries its error and code. */
+export function markOutcome(agentEnd: Record<string, unknown>, outcome: TurnOutcome, error?: string | null, code?: ErrorCode | null): void {
+  agentEnd.outcome = outcome;
+  if (outcome !== "failed") return;
+  if (error) agentEnd.error = error;
+  agentEnd.code = code ?? errorCode(error ?? "");
+}
+
+/** The latest usage a backend reported; `usage_update` carries the known fields. */
+export interface Usage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  thinkingTokens?: number;
+  costUsd?: number;
+  contextUsed?: number;
+  contextMax?: number;
+}
+
+const USAGE_KEYS = ["inputTokens", "cachedInputTokens", "outputTokens", "thinkingTokens", "costUsd", "contextUsed", "contextMax"] as const;
+
+/** Merges the finite numbers of `patch` into `usage`; true when a field changed. */
+export function mergeUsage(usage: Usage, patch: Usage): boolean {
+  let changed = false;
+  for (const key of USAGE_KEYS) {
+    const value = patch[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || usage[key] === value) continue;
+    usage[key] = value;
+    changed = true;
+  }
+  return changed;
+}
+
+/** The `usage_update` event pushed on every provider usage signal and at turn end. */
+export function usageEvent(usage: Usage, turnId?: string | null): Record<string, unknown> {
+  const event: Record<string, unknown> = { type: "usage_update", ...usage };
+  if (turnId) event.turnId = turnId;
+  return event;
+}
+
+/** The same usage as pi's `get_session_stats` payload (the pull fallback). */
+export function statsFromUsage(usage: Usage): Record<string, unknown> {
+  const input = (usage.inputTokens ?? 0) + (usage.cachedInputTokens ?? 0);
+  const output = (usage.outputTokens ?? 0) + (usage.thinkingTokens ?? 0);
+  const used = usage.contextUsed;
+  const max = usage.contextMax;
+  return {
+    tokens: { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, cacheRead: usage.cachedInputTokens ?? 0, total: input + output },
+    cost: usage.costUsd ?? 0,
+    contextUsage: used !== undefined && max ? { tokens: used, contextWindow: max, percent: (used / max) * 100 } : {},
+  };
+}

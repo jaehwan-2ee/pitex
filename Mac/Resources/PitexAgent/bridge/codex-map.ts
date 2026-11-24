@@ -14,6 +14,16 @@
 
 import { cleanDetail, newTurnId, stampTurn, unifiedDiff, type ToolDetail } from "./tool-detail.ts";
 import { todosFromCodexPlan } from "./todos.ts";
+import { markOutcome, type ErrorCode } from "./adapter.ts";
+
+/** Codex `turn.error.codexErrorInfo` values with a host wording. */
+const CODEX_ERROR_CODES: Record<string, ErrorCode> = {
+  contextWindowExceeded: "context_full",
+  usageLimitExceeded: "rate_limited",
+  unauthorized: "signed_out",
+  httpConnectionFailed: "network",
+  responseStreamConnectionFailed: "network",
+};
 
 export type Json = Record<string, unknown>;
 
@@ -297,6 +307,10 @@ function closeTurn(state: StreamState, turn: Json | null, out: Json[]): void {
   out.push({ type: "turn_end" });
   const agentEnd: Json = { type: "agent_end" };
   if (failed) agentEnd.messages = [assistant];
+  const info = error?.codexErrorInfo;
+  const infoKey = typeof info === "string" ? info : Object.keys(asObject(info) ?? {})[0];
+  const outcome = asString(turn?.status) === "interrupted" ? "canceled" : failed ? "failed" : "completed";
+  markOutcome(agentEnd, outcome, message ?? "Codex stopped before finishing.", infoKey ? CODEX_ERROR_CODES[infoKey] : null);
   out.push(agentEnd);
   state.turnOpen = false;
   state.assistantText = "";

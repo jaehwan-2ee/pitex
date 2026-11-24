@@ -109,6 +109,14 @@ function prompt(msg) {
     }, 900);
     return;
   }
+  if (text.startsWith("usage")) {
+    update({ sessionUpdate: "usage_update", used: 70, size: 100, cost: { amount: 0.25, currency: "USD" } });
+    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Counted" } });
+    const id = promptId;
+    promptId = null;
+    send({ jsonrpc: "2.0", id, result: { stopReason: "end_turn", usage: { totalTokens: 80, inputTokens: 50, outputTokens: 20, cachedReadTokens: 6, thoughtTokens: 4 } } });
+    return;
+  }
   if (text.startsWith("fswrite")) {
     send({ jsonrpc: "2.0", id: 900, method: "fs/write_text_file", params: { sessionId: "s", path: process.cwd() + "/sneaky.txt", content: "x" } });
     finish("end_turn");
@@ -173,7 +181,7 @@ function handle(msg) {
       });
       return;
     case "session/new":
-      if (auth === "fail") {
+      if ((process.env.FAKE_AUTH_FILE ? readFileSync(process.env.FAKE_AUTH_FILE, "utf8").trim() : auth) === "fail") {
         send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "Authentication required: token secret-xyz expired" } });
         return;
       }
@@ -828,6 +836,31 @@ test("a missing or signed-out Antigravity CLI is reported without forwarding its
   }
 });
 
+test("a signed-out agy prompt ends as a signed_out turn, and works once the user has signed in", { timeout: 20_000 }, async () => {
+  const prepared = prepare();
+  const authFile = join(prepared.dir, "auth");
+  writeFileSync(authFile, "fail");
+  prepared.env.FAKE_AUTH_FILE = authFile;
+  const booted = await boot(prepared);
+  const { adapter, host, events, responses } = booted;
+  try {
+    assert.equal(adapter.unavailableReason, AGY.signedOut);
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "hello" }, host);
+    assert.equal(response(responses, "p1").success, true);
+    const failed = events.find((event) => event.type === "agent_end");
+    assert.deepEqual([failed?.outcome, failed?.code], ["failed", "signed_out"]);
+    // The user signs in; Retry connects again and the turn runs.
+    writeFileSync(authFile, "ok");
+    await adapter.handleCommand({ type: "prompt", id: "p2", message: "usage please" }, host);
+    assert.equal(response(responses, "p2").success, true);
+    assert.equal(adapter.unavailableReason, null);
+    await waitUntil("second turn end", () => count(events, "agent_end") === 2);
+    assert.equal(events.filter((event) => event.type === "agent_end").at(-1)?.outcome, "completed");
+  } finally {
+    await shutdown(booted);
+  }
+});
+
 test("agy images go out as ACP image content ahead of the text; no image capability refuses them", async () => {
   const booted = await boot();
   const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
@@ -859,5 +892,33 @@ test("agy images go out as ACP image content ahead of the text; no image capabil
     assert.equal(traffic(plain.record).some((line) => line.method === "session/prompt"), false);
   } finally {
     await shutdown(plain);
+  }
+});
+
+test("agy usage_update and the prompt result usage are pushed as pi usage_update", { timeout: 20_000 }, async () => {
+  const booted = await boot();
+  const { adapter, host, events, responses } = booted;
+  try {
+    await adapter.handleCommand({ type: "prompt", id: "p", message: "usage please" }, host);
+    await waitUntil("turn end", () => count(events, "agent_end") === 1);
+    const usage = events.filter((event) => event.type === "usage_update");
+    assert.deepEqual(
+      { contextUsed: usage[0].contextUsed, contextMax: usage[0].contextMax, costUsd: usage[0].costUsd },
+      { contextUsed: 70, contextMax: 100, costUsd: 0.25 }
+    );
+    const last = usage.at(-1) as Record<string, unknown>;
+    assert.equal(last.inputTokens, 50);
+    assert.equal(last.cachedInputTokens, 6);
+    assert.equal(last.outputTokens, 20);
+    assert.equal(last.thinkingTokens, 4);
+    assert.equal(last.contextUsed, 70);
+    assert.ok(events.indexOf(last) < events.findIndex((event) => event.type === "agent_end"), "usage lands before agent_end");
+    assert.equal(events.find((event) => event.type === "agent_end")?.outcome, "completed");
+    await adapter.handleCommand({ type: "get_session_stats", id: "stats" }, host);
+    const stats = response(responses, "stats").data as { cost: number; contextUsage: { percent: number } };
+    assert.equal(stats.cost, 0.25);
+    assert.equal(stats.contextUsage.percent, 70);
+  } finally {
+    await shutdown(booted);
   }
 });

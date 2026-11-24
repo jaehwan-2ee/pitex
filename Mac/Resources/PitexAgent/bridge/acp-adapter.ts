@@ -26,7 +26,7 @@ import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
-import { promptImages, type AdapterHost, type AdapterStartOptions, type CliAdapter, type ModeState, type PiCommand, type PiImage } from "./adapter.ts";
+import { mergeUsage, promptImages, statsFromUsage, usageEvent, type AdapterHost, type ErrorCode, type Usage, type AdapterStartOptions, type CliAdapter, type ModeState, type PiCommand, type PiImage } from "./adapter.ts";
 import type { AcpProfile } from "./acp-profiles.ts";
 import { stopCodexChild } from "./codex-adapter.ts";
 import {
@@ -492,7 +492,8 @@ export class AcpAdapter implements CliAdapter {
   private lastReplayAt = 0;
   private acceptClose = false;
   private stopped = false;
-  private stats: Json = { tokens: { total: 0 }, cost: 0, contextUsage: {} };
+  /** Latest usage (`usage_update` and the prompt result); `get_session_stats` reads it too. */
+  private usage: Usage = {};
 
   constructor(profile: AcpProfile) {
     this.profile = profile;
@@ -599,6 +600,16 @@ export class AcpAdapter implements CliAdapter {
       this.noticeShown = true;
       host.emit({ type: "extension_error", error: this.profile.notice });
     }
+    if (this.signInBlocked() && (command.type === "prompt" || command.type === "steer")) {
+      // The user may have signed in since the failure: connect again before giving up.
+      await this.reconnect();
+      if (this.signInBlocked()) {
+        // A failed turn (not a refused prompt), so the hosts show the sign-in row with Retry.
+        host.respond(command.type, true, {}, undefined, command.id);
+        for (const event of closeTurn(this.stream, "refusal", this.unavailableReason ?? undefined, "signed_out")) host.emit(event);
+        return;
+      }
+    }
     if (this.unavailableReason && command.type !== "abort") {
       host.respond(command.type, false, undefined, this.unavailableReason, command.id);
       return;
@@ -655,7 +666,7 @@ export class AcpAdapter implements CliAdapter {
           await this.setMode(command, host);
           return;
         case "get_session_stats":
-          host.respond("get_session_stats", true, this.stats, undefined, command.id);
+          host.respond("get_session_stats", true, statsFromUsage(this.usage), undefined, command.id);
           return;
         case "get_commands":
           host.respond("get_commands", true, { commands: this.commands }, undefined, command.id);
@@ -675,6 +686,30 @@ export class AcpAdapter implements CliAdapter {
       const message = error instanceof Error ? error.message : `${this.displayName} request failed.`;
       host.respond(command.type, false, undefined, message, command.id);
     }
+  }
+
+  private signInBlocked(): boolean {
+    const reason = this.unavailableReason;
+    return reason !== null && (reason === this.profile.signedOut || reason === this.profile.keyringLocked);
+  }
+
+  /** Starts the CLI again after a sign-in failure, back on the same conversation when it can load it. */
+  private async reconnect(): Promise<void> {
+    const resume = this.loadSession ? this.sessionId : null;
+    const path = this.sessionPath;
+    await this.stop();
+    await this.start({ cwd: this.cwd, sessionDir: this.sessionDir, developerInstructions: this.developerInstructions, env: this.env });
+    if (this.unavailableReason) return;
+    if (resume) {
+      try {
+        await this.openSession(resume);
+        this.sessionPath = path;
+        return;
+      } catch {
+        // The old session did not load; the next prompt starts a new conversation file.
+      }
+    }
+    this.sessionPath = null;
   }
 
   async stop(): Promise<void> {
@@ -756,6 +791,7 @@ export class AcpAdapter implements CliAdapter {
     void pending
       ?.then((result) => {
         if (turn !== this.turn) return;
+        this.notePromptUsage(asObject(asObject(result)?.usage));
         this.endTurn(asString(asObject(result)?.stopReason));
       })
       .catch((error: unknown) => {
@@ -764,7 +800,7 @@ export class AcpAdapter implements CliAdapter {
         if (signedOut) {
           this.unavailableReason = signedOut;
           this.queue = [];
-          this.completeTurn("refusal", signedOut);
+          this.completeTurn("refusal", signedOut, "signed_out");
           return;
         }
         const text = error instanceof Error ? error.message : `${this.displayName} request failed.`;
@@ -838,6 +874,7 @@ export class AcpAdapter implements CliAdapter {
 
   private async newSession(host: AdapterHost, id?: string): Promise<void> {
     this.cancelStart();
+    this.usage = {};
     this.queue = [];
     this.ignoreUpdates = true;
     this.denyOutstanding("cancelled");
@@ -895,6 +932,7 @@ export class AcpAdapter implements CliAdapter {
     this.asked.clear();
     const saved = sessionModeFor(this.sessionDir, sessionPath);
     this.selectedMode = saved && this.profile.modes.includes(saved) ? saved : null;
+    this.usage = {};
     await this.openSession(sessionId);
     this.sessionPath = sessionPath;
     this.emitMode();
@@ -1204,7 +1242,7 @@ export class AcpAdapter implements CliAdapter {
     return resolve(this.cwd);
   }
 
-  private completeTurn(stopReason: string | null, errorMessage?: string): void {
+  private completeTurn(stopReason: string | null, errorMessage?: string, code?: ErrorCode): void {
     if (this.stopped || !this.running) return;
     this.running = false;
     this.suppressUserChunks = false;
@@ -1213,7 +1251,7 @@ export class AcpAdapter implements CliAdapter {
     this.denyOutstanding("cancelled");
     finishHistoryTurn(this.history);
     const message = errorMessage ?? (stopReason === "refusal" ? `${this.displayName} refused the turn.` : undefined);
-    for (const event of closeTurn(this.stream, stopReason, message)) {
+    for (const event of closeTurn(this.stream, stopReason, message, code)) {
       this.host?.emit(event);
     }
     const next = this.queue.shift();
@@ -1271,21 +1309,28 @@ export class AcpAdapter implements CliAdapter {
     });
   }
 
+  /** ACP `usage_update {used, size, cost}`: the context window and the session cost. */
   private noteUsage(update: Json): void {
-    const used =
-      typeof update.used === "number"
-        ? update.used
-        : typeof update.totalTokens === "number"
-          ? update.totalTokens
-          : 0;
-    const size = typeof update.size === "number" ? update.size : null;
+    const used = typeof update.used === "number" ? update.used : update.totalTokens;
     const cost = asObject(update.cost);
-    const amount = typeof cost?.amount === "number" ? cost.amount : 0;
-    this.stats = {
-      tokens: { total: used },
-      cost: amount,
-      contextUsage: size ? { tokens: used, contextWindow: size, percent: size ? (used / size) * 100 : null } : {},
-    };
+    // Paseo reads the cost only when it is in USD.
+    const usd = cost && (cost.currency === undefined || cost.currency === "USD") ? cost.amount : undefined;
+    this.pushUsage({ contextUsed: used as number, contextMax: update.size as number, costUsd: usd as number });
+  }
+
+  /** The `session/prompt` result's `usage`: this turn's token counts. */
+  private notePromptUsage(usage: Json | null): void {
+    if (!usage) return;
+    this.pushUsage({
+      inputTokens: usage.inputTokens as number,
+      cachedInputTokens: usage.cachedReadTokens as number,
+      outputTokens: usage.outputTokens as number,
+      thinkingTokens: usage.thoughtTokens as number,
+    });
+  }
+
+  private pushUsage(patch: Usage): void {
+    if (mergeUsage(this.usage, patch)) this.host?.emit(usageEvent(this.usage, this.stream.turnId));
   }
 
   private noteCommands(update: Json): void {
