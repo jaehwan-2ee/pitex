@@ -1363,6 +1363,10 @@ pub struct AgentCoordinator {
     catalog_root: Option<PathBuf>,
     probes: Vec<CatalogProbe>,
     probe_generation: u64,
+    /// Why a backend's catalog failed: the bridge's text, or None for the
+    /// generic "could not start". Shown until the backend lists models; a
+    /// re-armed (Pending) slot keeps showing it while it is checked again.
+    catalog_reasons: HashMap<String, Option<String>>,
     /// The new session's model list arrived while a settings round trip was
     /// still in flight. Commit it once that round trip goes idle.
     catalog_commit_pending: bool,
@@ -1383,20 +1387,22 @@ struct CatalogProbe {
     process: PiAgentProcess,
     started: std::time::Instant,
     sessions: std::path::PathBuf,
+    /// The first `extension_error` the probe printed (e.g. the CLI is missing).
+    error: Option<String>,
 }
 
 const CATALOG_PROBE_LIMIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 fn catalog_models_from_event(
     event: &PiRPCEvent,
-) -> Option<Result<Vec<crate::catalog::CatalogModel>, ()>> {
+) -> Option<Result<Vec<crate::catalog::CatalogModel>, Option<String>>> {
     if event.event_type != "response"
         || event.response_command().as_deref() != Some("get_available_models")
     {
         return None;
     }
     if !event.response_succeeded() {
-        return Some(Err(()));
+        return Some(Err(event.response_error()));
     }
     let raw = event
         .response_data()
@@ -1415,7 +1421,7 @@ fn catalog_models_from_event(
         })
         .collect();
     if models.is_empty() {
-        Some(Err(()))
+        Some(Err(None))
     } else {
         Some(Ok(models))
     }
@@ -1481,6 +1487,7 @@ impl AgentCoordinator {
             catalog_root: None,
             probes: Vec::new(),
             probe_generation: 1,
+            catalog_reasons: HashMap::new(),
             catalog_commit_pending: false,
             launch_idle: false,
             #[cfg(test)]
@@ -1739,6 +1746,20 @@ impl AgentCoordinator {
         self.catalog_generation
     }
 
+    /// One "<backend>: <reason>" line per enabled backend whose catalog failed.
+    pub(crate) fn catalog_notes(&self, lang: &str) -> Vec<String> {
+        self.catalog_slots
+            .iter()
+            .filter(|slot| !matches!(slot.state, crate::catalog::SlotState::Ready(_)))
+            .filter_map(|slot| {
+                let reason = self.catalog_reasons.get(&slot.backend)?.clone();
+                let reason =
+                    reason.unwrap_or_else(|| crate::l10n::tr(lang, "assistant.backend_unavailable"));
+                Some(format!("{}: {reason}", self.backend_title(lang, &slot.backend)))
+            })
+            .collect()
+    }
+
     pub(crate) fn catalog_menu(&self, lang: &str) -> crate::catalog::CatalogMenu {
         crate::catalog::menu(&self.catalog_facts(), |backend| {
             self.backend_title(lang, backend)
@@ -1907,6 +1928,9 @@ impl AgentCoordinator {
         } else {
             crate::catalog::SlotState::Ready(models)
         };
+        if matches!(state, crate::catalog::SlotState::Ready(_)) {
+            self.catalog_reasons.remove(&self.agent_provider);
+        }
         crate::catalog::note(&mut self.catalog_slots, &self.agent_provider, state);
         self.catalog_generation = self.catalog_generation.wrapping_add(1);
     }
@@ -1954,11 +1978,18 @@ impl AgentCoordinator {
     fn note_catalog_report(
         &mut self,
         backend: &str,
-        report: Result<Vec<crate::catalog::CatalogModel>, ()>,
+        report: Result<Vec<crate::catalog::CatalogModel>, Option<String>>,
     ) {
         let state = match report {
-            Ok(models) if !models.is_empty() => crate::catalog::SlotState::Ready(models),
-            _ => crate::catalog::SlotState::Unavailable,
+            Ok(models) if !models.is_empty() => {
+                self.catalog_reasons.remove(backend);
+                crate::catalog::SlotState::Ready(models)
+            }
+            Ok(_) => crate::catalog::SlotState::Unavailable,
+            Err(reason) => {
+                self.catalog_reasons.insert(backend.to_string(), reason);
+                crate::catalog::SlotState::Unavailable
+            }
         };
         crate::catalog::note(&mut self.catalog_slots, backend, state);
         self.catalog_generation = self.catalog_generation.wrapping_add(1);
@@ -2000,7 +2031,7 @@ impl AgentCoordinator {
         // A throwaway directory keeps the probe out of the project history.
         // The CLI still uses its own login. This path is not a credential file.
         if std::fs::create_dir_all(&sessions).is_err() {
-            self.note_catalog_report(backend, Err(()));
+            self.note_catalog_report(backend, Err(None));
             return;
         }
         let pi = self.catalog_pi.clone().unwrap_or_default();
@@ -2008,7 +2039,7 @@ impl AgentCoordinator {
             Ok(plan) => plan,
             Err(_) => {
                 let _ = std::fs::remove_dir_all(&sessions);
-                self.note_catalog_report(backend, Err(()));
+                self.note_catalog_report(backend, Err(None));
                 return;
             }
         };
@@ -2024,11 +2055,12 @@ impl AgentCoordinator {
                     process,
                     started: std::time::Instant::now(),
                     sessions,
+                    error: None,
                 });
             }
             Err(_) => {
                 let _ = std::fs::remove_dir_all(&sessions);
-                self.note_catalog_report(backend, Err(()));
+                self.note_catalog_report(backend, Err(None));
             }
         }
     }
@@ -2044,7 +2076,7 @@ impl AgentCoordinator {
     pub fn poll_catalog_probes(&mut self) {
         let generation = self.probe_generation;
         let mut finished = Vec::new();
-        for (index, probe) in self.probes.iter().enumerate() {
+        for (index, probe) in self.probes.iter_mut().enumerate() {
             if probe.generation != generation {
                 finished.push((index, None));
                 continue;
@@ -2053,8 +2085,14 @@ impl AgentCoordinator {
             {
                 let events = probe.process.events.lock().unwrap();
                 while let Ok(event) = events.try_recv() {
+                    if event.event_type == "extension_error" && probe.error.is_none() {
+                        probe.error = event.string("error");
+                    }
                     if let Some(report) = catalog_models_from_event(&event) {
-                        outcome = Some(report);
+                        // An empty but successful reply was not refused: a notice
+                        // printed before it (agy's permission warning) is not the reason.
+                        let earlier = probe.error.clone().filter(|_| !event.response_succeeded());
+                        outcome = Some(report.map_err(|reason| reason.or(earlier)));
                         break;
                     }
                 }
@@ -2066,7 +2104,7 @@ impl AgentCoordinator {
                     || (!probe.process.is_running()
                         && probe.started.elapsed() > std::time::Duration::from_millis(200)))
             {
-                outcome = Some(Err(()));
+                outcome = Some(Err(probe.error.clone()));
             }
             if outcome.is_some() {
                 finished.push((index, outcome));
@@ -2588,6 +2626,10 @@ impl AgentCoordinator {
             let message = event
                 .response_error()
                 .unwrap_or_else(|| "The agent command failed.".into());
+            if event.response_command().as_deref() == Some("get_available_models") {
+                let backend = self.agent_provider.clone();
+                self.note_catalog_report(&backend, Err(event.response_error()));
+            }
             self.status_message = Some(message.clone());
             if event.response_command().as_deref() == Some("prompt") {
                 self.push_entry(AgentTranscriptEntry {
@@ -4989,7 +5031,7 @@ mod session_history_tests {
             "pi",
             Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]),
         );
-        agent.note_catalog_report("claude", Err(()));
+        agent.note_catalog_report("claude", Err(None));
         let menu = agent.catalog_menu("en");
         assert_eq!(menu.rows.len(), 1);
         assert_eq!(menu.rows[0].id.backend, "pi");
@@ -5443,6 +5485,115 @@ mod session_history_tests {
         );
     }
 
+    /// Runs `lines` (JSONL) as a "claude" probe and returns the catalog notes it leaves.
+    #[cfg(unix)]
+    fn notes_after_probe(agent: &mut AgentCoordinator, lines: &[&str]) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!("pitex-catalog-probe-{}", uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("probe.sh");
+        let body: String = lines.iter().map(|line| format!("printf '%s\\n' '{line}'\n")).collect();
+        std::fs::write(&script, format!("#!/bin/sh\n{body}")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let process =
+            PiAgentProcess::start(&script, &dir, &[], &std::collections::HashMap::new()).unwrap();
+        agent.probes.push(CatalogProbe {
+            backend: "claude".into(),
+            generation: agent.probe_generation,
+            process,
+            started: std::time::Instant::now(),
+            sessions: dir.clone(),
+            error: None,
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !agent.probes.is_empty() && std::time::Instant::now() < deadline {
+            agent.poll_catalog_probes();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(agent.probes.is_empty(), "the probe did not finish");
+        agent.catalog_notes("en")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_probe_keeps_its_reason_until_the_backend_lists_models() {
+        let mut agent =
+            AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        assert!(agent.catalog_notes("en").is_empty());
+        let generic = format!(
+            "{}: {}",
+            agent.backend_title("en", "claude"),
+            crate::l10n::tr("en", "assistant.backend_unavailable")
+        );
+        // The response has no error text, so the earlier extension_error is the reason.
+        let notes = notes_after_probe(
+            &mut agent,
+            &[
+                r#"{"type":"extension_error","error":"Claude Code was not found."}"#,
+                r#"{"type":"response","command":"get_available_models","success":false}"#,
+            ],
+        );
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("Claude Code"), "{notes:?}");
+        assert!(notes[0].ends_with(": Claude Code was not found."), "{notes:?}");
+
+        // The reply's own error beats an earlier extension_error.
+        let notes = notes_after_probe(
+            &mut agent,
+            &[
+                r#"{"type":"extension_error","error":"first"}"#,
+                r#"{"type":"response","command":"get_available_models","success":false,"error":"X"}"#,
+            ],
+        );
+        assert!(notes.len() == 1 && notes[0].ends_with(": X"), "{notes:?}");
+
+        // A notice before an empty but successful reply is not the reason.
+        let notes = notes_after_probe(
+            &mut agent,
+            &[
+                r#"{"type":"extension_error","error":"asks before it runs a command"}"#,
+                r#"{"type":"response","command":"get_available_models","success":true,"data":{"models":[]}}"#,
+            ],
+        );
+        assert_eq!(notes, vec![generic.clone()]);
+
+        // No bridge text at all falls back to the generic localized reason.
+        agent.note_catalog_report("claude", Err(None));
+        assert_eq!(agent.catalog_notes("en"), vec![generic]);
+        // Re-arming for another check keeps the last reason on screen.
+        crate::catalog::rearm_unavailable(&mut agent.catalog_slots);
+        assert_eq!(agent.catalog_notes("en").len(), 1);
+
+        agent.note_catalog_report(
+            "claude",
+            Ok(vec![catalog_model("claude-sonnet", "claude", "Claude Sonnet")]),
+        );
+        assert!(agent.catalog_notes("en").is_empty());
+        assert!(!agent.catalog_reasons.contains_key("claude"));
+    }
+
+    #[test]
+    fn the_active_sessions_failed_model_list_shows_its_reason() {
+        let mut agent =
+            AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let title = agent.backend_title("en", &agent.agent_provider.clone());
+        for (error, reason) in [
+            (Some("Claude Code was not found."), "Claude Code was not found.".to_string()),
+            (None, crate::l10n::tr("en", "assistant.backend_unavailable")),
+        ] {
+            agent.model_settings_request_id = Some("models".into());
+            let mut reply = serde_json::json!({
+                "type": "response", "id": "models",
+                "command": "get_available_models", "success": false,
+            });
+            if let Some(error) = error {
+                reply["error"] = error.into();
+            }
+            agent.handle(&PiRPCEvent::new(reply.as_object().unwrap().clone()).unwrap());
+            assert_eq!(agent.catalog_notes("en"), vec![format!("{title}: {reason}")]);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_short_lived_probe_merges_the_other_backends_models() {
@@ -5470,6 +5621,7 @@ mod session_history_tests {
             process,
             started: std::time::Instant::now(),
             sessions: dir.clone(),
+            error: None,
         });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while agent.catalog_menu("en").rows.len() < 2 && std::time::Instant::now() < deadline {

@@ -243,6 +243,7 @@
 "assistant.configure_hint" = "Провайдеры и учётные записи настраиваются через собственный процесс входа Pitex Agent.";
 "assistant.open_pi_config" = "Открыть конфигурацию Pitex Agent";
 "assistant.model_placeholder" = "Нет моделей — войдите через Настройки → AI";
+"assistant.backend_unavailable" = "Не удалось запустить. Проверьте, что CLI установлен и выполнен вход.";
 "assistant.switched_backend" = "Ассистент переключён. Следующее сообщение начнёт новый сеанс.";
 "assistant.reasoning_help" = "Уровень рассуждений";
 "assistant.send_help" = "Отправить (⌘Return)";

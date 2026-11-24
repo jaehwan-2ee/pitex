@@ -184,12 +184,16 @@ final class AgentCoordinator: ObservableObject {
     private var catalogRoot: URL?
     private var probeGeneration: UInt64 = 1
     private var catalogProbes: [CatalogProbe] = []
+    /// Why a backend's catalog failed, shown until that backend lists models.
+    private var catalogReasons: [String: String] = [:]
     /// The new session listed models while a settings round trip was open.
     private var catalogCommitPending = false
     private var launchIdle = false
     @Published private(set) var catalogMenu = AssistantCatalog.Menu(
         rows: [], selection: nil, acceptsPicks: false, generation: 1
     )
+    /// One "<backend>: <reason>" line per enabled backend whose catalog failed.
+    @Published private(set) var catalogNotes: [String] = []
     private var assistantEntryIndex: Int?
     private var thinkingEntryIndex: Int?
     private var textContentIndex: Int?
@@ -937,6 +941,12 @@ final class AgentCoordinator: ObservableObject {
 
     private func publishCatalog() {
         catalogMenu = AssistantCatalog.menu(facts: catalogFacts(), title: backendTitle)
+        let notes: [String] = catalogSlots.compactMap { slot in
+            if case .ready = slot.state { return nil }
+            guard let reason = catalogReasons[slot.backend] else { return nil }
+            return "\(backendTitle(slot.backend)): \(reason)"
+        }
+        if notes != catalogNotes { catalogNotes = notes }
     }
 
     private func backendTitle(_ backend: String) -> String {
@@ -961,7 +971,14 @@ final class AgentCoordinator: ObservableObject {
     private func noteLiveModels() {
         let listed = models.map(Self.catalogModel(from:))
         let state: AssistantCatalog.SlotState = listed.isEmpty ? .unavailable : .ready(listed)
+        if !listed.isEmpty { catalogReasons[sessionBackend] = nil }
         noteCatalog(backend: sessionBackend, state: state)
+    }
+
+    /// `reason` is the bridge's text (CLI missing, signed out); nil means it said nothing.
+    private func noteCatalogFailure(backend: String, reason: String?) {
+        catalogReasons[backend] = reason ?? String(localized: "assistant.backend_unavailable")
+        noteCatalog(backend: backend, state: .unavailable)
     }
 
     private func noteCatalog(backend: String, state: AssistantCatalog.SlotState) {
@@ -1027,12 +1044,12 @@ final class AgentCoordinator: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         } catch {
-            noteCatalog(backend: backend, state: .unavailable)
+            noteCatalogFailure(backend: backend, reason: nil)
             return
         }
         guard let launch = catalogProbeLaunch(backend: backend, sessions: sessions, tools: tools) else {
             try? FileManager.default.removeItem(at: sessions)
-            noteCatalog(backend: backend, state: .unavailable)
+            noteCatalogFailure(backend: backend, reason: nil)
             return
         }
         let process = PiAgentProcess(
@@ -1047,7 +1064,7 @@ final class AgentCoordinator: ObservableObject {
         } catch {
             process.terminate()
             try? FileManager.default.removeItem(at: sessions)
-            noteCatalog(backend: backend, state: .unavailable)
+            noteCatalogFailure(backend: backend, reason: nil)
             return
         }
         let generation = probeGeneration
@@ -1061,13 +1078,20 @@ final class AgentCoordinator: ObservableObject {
                 }
             }
             var found: [AssistantCatalog.Model]?
+            var reason: String?
             for await event in process.events {
                 if Task.isCancelled {
                     timeout.cancel()
                     return
                 }
+                if event.type == "extension_error", reason == nil {
+                    reason = event.string("error")
+                }
                 if let models = Self.catalogModels(from: event) {
                     found = models
+                    // An empty but successful reply was not refused: a notice
+                    // printed before it (agy's permission warning) is not the reason.
+                    reason = event.responseSucceeded ? nil : (event.responseError ?? reason)
                     break
                 }
             }
@@ -1078,7 +1102,8 @@ final class AgentCoordinator: ObservableObject {
                 backend: backend,
                 generation: generation,
                 sessions: sessions,
-                models: found
+                models: found,
+                reason: reason
             )
         }
         catalogProbes.append(CatalogProbe(
@@ -1122,7 +1147,8 @@ final class AgentCoordinator: ObservableObject {
         backend: String,
         generation: UInt64,
         sessions: URL,
-        models: [AssistantCatalog.Model]?
+        models: [AssistantCatalog.Model]?,
+        reason: String?
     ) {
         catalogProbes.removeAll { probe in
             guard probe.backend == backend, probe.generation == generation else { return false }
@@ -1135,9 +1161,10 @@ final class AgentCoordinator: ObservableObject {
             return
         }
         if let models, !models.isEmpty {
+            catalogReasons[backend] = nil
             noteCatalog(backend: backend, state: .ready(models))
         } else {
-            noteCatalog(backend: backend, state: .unavailable)
+            noteCatalogFailure(backend: backend, reason: reason)
         }
     }
 
@@ -1315,6 +1342,9 @@ final class AgentCoordinator: ObservableObject {
                 }
             }
             let message = event.responseError ?? "The agent command failed."
+            if event.responseCommand == "get_available_models" {
+                noteCatalogFailure(backend: sessionBackend, reason: event.responseError)
+            }
             statusMessage = message
             if let command = event.responseCommand, command == "prompt" {
                 transcript.append(AgentTranscriptEntry(

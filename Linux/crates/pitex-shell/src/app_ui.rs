@@ -162,6 +162,8 @@ pub struct UiHandles {
     pub agent_send_button: RefCell<Option<gtk4::Button>>,
     pub agent_stop_button: RefCell<Option<gtk4::Button>>,
     pub agent_status_label: RefCell<Option<gtk4::Label>>,
+    /// "<backend>: <reason>" for enabled backends that list no models.
+    pub agent_catalog_notes: RefCell<Option<gtk4::Label>>,
     /// Approve / deny / always-allow row for a CLI approval request.
     pub agent_approval_box: RefCell<Option<gtk4::Box>>,
     pub agent_approval_title: RefCell<Option<gtk4::Label>>,
@@ -4472,6 +4474,14 @@ impl AppState {
             if let Some(label) = ui.agent_status_label.borrow().as_ref() {
                 label.set_text(agent.status_message.as_deref().unwrap_or(""));
                 label.set_visible(agent.status_message.is_some());
+            }
+            if let Some(label) = ui.agent_catalog_notes.borrow().as_ref() {
+                let notes = agent.catalog_notes(lang).join("\n");
+                // Resetting identical text would drop the user's selection.
+                if label.text() != notes {
+                    label.set_text(&notes);
+                }
+                label.set_visible(!notes.is_empty());
             }
             let menu = agent.catalog_menu(lang);
             let picker_key = view_key(&(
