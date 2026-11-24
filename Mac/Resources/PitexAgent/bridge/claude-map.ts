@@ -10,6 +10,8 @@
 //
 // This file is original Pitex code written against that SDK reference.
 
+import { cleanDetail, newTurnId, patchDiff, stampTurn, unifiedDiff, type ToolDetail } from "./tool-detail.ts";
+
 export type Json = Record<string, unknown>;
 
 export interface ClaudeStreamState {
@@ -25,6 +27,10 @@ export interface ClaudeStreamState {
   toolFinished: Record<string, true>;
   toolNameById: Record<string, string>;
   toolArgsById: Record<string, Json>;
+  /** The SDK tool name and full input, for the typed detail. */
+  toolRawNameById: Record<string, string>;
+  toolInputById: Record<string, Json>;
+  turnId: string | null;
   toolJsonById: Record<string, string>;
   /** content_block index → tool id while input JSON is still streaming. */
   toolIndexToId: Record<string, string>;
@@ -46,6 +52,9 @@ export function createClaudeStreamState(): ClaudeStreamState {
     toolFinished: {},
     toolNameById: {},
     toolArgsById: {},
+    toolRawNameById: {},
+    toolInputById: {},
+    turnId: null,
     toolJsonById: {},
     toolIndexToId: {},
     transcript: [],
@@ -272,6 +281,82 @@ function sessionScopedPermissions(suggestions: unknown, toolName: string, input:
   ];
 }
 
+const SEARCH_TOOLS = new Set(["Grep", "Glob", "WebSearch"]);
+
+function numberField(input: Json, key: string): number | undefined {
+  const value = input[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Typed detail for one Claude Code tool call, from its name and input (Paseo's name sets). */
+export function claudeToolDetail(name: string, input: Json): ToolDetail {
+  const path = filePathOf(input) || undefined;
+  if (name === "Bash") return cleanDetail({ kind: "shell", command: textField(input, "command") });
+  if (name === "Read") {
+    const offset = numberField(input, "offset");
+    const limit = numberField(input, "limit");
+    const startLine = offset ?? (limit !== undefined ? 1 : undefined);
+    const endLine = startLine !== undefined && limit !== undefined ? startLine + limit - 1 : undefined;
+    return cleanDetail({ kind: "read", path, startLine, endLine });
+  }
+  if (name === "Edit") {
+    const oldText = typeof input.old_string === "string" ? input.old_string : "";
+    const newText = typeof input.new_string === "string" ? input.new_string : "";
+    return cleanDetail({ kind: "edit", path, oldText, newText, diff: unifiedDiff(oldText, newText) });
+  }
+  if (name === "MultiEdit") {
+    const edits = Array.isArray(input.edits) ? input.edits : [];
+    const diff = edits
+      .map((edit) => asObject(edit))
+      .map((edit) =>
+        edit ? unifiedDiff(asString(edit.old_string) ?? "", asString(edit.new_string) ?? "") : ""
+      )
+      .filter(Boolean)
+      .join("\n");
+    return cleanDetail({ kind: "edit", path, diff });
+  }
+  if (name === "Write") {
+    const newText = typeof input.content === "string" ? input.content : "";
+    return cleanDetail({ kind: "write", path, newText, diff: unifiedDiff("", newText) });
+  }
+  if (name === "NotebookEdit") return cleanDetail({ kind: "edit", path });
+  if (SEARCH_TOOLS.has(name)) {
+    const query = textField(input, name === "WebSearch" ? "query" : "pattern");
+    return cleanDetail({ kind: "search", query, path, label: name });
+  }
+  if (name === "WebFetch") return cleanDetail({ kind: "fetch", url: textField(input, "url") });
+  if (name === "Task" || name === "Agent") {
+    return cleanDetail({
+      kind: "sub_agent",
+      label: textField(input, "description") || textField(input, "subagent_type"),
+    });
+  }
+  // TodoWrite stays generic until the todo list lands.
+  return { kind: "other", label: name };
+}
+
+/** Fields only the tool result knows: exit code, real-line diff, match count. */
+function claudeResultDetail(name: string, input: Json, text: string, isError: boolean, result: Json | null): ToolDetail {
+  const detail = claudeToolDetail(name, input);
+  if (detail.kind === "shell") {
+    const match = /^Exit code (-?\d+)/.exec(text.trimStart());
+    detail.exitCode = match ? Number(match[1]) : isError ? undefined : 0;
+  }
+  if ((detail.kind === "edit" || detail.kind === "write") && result) {
+    const diff = patchDiff(result.structuredPatch);
+    if (diff) detail.diff = diff;
+    else if (detail.kind === "write" && typeof result.originalFile === "string") {
+      // The raw content: detail.newText is already capped at TEXT_CAP.
+      detail.diff = unifiedDiff(result.originalFile, typeof input.content === "string" ? input.content : "");
+    }
+  }
+  if (detail.kind === "search" && result) {
+    // Not numFiles: Grep's default files_with_matches mode counts files, not matches.
+    detail.numMatches = numberField(result, "numMatches") ?? numberField(result, "numLines");
+  }
+  return cleanDetail(detail);
+}
+
 function asObject(value: unknown): Json | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : null;
 }
@@ -293,6 +378,7 @@ function toolContent(text: string): Json {
 function ensureTurn(state: ClaudeStreamState, out: Json[]): void {
   if (state.turnOpen) return;
   state.turnOpen = true;
+  state.turnId = newTurnId();
   out.push({ type: "agent_start" });
   out.push({ type: "message_start", message: { role: "assistant" } });
 }
@@ -380,6 +466,8 @@ function startTool(state: ClaudeStreamState, id: string, name: string, args: Jso
   const row = toolExecutionFields(name, args);
   state.toolNameById[id] = row.toolName;
   state.toolArgsById[id] = row.args;
+  state.toolRawNameById[id] = name;
+  state.toolInputById[id] = args;
   upsertToolDraft(state, id);
   if (state.toolStarted[id]) return;
   state.toolStarted[id] = true;
@@ -389,20 +477,33 @@ function startTool(state: ClaudeStreamState, id: string, name: string, args: Jso
     toolCallId: id,
     toolName: row.toolName,
     args: row.args,
+    detail: claudeToolDetail(name, args),
+    status: "running",
   });
 }
 
-function finishTool(state: ClaudeStreamState, id: string, text: string, isError: boolean, out: Json[]): void {
+function finishTool(
+  state: ClaudeStreamState,
+  id: string,
+  text: string,
+  isError: boolean,
+  out: Json[],
+  result: Json | null = null,
+  canceled = false
+): void {
   if (state.toolFinished[id]) return;
   if (!state.toolStarted[id]) {
-    startTool(state, id, state.toolNameById[id] ?? "tool", state.toolArgsById[id] ?? {}, out);
+    startTool(state, id, state.toolRawNameById[id] ?? state.toolNameById[id] ?? "tool", state.toolInputById[id] ?? state.toolArgsById[id] ?? {}, out);
   }
   state.toolFinished[id] = true;
+  const name = state.toolRawNameById[id] ?? "tool";
   out.push({
     type: "tool_execution_end",
     toolCallId: id,
     isError,
     result: toolContent(text),
+    detail: claudeResultDetail(name, state.toolInputById[id] ?? {}, text, isError, result),
+    status: canceled ? "canceled" : isError ? "failed" : "completed",
   });
   flushDraft(state);
   state.transcript.push({
@@ -412,6 +513,19 @@ function finishTool(state: ClaudeStreamState, id: string, text: string, isError:
     isError,
     content: [{ type: "text", text }],
   });
+}
+
+/** End every started, unfinished tool call as canceled (abort, or a turn that closed under it). */
+function cancelOpen(state: ClaudeStreamState, out: Json[]): void {
+  for (const id of Object.keys(state.toolStarted)) {
+    if (!state.toolFinished[id]) finishTool(state, id, "", true, out, null, true);
+  }
+}
+
+export function cancelOpenTools(state: ClaudeStreamState): Json[] {
+  const out: Json[] = [];
+  cancelOpen(state, out);
+  return stampTurn(out, state.turnId);
 }
 
 function resetTurnBuffers(state: ClaudeStreamState): void {
@@ -428,6 +542,8 @@ function resetTurnBuffers(state: ClaudeStreamState): void {
   state.toolFinished = {};
   state.toolJsonById = {};
   state.toolIndexToId = {};
+  state.toolRawNameById = {};
+  state.toolInputById = {};
 }
 
 function closeTurn(state: ClaudeStreamState, message: Json, out: Json[]): void {
@@ -435,6 +551,7 @@ function closeTurn(state: ClaudeStreamState, message: Json, out: Json[]): void {
   if (!state.assistantText && !failed && typeof message.result === "string") {
     appendText(state, "final", message.result, out);
   }
+  cancelOpen(state, out);
   flushDraft(state);
   ensureTurn(state, out);
   const errorText = resultError(message);
@@ -495,6 +612,7 @@ function applyStreamEvent(state: ClaudeStreamState, event: Json, out: Json[]): v
       const name = asString(block.name) ?? "tool";
       if (!id) return;
       state.toolNameById[id] = name;
+      state.toolRawNameById[id] = name;
       state.toolIndexToId[index] = id;
       const input = asObject(block.input) ?? {};
       state.toolArgsById[id] = input;
@@ -558,11 +676,13 @@ function applyAssistant(state: ClaudeStreamState, message: Json, out: Json[]): v
 }
 
 function applyUser(state: ClaudeStreamState, message: Json, out: Json[]): void {
-  for (const block of contentBlocks(message)) {
-    if (block.type !== "tool_result") continue;
+  const results = contentBlocks(message).filter((block) => block.type === "tool_result");
+  // `tool_use_result` is the structured result of the message's one tool call.
+  const structured = results.length === 1 ? asObject(message.tool_use_result) : null;
+  for (const block of results) {
     const id = asString(block.tool_use_id);
     if (!id) continue;
-    finishTool(state, id, blockText(block.content), block.is_error === true, out);
+    finishTool(state, id, blockText(block.content), block.is_error === true, out, structured);
   }
 }
 
@@ -580,20 +700,19 @@ export function mapClaudeMessage(message: unknown, state: ClaudeStreamState): Js
     case "stream_event": {
       const event = asObject(row.event);
       if (event) applyStreamEvent(state, event, out);
-      return out;
+      break;
     }
     case "assistant":
       applyAssistant(state, row, out);
-      return out;
+      break;
     case "user":
       applyUser(state, row, out);
-      return out;
+      break;
     case "result":
       closeTurn(state, row, out);
-      return out;
-    default:
-      return out;
+      break;
   }
+  return stampTurn(out, state.turnId);
 }
 
 export function sessionIdOf(message: unknown): string | null {

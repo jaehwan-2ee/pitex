@@ -35,6 +35,7 @@ import type { AdapterHost, AdapterStartOptions, CliAdapter, PiCommand } from "./
 import {
   allowKey,
   approvalPresentation,
+  cancelOpenTools,
   createClaudeStreamState,
   mapClaudeMessage,
   messagesFromState,
@@ -576,6 +577,10 @@ export class ClaudeAdapter implements CliAdapter {
   }
 
   private async abort(host: AdapterHost, id?: string): Promise<void> {
+    // Close open tool cards first; the results the interrupt produces are then ignored.
+    const before = this.stream.transcript.length;
+    for (const event of cancelOpenTools(this.stream)) host.emit(event);
+    this.persistFrom(before);
     this.denyOutstanding(true);
     try {
       await this.query?.interrupt();
