@@ -27,8 +27,13 @@ export interface AcpProfile {
   modelSource: "all" | "config";
   /** `rules`: `_meta.rules`. `antigravity`: `_meta.antigravity.systemPrompt.append`, when `initialize` advertises it. */
   instructions: "rules" | "antigravity";
-  /** Permission mode forced (and checked) after session/new and session/load, so the CLI cannot run in accept-edits. */
+  /**
+   * Permission mode forced (and checked) after session/new, session/load and before every
+   * prompt, unless the user picked another one of `modes` for this conversation.
+   */
   forceMode: string | null;
+  /** CLI mode ids the user may pick in the mode picker. Empty hides it. Never a bypass mode. */
+  modes: readonly string[];
   /** Mirror the CLI's own sessions for this project into the history list (session/list). */
   importSessions: boolean;
   /** Replayed history after session/load stays out of the live stream until this much quiet. */
@@ -57,6 +62,7 @@ export const GROK: AcpProfile = {
   modelSource: "all",
   instructions: "rules",
   forceMode: null,
+  modes: [],
   importSessions: false,
   replayQuietMs: 0,
   deferTurnOnRunningTools: false,
@@ -83,6 +89,8 @@ export const AGY: AcpProfile = {
   modelSource: "config",
   instructions: "antigravity",
   forceMode: "default",
+  // agy acp advertises exactly these; its `auto` and --dangerously-skip-permissions are never offered.
+  modes: ["default", "accept-edits", "plan"],
   importSessions: true,
   replayQuietMs: 200,
   deferTurnOnRunningTools: true,

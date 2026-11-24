@@ -25,6 +25,9 @@ import {
 } from "./claude-adapter.ts";
 import {
   approvalPresentation,
+  CLAUDE_MODES,
+  claudeAnswers,
+  claudeApprovalEvent,
   createClaudeStreamState,
   mapClaudeMessage,
   messagesFromState,
@@ -290,7 +293,10 @@ test("claude adapter sources do not reference credential files", () => {
     for (const needle of forbidden) assert.equal(source.includes(needle), false, `${name} mentions ${needle}`);
   }
   const adapter = readFileSync(new URL("./claude-adapter.ts", import.meta.url), "utf8");
-  assert.match(adapter, /permissionMode: "default"/);
+  // The launch mode is the conversation's pick, which starts at default and is never a bypass mode.
+  assert.match(adapter, /private mode = "default";/);
+  assert.match(adapter, /permissionMode: this\.mode,/);
+  assert.deepEqual(CLAUDE_MODES.map((mode) => mode.id), ["default", "acceptEdits", "plan"]);
   assert.match(adapter, /settingSources: \[\]/);
 });
 
@@ -840,6 +846,170 @@ test("abort interrupts the claude turn and denies the pending tool", async () =>
     assert.equal(opened[0].query.permissions[0].interrupt, true);
     assert.equal(opened[0].query.permissions[0].message, "The user denied this action.");
     assert.equal(collected.events.filter((event) => event.type === "approval_request").length, 1);
+    assert.deepEqual(
+      collected.events.find((event) => event.type === "approval_resolved"),
+      { type: "approval_resolved", id: "toolu_abort", outcome: "cancelled" },
+      "the bridge tells the host the card it settled"
+    );
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const QUESTION_INPUT = {
+  questions: [
+    {
+      header: "Engine",
+      question: "Which TeX engine should the build use?",
+      options: [{ label: "pdfLaTeX", description: "Fast, classic" }, { label: "LuaLaTeX" }],
+      multiSelect: false,
+    },
+    { header: "Parts", question: "Which parts need work?", options: ["Intro", "Method"], multiSelect: true },
+  ],
+};
+const PLAN_TEXT = "## Plan\n1. Rewrite the intro\n2. Rebuild";
+
+test("claude question, plan, and edit approvals carry their card data", () => {
+  const question = claudeApprovalEvent("q", "AskUserQuestion", QUESTION_INPUT, {});
+  assert.equal(question.kind, "question");
+  assert.deepEqual(question.questions, [
+    {
+      id: "0",
+      header: "Engine",
+      question: "Which TeX engine should the build use?",
+      options: [{ label: "pdfLaTeX", description: "Fast, classic" }, { label: "LuaLaTeX" }],
+      multiSelect: false,
+      allowOther: true,
+    },
+    {
+      id: "1",
+      header: "Parts",
+      question: "Which parts need work?",
+      options: [{ label: "Intro" }, { label: "Method" }],
+      multiSelect: true,
+      allowOther: true,
+    },
+  ]);
+  assert.equal(question.detail, "Which TeX engine should the build use?\npdfLaTeX / LuaLaTeX");
+  // Keyed by the full question text; multi-select joined; blanks and unknown ids dropped.
+  assert.deepEqual(claudeAnswers(QUESTION_INPUT, { "0": " Xe ", "1": ["Intro", "Method", ""], "9": "x" }), {
+    "Which TeX engine should the build use?": "Xe",
+    "Which parts need work?": "Intro, Method",
+  });
+  assert.equal(claudeAnswers(QUESTION_INPUT, { "0": "  " }), null);
+
+  const plan = claudeApprovalEvent("p", "ExitPlanMode", { plan: PLAN_TEXT }, {});
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.plan, PLAN_TEXT);
+  assert.deepEqual(
+    (plan.actions as { id: string; behavior: string }[]).map((action) => [action.id, action.behavior]),
+    [["approve_plan", "allow"], ["approve_plan_accept_edits", "allow"], ["keep_planning", "deny"]]
+  );
+
+  const edit = claudeApprovalEvent("e", "Edit", { file_path: "intro.tex", old_string: "a\n", new_string: "b\n" }, {});
+  assert.equal(edit.kind, "file");
+  assert.equal(edit.detail, "intro.tex");
+  assert.deepEqual(edit.toolDetail, { kind: "edit", path: "intro.tex", oldText: "a\n", newText: "b\n", diff: "@@ -1,1 +1,1 @@\n-a\n+b" });
+  const shell = claudeApprovalEvent("b", "Bash", { command: "touch x" }, {});
+  assert.deepEqual(shell.toolDetail, { kind: "shell", command: "touch x" });
+  assert.equal("actions" in shell, false, "tool approvals keep the host's three buttons");
+});
+
+test("claude answers a question, keeps planning with feedback, approves into accept edits, and resumes in that mode", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-ask-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const opened: Opened[] = [];
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery(opened, "ask"),
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  const { host, events, responses } = collect();
+  const requests = () => events.filter((event) => event.type === "approval_request");
+  const modes = () => events.filter((event) => event.type === "mode_changed").map((event) => (event.mode as { id: string }).id);
+  try {
+    await adapter.start({ cwd: dir, sessionDir: dir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary } });
+    await adapter.handleCommand({ type: "get_state", id: "s" }, host);
+    assert.deepEqual((response(responses, "get_state").data as { mode: unknown }).mode, {
+      id: "default",
+      options: CLAUDE_MODES,
+    });
+
+    await adapter.handleCommand({ type: "set_mode", id: "bad", modeId: "bypassPermissions" }, host);
+    assert.equal(response(responses, "set_mode").success, false);
+    await adapter.handleCommand({ type: "set_mode", id: "plan", modeId: "plan" }, host);
+    assert.equal(response(responses, "set_mode").success, true);
+    assert.deepEqual(opened[0].query.modesSet.filter((mode) => mode !== "default"), ["plan"]);
+    assert.deepEqual(modes(), ["plan"]);
+
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "question" }, host);
+    await waitUntil(() => requests().length === 1, "question card");
+    await adapter.handleCommand(
+      { type: "approval_response", id: "toolu_q", decision: "approve", answers: { "0": "LuaLaTeX", "1": ["Intro", "Method"] } },
+      host
+    );
+    await waitUntil(() => opened[0].query.permissions.length === 1, "question answer");
+    const answered = opened[0].query.permissions[0];
+    assert.equal(answered.behavior, "allow");
+    const updated = answered.updatedInput as { questions: unknown[]; answers: unknown };
+    assert.deepEqual(updated.questions, QUESTION_INPUT.questions);
+    assert.deepEqual(updated.answers, {
+      "Which TeX engine should the build use?": "LuaLaTeX",
+      "Which parts need work?": "Intro, Method",
+    });
+
+    await adapter.handleCommand({ type: "prompt", id: "p2", message: "plan1" }, host);
+    await waitUntil(() => requests().length === 2, "plan card");
+    assert.equal(requests()[1].plan, PLAN_TEXT);
+    await adapter.handleCommand(
+      { type: "approval_response", id: "toolu_plan1", decision: "deny", actionId: "keep_planning", message: "Also fix the abstract." },
+      host
+    );
+    await waitUntil(() => opened[0].query.permissions.length === 2, "keep planning");
+    const kept = opened[0].query.permissions[1];
+    assert.equal(kept.behavior, "deny");
+    assert.match(String(kept.message), /keep planning.*Also fix the abstract\./);
+    assert.equal(kept.interrupt, undefined, "Claude keeps working on the plan");
+    assert.deepEqual(modes(), ["plan"], "still planning");
+
+    await adapter.handleCommand({ type: "prompt", id: "p3", message: "plan2" }, host);
+    await waitUntil(() => requests().length === 3, "second plan card");
+    await adapter.handleCommand(
+      { type: "approval_response", id: "toolu_plan2", decision: "approve", actionId: "approve_plan_accept_edits" },
+      host
+    );
+    await waitUntil(() => opened[0].query.permissions.length === 3, "plan approved");
+    const approved = opened[0].query.permissions[2];
+    assert.equal(approved.behavior, "allow");
+    assert.deepEqual(approved.updatedPermissions, [{ type: "setMode", mode: "acceptEdits", destination: "session" }]);
+    assert.equal(opened[0].query.modesSet.at(-1), "acceptEdits");
+    assert.deepEqual(modes(), ["plan", "acceptEdits"]);
+
+    // Claude may enter plan by itself; a bypass it reports is set back to the user's pick.
+    await adapter.handleCommand({ type: "prompt", id: "p4", message: "status" }, host);
+    await waitUntil(() => opened[0].query.permissions.length === 4, "status turn");
+    await waitUntil(() => opened[0].query.modesSet.at(-1) === "plan", "bypass set back");
+    assert.deepEqual(modes(), ["plan", "acceptEdits", "plan"]);
+    const shellHook = opened[0].options.hooks.PreToolUse[0];
+    assert.equal(shellHook.matcher, "Bash|PowerShell|Monitor");
+    assert.deepEqual(await shellHook.hooks[0](), {}, "plan and default keep Claude's own shell rules");
+    await adapter.handleCommand({ type: "set_mode", id: "edits", modeId: "acceptEdits" }, host);
+    assert.equal(
+      ((await shellHook.hooks[0]()).hookSpecificOutput as Json).permissionDecision,
+      "ask",
+      "accept edits still asks before a shell command"
+    );
+
+    const session = claudeSession(dir);
+    assert.match(readFileSync(join(dir, "codex-session-index.json"), "utf8"), /"mode": "acceptEdits"/);
+    await adapter.handleCommand({ type: "new_session", id: "new" }, host);
+    assert.equal(opened[1].options.permissionMode, "default", "a new chat never inherits accept edits");
+    assert.equal(modes().at(-1), "default");
+    await adapter.handleCommand({ type: "switch_session", id: "sw", sessionPath: session }, host);
+    assert.equal(opened[2].options.resume, "sess-1");
+    assert.equal(opened[2].options.permissionMode, "acceptEdits", "the conversation's pick is applied on resume");
+    assert.equal(modes().at(-1), "acceptEdits");
   } finally {
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
@@ -916,7 +1086,7 @@ interface Opened {
   query: ScriptedQuery;
 }
 
-function scriptedQuery(opened: Opened[], mode: "script" | "hold" | "mutate"): ClaudeQueryFn {
+function scriptedQuery(opened: Opened[], mode: "script" | "hold" | "mutate" | "ask"): ClaudeQueryFn {
   return ({ prompt, options }) => {
     const query = new ScriptedQuery();
     opened.push({ options, query });
@@ -936,10 +1106,24 @@ async function runTurns(
   prompt: AsyncIterable<Json>,
   options: ClaudeQueryOptions,
   query: ScriptedQuery,
-  mode: "script" | "hold" | "mutate"
+  mode: "script" | "hold" | "mutate" | "ask"
 ): Promise<void> {
   try {
-    for await (const _message of prompt) {
+    for await (const message of prompt) {
+      if (mode === "ask") {
+        const text = String((message.message as Json).content);
+        const result =
+          text === "question"
+            ? await options.canUseTool("AskUserQuestion", QUESTION_INPUT, bareTool("toolu_q"))
+            : text === "status"
+              ? (query.push({ type: "system", subtype: "status", permissionMode: "plan" }),
+                query.push({ type: "system", subtype: "status", permissionMode: "bypassPermissions" }),
+                { behavior: "none" })
+              : await options.canUseTool("ExitPlanMode", { plan: PLAN_TEXT }, bareTool(`toolu_${text}`));
+        query.permissions.push(result);
+        query.push({ type: "result", subtype: "success", result: "ok", session_id: "sess-1" });
+        continue;
+      }
       if (mode === "hold") {
         query.permissions.push(await options.canUseTool("Bash", { command: "latexmk main.tex" }, toolOptions("toolu_abort")));
         continue;

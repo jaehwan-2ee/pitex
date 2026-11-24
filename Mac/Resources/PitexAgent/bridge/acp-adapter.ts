@@ -26,7 +26,7 @@ import { accessSync, existsSync, constants as fsConstants, readFileSync, realpat
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
-import type { AdapterHost, AdapterStartOptions, CliAdapter, PiCommand } from "./adapter.ts";
+import type { AdapterHost, AdapterStartOptions, CliAdapter, ModeState, PiCommand } from "./adapter.ts";
 import type { AcpProfile } from "./acp-profiles.ts";
 import { stopCodexChild } from "./codex-adapter.ts";
 import {
@@ -40,8 +40,10 @@ import {
   finishHistoryTurn,
   historyMessages,
   mapSessionUpdate,
+  permissionActions,
   permissionOptions,
   permissionResult,
+  permissionResultForAction,
   pushUserMessage,
   readProjectFile,
   recordSessionUpdate,
@@ -60,6 +62,7 @@ import {
   appendUserMessage,
   loadIndex,
   rememberSession,
+  sessionModeFor,
   saveIndex,
   sessionKey,
   foreignSessionMessage,
@@ -498,6 +501,10 @@ export class AcpAdapter implements CliAdapter {
   private effortUsesMode = false;
   private modeConfigId: string | null = null;
   private currentMode: string | null = null;
+  /** The CLI's permission modes (catalog), filtered to profile.modes for the picker. */
+  private modeOptions: ModeState["options"] = [];
+  /** Mode the user picked for this conversation; null means profile.forceMode. */
+  private selectedMode: string | null = null;
   private loadSession = false;
   private listSessions = false;
   private systemPromptAppend = false;
@@ -625,6 +632,7 @@ export class AcpAdapter implements CliAdapter {
     this.acceptClose = false;
     this.unavailableReason = message;
     this.running = false;
+    this.dropPending();
     this.host?.emit({ type: "extension_error", error: message });
   }
 
@@ -680,6 +688,9 @@ export class AcpAdapter implements CliAdapter {
         case "set_thinking_level":
           await this.setEffort(command, host);
           return;
+        case "set_mode":
+          await this.setMode(command, host);
+          return;
         case "get_session_stats":
           host.respond("get_session_stats", true, this.stats, undefined, command.id);
           return;
@@ -706,7 +717,7 @@ export class AcpAdapter implements CliAdapter {
     this.queue = [];
     this.killTerminals();
     const child = this.child;
-    this.pending.clear();
+    this.dropPending();
     this.rpc?.close();
     this.child = null;
     this.rpc = null;
@@ -739,7 +750,7 @@ export class AcpAdapter implements CliAdapter {
     try {
       if (!this.sessionId) await this.openSession(null);
       // The CLI's mode can change mid-session (`/plan`, its settings, an update dropped after an
-      // abort), so set it before every turn instead of trusting the cached value.
+      // abort), so set the selected one before every turn instead of trusting the cached value.
       else if (this.profile.forceMode) await this.forceMode();
     } finally {
       if (turn === this.turn) this.starting = false;
@@ -749,7 +760,7 @@ export class AcpAdapter implements CliAdapter {
     if (!this.sessionPath) {
       this.sessionPath = joinSession(this.sessionDir, `${this.profile.id}-${randomUUID()}.jsonl`);
       writeSessionPrelude(this.sessionPath, message, this.cwd);
-      if (this.sessionId) rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined);
+      if (this.sessionId) this.remember();
     } else {
       appendUserMessage(this.sessionPath, message);
     }
@@ -867,6 +878,9 @@ export class AcpAdapter implements CliAdapter {
     this.terminalAlways = false;
     this.allowRules.clear();
     this.asked.clear();
+    // A new conversation starts in the profile's mode; accept-edits is picked again per chat.
+    this.selectedMode = null;
+    this.emitMode();
     // Sessions started in a terminal since the last scan join the history list here.
     await this.importSessions();
     host.respond("new_session", true, {}, undefined, id);
@@ -904,8 +918,11 @@ export class AcpAdapter implements CliAdapter {
     }
     this.allowRules.clear();
     this.asked.clear();
+    const saved = sessionModeFor(this.sessionDir, sessionPath);
+    this.selectedMode = saved && this.profile.modes.includes(saved) ? saved : null;
     await this.openSession(sessionId);
     this.sessionPath = sessionPath;
+    this.emitMode();
     host.respond("switch_session", true, { cancelled: false }, undefined, command.id);
   }
 
@@ -913,9 +930,7 @@ export class AcpAdapter implements CliAdapter {
     this.modelTouched = true;
     this.modelId = command.modelId || this.modelId;
     if (this.sessionId && this.modelId) await this.pushModel(this.modelId);
-    if (this.sessionPath && this.sessionId) {
-      rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined);
-    }
+    this.remember();
     host.respond("set_model", true, {}, undefined, command.id);
   }
 
@@ -928,6 +943,43 @@ export class AcpAdapter implements CliAdapter {
     this.effort = command.level || this.effort;
     if (this.sessionId && this.effort) await this.pushEffort(this.effort);
     host.respond("set_thinking_level", true, {}, undefined, command.id);
+  }
+
+  private async setMode(command: PiCommand, host: AdapterHost): Promise<void> {
+    const modeId = command.modeId ?? "";
+    if (!this.modeState()?.options.some((option) => option.id === modeId)) {
+      host.respond("set_mode", false, undefined, `${this.displayName} cannot use that permission mode.`, command.id);
+      return;
+    }
+    const previous = this.selectedMode;
+    this.selectedMode = modeId;
+    try {
+      if (this.sessionId) await this.forceMode();
+    } catch (error) {
+      this.selectedMode = previous;
+      throw error;
+    }
+    this.remember();
+    this.emitMode();
+    host.respond("set_mode", true, { mode: this.modeState() }, undefined, command.id);
+  }
+
+  /** The picker state, or null when this profile has no user-selectable modes or the CLI listed none. */
+  private modeState(): ModeState | null {
+    const options = this.modeOptions.filter((option) => this.profile.modes.includes(option.id));
+    const id = this.selectedMode ?? this.profile.forceMode;
+    if (options.length === 0 || !id) return null;
+    return { id, options };
+  }
+
+  private emitMode(): void {
+    const mode = this.modeState();
+    if (mode) this.host?.emit({ type: "mode_changed", mode });
+  }
+
+  private remember(): void {
+    if (!this.sessionPath || !this.sessionId) return;
+    rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined, this.selectedMode ?? undefined);
   }
 
   private async openSession(resumeId: string | null): Promise<void> {
@@ -998,7 +1050,7 @@ export class AcpAdapter implements CliAdapter {
 
   /** Switch to the profile's permission mode and check that the CLI reports it. */
   private async forceMode(): Promise<void> {
-    const mode = this.profile.forceMode;
+    const mode = this.selectedMode ?? this.profile.forceMode;
     if (!mode || !this.rpc || !this.sessionId) return;
     if (this.modeConfigId) {
       const result = await this.rpc.request("session/set_config_option", {
@@ -1106,6 +1158,7 @@ export class AcpAdapter implements CliAdapter {
   private mergeCatalog(catalog: AcpCatalog): void {
     if (catalog.modeConfigId) this.modeConfigId = catalog.modeConfigId;
     if (catalog.currentMode) this.currentMode = catalog.currentMode;
+    if (catalog.modes.length > 0) this.modeOptions = catalog.modes;
     if (this.profile.modelSource === "config") {
       // Each config payload is the whole picture: the model list, and the
       // thought_level of the selected model or none at all.
@@ -1156,6 +1209,7 @@ export class AcpAdapter implements CliAdapter {
         ? { id: this.modelId, provider: this.profile.id, name: current?.name ?? this.modelId }
         : null,
       thinkingLevel: this.effort ?? (this.profile.modelSource === "config" ? null : "medium"),
+      ...(this.modeState() ? { mode: this.modeState() } : {}),
     };
   }
 
@@ -1176,6 +1230,8 @@ export class AcpAdapter implements CliAdapter {
     this.running = false;
     this.suppressUserChunks = false;
     this.clearDeferred();
+    // A request the agent left open when its turn ended can no longer be answered.
+    this.denyOutstanding("cancelled");
     finishHistoryTurn(this.history);
     const message = errorMessage ?? (stopReason === "refusal" ? `${this.displayName} refused the turn.` : undefined);
     for (const event of closeTurn(this.stream, stopReason, message)) {
@@ -1324,10 +1380,8 @@ export class AcpAdapter implements CliAdapter {
     this.pending.set(String(id), { kind: "permission", rpcId: id, options, key });
     this.host?.emit({
       type: "approval_request",
-      id: approval.id,
-      kind: approval.kind,
-      title: approval.title,
-      detail: approval.detail,
+      ...approval,
+      actions: permissionActions(options, key !== ""),
     });
   }
 
@@ -1477,9 +1531,10 @@ export class AcpAdapter implements CliAdapter {
     this.rpc?.respond(id, {});
   }
 
+  /** Settles every open request without the user; the host drops those cards on approval_resolved. */
   private denyOutstanding(reason: "cancelled" | "deny"): void {
     const outstanding = [...this.pending.values()];
-    this.pending.clear();
+    this.dropPending(reason === "cancelled" ? "cancelled" : "denied");
     if (!this.rpc) return;
     for (const pending of outstanding) {
       if (pending.kind === "permission") {
@@ -1493,6 +1548,12 @@ export class AcpAdapter implements CliAdapter {
     }
   }
 
+  private dropPending(outcome: "cancelled" | "denied" = "cancelled"): void {
+    const ids = [...this.pending.keys()];
+    this.pending.clear();
+    for (const id of ids) this.host?.emit({ type: "approval_resolved", id, outcome });
+  }
+
   private resolveApproval(command: PiCommand): void {
     const id = command.id ?? "";
     const pending = this.pending.get(id);
@@ -1501,8 +1562,9 @@ export class AcpAdapter implements CliAdapter {
     if (pending.kind === "permission") {
       // No allow_always on offer (agy): allow once now, and let this session repeat the answer.
       const offersAlways = pending.options.some((option) => option.kind === "allow_always");
-      if (command.decision === "always_allow" && !offersAlways && pending.key) this.allowRules.add(pending.key);
-      this.rpc.respond(pending.rpcId, permissionResult(command.decision, pending.options));
+      const always = command.actionId ? command.actionId === "always_allow" : command.decision === "always_allow";
+      if (always && !offersAlways && pending.key) this.allowRules.add(pending.key);
+      this.rpc.respond(pending.rpcId, permissionResultForAction(command.actionId, command.decision, pending.options));
       return;
     }
     const decision = command.decision === "approve" || command.decision === "always_allow" ? command.decision : "deny";

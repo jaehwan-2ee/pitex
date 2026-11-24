@@ -11,6 +11,9 @@ import readline from "node:readline";
 
 import { createAdapter, type AdapterHost, type PiCommand } from "./adapter.ts";
 
+// The host closed the pipe (quit, crash): late events have nowhere to go.
+process.stdout.on("error", () => process.exit(0));
+
 function write(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }

@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { AcpProfile } from "./acp-profiles.ts";
+import type { ApprovalAction, ModeState } from "./adapter.ts";
 import { cleanDetail, newTurnId, stampTurn, unifiedDiff, type ToolDetail, type ToolKind } from "./tool-detail.ts";
 
 export type Json = Record<string, unknown>;
@@ -56,11 +57,13 @@ export interface ApprovalView {
   kind: "command" | "file" | "permissions";
   title: string;
   detail: string;
+  toolDetail?: ToolDetail;
 }
 
 export interface PermissionOption {
   optionId: string;
   kind: string;
+  name?: string;
 }
 
 export interface AcpModel {
@@ -84,6 +87,8 @@ export interface AcpCatalog {
   /** Permission mode config option (agy: default, accept-edits, plan). */
   modeConfigId: string | null;
   currentMode: string | null;
+  /** The CLI's permission modes, from the mode config option or `modes.availableModes`. */
+  modes: ModeState["options"];
 }
 
 export function emptyCatalog(): AcpCatalog {
@@ -97,6 +102,7 @@ export function emptyCatalog(): AcpCatalog {
     effortUsesMode: false,
     modeConfigId: null,
     currentMode: null,
+    modes: [],
   };
 }
 
@@ -566,12 +572,48 @@ export function approvalFromPermission(id: string | number, params: Json, agentN
   const detail = [command, locationText(tool), title && title !== shape.title && title !== command ? title : "", toolOutputText(tool)]
     .filter(Boolean)
     .join("\n");
+  const toolDetail = acpToolDetail(tool);
   return {
     id: String(id),
     kind: shape.kind,
     title: shape.title,
     detail: bounded(detail || `${agentName} wants to use a tool.`, 4_000),
+    ...(toolDetail.kind !== "other" ? { toolDetail } : {}),
   };
+}
+
+const ACTION_KINDS: Record<string, Pick<ApprovalAction, "behavior" | "variant" | "label">> = {
+  allow_once: { behavior: "allow", variant: "primary", label: "Allow once" },
+  allow_always: { behavior: "allow", variant: "secondary", label: "Always allow" },
+  reject_once: { behavior: "deny", variant: "danger", label: "Deny" },
+  reject_always: { behavior: "deny", variant: "danger", label: "Always deny" },
+};
+
+/**
+ * Card buttons for session/request_permission, one per option kind the agent
+ * offered (the id is the kind; the answer maps it back to that optionId).
+ * `sessionAlways` adds Pitex's session-only "always_allow" when the agent
+ * offers no allow_always of its own (agy).
+ */
+export function permissionActions(options: PermissionOption[], sessionAlways: boolean): ApprovalAction[] {
+  const actions: ApprovalAction[] = [];
+  for (const kind of Object.keys(ACTION_KINDS)) {
+    const option = options.find((item) => item.kind === kind);
+    if (!option) continue;
+    const shape = ACTION_KINDS[kind];
+    actions.push({ id: kind, ...shape, label: option.name?.trim() || shape.label });
+  }
+  if (sessionAlways && !options.some((option) => option.kind === "allow_always")) {
+    actions.splice(1, 0, { id: "always_allow", label: "Always allow (this chat)", behavior: "allow", variant: "secondary" });
+  }
+  return actions;
+}
+
+/** The ACP result for a card button: the offered option of that kind, else the legacy decision. */
+export function permissionResultForAction(actionId: string | undefined, decision: string | undefined, options: PermissionOption[]): Json {
+  const match = actionId ? options.find((option) => option.kind === actionId) : undefined;
+  if (match) return { outcome: { outcome: "selected", optionId: match.optionId } };
+  return permissionResult(actionId === "always_allow" ? "always_allow" : decision, options);
 }
 
 /**
@@ -594,7 +636,8 @@ export function permissionOptions(params: Json): PermissionOption[] {
     const optionId = asString(row?.optionId);
     const kind = asString(row?.kind);
     if (!optionId || !kind) continue;
-    parsed.push({ optionId, kind });
+    const name = asString(row?.name);
+    parsed.push(name ? { optionId, kind, name } : { optionId, kind });
   }
   return parsed;
 }
@@ -733,6 +776,7 @@ function absorbConfigOptions(options: unknown, catalog: AcpCatalog, provider: st
     if (category === "mode" && id) {
       catalog.modeConfigId = id;
       if (typeof row.currentValue === "string") catalog.currentMode = row.currentValue;
+      catalog.modes = selectValues(row.options).map((option) => ({ id: option.value, label: option.name }));
     }
   }
 }
@@ -789,6 +833,14 @@ export function catalogFromAcp(payload: unknown, profile: Pick<AcpProfile, "id" 
   const modes = asObject(root.modes);
   if (!catalog.currentMode && asString(modes?.currentModeId)) catalog.currentMode = asString(modes?.currentModeId);
   if (asString(root.currentModeId)) catalog.currentMode = asString(root.currentModeId);
+  const availableModes = modes?.availableModes;
+  if (catalog.modes.length === 0 && Array.isArray(availableModes)) {
+    catalog.modes = availableModes.flatMap((raw) => {
+      const row = asObject(raw);
+      const id = asString(row?.id);
+      return id ? [{ id, label: asString(row?.name) ?? id }] : [];
+    });
+  }
   if (profile.modelSource === "config") return catalog;
   const modelObject = asObject(root.models);
   for (const row of modelRows(modelObject ?? root.models ?? root.availableModels ?? root.data)) {
