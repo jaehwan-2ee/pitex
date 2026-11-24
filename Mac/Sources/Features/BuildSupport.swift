@@ -806,7 +806,7 @@ extension WorkspaceModel {
                     // write beside the source — refuse it for live builds.
                     guard commandText.contains("{outdir}") else {
                         if runStillCurrent(token, context: context, root: root) {
-                            buildState = .failed("A custom live compile command must direct its outputs with {outdir}.")
+                            buildState = .failed("Live compile needs an {outdir} placeholder in a custom build command so its output stays in the live folder. Add {outdir} or choose a preset.")
                         }
                         finishScheduledRun(token)
                         return

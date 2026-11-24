@@ -174,7 +174,7 @@
 "issues.filter.warnings" = "Advertencias";
 "console.no_issues" = "Sin problemas";
 "console.no_issues_detail" = "La última compilación no informó de errores ni advertencias.";
-"console.build_command_help" = "Comando de compilación; {file} se sustituye por el archivo fuente";
+"console.build_command_help" = "Comando de compilación; {file} = archivo fuente, {filename} = fuente sin .tex, {outdir} = carpeta de salida (obligatorio para la compilación en vivo)";
 "console.build_run_help" = "Compilar (⌘B)";
 "console.custom_command_help" = "Comando personalizado ejecutado en el directorio del proyecto";
 "console.custom_run_help" = "Ejecutar comando personalizado (⌃⌘B)";
@@ -270,7 +270,7 @@
 "settings.compile.commands" = "Comandos";
 "settings.compile.build_command" = "Comando de compilación";
 "settings.compile.custom_command" = "Comando personalizado";
-"settings.compile.commands_note" = "{file} se expande a la ruta del archivo fuente. Los comandos se aplican al proyecto abierto y se convierten en los predeterminados para proyectos nuevos.";
+"settings.compile.commands_note" = "{file} se expande a la ruta del archivo fuente, {filename} a esa ruta sin .tex y {outdir} a la carpeta de salida. La compilación en vivo solo ejecuta un comando personalizado si contiene {outdir}; los preajustes funcionan tal cual. Los comandos se aplican al proyecto abierto y se convierten en los predeterminados para proyectos nuevos.";
 "settings.compile.behavior" = "Comportamiento";
 "settings.compile.switch_pdf" = "Cambiar a la barra lateral derecha tras una compilación correcta";
 "settings.compile.preview_window" = "Abrir la vista previa en una ventana aparte al abrir un proyecto";
@@ -281,7 +281,7 @@
 "settings.compile.shell_path" = "Shell";
 "settings.compile.shell_ack" = "Apruebo ejecutar comandos personalizados a través de un shell de inicio de sesión";
 "settings.compile.fallback_command" = "Comando de compilación alternativo";
-"settings.compile.fallback_help" = "Se usa cuando el campo de comando de compilación está vacío. Requiere la aprobación del shell anterior.";
+"settings.compile.fallback_help" = "Se usa cuando el campo de comando de compilación está vacío. Admite los mismos marcadores. Requiere la aprobación del shell anterior.";
 "settings.compile.make_default_editor" = "Usar para archivos .tex";
 "settings.compile.make_default_note" = "Registra Pitex como la app predeterminada para archivos .tex (doble clic para abrir aquí).";
 "settings.compile.live" = "Compilación en vivo";

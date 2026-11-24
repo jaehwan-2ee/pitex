@@ -173,7 +173,7 @@
 "issues.filter.warnings" = "Warnings";
 "console.no_issues" = "No Issues";
 "console.no_issues_detail" = "The last build reported no errors or warnings.";
-"console.build_command_help" = "Build command; {file} is replaced with the source file";
+"console.build_command_help" = "Build command; {file} = source file, {filename} = source without .tex, {outdir} = output folder (required for live compile)";
 "console.build_run_help" = "Build (⌘B)";
 "console.custom_command_help" = "Custom command run in the project directory";
 "console.custom_run_help" = "Run custom command (⌃⌘B)";
@@ -270,7 +270,7 @@
 "settings.compile.commands" = "Commands";
 "settings.compile.build_command" = "Build Command";
 "settings.compile.custom_command" = "Custom Command";
-"settings.compile.commands_note" = "{file} expands to the source file path. Commands apply to the open project and become the default for new projects.";
+"settings.compile.commands_note" = "{file} expands to the source file path, {filename} to that path without .tex, {outdir} to the output folder. Live compile runs a custom command only if it contains {outdir}; presets work as is. Commands apply to the open project and become the default for new projects.";
 "settings.compile.behavior" = "Behavior";
 "settings.compile.switch_pdf" = "Switch to the right sidebar after a successful build";
 "settings.compile.preview_window" = "Open the preview in a separate window when a project opens";
@@ -281,7 +281,7 @@
 "settings.compile.shell_path" = "Shell";
 "settings.compile.shell_ack" = "I approve running custom commands through a login shell";
 "settings.compile.fallback_command" = "Fallback build command";
-"settings.compile.fallback_help" = "Used when the build-command field is empty. Requires the shell approval above.";
+"settings.compile.fallback_help" = "Used when the build-command field is empty. Takes the same placeholders. Requires the shell approval above.";
 "settings.compile.make_default_editor" = "Use for .tex Files";
 "settings.compile.make_default_note" = "Registers Pitex as the default app for .tex files (double-click opens here).";
 "settings.compile.live" = "Live Compile";

@@ -173,7 +173,7 @@
 "console.terminal" = "ターミナル";
 "console.no_issues" = "問題なし";
 "console.no_issues_detail" = "前回のビルドでエラーや警告はありませんでした。";
-"console.build_command_help" = "ビルドコマンド。{file} はソースファイルに置き換わります";
+"console.build_command_help" = "ビルドコマンド。{file}=ソースファイル、{filename}=.tex を除いたソース、{outdir}=出力フォルダ（ライブコンパイルに必須）";
 "console.build_run_help" = "ビルド (⌘B)";
 "console.custom_command_help" = "プロジェクトディレクトリで実行するカスタムコマンド";
 "console.custom_run_help" = "カスタムコマンドを実行 (⌃⌘B)";
@@ -270,7 +270,7 @@
 "settings.compile.commands" = "コマンド";
 "settings.compile.build_command" = "ビルドコマンド";
 "settings.compile.custom_command" = "カスタムコマンド";
-"settings.compile.commands_note" = "{file} はソースファイルのパスに置き換わります。コマンドは開いているプロジェクトに適用され、新規プロジェクトのデフォルトになります。";
+"settings.compile.commands_note" = "{file} はソースファイルのパス、{filename} はそこから .tex を除いたパス、{outdir} は出力フォルダに置き換わります。ライブコンパイルは {outdir} を含むカスタムコマンドだけを実行します（プリセットはそのまま動作）。コマンドは開いているプロジェクトに適用され、新規プロジェクトのデフォルトになります。";
 "settings.compile.behavior" = "動作";
 "settings.compile.switch_pdf" = "ビルド成功後に右サイドバーへ切り替え";
 "settings.compile.preview_window" = "プロジェクトを開くときにプレビューを別ウインドウで開く";
@@ -281,7 +281,7 @@
 "settings.compile.shell_path" = "シェル";
 "settings.compile.shell_ack" = "ログインシェル経由のカスタムコマンド実行を承認します";
 "settings.compile.fallback_command" = "フォールバックビルドコマンド";
-"settings.compile.fallback_help" = "ビルドコマンド欄が空のときに使用。上のシェル承認が必要です。";
+"settings.compile.fallback_help" = "ビルドコマンド欄が空のときに使用。同じプレースホルダーが使えます。上のシェル承認が必要です。";
 "settings.compile.make_default_editor" = ".tex ファイルに使用";
 "settings.compile.make_default_note" = "Pitex を既定の .tex エディタとして登録します（ダブルクリックで開く）。";
 "settings.compile.live" = "ライブコンパイル";

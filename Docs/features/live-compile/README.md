@@ -130,6 +130,12 @@ Text entry does not stop a manual build.
 If you disable live compile or change the build context, Pitex stops live work.
 The build context includes the resolved main document and an explicit target pin.
 
+Build commands, the fallback build command, and the custom command can use these placeholders:
+
+- `{file}`: the source file path.
+- `{filename}`: the source file path without `.tex`.
+- `{outdir}`: the output folder. A manual build uses the source folder. A live build uses its folder in `.pitex-live/`.
+
 For a custom live command, include the `{outdir}` placeholder for the live output folder.
 For example:
 
