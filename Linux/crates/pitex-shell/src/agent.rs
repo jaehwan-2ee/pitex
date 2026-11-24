@@ -436,6 +436,18 @@ impl PiToolchain {
             }
         }
         result.bun = Self::find("bun", &result.environment);
+        // A Node older than pi's minimum fails the install's smoke check:
+        // put the pinned Node first instead, or report none so the
+        // installer downloads it.
+        if result.bun.is_none()
+            && result.node.as_ref().is_some_and(|node| !node_meets_minimum(node, &result.environment, home))
+        {
+            paths.insert(0, pi_paths::pinned_node_bin().to_string_lossy().into_owned());
+            update_path(&mut result.environment, &paths);
+            result.node = Self::find("node", &result.environment)
+                .filter(|node| node_meets_minimum(node, &result.environment, home));
+            result.npm = result.node.as_ref().and_then(|_| Self::find("npm", &result.environment));
+        }
         result
     }
 
@@ -562,6 +574,23 @@ fn update_path(environment: &mut HashMap<String, String>, paths: &[String]) {
 /// `ProcessRunner().run(DirectCommandPlan…)` — a short-lived probe: run the
 /// command with the toolchain PATH and return stdout only on a clean
 /// completed exit(0).
+/// pi's `engines.node` (`@earendil-works/pi-coding-agent` 1.5.2 and its
+/// pi-codemode dependency both declare `>=22.19.0`).
+pub const MINIMUM_NODE_VERSION: &str = "22.19.0";
+
+/// `node --version` prints `v22.19.0`; an unreadable answer counts as too old.
+fn node_version_meets_minimum(output: &str) -> bool {
+    let version = output.trim().strip_prefix('v').unwrap_or("");
+    version.split('.').count() == 3
+        && version.split('.').all(|part| part.starts_with(|c: char| c.is_ascii_digit()))
+        && !pi_installer::is_older(version, MINIMUM_NODE_VERSION)
+}
+
+fn node_meets_minimum(node: &Path, environment: &HashMap<String, String>, home: &Path) -> bool {
+    run_probe(&node.to_string_lossy(), &["--version".into()], environment, home, 5)
+        .is_some_and(|output| node_version_meets_minimum(&String::from_utf8_lossy(&output)))
+}
+
 fn run_probe(
     executable: &str,
     arguments: &[String],
@@ -3803,6 +3832,33 @@ pub mod pi_installer {
         }
 
         #[test]
+        fn discover_replaces_a_too_old_node_with_the_pinned_one() {
+            let _env = env_lock();
+            let dir = sandbox("old-node");
+            let system = dir.parent().unwrap().join("system-bin");
+            executable(&system.join("node"), "#!/bin/sh\necho v18.19.1\n");
+            executable(&system.join("npm"), "#!/bin/sh\n");
+            let environment = HashMap::from([
+                ("PATH".to_string(), system.to_string_lossy().into_owned()),
+                ("SHELL".to_string(), "/bin/false".to_string()),
+            ]);
+            // Without the pinned Node there is no usable runtime, so the
+            // installer downloads it instead of failing pi's smoke check.
+            let tools = PiToolchain::discover(environment.clone(), dir.parent().unwrap(), &[]);
+            assert_eq!(tools.node, None);
+            assert!(tools.npm_command(&[]).is_none());
+            let pinned = pi_paths::pinned_node_bin();
+            executable(&pinned.join("node"), "#!/bin/sh\necho v24.22.2\n");
+            executable(&pinned.join("npm"), "#!/bin/sh\n");
+            let tools = PiToolchain::discover(environment, dir.parent().unwrap(), &[]);
+            assert_eq!(tools.node, Some(pinned.join("node")));
+            assert_eq!(tools.npm, Some(pinned.join("npm")));
+            let path = tools.environment.get("PATH").unwrap();
+            assert!(path.starts_with(&*pinned.to_string_lossy()), "pinned Node must lead PATH: {path}");
+            leave_sandbox(&dir);
+        }
+
+        #[test]
         #[ignore = "downloads Node.js and pi from the network; run alone"]
         fn pinned_node_runs_the_agent_install_without_a_system_runtime() {
             let _env = env_lock();
@@ -4139,14 +4195,14 @@ mod toolchain_tests {
         let home = home("nvm");
         // v9 must not shadow v18/v20 — Foundation's numeric compare orders
         // digit runs numerically, not lexicographically.
-        for version in ["v9.11.2", "v18.20.4", "v20.11.0"] {
+        for version in ["v9.11.2", "v18.20.4", "v24.0.0"] {
             executable(
                 &home.join(format!(".nvm/versions/node/{version}/bin/node")),
-                "#!/bin/sh\n",
+                &format!("#!/bin/sh\necho {version}\n"),
             );
         }
         executable(
-            &home.join(".nvm/versions/node/v20.11.0/bin/npm"),
+            &home.join(".nvm/versions/node/v24.0.0/bin/npm"),
             "#!/bin/sh\n",
         );
         // Ambient PATH with no node — version-manager dirs are appended
@@ -4155,18 +4211,37 @@ mod toolchain_tests {
         assert_eq!(
             tools.node.as_deref(),
             Some(
-                home.join(".nvm/versions/node/v20.11.0/bin/node")
+                home.join(".nvm/versions/node/v24.0.0/bin/node")
                     .as_path()
                 )
         );
         assert_eq!(
             tools.npm.as_deref(),
             Some(
-                home.join(".nvm/versions/node/v20.11.0/bin/npm")
+                home.join(".nvm/versions/node/v24.0.0/bin/npm")
                     .as_path()
                 )
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn node_version_check_follows_pi_engines() {
+        for (output, supported) in [
+            ("v22.19.0\n", true),
+            ("v22.20.1", true),
+            ("v24.22.2", true),
+            ("v100.0.0", true),
+            ("v22.18.9", false),
+            ("v22.9.0", false),
+            ("v18.19.1", false),
+            ("v9.11.2", false),
+            ("22.19.0", false),
+            ("", false),
+            ("node: not found", false),
+        ] {
+            assert_eq!(node_version_meets_minimum(output), supported, "{output:?}");
+        }
     }
 
     #[test]
