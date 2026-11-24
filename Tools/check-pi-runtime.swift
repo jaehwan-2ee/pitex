@@ -238,6 +238,25 @@ import BuildCore
         }
         let minimal = "/usr/bin:/bin:/usr/sbin:/sbin"
         let base = ["PATH": minimal, "SHELL": "/usr/bin/false", "PI_CODING_AGENT_DIR": PiPaths.agentDirectory.path]
+        for (output, supported) in [("v22.19.0\n", true), ("v22.20.1", true), ("v24.22.2", true), ("v100.0.0", true),
+                                     ("v22.18.9", false), ("v22.9.0", false), ("v18.19.1", false), ("v9.11.2", false),
+                                     ("22.19.0", false), ("v22.19", false), ("", false), ("node: not found", false)] {
+            precondition(PiToolchain.nodeVersionMeetsMinimum(output) == supported, "Node version check: \(output)")
+        }
+        let oldHome = root.appendingPathComponent("old-node")
+        let oldBin = oldHome.appendingPathComponent("homebrew/bin")
+        try script(oldBin.appendingPathComponent("node"), "#!/bin/sh\necho v18.19.1\n")
+        try script(oldBin.appendingPathComponent("npm"), "#!/bin/sh\n")
+        let oldOnly = await PiToolchain.discover(environment: base, home: oldHome, systemDirectories: [oldBin.path])
+        precondition(oldOnly.node == nil && oldOnly.npmCommand(arguments: []) == nil, "A too-old Node must not be used")
+        try script(PinnedNode.binDirectory.appendingPathComponent("node"), "#!/bin/sh\necho v24.22.2\n")
+        try script(PinnedNode.binDirectory.appendingPathComponent("npm"), "#!/bin/sh\n")
+        let withPinned = await PiToolchain.discover(environment: base, home: oldHome, systemDirectories: [oldBin.path])
+        precondition(withPinned.node == PinnedNode.binDirectory.appendingPathComponent("node")
+            && withPinned.npm == PinnedNode.binDirectory.appendingPathComponent("npm")
+            && withPinned.environment["PATH"]!.hasPrefix(PinnedNode.binDirectory.path), "The pinned Node must replace a too-old one")
+        try files.removeItem(at: PinnedNode.directory)
+        print("PASS too-old Node is replaced by the pinned Node"); fflush(nil)
         var selected: PiToolchain?
         if mode == "bun" {
             for layout in ["opt/homebrew/bin", "usr/local/bin", ".bun/bin", ".npm-global/bin"] {

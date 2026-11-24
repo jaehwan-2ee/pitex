@@ -121,7 +121,41 @@ struct PiToolchain: Sendable {
             updatePath()
         }
         result.bun = find("bun", environment: result.environment)
+        // A Node older than pi's minimum fails the install's smoke check:
+        // put the pinned Node first instead, or report none so the
+        // installer downloads it.
+        if result.bun == nil, let node = result.node,
+           await !nodeMeetsMinimum(node, environment: result.environment, home: home) {
+            paths.insert(PinnedNode.binDirectory.path, at: 0)
+            updatePath()
+            result.node = find("node", environment: result.environment)
+            if let pinned = result.node, await !nodeMeetsMinimum(pinned, environment: result.environment, home: home) {
+                result.node = nil
+            }
+            result.npm = result.node == nil ? nil : find("npm", environment: result.environment)
+        }
         return result
+    }
+
+    /// pi's `engines.node` (`@earendil-works/pi-coding-agent` 1.5.2 and its
+    /// pi-codemode dependency both declare `>=22.19.0`).
+    static let minimumNodeVersion = [22, 19, 0]
+
+    /// `node --version` prints `v22.19.0`; an unreadable answer counts as too old.
+    static func nodeVersionMeetsMinimum(_ output: String) -> Bool {
+        let version = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard version.hasPrefix("v") else { return false }
+        let parts = version.dropFirst().split(separator: ".", omittingEmptySubsequences: false)
+            .map { Int($0.prefix { $0.isASCII && $0.isNumber }) }
+        guard parts.count == 3, !parts.contains(nil) else { return false }
+        return !parts.compactMap { $0 }.lexicographicallyPrecedes(minimumNodeVersion)
+    }
+
+    private static func nodeMeetsMinimum(_ node: URL, environment: [String: String], home: URL) async -> Bool {
+        guard let probe = try? await ProcessRunner().run(DirectCommandPlan(executable: node.path, arguments: ["--version"],
+            environment: .inherit(overrides: environment)), projectRoot: home, timeout: .seconds(5)),
+            probe.stopReason == .completed, probe.termination == .exited(code: 0) else { return false }
+        return nodeVersionMeetsMinimum(String(decoding: probe.standardOutput, as: UTF8.self))
     }
 
     func npmCommand(arguments: [String]) -> (executable: URL, arguments: [String])? {
