@@ -25,9 +25,9 @@ TODOS = "claude-todos"
 TODO_HEADER = (445, 728)
 # The header's trash button (new chat).
 NEW_CHAT = (1161, 227)
-# The history button beside it, and the newest conversation in its list.
+# The history button beside it, and the newest conversation in its list (below the search field).
 HISTORY = (1203, 227)
-HISTORY_FIRST_ROW = (1200, 300)
+HISTORY_FIRST_ROW = (1200, 335)
 # The mode picker sits on the composer row, right of the message entry.
 MODE_PICKER = (1188, 767)
 # Approval card in the 1280x800 window once the divider is dragged up. Its buttons sit

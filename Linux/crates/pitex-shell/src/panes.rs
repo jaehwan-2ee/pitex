@@ -1141,17 +1141,12 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     compat::initial_tooltip(&history, &tr(lang, "assistant.history"));
     {
         let state = state.clone();
-        history.connect_clicked(move |button| {
-            let sessions = {
-                let Ok(mut s) = state.try_borrow_mut() else { return };
-                let Some(agent) = s.agent.as_mut() else { return };
-                if agent.is_running {
-                    return;
-                }
-                agent.load_past_sessions();
-                agent.past_sessions.clone()
-            };
-            show_session_history(button, sessions, lang);
+        // The popover opens from `refresh_assistant` once the list is fresh.
+        history.connect_clicked(move |_| {
+            let Ok(mut s) = state.try_borrow_mut() else { return };
+            let Some(agent) = s.agent.as_mut() else { return };
+            agent.open_history();
+            s.refresh_assistant();
         });
     }
     ui.agent_history_button.replace(Some(history.clone()));
@@ -3763,66 +3758,81 @@ mod skill_frontmatter_tests {
     }
 }
 
-/// The resumable conversations of the current project, newest first.
-/// Takes the list by value: `refresh_assistant` calls this while it holds
-/// the app state, so only the row click touches `STATE`.
+/// The resumable conversations of the current project, newest first, with a
+/// title search. Each row shows its age and owning backend; another
+/// backend's rows say where they open. A lazy `ListView`, so 500 rows stay
+/// fast. Takes the list by value: `refresh_assistant` calls this while it
+/// holds the app state, so only the row activation touches `STATE`.
 pub(crate) fn show_session_history(
     anchor: &gtk4::Button,
     sessions: Vec<crate::agent::AgentSessionSummary>,
+    active: String,
     lang: &'static str,
 ) {
     let popover = gtk4::Popover::new();
-    let list = gtk4::ListBox::new();
-    list.set_selection_mode(gtk4::SelectionMode::None);
-    if sessions.is_empty() {
-        let empty = gtk4::Label::new(Some(&tr(lang, "assistant.history_empty")));
-        empty.add_css_class("dim-label");
-        empty.set_margin_top(16);
-        empty.set_margin_bottom(16);
-        empty.set_margin_start(16);
-        empty.set_margin_end(16);
-        list.append(&empty);
+    let column = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    column.set_width_request(380);
+    column.set_margin_top(6);
+    column.set_margin_bottom(6);
+    column.set_margin_start(6);
+    column.set_margin_end(6);
+    let search = gtk4::SearchEntry::new();
+    search.set_placeholder_text(Some(&tr(lang, "assistant.history_search")));
+    a11y(&search, "pitex.assistant.historySearch", "assistant.history_search");
+    column.append(&search);
+
+    let sessions = std::rc::Rc::new(sessions);
+    let now = std::time::SystemTime::now();
+    // Items are indices into `sessions`.
+    let indices: Vec<String> = (0..sessions.len()).map(|i| i.to_string()).collect();
+    let model = gtk4::StringList::new(&indices.iter().map(String::as_str).collect::<Vec<_>>());
+    let index_of = |item: &gtk4::glib::Object| -> Option<usize> {
+        item.downcast_ref::<gtk4::StringObject>()?.string().parse().ok()
+    };
+    let filter = {
+        let sessions = sessions.clone();
+        let search = search.clone();
+        gtk4::CustomFilter::new(move |item| {
+            index_of(item)
+                .and_then(|i| sessions.get(i))
+                .is_some_and(|session| crate::agent::session_matches(&session.title, &search.text()))
+        })
+    };
+    let filtered = gtk4::FilterListModel::new(Some(model), Some(filter.clone()));
+    let selection = gtk4::SingleSelection::new(Some(filtered.clone()));
+    selection.set_autoselect(true);
+    let factory = gtk4::SignalListItemFactory::new();
+    {
+        let sessions = sessions.clone();
+        let active = active.clone();
+        factory.connect_bind(move |_, object| {
+            let item = object.downcast_ref::<gtk4::ListItem>().unwrap();
+            let Some(session) = item.item().as_ref().and_then(index_of).and_then(|i| sessions.get(i)) else { return };
+            item.set_child(Some(&session_history_row(session, &active, now, lang)));
+        });
     }
-    for session in &sessions {
-        let row = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-        row.set_margin_top(4);
-        row.set_margin_bottom(4);
-        row.set_margin_start(6);
-        row.set_margin_end(6);
-        let title = gtk4::Label::new(Some(&session.title));
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        title.set_lines(2);
-        title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        title.set_max_width_chars(48);
-        row.append(&title);
-        let seconds = session
-            .modified
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let date = gtk4::glib::DateTime::from_unix_local(seconds)
-            .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let when = gtk4::Label::new(Some(&date));
-        when.set_xalign(0.0);
-        when.add_css_class("dim-label");
-        when.add_css_class("caption");
-        row.append(&when);
-        list.append(&row);
-    }
+    factory.connect_unbind(|_, object| {
+        object.downcast_ref::<gtk4::ListItem>().unwrap().set_child(None::<&gtk4::Widget>);
+    });
+    let list = gtk4::ListView::new(Some(selection.clone()), Some(factory));
+    list.set_single_click_activate(true);
+    a11y(&list, "pitex.assistant.historyList", "assistant.history");
     {
         let popover = popover.clone();
-        list.connect_row_activated(move |_, row| {
-            let Some(session) = sessions.get(row.index().max(0) as usize) else { return };
-            let path = session.path.clone();
+        let sessions = sessions.clone();
+        let filtered = filtered.clone();
+        list.connect_activate(move |_, position| {
+            let Some(session) = filtered.item(position).as_ref().and_then(index_of).and_then(|i| sessions.get(i)).cloned()
+            else {
+                return;
+            };
             popover.popdown();
             crate::app_ui::STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     if let Ok(mut st) = state.try_borrow_mut() {
-                        if let Some(agent) = st.agent.as_mut() {
-                            agent.resume(&path);
+                        let crate::app_ui::AppState { agent, store, .. } = &mut *st;
+                        if let Some(agent) = agent.as_mut() {
+                            agent.open_session(&session, store, lang);
                         }
                         st.refresh_assistant();
                     }
@@ -3830,14 +3840,112 @@ pub(crate) fn show_session_history(
             });
         });
     }
+    let empty = gtk4::Label::new(Some(&tr(
+        lang,
+        if sessions.is_empty() { "assistant.history_empty" } else { "assistant.history_no_match" },
+    )));
+    empty.add_css_class("dim-label");
+    empty.set_margin_top(16);
+    empty.set_margin_bottom(16);
+    empty.set_visible(sessions.is_empty());
+    {
+        let filter = filter.clone();
+        let filtered = filtered.clone();
+        let empty = empty.clone();
+        search.connect_search_changed(move |_| {
+            filter.changed(gtk4::FilterChange::Different);
+            empty.set_visible(filtered.n_items() == 0);
+        });
+    }
+    // Return opens the highlighted row; Up and Down move the highlight while typing goes on filtering.
+    {
+        let list = list.clone();
+        let selection = selection.clone();
+        search.connect_activate(move |_| {
+            if selection.selected() != gtk4::INVALID_LIST_POSITION {
+                list.emit_by_name::<()>("activate", &[&selection.selected()]);
+            }
+        });
+    }
+    {
+        let keys = gtk4::EventControllerKey::new();
+        let list = list.clone();
+        let selection = selection.clone();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let step: i64 = match key {
+                gtk4::gdk::Key::Down => 1,
+                gtk4::gdk::Key::Up => -1,
+                _ => return gtk4::glib::Propagation::Proceed,
+            };
+            let count = i64::from(selection.n_items());
+            if count > 0 {
+                let current = selection.selected();
+                let next = if current == gtk4::INVALID_LIST_POSITION { 0 } else { (i64::from(current) + step).clamp(0, count - 1) };
+                selection.set_selected(next as u32);
+                // GtkListBase's own action (GTK 4.0+); `ListView::scroll_to` needs 4.12.
+                let _ = list.activate_action("list.scroll-to-item", Some(&(next as u32).to_variant()));
+            }
+            gtk4::glib::Propagation::Stop
+        });
+        search.add_controller(keys);
+    }
     let scroll = gtk4::ScrolledWindow::new();
     scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+    scroll.set_min_content_height(320);
     scroll.set_max_content_height(320);
-    scroll.set_propagate_natural_height(true);
     scroll.set_min_content_width(380);
     scroll.set_child(Some(&list));
-    popover.set_child(Some(&scroll));
+    column.append(&empty);
+    column.append(&scroll);
+    popover.set_child(Some(&column));
     popover.set_parent(anchor);
     popover.connect_closed(|p| p.unparent());
     popover.popup();
+    search.grab_focus();
+}
+
+/// One history row: the title on one line; age and backend badge below.
+fn session_history_row(
+    session: &crate::agent::AgentSessionSummary,
+    active: &str,
+    now: std::time::SystemTime,
+    lang: &str,
+) -> gtk4::Box {
+    let row = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
+    row.set_margin_start(6);
+    row.set_margin_end(6);
+    let title = gtk4::Label::new(Some(&session.title));
+    title.set_xalign(0.0);
+    title.set_single_line_mode(true);
+    title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    title.set_max_width_chars(48);
+    row.append(&title);
+    let meta = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let when = gtk4::Label::new(Some(&crate::agent::relative_time(lang, now, session.modified)));
+    when.add_css_class("dim-label");
+    when.add_css_class("caption");
+    meta.append(&when);
+    let source = crate::agent::session_source_label(session.source);
+    let badge = gtk4::Label::new(Some(source));
+    badge.add_css_class("caption");
+    badge.add_css_class("pitex-history-badge");
+    meta.append(&badge);
+    let foreign = session.source != active;
+    let mut spoken = format!("{}, {}, {}", session.title, when.text(), source);
+    if foreign {
+        // Another backend's chat: picking it switches the backend first.
+        let opens = crate::l10n::tr1(lang, "assistant.history_other_backend", source);
+        let note = gtk4::Label::new(Some(&opens));
+        note.add_css_class("dim-label");
+        note.add_css_class("caption");
+        meta.append(&note);
+        badge.add_css_class("pitex-history-badge-other");
+        row.set_tooltip_text(Some(&opens));
+        spoken = format!("{spoken}, {opens}");
+    }
+    row.append(&meta);
+    row.update_property(&[gtk4::accessible::Property::Label(&spoken)]);
+    row
 }

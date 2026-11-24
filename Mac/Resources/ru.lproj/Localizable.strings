@@ -239,6 +239,15 @@
 "assistant.clear" = "Очистить диалог";
 "assistant.history" = "История разговоров";
 "assistant.history_empty" = "Для этого проекта пока нет сохранённых разговоров.";
+"assistant.history_search" = "Поиск разговоров";
+"assistant.history_no_match" = "Нет разговоров, подходящих под запрос.";
+"assistant.history_other_backend" = "Откроется в %@";
+"assistant.history_backend_off" = "Этот разговор относится к %@, который выключен. Включите его в Настройки → AI, чтобы открыть.";
+"assistant.time_now" = "Только что";
+"assistant.time_minutes" = "%ld мин назад";
+"assistant.time_hours" = "%ld ч назад";
+"assistant.time_yesterday" = "Вчера";
+"assistant.time_days" = "%ld дн. назад";
 "assistant.empty_headline" = "Спросите что угодно о вашем LaTeX";
 "assistant.configure_hint" = "Провайдеры и учётные записи настраиваются через собственный процесс входа Pitex Agent.";
 "assistant.open_pi_config" = "Открыть конфигурацию Pitex Agent";

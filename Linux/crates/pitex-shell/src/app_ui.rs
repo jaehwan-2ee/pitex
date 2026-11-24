@@ -874,6 +874,8 @@ impl AppState {
                  .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}
                  .pitex-mode-edits > button {{ background-color: alpha(#e5a50a, 0.25); box-shadow: inset 0 0 0 1px alpha(#e5a50a, 0.8); }}
                  .pitex-todos {{ padding: 4px 8px; }}
+                 .pitex-history-badge {{ background-color: alpha(currentColor, 0.10); border-radius: 999px; padding: 0 6px; }}
+                 .pitex-history-badge-other {{ background-color: alpha(@accent_color, 0.18); }}
                  .pitex-md-code {{ background-color: alpha(currentColor, 0.06); border-radius: 6px; padding: 2px 8px 6px 8px; }}
                  .pitex-md-quote {{ border-left: 3px solid alpha(currentColor, 0.25); padding-left: 8px; }}
                  .pitex-md-cell {{ padding: 2px 0; border-bottom: 1px solid alpha(currentColor, 0.10); }}
@@ -4465,8 +4467,9 @@ impl AppState {
             if std::mem::take(&mut agent.history_requested) {
                 if let Some(button) = ui.agent_history_button.borrow().clone() {
                     let sessions = agent.past_sessions.clone();
+                    let active = agent.provider().to_string();
                     glib::idle_add_local_once(move || {
-                        crate::panes::show_session_history(&button, sessions, lang);
+                        crate::panes::show_session_history(&button, sessions, active, lang);
                     });
                 }
             }

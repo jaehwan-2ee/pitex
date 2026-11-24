@@ -65,6 +65,8 @@ struct AgentSessionSummary: Identifiable {
     let url: URL
     let date: Date
     let title: String
+    /// The backend that owns it (`AgentSessionHistory.source`): pi, claude, agy, codex, or grok.
+    var source: String { AgentSessionHistory.source(fileName: url.lastPathComponent) }
     var id: URL { url }
 }
 
@@ -189,6 +191,8 @@ final class AgentCoordinator: ObservableObject {
     /// The backend of the live conversation. Settings can move first; this
     /// catches up when the switch shuts the current turn down.
     private var sessionBackend = AgentCoordinator.selectedAgentProvider()
+    /// The backend of the running session; history rows of another one say where they open.
+    var activeBackend: String { sessionBackend }
     private var catalogSlots: [AssistantCatalog.Slot] = []
     private var catalogGeneration: UInt64 = 1
     private var switchTicket: AssistantCatalog.SwitchTicket?
@@ -219,6 +223,10 @@ final class AgentCoordinator: ObservableObject {
     private var prepareTask: Task<Void, Never>?
     private var modelSettingsRequestID: String?
     private var messagesRequestID: String?
+    /// The `refresh_sessions` reply the history list waits for.
+    private var refreshRequestID: String?
+    /// A history row of another backend: opened once that backend is up.
+    private var pendingResume: AgentSessionSummary?
     /// Watches `PiPaths.agentDirectory` so auth/model/settings edits made in
     /// pi's own flows (or by hand) restart the agent without an app relaunch.
     private struct ConfigFileState: Equatable {
@@ -343,6 +351,8 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func beginSwitch(backend: String, model: AssistantCatalog.Model?, settings: SettingsStore) {
+        // A row picked for the previous backend must not open in this one.
+        pendingResume = nil
         switchTicket = AssistantCatalog.SwitchTicket(backend: backend, model: model)
         preferredModelID = nil
         settings.aiDefaultModel = model?.id ?? ""
@@ -671,6 +681,10 @@ final class AgentCoordinator: ObservableObject {
         sendSilently(.getSessionStats)
         sendSilently(.getCommands)
         SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
+        if let session = pendingResume {
+            pendingResume = nil
+            resume(session)
+        }
     }
 
     private func processDidExit(_ token: UInt64) {
@@ -855,7 +869,20 @@ final class AgentCoordinator: ObservableObject {
             .appendingPathComponent(name, isDirectory: true)
     }
 
+    /// Opens the history list. A bridge backend first mirrors sessions the
+    /// CLI started elsewhere (`refresh_sessions`); the list opens on its reply.
     func showSessionHistory() {
+        guard !isRunning else { return }
+        if Self.bridgeAdapterID(sessionBackend) != nil, let process, process.isRunning {
+            let id = UUID().uuidString
+            refreshRequestID = id
+            if (try? process.send(.refreshSessions, id: id)) != nil { return }
+        }
+        listPastSessions()
+    }
+
+    private func listPastSessions() {
+        refreshRequestID = nil
         let files = sessionDirectory.flatMap {
             try? FileManager.default.contentsOfDirectory(
                 at: $0, includingPropertiesForKeys: [.contentModificationDateKey]
@@ -864,8 +891,31 @@ final class AgentCoordinator: ObservableObject {
         pastSessions = files
             .filter { $0.pathExtension == "jsonl" }
             .compactMap(Self.sessionSummary)
+            // Mirrors of hidden backends (direct Codex and Grok) cannot be opened from any setting.
+            .filter { ShippedAgentProvider(rawValue: $0.source)?.isSelectable ?? true }
             .sorted { $0.date > $1.date }
         showingSessionHistory = true
+    }
+
+    /// A history row was picked. Another backend's conversation switches the
+    /// backend first and opens once it is up; a turned-off backend says so.
+    func open(_ session: AgentSessionSummary, settings: SettingsStore) {
+        showingSessionHistory = false
+        guard !isRunning else { return }
+        if session.source == sessionBackend {
+            resume(session)
+        } else if catalogSlots.contains(where: { $0.backend == session.source }) {
+            beginSwitch(backend: session.source, model: nil, settings: settings)
+            // After the switch: the new process connects later, from `prepare`'s task.
+            pendingResume = session
+        } else {
+            transcript.append(AgentTranscriptEntry(
+                role: .notice,
+                title: "Assistant",
+                text: String(format: String(localized: "assistant.history_backend_off"),
+                             AgentSessionHistory.sourceLabel(session.source))
+            ))
+        }
     }
 
     /// Loads a saved session into pi, then redraws the transcript from its
@@ -947,6 +997,14 @@ final class AgentCoordinator: ObservableObject {
             case "toolResult":
                 guard let id = message["toolCallId"] as? String, let index = toolRows[id] else { break }
                 if message["isError"] as? Bool == true { entries[index].status = .failed }
+                // Bridge backends keep the typed card; the args summary goes, as live.
+                if let status = Self.entryStatus(AgentToolDetail.status(message["status"] as? String)) {
+                    entries[index].status = status
+                }
+                if let tool = AgentToolDetail(message["detail"] as? [String: Any]) {
+                    if tool.kind != .other, tool.kind != .subAgent { entries[index].detail = "" }
+                    entries[index].tool = tool
+                }
                 if let text = toolResultText(message) {
                     entries[index].detail = bounded(text, limit: 4_000)
                 }
@@ -1377,6 +1435,13 @@ final class AgentCoordinator: ObservableObject {
         if isModelSettingsResponse {
             guard let id = modelSettingsRequestID, event.string("id") == id else { return }
         }
+        if event.responseCommand == "refresh_sessions" {
+            // Success or not (a signed-out backend refuses), the list shows what is on disk now;
+            // a turn started meanwhile wins, since rows cannot be opened during it.
+            guard refreshRequestID != nil, event.string("id") == refreshRequestID else { return }
+            if isRunning { refreshRequestID = nil } else { listPastSessions() }
+            return
+        }
         guard event.responseSucceeded else {
             if isModelSettingsResponse {
                 modelSettingsRequestID = nil
@@ -1634,7 +1699,12 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func toolStatus(_ event: PiRPCEvent) -> AgentTranscriptEntry.Status? {
-        switch AgentToolDetail.status(event.string("status")) {
+        Self.entryStatus(AgentToolDetail.status(event.string("status")))
+    }
+
+    /// The bridge's `status` (live events and replayed `toolResult` rows).
+    private static func entryStatus(_ status: AgentToolDetail.Status?) -> AgentTranscriptEntry.Status? {
+        switch status {
         case .running: return .running
         case .completed: return .done
         case .failed: return .failed

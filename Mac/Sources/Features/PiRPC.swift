@@ -30,6 +30,8 @@ enum PiRPCCommand {
     case newSession
     case switchSession(path: String)
     case getMessages
+    /// Bridge backends: mirror the CLI's own sessions before the history list opens.
+    case refreshSessions
     case getState
     case getAvailableModels
     case getSessionStats
@@ -58,6 +60,8 @@ enum PiRPCCommand {
             return ["type": "switch_session", "sessionPath": path]
         case .getMessages:
             return ["type": "get_messages"]
+        case .refreshSessions:
+            return ["type": "refresh_sessions"]
         case .getState:
             return ["type": "get_state"]
         case .getAvailableModels:

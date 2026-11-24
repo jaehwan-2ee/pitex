@@ -720,6 +720,8 @@ pub enum PiRPCCommand {
         path: String,
     },
     GetMessages,
+    /// Bridge backends: mirror the CLI's own sessions before the history list opens.
+    RefreshSessions,
 }
 impl PiRPCCommand {
     pub fn object(&self) -> Value {
@@ -739,6 +741,7 @@ impl PiRPCCommand {
             Self::NewSession => json!({"type": "new_session"}),
             Self::SwitchSession { path } => json!({"type": "switch_session", "sessionPath": path}),
             Self::GetMessages => json!({"type": "get_messages"}),
+            Self::RefreshSessions => json!({"type": "refresh_sessions"}),
             Self::GetState => json!({"type": "get_state"}),
             Self::GetAvailableModels => json!({"type": "get_available_models"}),
             Self::GetAvailableThinkingLevels => {
@@ -1632,7 +1635,12 @@ fn bounded_diff(diff: &str) -> String {
 }
 
 fn tool_status(event: &PiRPCEvent) -> Option<TranscriptStatus> {
-    match event.string("status")?.as_str() {
+    status_named(&event.string("status")?)
+}
+
+/// The bridge's `status` (live events and replayed `toolResult` rows).
+fn status_named(status: &str) -> Option<TranscriptStatus> {
+    match status {
         "running" => Some(TranscriptStatus::Running),
         "completed" => Some(TranscriptStatus::Done),
         "failed" => Some(TranscriptStatus::Failed),
@@ -1647,6 +1655,54 @@ pub struct AgentSessionSummary {
     pub path: PathBuf,
     pub modified: std::time::SystemTime,
     pub title: String,
+    /// The backend that owns it (`session_source`): pi, claude, agy, codex, or grok.
+    pub source: &'static str,
+}
+
+/// Bridge mirrors are named `<backend>-<id>.jsonl`; any other file is pi's own.
+pub fn session_source(path: &Path) -> &'static str {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    ["claude", "agy", "codex", "grok"]
+        .into_iter()
+        .find(|id| name.strip_prefix(id).is_some_and(|rest| rest.starts_with('-')))
+        .unwrap_or("pi")
+}
+
+/// The history row badge: product names, the same in every language.
+pub fn session_source_label(source: &str) -> &'static str {
+    match source {
+        "claude" => "Claude Code",
+        "agy" => "Antigravity",
+        "codex" => "Codex",
+        "grok" => "Grok",
+        _ => "pi",
+    }
+}
+
+/// "Just now", "5 min ago", "3 h ago", "Yesterday", "4 days ago", then the date.
+pub fn relative_time(lang: &str, now: std::time::SystemTime, then: std::time::SystemTime) -> String {
+    let seconds = now.duration_since(then).map(|d| d.as_secs()).unwrap_or(0);
+    let count = |key: &str, n: u64| crate::l10n::trn(lang, key, &[&n.to_string()]);
+    match seconds {
+        0..=59 => crate::l10n::tr(lang, "assistant.time_now"),
+        60..=3_599 => count("assistant.time_minutes", seconds / 60),
+        3_600..=86_399 => count("assistant.time_hours", seconds / 3_600),
+        86_400..=172_799 => crate::l10n::tr(lang, "assistant.time_yesterday"),
+        172_800..=604_799 => count("assistant.time_days", seconds / 86_400),
+        _ => {
+            let secs = then.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            gtk4::glib::DateTime::from_unix_local(secs)
+                .and_then(|d| d.format("%Y-%m-%d"))
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+        }
+    }
+}
+
+/// The history search: every word of `query` appears in the title, ignoring case.
+pub fn session_matches(title: &str, query: &str) -> bool {
+    let title = title.to_lowercase();
+    query.to_lowercase().split_whitespace().all(|word| title.contains(word))
 }
 
 /// Each project's conversations live in their own folder (`--session-dir`),
@@ -1697,6 +1753,7 @@ fn session_summary(path: &Path) -> Option<AgentSessionSummary> {
         path: path.to_path_buf(),
         modified: std::fs::metadata(path).and_then(|m| m.modified()).ok()?,
         title: title.chars().take(120).collect(),
+        source: session_source(path),
     })
 }
 
@@ -1775,8 +1832,13 @@ pub struct AgentCoordinator {
     pub transcript: Vec<AgentTranscriptEntry>,
     /// The history list (`/resume` or the clock button), newest first.
     pub past_sessions: Vec<AgentSessionSummary>,
-    /// `/resume` was typed — the panel opens the history popover.
+    /// `/resume` was typed or the history button clicked, and the list is
+    /// fresh — the panel opens the history popover.
     pub history_requested: bool,
+    /// The `refresh_sessions` reply the history list waits for.
+    refresh_request_id: Option<String>,
+    /// A history row of another backend: opened once that backend is up.
+    pending_resume: Option<PathBuf>,
     /// Where pi saves this project's sessions (`--session-dir`).
     session_directory: Option<PathBuf>,
     pub preferred_model_id: Option<String>,
@@ -1931,6 +1993,8 @@ impl AgentCoordinator {
             transcript: Vec::new(),
             past_sessions: Vec::new(),
             history_requested: false,
+            refresh_request_id: None,
+            pending_resume: None,
             session_directory: None,
             preferred_model_id: None,
             history_limit: 50,
@@ -1990,6 +2054,11 @@ impl AgentCoordinator {
             #[cfg(test)]
             model_requests: Vec::new(),
         }
+    }
+
+    /// The active backend id (`pi`, `claude`, `agy`, ...).
+    pub(crate) fn provider(&self) -> &str {
+        &self.agent_provider
     }
 
     pub fn set_agent_provider(&mut self, value: &str) {
@@ -2123,6 +2192,9 @@ impl AgentCoordinator {
             Ok(agent) => {
                 self.process = Some(agent);
                 self.connection = Connection::Ready;
+                if let Some(path) = self.pending_resume.take() {
+                    self.resume(&path);
+                }
                 self.send_model_settings(PiRPCCommand::GetState, None);
                 if let Some(process) = &self.process {
                     self.send_to(process, &PiRPCCommand::GetAvailableModels);
@@ -2318,6 +2390,8 @@ impl AgentCoordinator {
         store: &mut crate::settings::SettingsStore,
         notice: &str,
     ) {
+        // A row picked for the previous backend must not open in this one.
+        self.pending_resume = None;
         self.switch_ticket = Some(SwitchTicket {
             backend: backend.clone(),
             model: model.clone(),
@@ -2677,9 +2751,7 @@ impl AgentCoordinator {
         // pi's own /resume is an interactive TUI picker; here it opens the
         // panel's history list instead.
         if trimmed == "/resume" {
-            self.load_past_sessions();
-            self.history_requested = true;
-            self.ui_revision += 1;
+            self.open_history();
             return;
         }
         self.push_entry(AgentTranscriptEntry {
@@ -2904,8 +2976,64 @@ impl AgentCoordinator {
             .flatten()
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|x| x == "jsonl"));
-        self.past_sessions = files.filter_map(|p| session_summary(&p)).collect();
+        // Mirrors of hidden backends (direct Codex and Grok) cannot be opened from any setting.
+        self.past_sessions = files
+            .filter_map(|p| session_summary(&p))
+            .filter(|s| crate::settings::visible_agent_providers().any(|c| c.id == s.source))
+            .collect();
         self.past_sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+    }
+
+    /// Opens the history list. A bridge backend first mirrors sessions the
+    /// CLI started elsewhere (`refresh_sessions`); the list opens on its reply.
+    pub fn open_history(&mut self) {
+        if self.is_running {
+            return;
+        }
+        let process = self.process.as_ref().filter(|p| p.is_running());
+        if let (true, Some(process)) = (crate::settings::agent_provider_uses_bridge(&self.agent_provider), process) {
+            let request_id = uuid_v4();
+            if process.send(&PiRPCCommand::RefreshSessions, Some(&request_id)).is_ok() {
+                self.refresh_request_id = Some(request_id);
+                return;
+            }
+        }
+        self.show_history_now();
+    }
+
+    fn show_history_now(&mut self) {
+        self.refresh_request_id = None;
+        self.load_past_sessions();
+        self.history_requested = true;
+        self.ui_revision += 1;
+    }
+
+    /// A history row was picked. Another backend's conversation switches the
+    /// backend first and opens once it is up; a turned-off backend says so.
+    pub(crate) fn open_session(
+        &mut self,
+        session: &AgentSessionSummary,
+        store: &mut crate::settings::SettingsStore,
+        lang: &str,
+    ) {
+        if session.source == self.agent_provider {
+            self.resume(&session.path);
+        } else if !self.is_running && self.catalog_slots.iter().any(|slot| slot.backend == session.source) {
+            self.begin_switch(session.source.to_string(), None, store, "");
+            // After the switch: the new process starts later, on the toolchain poll.
+            self.pending_resume = Some(session.path.clone());
+        } else if !self.is_running {
+            let name = session_source_label(session.source);
+            self.push_entry(AgentTranscriptEntry {
+                role: TranscriptRole::Notice,
+                title: "Assistant".into(),
+                text: crate::l10n::tr1(lang, "assistant.history_backend_off", name),
+                detail: String::new(),
+                status: TranscriptStatus::Done,
+                tool: None,
+            });
+        }
+        self.ui_revision += 1;
     }
 
     /// Loads a saved session into pi, then redraws the transcript from its
@@ -2972,6 +3100,17 @@ impl AgentCoordinator {
                     let Some(&index) = tool_rows.get(id) else { continue };
                     if message.get("isError").and_then(|e| e.as_bool()) == Some(true) {
                         entries[index].status = TranscriptStatus::Failed;
+                    }
+                    // Bridge backends keep the typed card; the args summary goes, as live.
+                    if let Some(status) = message.get("status").and_then(|s| s.as_str()).and_then(status_named) {
+                        entries[index].status = status;
+                    }
+                    let typed = message.get("detail").and_then(|d| d.as_object()).and_then(|d| ToolDetail::decode(id, d));
+                    if let Some(tool) = typed {
+                        if !tool.is_untyped() {
+                            entries[index].detail.clear();
+                        }
+                        entries[index].tool = Some(tool);
                     }
                     if let Some(text) = tool_result_text(Some(message)) {
                         entries[index].detail = bounded(&text, 4_000);
@@ -3187,6 +3326,17 @@ impl AgentCoordinator {
             if event.string("id").as_deref() != Some(id.as_str()) {
                 return;
             }
+        }
+        if event.response_command().as_deref() == Some("refresh_sessions") {
+            // Success or not (a signed-out backend refuses), the list shows what is on disk now;
+            // a turn started meanwhile wins, since rows cannot be opened during it.
+            if self.refresh_request_id.is_some() && event.string("id") == self.refresh_request_id {
+                self.refresh_request_id = None;
+                if !self.is_running {
+                    self.show_history_now();
+                }
+            }
+            return;
         }
         if !event.response_succeeded() {
             if is_model_settings_response {
@@ -5301,6 +5451,138 @@ mod session_history_tests {
         assert_eq!(rows[2].status, TranscriptStatus::Failed);
         assert!(rows[2].detail.contains("Undefined control sequence"));
         assert_eq!(rows[3].text, "Fixed.");
+    }
+
+    #[test]
+    fn resumed_bridge_results_keep_their_typed_cards() {
+        let agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let messages = vec![
+            json!({"role": "assistant", "content": [
+                {"type": "toolCall", "id": "e1", "name": "edit", "arguments": {"path": "main.tex"}},
+                {"type": "toolCall", "id": "b1", "name": "bash", "arguments": {"command": "latexmk"}},
+            ]}),
+            json!({"role": "toolResult", "toolCallId": "e1", "toolName": "edit", "isError": false,
+                   "content": [{"type": "text", "text": "Edited"}], "status": "completed",
+                   "detail": {"kind": "edit", "path": "/p/main.tex", "diff": "@@ -1 +1 @@\n-a\n+b"}}),
+            json!({"role": "toolResult", "toolCallId": "b1", "toolName": "bash", "isError": true,
+                   "content": [{"type": "text", "text": ""}], "status": "canceled",
+                   "detail": {"kind": "shell", "command": "latexmk"}}),
+        ];
+        let rows = agent.transcript_from_messages(&messages);
+        let edit = rows[0].tool.as_ref().expect("typed edit card");
+        assert_eq!(edit.kind, "edit");
+        assert_eq!(edit.diff_counts(), (1, 1));
+        assert_eq!(rows[0].status, TranscriptStatus::Done);
+        assert_eq!(rows[1].tool.as_ref().map(|t| t.kind.as_str()), Some("shell"));
+        assert_eq!(rows[1].status, TranscriptStatus::Canceled);
+        assert!(rows[1].detail.is_empty(), "a typed card drops the args summary, as live");
+    }
+
+    #[test]
+    fn history_rows_badge_their_backend_from_the_file_name() {
+        assert_eq!(session_source(Path::new("/s/claude-0b1c.jsonl")), "claude");
+        assert_eq!(session_source(Path::new("/s/agy-x.jsonl")), "agy");
+        assert_eq!(session_source(Path::new("/s/codex-x.jsonl")), "codex");
+        assert_eq!(session_source(Path::new("/s/grok-x.jsonl")), "grok");
+        assert_eq!(session_source(Path::new("/s/2026-11-20T10-00-00_abc.jsonl")), "pi");
+        assert_eq!(session_source(Path::new("/s/claudette.jsonl")), "pi");
+        assert_eq!(session_source_label("claude"), "Claude Code");
+        assert_eq!(session_source_label("agy"), "Antigravity");
+        assert_eq!(session_source_label("pi"), "pi");
+    }
+
+    #[test]
+    fn history_rows_show_a_localized_relative_time() {
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let ago = |secs: u64| now - std::time::Duration::from_secs(secs);
+        assert_eq!(relative_time("en", now, ago(20)), "Just now");
+        assert_eq!(relative_time("en", now, ago(5 * 60)), "5 min ago");
+        assert_eq!(relative_time("en", now, ago(3 * 3_600 + 59)), "3 h ago");
+        assert_eq!(relative_time("en", now, ago(30 * 3_600)), "Yesterday");
+        assert_eq!(relative_time("en", now, ago(4 * 86_400)), "4 days ago");
+        assert_eq!(relative_time("ko", now, ago(5 * 60)), "5분 전");
+        assert_eq!(relative_time("en", now, now + std::time::Duration::from_secs(9)), "Just now");
+        let old = relative_time("en", now, ago(40 * 86_400));
+        assert!(old.len() == 10 && old.starts_with("2026-"), "{old}");
+    }
+
+    #[test]
+    fn history_search_matches_every_word_ignoring_case() {
+        assert!(session_matches("Fix the Bibliography", "bib fix"));
+        assert!(session_matches("anything", "  "));
+        assert!(!session_matches("Fix the intro", "bib"));
+        assert!(session_matches("한글 질문", "질문"));
+    }
+
+    #[test]
+    fn the_history_list_opens_after_the_bridge_refreshes_its_sessions() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let dir = std::env::temp_dir().join(format!("pitex-history-refresh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        agent.session_directory = Some(dir.clone());
+        agent.refresh_request_id = Some("r1".into());
+        let reply = |id: &str| json!({"type": "response", "id": id, "command": "refresh_sessions", "success": true, "data": {"imported": 1}});
+        // Written by the bridge before it replies.
+        std::fs::write(dir.join("claude-new.jsonl"), [
+            r#"{"type":"session","version":1,"id":"x","cwd":"/p","source":"claude"}"#,
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"reply with ok"}]}}"#,
+        ].join("\n")).unwrap();
+        // A direct Codex mirror from an older build: no setting can open it, so it is not listed.
+        std::fs::write(dir.join("codex-old.jsonl"), [
+            r#"{"type":"session","version":1,"id":"y","cwd":"/p","source":"codex"}"#,
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"old codex chat"}]}}"#,
+        ].join("\n")).unwrap();
+        agent.handle(&response(reply("stale")));
+        assert!(!agent.history_requested, "only the reply the list waits for opens it");
+        agent.handle(&response(reply("r1")));
+        assert!(agent.history_requested);
+        assert_eq!(agent.past_sessions.len(), 1);
+        // A signed-out backend refuses the refresh; the list still opens from disk.
+        agent.history_requested = false;
+        agent.refresh_request_id = Some("r2".into());
+        agent.handle(&response(json!({"type": "response", "id": "r2", "command": "refresh_sessions", "success": false, "error": "Sign in to Claude Code"})));
+        assert!(agent.history_requested);
+        // A turn started before the reply keeps the list closed.
+        agent.history_requested = false;
+        agent.refresh_request_id = Some("r3".into());
+        agent.is_running = true;
+        agent.handle(&response(reply("r3")));
+        assert!(!agent.history_requested);
+        assert!(agent.refresh_request_id.is_none());
+        agent.is_running = false;
+        assert_eq!(agent.past_sessions[0].title, "reply with ok");
+        assert_eq!(agent.past_sessions[0].source, "claude");
+        // pi (no bridge) lists at once.
+        agent.history_requested = false;
+        agent.open_history();
+        assert!(agent.history_requested);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_turned_off_backend_row_says_so_instead_of_failing() {
+        let mut store = crate::settings::SettingsStore::new(Default::default());
+        let mut agent = AgentCoordinator::new(&store);
+        agent.catalog_slots.retain(|slot| slot.backend != "agy");
+        let session = AgentSessionSummary {
+            path: PathBuf::from("/s/agy-x.jsonl"),
+            modified: std::time::SystemTime::now(),
+            title: "Old".into(),
+            source: "agy",
+        };
+        agent.open_session(&session, &mut store, "en");
+        let last = agent.transcript.last().expect("a notice");
+        assert_eq!(last.role, TranscriptRole::Notice);
+        assert!(last.text.contains("Antigravity") && last.text.contains("turned off"), "{}", last.text);
+        assert!(agent.pending_resume.is_none());
+
+        // An enabled backend: switch first, open the row once it is up.
+        let claude = AgentSessionSummary { path: PathBuf::from("/s/claude-x.jsonl"), source: "claude", ..session };
+        assert!(agent.catalog_slots.iter().any(|slot| slot.backend == "claude"));
+        agent.open_session(&claude, &mut store, "en");
+        assert_eq!(agent.provider(), "claude");
+        assert_eq!(store.agent_provider(), "claude");
+        assert_eq!(agent.pending_resume.as_deref(), Some(Path::new("/s/claude-x.jsonl")));
     }
 
     #[test]

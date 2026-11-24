@@ -97,6 +97,9 @@ final class AppleFMSession: AgentSession, @unchecked Sendable {
                 success: true,
                 data: .object(["messages": .array([])])
             ))
+        case .refreshSessions:
+            // Apple FM keeps no sessions of its own to import.
+            emit(AppleFMEvents.response(command: "refresh_sessions", id: id, success: true))
         case .steer, .extensionUICancelled:
             emit(AppleFMEvents.response(command: "extension_ui_response", id: id, success: true))
         }

@@ -191,10 +191,11 @@ struct AgentPanel: View {
                 Image(systemName: "clock.arrow.circlepath")
             }
             .buttonStyle(.borderless)
-            .disabled(coordinator.connection != .ready || coordinator.isRunning)
+            // Open while the backend is down too: its rows can switch to another backend.
+            .disabled(coordinator.isRunning)
             .help(String(localized: "assistant.history"))
             .popover(isPresented: $coordinator.showingSessionHistory, arrowEdge: .bottom) {
-                AgentSessionHistory(coordinator: coordinator)
+                AgentSessionHistoryList(coordinator: coordinator, settings: settings)
             }
 
             if let usage = usageText {
@@ -1154,35 +1155,126 @@ private struct AgentApprovalCard: View {
     }
 }
 
-/// The resumable conversations of the current project, newest first.
-private struct AgentSessionHistory: View {
+/// The resumable conversations of the current project, newest first, with a
+/// title search. Arrows move the highlight from the search field, Return
+/// opens it. Each row shows its age and owning backend; another backend's
+/// rows say where they open. `List` is lazy, so 500 rows stay fast.
+private struct AgentSessionHistoryList: View {
     @ObservedObject var coordinator: AgentCoordinator
+    @ObservedObject var settings: SettingsStore
+    @State private var query = ""
+    @State private var selection: URL?
+    @FocusState private var searchFocused: Bool
+
+    private var shown: [AgentSessionSummary] {
+        coordinator.pastSessions.filter { AgentSessionHistory.matches(title: $0.title, query: query) }
+    }
 
     var body: some View {
-        Group {
-            if coordinator.pastSessions.isEmpty {
-                Text("assistant.history_empty")
+        let shown = shown
+        let now = Date()
+        VStack(spacing: 6) {
+            TextField(String(localized: "assistant.history_search"), text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($searchFocused)
+                .onSubmit { _ = openSelection(in: shown) }
+                .onKeyPress(.downArrow) { move(1, in: shown) }
+                .onKeyPress(.upArrow) { move(-1, in: shown) }
+                .accessibilityIdentifier("pitex.assistant.historySearch")
+            if shown.isEmpty {
+                Text(LocalizedStringKey(coordinator.pastSessions.isEmpty ? "assistant.history_empty" : "assistant.history_no_match"))
                     .foregroundStyle(.secondary)
-                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(coordinator.pastSessions) { session in
-                    Button {
-                        coordinator.resume(session)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(verbatim: session.title)
-                                .lineLimit(2)
-                            Text(session.date, format: .dateTime.year().month().day().hour().minute())
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                ScrollViewReader { proxy in
+                    List(shown, selection: $selection) { session in
+                        Button {
+                            coordinator.open(session, settings: settings)
+                        } label: {
+                            AgentSessionHistoryRow(
+                                session: session,
+                                foreign: session.source != coordinator.activeBackend,
+                                now: now
+                            )
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .tag(session.url)
                     }
-                    .buttonStyle(.plain)
+                    .onKeyPress(.return) { openSelection(in: shown) }
+                    .onChange(of: selection) { _, url in
+                        if let url { proxy.scrollTo(url) }
+                    }
+                    .accessibilityLabel(Text("assistant.history"))
+                    .accessibilityIdentifier("pitex.assistant.historyList")
                 }
-                .frame(width: 380, height: 320)
             }
+        }
+        .padding(8)
+        .frame(width: 400, height: 360)
+        .onAppear {
+            searchFocused = true
+            selection = shown.first?.url
+        }
+        .onChange(of: query) { selection = self.shown.first?.url }
+    }
+
+    private func move(_ step: Int, in shown: [AgentSessionSummary]) -> KeyPress.Result {
+        guard !shown.isEmpty else { return .ignored }
+        let current = shown.firstIndex { $0.url == selection } ?? (step > 0 ? -1 : shown.count)
+        selection = shown[min(max(current + step, 0), shown.count - 1)].url
+        return .handled
+    }
+
+    private func openSelection(in shown: [AgentSessionSummary]) -> KeyPress.Result {
+        guard let session = shown.first(where: { $0.url == selection }) ?? shown.first else { return .ignored }
+        coordinator.open(session, settings: settings)
+        return .handled
+    }
+}
+
+/// One history row: the title on one line; age and backend badge below.
+private struct AgentSessionHistoryRow: View {
+    let session: AgentSessionSummary
+    let foreign: Bool
+    let now: Date
+
+    var body: some View {
+        let label = AgentSessionHistory.sourceLabel(session.source)
+        let opens = String(format: String(localized: "assistant.history_other_backend"), label)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: session.title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            HStack(spacing: 6) {
+                Text(verbatim: age)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(verbatim: label)
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .background(Capsule().fill(foreign ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12)))
+                if foreign {
+                    // Another backend's chat: picking it switches the backend first.
+                    Text(verbatim: opens)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .help(foreign ? opens : "")
+        .accessibilityElement(children: .combine)
+    }
+
+    private var age: String {
+        switch AgentSessionHistory.age(of: session.date, now: now) {
+        case .justNow: String(localized: "assistant.time_now")
+        case .minutes(let n): String(format: String(localized: "assistant.time_minutes"), n)
+        case .hours(let n): String(format: String(localized: "assistant.time_hours"), n)
+        case .yesterday: String(localized: "assistant.time_yesterday")
+        case .days(let n): String(format: String(localized: "assistant.time_days"), n)
+        case .date: session.date.formatted(date: .numeric, time: .omitted)
         }
     }
 }
