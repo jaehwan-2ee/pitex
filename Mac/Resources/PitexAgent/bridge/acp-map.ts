@@ -1,12 +1,14 @@
-// Maps Grok CLI ACP notifications onto the pi RPC events the Mac and GTK
-// transcript UIs already render.
+// Maps ACP notifications (Grok CLI, Antigravity CLI) onto the pi RPC events
+// the Mac and GTK transcript UIs already render.
 //
 // Protocol checked against the Grok CLI ACP guide
-// (https://docs.x.ai/build/cli/headless-scripting) and ACP v1
-// (https://agentclientprotocol.com/protocol/v1/prompt-turn):
-// session/update variants agent_message_chunk, agent_thought_chunk,
-// tool_call, tool_call_update, and plan; session/request_permission
-// option kinds allow_once, allow_always, reject_once, reject_always.
+// (https://docs.x.ai/build/cli/headless-scripting), ACP v1
+// (https://agentclientprotocol.com/protocol/v1/prompt-turn), and the wire of
+// `agy acp` 1.5.15: session/update variants agent_message_chunk,
+// agent_thought_chunk, tool_call, tool_call_update, and plan;
+// session/request_permission option kinds allow_once, allow_always,
+// reject_once, reject_always. agy tool calls carry `name` (run_command,
+// write_file, ...) and capitalised arguments (CommandLine, Path, Content).
 //
 // The event shape follows Pitex's Codex adapter, which was adapted from
 // T3 Code v0.1.4 (MIT), Copyright (c) 2026 T3 Tools Inc.
@@ -15,6 +17,8 @@
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+
+import type { AcpProfile } from "./acp-profiles.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -56,16 +60,16 @@ export interface PermissionOption {
   kind: string;
 }
 
-export interface GrokModel {
+export interface AcpModel {
   id: string;
-  provider: "grok";
+  provider: string;
   name: string;
   isDefault: boolean;
   efforts: string[];
 }
 
 export interface AcpCatalog {
-  models: GrokModel[];
+  models: AcpModel[];
   currentModelId: string | null;
   efforts: string[];
   currentEffort: string | null;
@@ -74,6 +78,9 @@ export interface AcpCatalog {
   effortConfigId: string | null;
   /** Grok publishes reasoning effort as a session mode (`session/set_mode`). */
   effortUsesMode: boolean;
+  /** Permission mode config option (agy: default, accept-edits, plan). */
+  modeConfigId: string | null;
+  currentMode: string | null;
 }
 
 export function emptyCatalog(): AcpCatalog {
@@ -85,20 +92,10 @@ export function emptyCatalog(): AcpCatalog {
     modelConfigId: null,
     effortConfigId: null,
     effortUsesMode: false,
+    modeConfigId: null,
+    currentMode: null,
   };
 }
-
-/**
- * Client capabilities advertised on `initialize`.
- * Filesystem reads and writes are implemented and jailed to the project.
- * The terminal capability is on so Grok can ask Pitex to run a command, but
- * `terminal/create` refuses a cwd outside the project and waits for the
- * existing approval row before the process starts.
- */
-export const GROK_CLIENT_CAPABILITIES = {
-  fs: { readTextFile: true, writeTextFile: true },
-  terminal: true,
-} as const;
 
 type HistoryItem =
   | { kind: "text"; text: string }
@@ -160,13 +157,15 @@ function bounded(text: string, limit: number): string {
 }
 
 function commandText(tool: Json): string {
-  const raw = tool.rawInput;
+  // agy puts the input in `args`, `rawInput`, or both.
+  const raw = tool.rawInput ?? tool.args;
   if (typeof raw === "string") return raw;
   if (Array.isArray(raw)) {
     return raw.filter((part): part is string => typeof part === "string" && part.length > 0).join(" ");
   }
   const obj = asObject(raw);
   if (!obj) return "";
+  if (typeof obj.CommandLine === "string") return obj.CommandLine;
   if (Array.isArray(obj.command)) {
     return obj.command.filter((part): part is string => typeof part === "string" && part.length > 0).join(" ");
   }
@@ -229,6 +228,13 @@ function toolOutputText(update: Json): string {
 
 function toolName(update: Json): string {
   const name = asString(update.name);
+  // agy names (run_command, write_file, view_file, ...) become the pi names the cards know.
+  const raw = asObject(update.rawInput) ?? asObject(update.args);
+  if (typeof raw?.CommandLine === "string") return "bash";
+  if (name && typeof raw?.Path === "string") {
+    if (update.kind === "read") return "read";
+    if (update.kind === "edit") return name === "write_file" ? "write" : "edit";
+  }
   if (name) return name;
   switch (update.kind) {
     case "execute":
@@ -251,13 +257,14 @@ function toolName(update: Json): string {
 }
 
 function toolArgs(update: Json): Json {
-  const raw = asObject(update.rawInput);
+  const raw = asObject(update.rawInput) ?? asObject(update.args);
   if (raw && (typeof raw.command === "string" || typeof raw.path === "string" || Array.isArray(raw.command))) {
     return raw;
   }
   const command = commandText(update);
   if (command) return { command };
-  const path = asString(asObject(Array.isArray(update.locations) ? update.locations[0] : null)?.path);
+  const path =
+    asString(raw?.Path) ?? asString(asObject(Array.isArray(update.locations) ? update.locations[0] : null)?.path);
   if (path) return { path };
   if (raw) return raw;
   const title = asString(update.title);
@@ -436,7 +443,7 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
     stopReason: failed ? "error" : "stop",
     content,
   };
-  const message = errorMessage || (stopReason === "cancelled" ? "The turn was cancelled." : stopReason === "refusal" ? "Grok CLI refused the turn." : "");
+  const message = errorMessage || (stopReason === "cancelled" ? "The turn was cancelled." : stopReason === "refusal" ? "The CLI refused the turn." : "");
   if (message && failed) assistant.errorMessage = message;
   out.push({ type: "message_end", message: assistant });
   out.push({ type: "turn_end" });
@@ -454,19 +461,32 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
   return out;
 }
 
-export function approvalFromPermission(id: string | number, params: Json): ApprovalView {
+export function approvalFromPermission(id: string | number, params: Json, agentName = "The agent"): ApprovalView {
   const tool = asObject(params.toolCall) ?? {};
   const shape = approvalShape(tool);
   const title = asString(tool.title);
-  const detail = [commandText(tool), locationText(tool), title && title !== shape.title ? title : "", toolOutputText(tool)]
+  const command = commandText(tool);
+  const detail = [command, locationText(tool), title && title !== shape.title && title !== command ? title : "", toolOutputText(tool)]
     .filter(Boolean)
     .join("\n");
   return {
     id: String(id),
     kind: shape.kind,
     title: shape.title,
-    detail: bounded(detail || "Grok wants to use a tool.", 4_000),
+    detail: bounded(detail || `${agentName} wants to use a tool.`, 4_000),
   };
+}
+
+/**
+ * Same tool and same command or path. Keys the session-only "Always allow" fallback.
+ * Empty when the request names neither, so one grant can never cover every call of a tool.
+ */
+export function approvalKey(params: Json): string {
+  const tool = asObject(params.toolCall) ?? {};
+  const command = commandText(tool);
+  const path = locationText(tool) || asString(toolArgs(tool).path) || "";
+  if (!command && !path) return "";
+  return JSON.stringify([toolName(tool), command, path]);
 }
 
 export function permissionOptions(params: Json): PermissionOption[] {
@@ -514,7 +534,7 @@ export function cancelledPermission(): Json {
   return { outcome: { outcome: "cancelled" } };
 }
 
-function addModel(catalog: AcpCatalog, model: GrokModel): void {
+function addModel(catalog: AcpCatalog, model: AcpModel): void {
   const existing = catalog.models.find((item) => item.id === model.id);
   if (!existing) {
     catalog.models.push(model);
@@ -540,7 +560,7 @@ function effortNames(value: unknown): string[] {
   return names;
 }
 
-function modelFromEntry(row: Json): GrokModel | null {
+function modelFromEntry(row: Json, provider: string): AcpModel | null {
   const id = asString(row.modelId) ?? asString(row.id) ?? asString(row.value);
   if (!id) return null;
   const meta = asObject(row._meta);
@@ -551,7 +571,7 @@ function modelFromEntry(row: Json): GrokModel | null {
   ];
   return {
     id,
-    provider: "grok",
+    provider,
     name: asString(row.name) ?? asString(row.displayName) ?? asString(row.label) ?? id,
     isDefault: row.isDefault === true || row.selected === true || row.default === true,
     efforts,
@@ -587,7 +607,7 @@ function selectValues(options: unknown): { value: string; name: string }[] {
   return values;
 }
 
-function absorbConfigOptions(options: unknown, catalog: AcpCatalog): void {
+function absorbConfigOptions(options: unknown, catalog: AcpCatalog, provider: string): void {
   if (!Array.isArray(options)) return;
   for (const raw of options) {
     const row = asObject(raw);
@@ -600,7 +620,7 @@ function absorbConfigOptions(options: unknown, catalog: AcpCatalog): void {
       for (const option of selectValues(row.options)) {
         addModel(catalog, {
           id: option.value,
-          provider: "grok",
+          provider,
           name: option.name,
           isDefault: option.value === current,
           efforts: [],
@@ -613,10 +633,14 @@ function absorbConfigOptions(options: unknown, catalog: AcpCatalog): void {
       catalog.efforts = selectValues(row.options).map((option) => option.value);
       if (typeof row.currentValue === "string") catalog.currentEffort = row.currentValue;
     }
+    if (category === "mode" && id) {
+      catalog.modeConfigId = id;
+      if (typeof row.currentValue === "string") catalog.currentMode = row.currentValue;
+    }
   }
 }
 
-function absorbFlatSessionConfig(options: unknown, catalog: AcpCatalog): void {
+function absorbFlatSessionConfig(options: unknown, catalog: AcpCatalog, provider: string): void {
   if (!Array.isArray(options)) return;
   for (const raw of options) {
     const row = asObject(raw);
@@ -628,7 +652,7 @@ function absorbFlatSessionConfig(options: unknown, catalog: AcpCatalog): void {
     if (category === "model") {
       addModel(catalog, {
         id,
-        provider: "grok",
+        provider,
         name,
         isDefault: row.selected === true,
         efforts: effortNames(row.reasoningEfforts),
@@ -642,10 +666,10 @@ function absorbFlatSessionConfig(options: unknown, catalog: AcpCatalog): void {
   }
 }
 
-function absorbModelState(state: Json | null, catalog: AcpCatalog): void {
+function absorbModelState(state: Json | null, catalog: AcpCatalog, provider: string): void {
   if (!state) return;
   for (const row of modelRows(state.availableModels ?? state.models ?? state)) {
-    const model = modelFromEntry(row);
+    const model = modelFromEntry(row, provider);
     if (model) addModel(catalog, model);
   }
   const current = asString(state.currentModelId) ?? asString(state.defaultModelId);
@@ -654,15 +678,24 @@ function absorbModelState(state: Json | null, catalog: AcpCatalog): void {
   if (efforts.length > 0 && catalog.efforts.length === 0) catalog.efforts = efforts;
 }
 
-/** Models and reasoning efforts from initialize, session/new, or `x.ai/models/list`. */
-export function catalogFromAcp(payload: unknown): AcpCatalog {
+/**
+ * Models and reasoning efforts from initialize, session/new, or `x.ai/models/list`.
+ * A `config` profile reads only config options: agy's `models.availableModels`
+ * folds the effort into the id (`gemini-4-neon-high`) and would mix two id schemes.
+ */
+export function catalogFromAcp(payload: unknown, profile: Pick<AcpProfile, "id" | "modelSource">): AcpCatalog {
   const catalog = emptyCatalog();
   const root = asObject(payload);
   if (!root) return catalog;
-  absorbConfigOptions(root.configOptions, catalog);
+  const provider = profile.id;
+  absorbConfigOptions(root.configOptions, catalog, provider);
+  const modes = asObject(root.modes);
+  if (!catalog.currentMode && asString(modes?.currentModeId)) catalog.currentMode = asString(modes?.currentModeId);
+  if (asString(root.currentModeId)) catalog.currentMode = asString(root.currentModeId);
+  if (profile.modelSource === "config") return catalog;
   const modelObject = asObject(root.models);
   for (const row of modelRows(modelObject ?? root.models ?? root.availableModels ?? root.data)) {
-    const model = modelFromEntry(row);
+    const model = modelFromEntry(row, provider);
     if (model) addModel(catalog, model);
   }
   const current =
@@ -670,11 +703,11 @@ export function catalogFromAcp(payload: unknown): AcpCatalog {
   if (current) catalog.currentModelId = current;
   const meta = asObject(root._meta);
   if (meta) {
-    absorbModelState(asObject(meta.modelState), catalog);
+    absorbModelState(asObject(meta.modelState), catalog, provider);
     const sessionConfig = asObject(meta["x.ai/sessionConfig"]);
-    absorbFlatSessionConfig(sessionConfig?.options, catalog);
+    absorbFlatSessionConfig(sessionConfig?.options, catalog, provider);
   }
-  absorbModelState(asObject(root.modelState), catalog);
+  absorbModelState(asObject(root.modelState), catalog, provider);
   if (catalog.efforts.length === 0 && catalog.currentModelId) {
     const currentModel = catalog.models.find((model) => model.id === catalog.currentModelId);
     if (currentModel && currentModel.efforts.length > 0) catalog.efforts = [...currentModel.efforts];
@@ -686,7 +719,7 @@ export function catalogFromAcp(payload: unknown): AcpCatalog {
   return catalog;
 }
 
-export function visibleModels(models: GrokModel[]): { id: string; provider: string; name: string }[] {
+export function visibleModels(models: AcpModel[]): { id: string; provider: string; name: string }[] {
   return models.map(({ id, provider, name }) => ({ id, provider, name }));
 }
 

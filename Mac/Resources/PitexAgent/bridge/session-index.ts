@@ -1,7 +1,7 @@
 // Per-project map from a Pitex session file to a CLI conversation id
-// (Codex thread id, Claude session id, Grok session id, Antigravity
-// conversation id). The history list keeps scanning *.jsonl; this index is not
-// a jsonl file, so it never shows up as its own conversation.
+// (Codex thread id, Claude session id, Grok or Antigravity ACP session id).
+// The history list keeps scanning *.jsonl; this index is not a jsonl file,
+// so it never shows up as its own conversation.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -100,26 +100,15 @@ export function appendUserMessage(sessionPath: string, userText: string): void {
   });
 }
 
-/** Messages this bridge wrote into a session file. Skips the session header. */
-export function sessionMessages(sessionPath: string): Record<string, unknown>[] {
-  let text = "";
-  try {
-    text = readFileSync(sessionPath, "utf8");
-  } catch {
-    return [];
-  }
-  const messages: Record<string, unknown>[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as { type?: string; message?: Record<string, unknown> };
-      if (parsed.type === "message" && parsed.message && typeof parsed.message === "object") {
-        messages.push(parsed.message);
-      }
-    } catch {
-      // A torn final line is ignored; the next append rewrites nothing before it.
-    }
-  }
-  return messages;
+/** Bridge backends whose session files are named `<id>-<uuid>.jsonl`. */
+const BRIDGE_BACKENDS = ["claude", "codex", "grok", "agy"];
+
+/** The bridge backend that wrote a session file, or null for any other name (pi's own files). */
+export function sessionBackend(sessionPath: string): string | null {
+  const name = sessionPath.split(/[\\/]/).pop() ?? "";
+  return BRIDGE_BACKENDS.find((id) => name.startsWith(`${id}-`)) ?? null;
+}
+
+export function foreignSessionMessage(owner: string): string {
+  return `That conversation was started with another assistant (${owner}). Choose it in Settings to continue the conversation.`;
 }
