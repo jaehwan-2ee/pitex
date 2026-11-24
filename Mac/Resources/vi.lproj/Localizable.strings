@@ -173,7 +173,7 @@
 "issues.filter.warnings" = "Cảnh báo";
 "console.no_issues" = "Không có vấn đề";
 "console.no_issues_detail" = "Bản dựng gần nhất không báo lỗi hay cảnh báo.";
-"console.build_command_help" = "Lệnh biên dịch; {file} được thay bằng tệp nguồn";
+"console.build_command_help" = "Lệnh biên dịch; {file} = tệp nguồn, {filename} = tệp nguồn bỏ .tex, {outdir} = thư mục đầu ra (bắt buộc cho biên dịch trực tiếp)";
 "console.build_run_help" = "Biên dịch (⌘B)";
 "console.custom_command_help" = "Lệnh tùy chỉnh chạy trong thư mục dự án";
 "console.custom_run_help" = "Chạy lệnh tùy chỉnh (⌃⌘B)";
@@ -270,7 +270,7 @@
 "settings.compile.commands" = "Lệnh";
 "settings.compile.build_command" = "Lệnh biên dịch";
 "settings.compile.custom_command" = "Lệnh tùy chỉnh";
-"settings.compile.commands_note" = "{file} mở rộng thành đường dẫn tệp nguồn. Lệnh áp dụng cho dự án đang mở và trở thành mặc định cho dự án mới.";
+"settings.compile.commands_note" = "{file} mở rộng thành đường dẫn tệp nguồn, {filename} thành đường dẫn đó bỏ .tex, {outdir} thành thư mục đầu ra. Biên dịch trực tiếp chỉ chạy lệnh tùy chỉnh có {outdir}; các preset dùng được ngay. Lệnh áp dụng cho dự án đang mở và trở thành mặc định cho dự án mới.";
 "settings.compile.behavior" = "Hành vi";
 "settings.compile.switch_pdf" = "Chuyển sang thanh bên phải sau khi biên dịch thành công";
 "settings.compile.preview_window" = "Mở bản xem trước trong cửa sổ riêng khi mở dự án";
@@ -281,7 +281,7 @@
 "settings.compile.shell_path" = "Shell";
 "settings.compile.shell_ack" = "Tôi đồng ý chạy lệnh tùy chỉnh qua shell đăng nhập";
 "settings.compile.fallback_command" = "Lệnh biên dịch dự phòng";
-"settings.compile.fallback_help" = "Dùng khi trường lệnh biên dịch trống. Yêu cầu xác nhận shell ở trên.";
+"settings.compile.fallback_help" = "Dùng khi trường lệnh biên dịch trống. Nhận cùng các placeholder. Yêu cầu xác nhận shell ở trên.";
 "settings.compile.make_default_editor" = "Dùng cho tệp .tex";
 "settings.compile.make_default_note" = "Đăng ký Pitex làm ứng dụng mặc định cho tệp .tex (nhấp đúp để mở tại đây).";
 "settings.compile.live" = "Biên dịch trực tiếp";

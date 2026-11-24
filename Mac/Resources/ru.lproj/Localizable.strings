@@ -174,7 +174,7 @@
 "issues.filter.warnings" = "Предупреждения";
 "console.no_issues" = "Нет проблем";
 "console.no_issues_detail" = "Последняя сборка не сообщила об ошибках или предупреждениях.";
-"console.build_command_help" = "Команда сборки; {file} заменяется на исходный файл";
+"console.build_command_help" = "Команда сборки; {file} — исходный файл, {filename} — исходник без .tex, {outdir} — папка вывода (обязательна для живой компиляции)";
 "console.build_run_help" = "Сборка (⌘B)";
 "console.custom_command_help" = "Пользовательская команда, запускаемая в каталоге проекта";
 "console.custom_run_help" = "Запустить пользовательскую команду (⌃⌘B)";
@@ -270,7 +270,7 @@
 "settings.compile.commands" = "Команды";
 "settings.compile.build_command" = "Команда сборки";
 "settings.compile.custom_command" = "Пользовательская команда";
-"settings.compile.commands_note" = "{file} раскрывается в путь к исходному файлу. Команды применяются к открытому проекту и становятся стандартными для новых проектов.";
+"settings.compile.commands_note" = "{file} раскрывается в путь к исходному файлу, {filename} — в этот путь без .tex, {outdir} — в папку вывода. Живая компиляция запускает пользовательскую команду, только если в ней есть {outdir}; пресеты работают как есть. Команды применяются к открытому проекту и становятся стандартными для новых проектов.";
 "settings.compile.behavior" = "Поведение";
 "settings.compile.switch_pdf" = "Переключаться на правую панель после успешной сборки";
 "settings.compile.preview_window" = "Открывать просмотр в отдельном окне при открытии проекта";
@@ -281,7 +281,7 @@
 "settings.compile.shell_path" = "Оболочка";
 "settings.compile.shell_ack" = "Я разрешаю запуск пользовательских команд через оболочку входа";
 "settings.compile.fallback_command" = "Резервная команда сборки";
-"settings.compile.fallback_help" = "Используется, когда поле команды сборки пусто. Требует одобрения оболочки выше.";
+"settings.compile.fallback_help" = "Используется, когда поле команды сборки пусто. Принимает те же подстановки. Требует одобрения оболочки выше.";
 "settings.compile.make_default_editor" = "Использовать для файлов .tex";
 "settings.compile.make_default_note" = "Регистрирует Pitex как приложение по умолчанию для файлов .tex (двойной щелчок открывает здесь).";
 "settings.compile.live" = "Живая сборка";

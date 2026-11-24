@@ -174,7 +174,7 @@
 "issues.filter.warnings" = "警告";
 "console.no_issues" = "没有问题";
 "console.no_issues_detail" = "上次构建未报告错误或警告。";
-"console.build_command_help" = "构建命令；{file} 会替换为源文件";
+"console.build_command_help" = "构建命令；{file}=源文件，{filename}=去掉 .tex 的源文件，{outdir}=输出文件夹（实时编译必需）";
 "console.build_run_help" = "构建（⌘B）";
 "console.custom_command_help" = "在项目目录中运行的自定义命令";
 "console.custom_run_help" = "运行自定义命令（⌃⌘B）";
@@ -270,7 +270,7 @@
 "settings.compile.commands" = "命令";
 "settings.compile.build_command" = "构建命令";
 "settings.compile.custom_command" = "自定义命令";
-"settings.compile.commands_note" = "{file} 会展开为源文件路径。命令应用于当前打开的项目，并成为新项目的默认值。";
+"settings.compile.commands_note" = "{file} 会展开为源文件路径，{filename} 为去掉 .tex 的该路径，{outdir} 为输出文件夹。实时编译只运行包含 {outdir} 的自定义命令；预设可直接使用。命令应用于当前打开的项目，并成为新项目的默认值。";
 "settings.compile.behavior" = "行为";
 "settings.compile.switch_pdf" = "构建成功后切换到右侧边栏";
 "settings.compile.preview_window" = "打开项目时在单独窗口中打开预览";
@@ -281,7 +281,7 @@
 "settings.compile.shell_path" = "Shell";
 "settings.compile.shell_ack" = "我同意通过登录 Shell 运行自定义命令";
 "settings.compile.fallback_command" = "备用构建命令";
-"settings.compile.fallback_help" = "当构建命令字段为空时使用。需要上方对 Shell 的批准。";
+"settings.compile.fallback_help" = "当构建命令字段为空时使用。支持相同的占位符。需要上方对 Shell 的批准。";
 "settings.compile.make_default_editor" = "用于 .tex 文件";
 "settings.compile.make_default_note" = "将 Pitex 注册为 .tex 文件的默认应用（双击在此打开）。";
 "settings.compile.live" = "实时编译";
