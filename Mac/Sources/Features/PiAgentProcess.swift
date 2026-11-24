@@ -1,6 +1,7 @@
 import AppKit
 import AppPorts
 import BuildCore
+import CryptoKit
 import Foundation
 
 /// Locates the `pi` agent executable. Resolution prefers the app's own
@@ -103,6 +104,8 @@ struct PiToolchain: Sendable {
             paths += versions.sorted { $0.compare($1, options: .numeric) == .orderedDescending }
                 .map { root.appendingPathComponent($0).appendingPathComponent(suffix).path }
         }
+        // Last, so a user's own Bun or Node wins over the one Pitex installed.
+        paths.append(PinnedNode.binDirectory.path)
         updatePath()
         result.node = find("node", environment: result.environment)
         result.npm = find("npm", environment: result.environment)
@@ -163,7 +166,7 @@ enum PiRuntimeInstaller {
         var errorDescription: String? {
             switch self {
             case .runtimeMissing:
-                "Bun or Node.js with npm was not found. Install Bun with Homebrew, npm, or the official installer, then retry."
+                "Pitex Agent's JavaScript runtime is not installed yet. Click Install Pitex Agent in the Assistant or in Settings → AI."
             case let .installFailed(output):
                 "Pitex Agent install failed: \(output)"
             }
@@ -181,7 +184,7 @@ enum PiRuntimeInstaller {
     /// The Node requirement is unchanged (`>=22.19.0`).
     static let desiredVersion = "1.5.2"
 
-    @MainActor private static var installationInProgress = false
+    @MainActor private static var inFlight: Task<Void, Error>?
 
     /// First-launch path: installs the app-local runtime when missing,
     /// upgrades it when the installed version trails `desiredVersion`, and
@@ -240,14 +243,27 @@ enum PiRuntimeInstaller {
 
     /// Both package managers install locally; no global packages or provider
     /// credentials are changed. Publish the launcher only after a smoke check.
+    /// A pinned install that is already running (the launch-time one) is
+    /// joined, so the Install button never fails just because it was early.
     @MainActor
     static func install(latest: Bool = false, toolchain: PiToolchain? = nil) async throws {
-        guard !installationInProgress else {
-            throw InstallError.installFailed("An agent installation is already in progress.")
+        if let inFlight {
+            guard !latest else { throw InstallError.installFailed("An agent installation is already in progress.") }
+            return try await inFlight.value
         }
-        installationInProgress = true
-        defer { installationInProgress = false }
-        let tools = if let toolchain { toolchain } else { await PiToolchain.discover() }
+        let task = Task { try await performInstall(latest: latest, toolchain: toolchain) }
+        inFlight = task
+        defer { inFlight = nil }
+        try await task.value
+    }
+
+    @MainActor
+    private static func performInstall(latest: Bool, toolchain: PiToolchain?) async throws {
+        var tools = if let toolchain { toolchain } else { await PiToolchain.discover() }
+        if tools.bun == nil, tools.npmCommand(arguments: []) == nil {
+            try await PinnedNode.install()
+            tools = await PiToolchain.discover()
+        }
         let files = FileManager.default
         let runtime = PiPaths.runtimeDirectory
         let backup = runtime.deletingLastPathComponent().appendingPathComponent("pi-runtime-backup-\(UUID().uuidString)")
@@ -552,4 +568,67 @@ enum PiAgentProcessError: LocalizedError {
     case notRunning
 
     var errorDescription: String? { "The pi agent process is not running." }
+}
+
+/// Node.js that Pitex installs for itself when neither Bun nor Node is
+/// found, next to pi-runtime in Application Support. Keep the version and
+/// checksums in step with `PINNED_NODE` in Linux/crates/pitex-shell/src/agent.rs.
+enum PinnedNode {
+    static let version = "24.22.2"
+    /// From nodejs.org/dist/v24.22.2/SHASUMS256.txt.asc (release-key signed).
+    private static let sha256 = [
+        "darwin-arm64": "aa9549349e47dffaa42dcf95d6e06ade8c4bdafc980979883b88767670df385a",
+        "darwin-x64": "d5e336d588c45be0c37dbd52cc29895593009ca4997a77a1fd02815131ed0e52",
+    ]
+
+    static var directory: URL {
+        PiPaths.runtimeDirectory.deletingLastPathComponent().appendingPathComponent("node", isDirectory: true)
+    }
+
+    static var binDirectory: URL { directory.appendingPathComponent("bin", isDirectory: true) }
+
+    /// Download, verify against the pinned SHA-256, unpack, then swap in.
+    static func install() async throws {
+        #if arch(arm64)
+        let platform = "darwin-arm64"
+        #else
+        let platform = "darwin-x64"
+        #endif
+        let name = "node-v\(version)-\(platform)"
+        let url = URL(string: "https://nodejs.org/dist/v\(version)/\(name).tar.gz")!
+        let download: URL
+        do {
+            let (file, response) = try await URLSession.shared.download(from: url)
+            download = file
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                try? FileManager.default.removeItem(at: file)
+                throw URLError(.badServerResponse)
+            }
+        } catch {
+            throw PiRuntimeInstaller.InstallError.installFailed("Node.js could not be downloaded from nodejs.org: \(error.localizedDescription)")
+        }
+        defer { try? FileManager.default.removeItem(at: download) }
+        let digest = try SHA256.hash(data: Data(contentsOf: download, options: .mappedIfSafe))
+            .map { String(format: "%02x", $0) }.joined()
+        guard digest == sha256[platform] else {
+            throw PiRuntimeInstaller.InstallError.installFailed("The Node.js download did not match its pinned checksum, so it was not installed.")
+        }
+        let files = FileManager.default
+        let staging = directory.deletingLastPathComponent().appendingPathComponent("node-staging-\(UUID().uuidString)")
+        try files.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: staging) }
+        let result = try await ProcessRunner().run(DirectCommandPlan(executable: "/usr/bin/tar",
+            arguments: ["-xzf", download.path, "-C", staging.path], environment: .inherit(overrides: [:])),
+            projectRoot: staging, timeout: .seconds(300))
+        let unpacked = staging.appendingPathComponent(name)
+        guard result.termination == .exited(code: 0),
+              files.isExecutableFile(atPath: unpacked.appendingPathComponent("bin/node").path) else {
+            throw PiRuntimeInstaller.InstallError.installFailed("Node.js could not be unpacked: "
+                + String(decoding: result.standardError, as: UTF8.self).suffix(1_000))
+        }
+        // C headers are only for native addons, which the install skips (--ignore-scripts).
+        try? files.removeItem(at: unpacked.appendingPathComponent("include"))
+        if files.fileExists(atPath: directory.path) { try files.removeItem(at: directory) }
+        try files.moveItem(at: unpacked, to: directory)
+    }
 }

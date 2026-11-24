@@ -80,11 +80,11 @@ See the [build instructions](../../Development/README.md) for development depend
 |---|---|
 | TeX Live, BasicTeX on macOS, or MiKTeX on Windows | Necessary for document builds. The editor and PDF preview can operate without a TeX distribution. |
 | TeX Live or MacTeX, with XeTeX formats and fonts | Supplies TeX files for the embedded editing preview. |
-| Bun, or Node.js **22.19 or later** with npm | Installs the Pi agent runtime in the application's support folder on the first start. |
+| Bun or Node.js **22.19 or later** with npm (optional) | Installs the Pi agent runtime in the application's support folder on the first start. If neither is found, Pitex downloads Node.js 24.22.2 from nodejs.org (about 55 MB), checks it against a SHA-256 pinned in the app, and keeps it in the same folder. |
 | Internet access | Necessary for agent installation, update checks, and downloads. |
 
-Without Bun or Node.js 22.19 or later with npm, the assistant is unavailable.
-The other application functions can operate.
+If that download fails, the assistant shows the error and an **Install Pitex Agent** button to retry.
+The other application functions can operate without the assistant.
 
 | Platform | Other requirements |
 |---|---|

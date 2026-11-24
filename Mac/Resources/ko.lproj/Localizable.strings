@@ -76,7 +76,7 @@
 "assistant.response_error" = "어시스턴트 오류: %@";
 "assistant.sign_in_chatgpt" = "ChatGPT로 로그인";
 "assistant.new_session" = "새 세션";
-"assistant.pi_missing" = "Pitex Agent가 아직 설치되지 않았습니다 — 실행 시 자동으로 설치됩니다. 설정 → AI를 확인하세요.";
+"assistant.pi_missing" = "Pitex Agent가 아직 설치되지 않았습니다. 실행 시 자동으로 설치되며, 끝나지 않았거나 실패했다면 Pitex Agent 설치를 누르세요.";
 "assistant.context_attached" = "컨텍스트:";
 "assistant.context_none" = "활성 문서 컨텍스트 없음";
 "assistant.selection_remove" = "선택 영역 제거";
@@ -375,7 +375,7 @@
 "settings.ai.open_config" = "Pitex Agent 설정 열기 (settings.json)";
 "settings.ai.install_runtime" = "Pitex Agent 설치";
 "settings.ai.reinstall_runtime" = "Pitex Agent 다시 설치";
-"settings.ai.runtime_note" = "Pitex Agent는 Pitex 자체 폴더(응용 프로그램 지원 ▸ Pitex ▸ pi-runtime)에 LaTeX, Humanizer, SciSpace 스킬과 함께 자동 설치됩니다. 누락되거나 손상된 경우에만 다시 설치하세요. Bun이 있으면 우선 사용하며, 없으면 Node.js와 npm을 사용합니다.";
+"settings.ai.runtime_note" = "Pitex Agent는 Pitex 자체 폴더(응용 프로그램 지원 ▸ Pitex ▸ pi-runtime)에 LaTeX, Humanizer, SciSpace 스킬과 함께 자동 설치됩니다. 누락되거나 손상된 경우에만 다시 설치하세요. Bun이나 Node.js가 있으면 그것을 사용하고, 없으면 nodejs.org에서 Node.js를 내려받아 고정된 체크섬으로 확인한 뒤 같은 폴더에 둡니다.";
 "settings.ai.skills" = "스킬";
 "settings.ai.install_skill" = "스킬 또는 확장 소스 설치";
 "settings.ai.install" = "설치";

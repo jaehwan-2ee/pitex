@@ -76,7 +76,7 @@
 "assistant.response_error" = "Lỗi trợ lý: %@";
 "assistant.sign_in_chatgpt" = "Đăng nhập bằng ChatGPT";
 "assistant.new_session" = "Phiên mới";
-"assistant.pi_missing" = "Pitex Agent chưa được cài đặt — nó tự cài khi khởi chạy; xem Cài đặt → AI.";
+"assistant.pi_missing" = "Pitex Agent chưa được cài đặt. Nó tự cài khi khởi chạy; nếu chưa xong hoặc thất bại, hãy bấm Cài đặt Pitex Agent.";
 "assistant.context_attached" = "Ngữ cảnh:";
 "assistant.context_none" = "Không có ngữ cảnh tài liệu đang mở";
 "assistant.selection_remove" = "Bỏ vùng chọn";
@@ -374,7 +374,7 @@
 "settings.ai.open_config" = "Mở cấu hình Pitex Agent (settings.json)";
 "settings.ai.install_runtime" = "Cài đặt Pitex Agent";
 "settings.ai.reinstall_runtime" = "Cài lại Pitex Agent";
-"settings.ai.runtime_note" = "Pitex Agent tự cài vào thư mục riêng của Pitex (Application Support ▸ Pitex ▸ pi-runtime) kèm các skill LaTeX, Humanizer và SciSpace. Chỉ cài lại khi bị thiếu hoặc hỏng. Ưu tiên Bun nếu có; nếu không, sử dụng Node.js và npm.";
+"settings.ai.runtime_note" = "Pitex Agent tự cài vào thư mục riêng của Pitex (Application Support ▸ Pitex ▸ pi-runtime) kèm các skill LaTeX, Humanizer và SciSpace. Chỉ cài lại khi bị thiếu hoặc hỏng. Dùng Bun hoặc Node.js nếu có; nếu không, Pitex tải Node.js từ nodejs.org, kiểm tra bằng mã băm cố định và lưu trong cùng thư mục.";
 "settings.ai.skills" = "Skill";
 "settings.ai.install_skill" = "Cài đặt nguồn skill hoặc extension";
 "settings.ai.install" = "Cài đặt";

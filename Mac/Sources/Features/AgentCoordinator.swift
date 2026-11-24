@@ -413,6 +413,21 @@ final class AgentCoordinator: ObservableObject {
         if reconnect { restart() } else { prepare() }
     }
 
+    /// The panel's Install button: install (or join the launch-time
+    /// install), then connect; a failure stays on screen with the button.
+    func installRuntime() {
+        connection = .connecting
+        Task { @MainActor in
+            do {
+                try await PiRuntimeInstaller.install()
+                connection = .idle
+                prepare()
+            } catch {
+                connection = .failed(error.localizedDescription)
+            }
+        }
+    }
+
     // MARK: - Agent config watch
 
     /// `startWatcher(for:)` in PitexApp.swift, applied to the agent
@@ -657,7 +672,7 @@ final class AgentCoordinator: ObservableObject {
         guard !trimmed.isEmpty else { return }
         switch connection {
         case .piMissing:
-            statusMessage = "Pitex Agent is not installed yet — it installs automatically on launch; see Settings → AI."
+            statusMessage = String(localized: "assistant.pi_missing")
             return
         default:
             break

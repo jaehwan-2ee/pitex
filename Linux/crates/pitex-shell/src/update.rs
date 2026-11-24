@@ -38,7 +38,7 @@ pub enum InstallOutcome {
     ManualFallback,
 }
 
-fn curl(arguments: &[&str], timeout_secs: u64) -> Result<Vec<u8>, String> {
+pub(crate) fn curl(arguments: &[&str], timeout_secs: u64) -> Result<Vec<u8>, String> {
     let mut command = Command::new("curl");
     command
         .arg("--max-time")

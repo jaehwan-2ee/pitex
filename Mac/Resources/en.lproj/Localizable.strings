@@ -76,7 +76,7 @@
 "assistant.response_error" = "Assistant error: %@";
 "assistant.sign_in_chatgpt" = "Sign in with ChatGPT";
 "assistant.new_session" = "New Session";
-"assistant.pi_missing" = "Pitex Agent is not installed yet — it installs automatically on launch; see Settings → AI.";
+"assistant.pi_missing" = "Pitex Agent is not installed yet. Pitex installs it on launch; if that has not finished or failed, click Install Pitex Agent.";
 "assistant.context_attached" = "Context:";
 "assistant.context_none" = "No active document context";
 "assistant.selection_remove" = "Remove selection";
@@ -374,7 +374,7 @@
 "settings.ai.open_config" = "Open Pitex Agent Configuration (settings.json)";
 "settings.ai.install_runtime" = "Install Pitex Agent";
 "settings.ai.reinstall_runtime" = "Reinstall Pitex Agent";
-"settings.ai.runtime_note" = "Pitex Agent installs itself into Pitex's own folder (Application Support ▸ Pitex ▸ pi-runtime) with its LaTeX, Humanizer, and SciSpace skills. Reinstall only if it is missing or damaged. Uses Bun when available, otherwise Node.js and npm.";
+"settings.ai.runtime_note" = "Pitex Agent installs itself into Pitex's own folder (Application Support ▸ Pitex ▸ pi-runtime) with its LaTeX, Humanizer, and SciSpace skills. Reinstall only if it is missing or damaged. Uses Bun or Node.js when available; otherwise Pitex downloads Node.js from nodejs.org, checks it against a pinned checksum, and keeps it in the same folder.";
 "settings.ai.skills" = "Skills";
 "settings.ai.install_skill" = "Install a skill or extension source";
 "settings.ai.install" = "Install";
