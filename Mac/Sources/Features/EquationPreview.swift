@@ -297,8 +297,9 @@ struct CroppedImage: @unchecked Sendable {
 }
 
 enum ExactEquationImage {
-    /// Renders page 1 on white paper at `scale` and crops to the ink.
-    static func cropped(pdf: [UInt8], scale: CGFloat) -> CGImage? {
+    /// Renders page 1 on white paper at `scale` and crops to the ink plus
+    /// `padding` points (assistant math uses less than the popover).
+    static func cropped(pdf: [UInt8], scale: CGFloat, padding: CGFloat = 6) -> CGImage? {
         guard let document = PDFDocument(data: Data(pdf)), let page = document.page(at: 0) else { return nil }
         let bounds = page.bounds(for: .cropBox)
         let width = Int(bounds.width * scale), height = Int(bounds.height * scale)
@@ -321,7 +322,7 @@ enum ExactEquationImage {
             }
         }
         guard maxX >= minX, maxY >= minY else { return nil }
-        let pad = Int(6 * scale)
+        let pad = Int(padding * scale)
         let left = max(minX - pad, 0), top = max(minY - pad, 0)
         // Bitmap memory rows run top-down, as makeImage's pixel rows do.
         return image.cropping(to: CGRect(x: left, y: top,

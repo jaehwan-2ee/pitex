@@ -12,7 +12,7 @@ const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
 const PROVIDERS = ["codex", "claude", "grok", "agy"];
-const GTK_PROVIDERS = ["claude", "claude-toolcards", "agy", "stale-codex", "stale-grok"];
+const GTK_PROVIDERS = ["claude", "claude-toolcards", "claude-markdown", "agy", "stale-codex", "stale-grok"];
 const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH", agy: "AGY_PATH" };
 const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", agy: "agy.mjs" };
 
@@ -572,7 +572,8 @@ function driveGtk(provider) {
     return Promise.resolve(2);
   }
   // claude-toolcards drives the Claude fake with the TOOLCARDS prompt.
-  const run = provider === "claude-toolcards" ? prepareRun("claude", "gtk-toolcards") : prepareRun(provider, "gtk");
+  // claude-markdown drives it with MARKDOWN: a streamed Markdown answer.
+  const run = provider.startsWith("claude-") ? prepareRun("claude", `gtk-${provider.slice(7)}`) : prepareRun(provider, "gtk");
   const env = {
     ...bridgeEnv(run, "ok"),
     HOME: run.home,
@@ -585,6 +586,8 @@ function driveGtk(provider) {
     PITEX_GTK_EVIDENCE: run.evidence,
     PITEX_GTK_PROJECT: run.project,
     PITEX_GTK_PROVIDER: provider,
+    // PITEX_GTK_THEME=dark seeds appearance.theme before launch.
+    PITEX_GTK_THEME: process.env.PITEX_GTK_THEME || "",
     DISPLAY: process.env.DISPLAY || "",
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
   };

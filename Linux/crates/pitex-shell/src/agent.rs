@@ -1897,6 +1897,8 @@ impl AgentCoordinator {
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
         self.clear_approvals();
+        // A message cut off by the exit gets its final (non-streaming) render.
+        self.finalize_entries();
         if !self.intentional_stop {
             self.connection = Connection::Failed("The agent process exited unexpectedly.".into());
         }
@@ -1916,6 +1918,7 @@ impl AgentCoordinator {
         self.thinking_levels.clear();
         self.is_updating_model_settings = false;
         self.clear_approvals();
+        self.finalize_entries();
         self.ui_revision += 1;
     }
 

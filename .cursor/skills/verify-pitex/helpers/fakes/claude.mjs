@@ -131,6 +131,28 @@ function toolCards() {
   finish("success", "Done");
 }
 
+// A Markdown answer streamed in two parts: the first ends inside an open
+// ```latex fence (drawn as an open code box), the rest closes it 4 s later.
+const MARKDOWN_ANSWER = [
+  "## Plan for the intro\n\n1. Check `main.tex` for the title\n2. Add a **section** with *emphasis*\n   - nested point\n\n",
+  "Inline math $E=mc^2$ sits in the text; prices like $5 and $10 stay plain.\n\n```latex\n\\section{Intro} % first section\n",
+  "\\begin{equation}\n  a^2 + b^2 = c^2\n\\end{equation}\n```\n\n$$\\int_0^1 x\\,dx$$\n\n",
+  "| Command | Purpose |\n|---|---|\n| `\\cite` | references |\n| `\\ref` | **labels** |\n\n> A short quote.\n\n",
+  "**Bold with $x^2$ inside**, while echo $FOO$BAR and ![img](x.png) stay text.\n\n",
+  "See [intro.tex:1](intro.tex:1) or [the docs](https://example.org).",
+];
+
+function markdown() {
+  streamText(MARKDOWN_ANSWER[0]);
+  streamText(MARKDOWN_ANSWER[1]);
+  setTimeout(() => {
+    for (const part of MARKDOWN_ANSWER.slice(2)) streamText(part);
+    const text = MARKDOWN_ANSWER.join("");
+    send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text }] } });
+    finish("success", text);
+  }, 4000);
+}
+
 function finish(subtype, result) {
   send({
     type: "result",
@@ -202,6 +224,10 @@ rl.on("line", (line) => {
         message: { role: "assistant", content: [{ type: "text", text: "pitex-ok" }] },
       });
       finish("success", "pitex-ok");
+      return;
+    }
+    if (text.includes("MARKDOWN")) {
+      markdown();
       return;
     }
     if (text.includes("TOOLCARDS")) {

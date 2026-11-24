@@ -259,6 +259,10 @@
 "assistant.tool.thought" = "생각 중";
 "assistant.tool.exit" = "종료 코드 %@";
 "assistant.tool.open_file" = "파일 열기";
+"assistant.markdown.copy" = "복사";
+"assistant.markdown.copied" = "복사됨";
+"assistant.markdown.copy_message" = "메시지 복사";
+"assistant.markdown.truncated" = "메시지가 잘렸습니다. 처음 32,000자만 표시합니다.";
 "assistant.tool.status_running" = "실행 중";
 "assistant.tool.status_completed" = "완료";
 "assistant.tool.status_failed" = "실패";

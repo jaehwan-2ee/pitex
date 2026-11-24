@@ -260,6 +260,10 @@
 "assistant.tool.thought" = "Pensando";
 "assistant.tool.exit" = "código %@";
 "assistant.tool.open_file" = "Abrir archivo";
+"assistant.markdown.copy" = "Copiar";
+"assistant.markdown.copied" = "Copiado";
+"assistant.markdown.copy_message" = "Copiar mensaje";
+"assistant.markdown.truncated" = "Mensaje truncado: se muestran los primeros 32.000 caracteres.";
 "assistant.tool.status_running" = "En curso";
 "assistant.tool.status_completed" = "Completado";
 "assistant.tool.status_failed" = "Falló";

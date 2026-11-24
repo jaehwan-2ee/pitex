@@ -260,6 +260,10 @@
 "assistant.tool.thought" = "思考中";
 "assistant.tool.exit" = "退出码 %@";
 "assistant.tool.open_file" = "打开文件";
+"assistant.markdown.copy" = "复制";
+"assistant.markdown.copied" = "已复制";
+"assistant.markdown.copy_message" = "复制消息";
+"assistant.markdown.truncated" = "消息已截断：仅显示前 32,000 个字符。";
 "assistant.tool.status_running" = "运行中";
 "assistant.tool.status_completed" = "已完成";
 "assistant.tool.status_failed" = "失败";
