@@ -330,6 +330,7 @@ jobs:
             mingw-w64-ucrt-x86_64-librsvg
             mingw-w64-ucrt-x86_64-adwaita-icon-theme
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
+            mingw-w64-ucrt-x86_64-nsis
             zip
       # B2: after setup-msys2 — the job's default shell is `msys2 {0}`, which
       # only exists once that action installs it.
@@ -456,12 +457,6 @@ jobs:
             ZIP_NAME="${GITHUB_WORKSPACE}/${PITEX_ASSET_PREFIX}-${NAME}-windows-amd64.zip"
           fi
           zip -qr "$ZIP_NAME" "$PITEX_BUNDLE"
-      - name: Ensure NSIS
-        shell: pwsh
-        run: |
-          if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) {
-            choco install nsis -y --no-progress
-          }
       - name: Compute NSIS version
         run: |
           set -euo pipefail
@@ -487,7 +482,7 @@ jobs:
             SETUP_NAME="${PITEX_ASSET_PREFIX}-${NAME}-windows-amd64-setup.exe"
           fi
           echo "SETUP_NAME=$SETUP_NAME" >> "$GITHUB_ENV"
-          '/c/Program Files (x86)/NSIS/makensis.exe' -V2 \
+          makensis -V2 \
             -DVERSION="${NSIS_VERSION}" \
             -DNAME="${PITEX_NAME}" \
             -DREGKEY="${PITEX_REGKEY}" \
