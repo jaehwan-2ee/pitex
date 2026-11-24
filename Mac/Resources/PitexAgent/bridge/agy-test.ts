@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
@@ -705,7 +705,7 @@ test("agy sessions for this project are mirrored once into the history list", { 
       { sessionId: "../escape", cwd: project, title: "Bad id", updatedAt: "2026-01-02T03:04:05Z" },
     ];
     const written = importListedSessions(sessionDir, "agy", rows, project);
-    assert.deepEqual(written.map((path) => path.split("/").pop()), ["agy-s-1.jsonl", "agy-s-2.jsonl"]);
+    assert.deepEqual(written.map((path) => basename(path)), ["agy-s-1.jsonl", "agy-s-2.jsonl"]);
     const first = readFileSync(join(sessionDir, "agy-s-1.jsonl"), "utf8");
     assert.match(first, /Fix the intro/);
     assert.match(readFileSync(join(sessionDir, "agy-s-2.jsonl"), "utf8"), /Untitled conversation/);
