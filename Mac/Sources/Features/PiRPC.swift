@@ -30,6 +30,12 @@ enum PiRPCCommand {
     case abort
     case newSession
     case switchSession(path: String)
+    /// Bridge backends with `capabilities.fork`: a new chat holding the first `keepTurns` turns.
+    /// `turns` is how many prompts the chat on screen has; the bridge refuses a cut when its count differs.
+    case forkSession(keepTurns: Int, turns: Int)
+    /// Bridge backends with `capabilities.rewind`: drop the turns after the first `keepTurns`,
+    /// restoring the conversation and/or the agent's file edits; `dryRun` only lists the files.
+    case rewind(keepTurns: Int, turns: Int, conversation: Bool, files: Bool, dryRun: Bool)
     case getMessages
     /// Bridge backends: mirror the CLI's own sessions before the history list opens.
     case refreshSessions
@@ -62,6 +68,12 @@ enum PiRPCCommand {
             return ["type": "new_session"]
         case let .switchSession(path):
             return ["type": "switch_session", "sessionPath": path]
+        case let .forkSession(keepTurns, turns):
+            return ["type": "fork_session", "keepTurns": keepTurns, "turns": turns]
+        case let .rewind(keepTurns, turns, conversation, files, dryRun):
+            var object: [String: Any] = ["type": "rewind", "keepTurns": keepTurns, "turns": turns, "conversation": conversation, "files": files]
+            if dryRun { object["dryRun"] = true }
+            return object
         case .getMessages:
             return ["type": "get_messages"]
         case .refreshSessions:
@@ -195,6 +207,11 @@ struct PiSlashCommand: Identifiable {
 struct AgentCapabilities: Equatable {
     var steer = false
     var images = false
+    /// `fork_session` works; otherwise Fork quotes the earlier chat into a new one.
+    var fork = false
+    /// What `rewind` can restore.
+    var rewindConversation = false
+    var rewindFiles = false
 
     init(steer: Bool = false, images: Bool = false) {
         self.steer = steer
@@ -207,6 +224,10 @@ struct AgentCapabilities: Equatable {
         if let caps = state["capabilities"] as? [String: Any] {
             steer = caps["steer"] as? Bool ?? false
             images = caps["images"] as? Bool ?? false
+            fork = caps["fork"] as? Bool ?? false
+            let rewind = caps["rewind"] as? [String: Any]
+            rewindConversation = rewind?["conversation"] as? Bool ?? false
+            rewindFiles = rewind?["files"] as? Bool ?? false
             return
         }
         steer = true

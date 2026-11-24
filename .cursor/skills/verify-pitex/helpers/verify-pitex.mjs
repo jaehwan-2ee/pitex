@@ -12,7 +12,7 @@ const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
 const PROVIDERS = ["codex", "claude", "grok", "agy"];
-const GTK_PROVIDERS = ["claude", "claude-toolcards", "claude-markdown", "claude-approvals", "claude-todos", "claude-composer", "claude-usage", "pi-fit", "agy", "agy-signin", "stale-codex", "stale-grok"];
+const GTK_PROVIDERS = ["claude", "claude-toolcards", "claude-markdown", "claude-approvals", "claude-todos", "claude-composer", "claude-usage", "claude-branch", "pi-fit", "agy-branch", "agy", "agy-signin", "stale-codex", "stale-grok"];
 const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH", agy: "AGY_PATH" };
 const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", agy: "agy.mjs" };
 
@@ -577,6 +577,8 @@ function driveGtk(provider) {
     ? prepareRun("claude", `gtk-${provider.slice(7)}`)
     : provider === "agy-signin"
       ? prepareRun("agy", "gtk-signin")
+      : provider === "agy-branch"
+        ? prepareRun("agy", "gtk-branch")
       : prepareRun(provider, "gtk");
   const env = {
     ...bridgeEnv(run, "ok"),
@@ -597,6 +599,12 @@ function driveGtk(provider) {
     DISPLAY: process.env.DISPLAY || "",
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
   };
+  if (provider === "claude-branch") {
+    // The fake saves its session like Claude Code, so the SDK can fork it and rewind its files.
+    env.FAKE_PERSIST = "1";
+    // The restore takes 3 s, so 09b-rewinding.png shows the rewind in flight.
+    env.FAKE_REWIND_DELAY_MS = "3000";
+  }
   if (provider === "agy-signin") {
     // agy-signin starts signed out; gtk-drive.py writes "ok" here before Retry.
     env.FAKE_AUTH_FILE = join(run.home, "agy-auth");

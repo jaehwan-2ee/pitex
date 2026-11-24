@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import readline from "node:readline";
 
 import { recordLine, recordNote, recordSpawn } from "./record.mjs";
@@ -12,9 +15,64 @@ if (args[0] === "auth" && args[1] === "status") {
   process.exit(0);
 }
 
+/** `--flag value` or `--flag=value` (the SDK passes the second form). */
+function flag(name) {
+  const joined = args.find((arg) => arg.startsWith(`${name}=`));
+  if (joined) return joined.slice(name.length + 1);
+  const at = args.indexOf(name);
+  return at >= 0 ? args[at + 1] : undefined;
+}
 const resumeAt = args.indexOf("--resume");
-const session = resumeAt >= 0 && args[resumeAt + 1] ? args[resumeAt + 1] : "sess-claude-1";
-const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
+// FAKE_PERSIST=1 (the claude-branch journey): a UUID session saved like Claude Code's own
+// transcript, so the SDK's getSessionMessages and forkSession read it, plus file checkpoints.
+const persist = process.env.FAKE_PERSIST === "1";
+const session = flag("--resume") ?? (resumeAt >= 0 && args[resumeAt + 1] ? args[resumeAt + 1] : persist ? randomUUID() : "sess-claude-1");
+const projectDir = join(process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || ".", ".claude"), "projects", process.cwd().replace(/[^A-Za-z0-9]/g, "-"));
+const sessionFile = join(projectDir, `${session}.jsonl`);
+const backupFile = join(projectDir, "fake-backups.json");
+let lastUuid = flag("--resume-session-at") ?? lastSavedUuid();
+let currentPrompt = null;
+
+function lastSavedUuid() {
+  if (!persist || !existsSync(sessionFile)) return null;
+  const rows = readFileSync(sessionFile, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  return rows.findLast((row) => row.uuid)?.uuid ?? null;
+}
+
+/** One transcript row in Claude Code's format (main chain only). */
+function save(type, message) {
+  if (!persist) return null;
+  mkdirSync(projectDir, { recursive: true });
+  const uuid = randomUUID();
+  appendFileSync(sessionFile, `${JSON.stringify({ type, uuid, parentUuid: lastUuid, isSidechain: false, sessionId: session, timestamp: new Date().toISOString(), cwd: process.cwd(), userType: "external", message })}\n`);
+  lastUuid = uuid;
+  return uuid;
+}
+
+const send = (value) => {
+  if ((value.type === "assistant" || value.type === "user") && !value.parent_tool_use_id) save(value.type, value.message);
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+};
+
+function backups() {
+  return existsSync(backupFile) ? JSON.parse(readFileSync(backupFile, "utf8")) : [];
+}
+
+/** rewind_files: files edited at or after that prompt go back to their content before it. */
+function rewindFiles(msg) {
+  const order = existsSync(sessionFile)
+    ? readFileSync(sessionFile, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.type === "user" && typeof row.message?.content === "string").map((row) => row.uuid)
+    : [];
+  const from = order.indexOf(msg.request.user_message_id);
+  if (from < 0) return { canRewind: false, error: "No file checkpoint found for this message." };
+  const restore = new Map();
+  for (const row of backups()) if (order.indexOf(row.prompt) >= from && !restore.has(row.path)) restore.set(row.path, row.before);
+  if (!msg.request.dry_run) {
+    for (const [path, before] of restore) writeFileSync(path, before);
+    recordNote({ rewindFiles: [...restore.keys()] });
+  }
+  return { canRewind: true, filesChanged: [...restore.keys()] };
+}
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 
 let holding = false;
@@ -144,6 +202,55 @@ function toolCards() {
   streamText("Done");
   send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: "Done" }] } });
   finish("success", "Done");
+}
+
+// SUBAGENT: a short reply, then an Explore subagent (Agent tool) whose Glob and Read
+// arrive 1.5 s apart with parent_tool_use_id, its report, and the final answer.
+function subagent() {
+  const root = process.env.FAKE_ROOT ?? process.cwd();
+  const agent = "toolu_agent";
+  const child = (id, name, input) =>
+    send({ type: "assistant", session_id: session, parent_tool_use_id: agent, message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } });
+  const result = (id, content, parent) =>
+    send({ type: "user", session_id: session, parent_tool_use_id: parent, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] } });
+  streamText("I will ask a subagent to look.");
+  send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: "I will ask a subagent to look." }] } });
+  send({
+    type: "assistant",
+    session_id: session,
+    message: { role: "assistant", content: [{ type: "tool_use", id: agent, name: "Agent", input: { description: "Find the document title", subagent_type: "Explore", prompt: "Find the title of main.tex" } }] },
+  });
+  setTimeout(() => {
+    child("toolu_glob", "Glob", { pattern: "**/*.tex" });
+    result("toolu_glob", `${root}/main.tex`, agent);
+  }, 1500);
+  setTimeout(() => {
+    child("toolu_sub_read", "Read", { file_path: `${root}/main.tex` });
+    result("toolu_sub_read", "1\t\\documentclass{article}\\begin{document}Title\\end{document}", agent);
+  }, 3000);
+  setTimeout(() => {
+    result(agent, "The document's title is \"Title\" (main.tex, line 1).", null);
+    const reply = "The title of main.tex is **Title**.";
+    send({ type: "stream_event", session_id: session, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: reply } } });
+    send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: reply }] } });
+    finish("success", reply);
+  }, Number(process.env.FAKE_SUBAGENT_MS || 6000));
+}
+
+// EDITFILE: an Edit of main.tex written to disk with a checkpoint (FAKE_PERSIST), then an answer.
+function editFile() {
+  const root = process.env.FAKE_ROOT ?? process.cwd();
+  const path = `${root}/main.tex`;
+  const before = readFileSync(path, "utf8");
+  const after = before.replace("Title", "Title\\section{Added by Claude}");
+  if (persist) writeFileSync(backupFile, JSON.stringify([...backups(), { prompt: currentPrompt, path, before }]));
+  writeFileSync(path, after);
+  send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_editfile", name: "Edit", input: { file_path: path, old_string: "Title", new_string: "Title\\section{Added by Claude}" } }] } });
+  send({ type: "user", session_id: session, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_editfile", content: "The file has been updated." }] } });
+  const reply = "I added a section to main.tex.";
+  streamText(reply);
+  send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: reply }] } });
+  finish("success", reply);
 }
 
 // TODOS: three TodoWrite snapshots 1.5 s apart (all pending, the first in
@@ -372,6 +479,14 @@ rl.on("line", (line) => {
     finish("error", "interrupted");
     return;
   }
+  if (msg.type === "control_request" && msg.request?.subtype === "rewind_files") {
+    const answer = () => send({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: rewindFiles(msg) } });
+    // FAKE_REWIND_DELAY_MS holds the real (not dry-run) restore, so a drive can see the rewind in flight.
+    const delay = msg.request.dry_run ? 0 : Number(process.env.FAKE_REWIND_DELAY_MS || 0);
+    if (delay > 0) setTimeout(answer, delay);
+    else answer();
+    return;
+  }
   if (msg.type === "control_request" && msg.request?.subtype !== "interrupt") {
     // set_permission_mode, set_model, ...: acknowledge so the SDK call returns.
     if (msg.request?.subtype === "set_permission_mode") recordNote({ setPermissionMode: msg.request.mode });
@@ -394,6 +509,7 @@ rl.on("line", (line) => {
   }
   if (msg.type === "user" || msg.message) {
     const text = userText(msg);
+    currentPrompt = save("user", { role: "user", content: text });
     const images = imageBlocks(msg);
     recordNote({ user: text.split("\n").at(-1), images: images.map((part) => part.source?.media_type) });
     if (slowTimer) {
@@ -474,6 +590,14 @@ rl.on("line", (line) => {
     }
     if (text.includes("TOOLCARDS")) {
       toolCards();
+      return;
+    }
+    if (text.includes("SUBAGENT")) {
+      subagent();
+      return;
+    }
+    if (text.includes("EDITFILE")) {
+      editFile();
       return;
     }
     if (text.includes("TOUCH")) {

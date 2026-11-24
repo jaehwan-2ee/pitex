@@ -100,6 +100,12 @@ final class AppleFMSession: AgentSession, @unchecked Sendable {
         case .refreshSessions:
             // Apple FM keeps no sessions of its own to import.
             emit(AppleFMEvents.response(command: "refresh_sessions", id: id, success: true))
+        case .forkSession:
+            // No fork capability: the panel forks by quoting the chat into a new one.
+            emit(AppleFMEvents.response(command: "fork_session", id: id, success: false, error: "Apple Foundation Models cannot fork chats."))
+        case .rewind:
+            // No rewind capability, so the panel never offers it.
+            emit(AppleFMEvents.response(command: "rewind", id: id, success: false, error: "Apple Foundation Models cannot rewind chats."))
         case .steer, .extensionUICancelled:
             emit(AppleFMEvents.response(command: "extension_ui_response", id: id, success: true))
         }

@@ -198,6 +198,8 @@ pub struct UiHandles {
     /// The request the card was built for; rebuilt only when it changes,
     /// so a half-filled question keeps its picks across refreshes.
     pub agent_approval_shown: RefCell<Option<crate::agent::AgentApprovalRequest>>,
+    /// The rewind confirmation the same slot shows when no approval waits.
+    pub agent_rewind_shown: RefCell<Option<(crate::agent::RewindOffer, bool)>>,
     /// The todo checklist pinned above the composer; hidden while the list is empty.
     pub agent_todos: RefCell<Option<gtk4::Expander>>,
     /// The list, running state and font size the checklist was built for; rebuilt only when one changes.
@@ -896,6 +898,10 @@ impl AppState {
                  .pitex-todos {{ padding: 4px 8px; }}
                  .pitex-queue {{ padding: 4px 8px; }}
                  .pitex-turn-error {{ padding: 8px 10px; border: 1px solid alpha(@error_color, 0.5); }}
+                 .pitex-rewind-card {{ padding: 8px 10px; }}
+                 .pitex-turn-summary > title {{ opacity: 0.75; }}
+                 .pitex-turn-folded {{ margin-left: 10px; padding-left: 8px; border-left: 2px solid alpha(currentColor, 0.12); }}
+                 .pitex-subagent-children {{ padding-left: 8px; border-left: 2px solid alpha(@accent_color, 0.35); }}
                  levelbar.pitex-meter block.filled {{ background-color: alpha(currentColor, 0.55); }}
                  levelbar.pitex-meter-warning block.filled {{ background-color: @warning_color; }}
                  levelbar.pitex-meter-danger block.filled {{ background-color: @error_color; }}
@@ -3049,6 +3055,10 @@ impl AppState {
         if draft.trim().is_empty() && self.agent.as_ref().map_or(true, |agent| agent.draft_images.is_empty()) {
             return;
         }
+        // The draft stays put until the fork or rewind answers.
+        if self.agent.as_ref().is_some_and(|agent| agent.is_branching()) {
+            return;
+        }
         self.ensure_agent();
         *self.context_cell.borrow_mut() = self.model.agent_context();
         *self.persist_result.borrow_mut() = Some(self.model.persist_dirty_sessions());
@@ -3128,6 +3138,10 @@ impl AppState {
 
     /// Apply queued composer insertion text (attach-files flow).
     pub fn apply_pending_composer(&mut self) {
+        // A forked or rewound prompt (or a quoted chat) replaces the draft.
+        if let Some(text) = self.agent.as_mut().and_then(|a| a.composer_replacement.take()) {
+            Self::set_composer_text(&text);
+        }
         let insertion = self
             .agent
             .as_mut()
@@ -4583,6 +4597,7 @@ impl AppState {
         if self.agent.is_none() {
             return;
         }
+        self.apply_pending_composer();
         self.sync_assistant_visibility();
         let lang = self.language;
         let root = self.model.project_url.clone();
@@ -4651,18 +4666,21 @@ impl AppState {
                     }
                     box_.append(&empty);
                 } else {
-                    let keys: Vec<u64> = agent.transcript.iter()
-                        .map(|entry| view_key(&(entry, font_size.to_bits(), &chat_theme)))
+                    // Subagent calls nest under their card; finished turns fold their work.
+                    let items = crate::turn_view::view_items(&agent.transcript, agent.is_running);
+                    let menus = message_menus(agent, lang);
+                    let keys: Vec<u64> = items.iter()
+                        .map(|item| view_key(&(item, item_entries(item, &agent.transcript, &menus), font_size.to_bits(), &chat_theme)))
                         .collect();
                     let mut previous = self.rendered_transcript_keys.borrow_mut();
                     if previous.is_empty() {
                         while let Some(child) = box_.first_child() { box_.remove(&child); }
                     }
                     let mut child = box_.first_child();
-                    for (i, entry) in agent.transcript.iter().enumerate() {
+                    for (i, item) in items.iter().enumerate() {
                         let next = child.as_ref().and_then(|row| row.next_sibling());
                         if previous.get(i) != keys.get(i) {
-                            let row = transcript_row(entry, font_size, root.as_deref(), &chat_theme);
+                            let row = item_widget(item, &agent.transcript, &menus, font_size, root.as_deref(), &chat_theme);
                             if let Some(old) = child.as_ref() {
                                 box_.insert_child_after(&row, old.prev_sibling().as_ref());
                                 box_.remove(old);
@@ -4818,6 +4836,7 @@ impl AppState {
             // Stays beside Stop while a turn runs: a click then queues the draft.
             if let Some(b) = ui.agent_send_button.borrow().as_ref() {
                 b.set_visible(true);
+                b.set_sensitive(!agent.is_branching());
             }
             if let Some(b) = ui.agent_stop_button.borrow().as_ref() {
                 b.set_visible(agent.is_running);
@@ -4835,8 +4854,23 @@ impl AppState {
                         box_.append(&approval_card(pending, font_size, root.as_deref(), &chat_theme));
                     }
                     *shown = agent.pending_approval.clone();
+                    ui.agent_rewind_shown.replace(None);
                 }
-                box_.set_visible(shown.is_some());
+                // The rewind confirmation takes the slot when no approval waits.
+                let offer = agent.rewind_offer.clone().filter(|_| shown.is_none()).map(|offer| (offer, agent.is_running));
+                let mut rewind_shown = ui.agent_rewind_shown.borrow_mut();
+                if *rewind_shown != offer {
+                    if shown.is_none() {
+                        while let Some(child) = box_.first_child() {
+                            box_.remove(&child);
+                        }
+                    }
+                    if let Some((offer, running)) = &offer {
+                        box_.append(&rewind_card(offer, *running, root.as_deref(), self.store.ai_font_size()));
+                    }
+                    *rewind_shown = offer;
+                }
+                box_.set_visible(shown.is_some() || rewind_shown.is_some());
             }
             if let Some(box_) = ui.agent_queue_box.borrow().as_ref() {
                 let expanded = ui.agent_queue_expanded.get();
@@ -6943,6 +6977,7 @@ fn transcript_row(
     font_size: f64,
     root: Option<&Path>,
     theme: &crate::chat_view::ChatTheme,
+    menu: Option<&MessageMenu>,
 ) -> gtk4::Widget {
     if entry.role == crate::agent::TranscriptRole::Activity {
         return todo_activity_row(entry, font_size);
@@ -6996,6 +7031,9 @@ fn transcript_row(
         copy.connect_clicked(move |button| button.clipboard().set_text(&text));
         header.append(&copy);
     }
+    if let Some(menu) = menu {
+        header.append(&message_menu_button(menu));
+    }
     row.append(&header);
     if assistant && !entry.text.is_empty() && entry.status != crate::agent::TranscriptStatus::Failed {
         let streaming = entry.status == crate::agent::TranscriptStatus::Streaming;
@@ -7043,6 +7081,296 @@ fn transcript_row(
         row.append(&detail);
     }
     row.upcast()
+}
+
+/// The ⋯ menu on a prompt or an answer: Fork and Rewind, each enabled or with the reason it is not.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MessageMenu {
+    index: usize,
+    fork: Result<(), String>,
+    rewind: Result<(), String>,
+}
+
+/// Menus for the prompt and answer rows that can be forked or rewound from.
+fn message_menus(agent: &AgentCoordinator, lang: &str) -> HashMap<usize, MessageMenu> {
+    if agent.connection != crate::agent::Connection::Ready {
+        return HashMap::new();
+    }
+    let busy = tr(lang, "assistant.message.busy");
+    let prompts = agent.prompt_count();
+    (0..agent.transcript.len())
+        .filter_map(|index| {
+            let (keep, _) = agent.turn_cut(index)?;
+            let blocked = agent.is_running || agent.is_branching();
+            let fork = if blocked { Err(busy.clone()) } else { Ok(()) };
+            let rewind = if blocked {
+                Err(busy.clone())
+            } else if !agent.capabilities.rewind_conversation {
+                Err(crate::l10n::tr1(lang, "assistant.message.rewind_unavailable", crate::turn_state::cli_name(agent.provider())))
+            } else if keep >= prompts {
+                Err(tr(lang, "assistant.message.rewind_last"))
+            } else {
+                Ok(())
+            };
+            Some((index, MessageMenu { index, fork, rewind }))
+        })
+        .collect()
+}
+
+fn message_menu_button(menu: &MessageMenu) -> gtk4::Widget {
+    let lang = language();
+    let button = gtk4::MenuButton::new();
+    button.set_icon_name("view-more-symbolic");
+    button.add_css_class("flat");
+    button.set_tooltip_text(Some(&tr(lang, "assistant.message.actions")));
+    a11y(&button, "pitex.assistant.messageMenu", "assistant.message.actions");
+    let popover = gtk4::Popover::new();
+    let list = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    for (key, name, state, fork) in [
+        ("assistant.message.fork", "pitex.assistant.fork", &menu.fork, true),
+        ("assistant.message.rewind", "pitex.assistant.rewind", &menu.rewind, false),
+    ] {
+        let item = gtk4::Button::with_label(&tr(lang, key));
+        item.add_css_class("flat");
+        if let Some(label) = item.child().and_then(|c| c.downcast::<gtk4::Label>().ok()) {
+            label.set_xalign(0.0);
+        }
+        a11y(&item, name, key);
+        match state {
+            Ok(()) => {
+                let index = menu.index;
+                let popover = popover.clone();
+                item.connect_clicked(move |_| {
+                    popover.popdown();
+                    glib::idle_add_local_once(move || {
+                        let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+                        let Ok(mut s) = state.try_borrow_mut() else { return };
+                        let lang = s.language;
+                        if let Some(agent) = s.agent.as_mut() {
+                            if fork {
+                                agent.fork_from(index, lang);
+                            } else {
+                                agent.request_rewind(index, lang);
+                            }
+                        }
+                        s.refresh_assistant();
+                    });
+                });
+            }
+            Err(reason) => {
+                item.set_sensitive(false);
+                item.set_tooltip_text(Some(reason));
+                item.update_property(&[gtk4::accessible::Property::Description(reason)]);
+            }
+        }
+        list.append(&item);
+    }
+    popover.set_child(Some(&list));
+    button.set_popover(Some(&popover));
+    button.upcast()
+}
+
+/// Every row an item draws, with its menu, for the item's view key.
+fn item_entries<'a>(
+    item: &crate::turn_view::ViewItem,
+    entries: &'a [crate::agent::AgentTranscriptEntry],
+    menus: &'a HashMap<usize, MessageMenu>,
+) -> Vec<(&'a crate::agent::AgentTranscriptEntry, Option<&'a MessageMenu>)> {
+    match item {
+        crate::turn_view::ViewItem::Row { index, children } => std::iter::once(index)
+            .chain(children)
+            .filter_map(|&i| entries.get(i).map(|e| (e, menus.get(&i))))
+            .collect(),
+        crate::turn_view::ViewItem::Summary { rows, .. } => rows.iter().flat_map(|row| item_entries(row, entries, menus)).collect(),
+    }
+}
+
+fn item_widget(
+    item: &crate::turn_view::ViewItem,
+    entries: &[crate::agent::AgentTranscriptEntry],
+    menus: &HashMap<usize, MessageMenu>,
+    font_size: f64,
+    root: Option<&Path>,
+    theme: &crate::chat_view::ChatTheme,
+) -> gtk4::Widget {
+    match item {
+        crate::turn_view::ViewItem::Row { index, children } if children.is_empty() => {
+            transcript_row(&entries[*index], font_size, root, theme, menus.get(index))
+        }
+        crate::turn_view::ViewItem::Row { index, children } => {
+            let nested: Vec<&crate::agent::AgentTranscriptEntry> = children.iter().filter_map(|&i| entries.get(i)).collect();
+            subagent_card(&entries[*index], &nested, font_size, root, theme)
+        }
+        crate::turn_view::ViewItem::Summary { prompt, summary, rows } => {
+            let folded: Vec<gtk4::Widget> = rows.iter().map(|row| item_widget(row, entries, menus, font_size, root, theme)).collect();
+            turn_summary_row(*prompt, &entries[*prompt].text, summary, folded, font_size)
+        }
+    }
+}
+
+/// A Task/Agent card whose body lists the calls its subagent made (collapsed by default).
+fn subagent_card(
+    entry: &crate::agent::AgentTranscriptEntry,
+    children: &[&crate::agent::AgentTranscriptEntry],
+    font_size: f64,
+    root: Option<&Path>,
+    theme: &crate::chat_view::ChatTheme,
+) -> gtk4::Widget {
+    let lang = language();
+    let generic = crate::agent::ToolDetail { kind: "sub_agent".into(), ..Default::default() };
+    let card = tool_card(entry, entry.tool.as_ref().unwrap_or(&generic), font_size, root);
+    let Some(expander) = card.downcast_ref::<gtk4::Expander>() else { return card };
+    // Live count from the bridge, else the nested rows.
+    let count = entry.tool.as_ref().and_then(|t| t.tool_uses).map(|n| n as usize).unwrap_or(children.len()).max(children.len());
+    if let Some(header) = expander.label_widget().and_then(|w| w.downcast::<gtk4::Box>().ok()) {
+        let text = if count == 1 { tr(lang, "assistant.turn.tools.one") } else { crate::l10n::tr1(lang, "assistant.turn.tools.other", &count.to_string()) };
+        let chip = gtk4::Label::new(Some(&text));
+        chip.add_css_class("pitex-diff-chip");
+        chip.set_attributes(Some(&font_attrs((font_size - 2.0).max(9.0))));
+        header.append(&chip);
+    }
+    if let Some(body) = expander.child().and_then(|w| w.downcast::<gtk4::Box>().ok()) {
+        let list = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+        list.add_css_class("pitex-subagent-children");
+        list.set_widget_name("pitex.assistant.subagentCalls");
+        for child in children {
+            list.append(&transcript_row(child, font_size, root, theme, None));
+        }
+        body.prepend(&list);
+    }
+    card
+}
+
+thread_local! {
+    /// Folded turns the user opened, by prompt row and text.
+    static EXPANDED_TURNS: RefCell<std::collections::HashSet<String>> = RefCell::new(Default::default());
+}
+
+/// "Worked for 1m 12s · 3 edits · …": a finished turn's work, opened on click.
+fn turn_summary_row(prompt: usize, prompt_text: &str, summary: &crate::turn_view::TurnSummary, folded: Vec<gtk4::Widget>, font_size: f64) -> gtk4::Widget {
+    let lang = language();
+    let line = crate::turn_view::summary_text(lang, summary);
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    header.append(&gtk4::Image::from_icon_name("view-list-symbolic"));
+    let label = gtk4::Label::new(Some(&line));
+    label.add_css_class("dim-label");
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_attributes(Some(&font_attrs((font_size - 2.0).max(9.0))));
+    header.append(&label);
+    let body = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    body.add_css_class("pitex-turn-folded");
+    body.set_margin_top(4);
+    for row in folded {
+        body.append(&row);
+    }
+    let expander = gtk4::Expander::new(None);
+    expander.set_label_widget(Some(&header));
+    expander.set_child(Some(&body));
+    expander.add_css_class("pitex-turn-summary");
+    expander.set_widget_name("pitex.assistant.turnSummary");
+    expander.update_property(&[gtk4::accessible::Property::Label(&line)]);
+    let key = format!("{prompt}:{prompt_text}");
+    expander.set_expanded(EXPANDED_TURNS.with(|set| set.borrow().contains(&key)));
+    expander.connect_expanded_notify(move |expander| {
+        EXPANDED_TURNS.with(|set| {
+            let mut set = set.borrow_mut();
+            if expander.is_expanded() {
+                set.insert(key.clone());
+            } else {
+                set.remove(&key);
+            }
+        });
+    });
+    expander.upcast()
+}
+
+/// Runs a rewind-card button on the next idle (the click may land mid-refresh).
+fn rewind_card_action(confirm: Option<bool>) {
+    glib::idle_add_local_once(move || {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+        let Ok(mut s) = state.try_borrow_mut() else { return };
+        if let Some(agent) = s.agent.as_mut() {
+            match confirm {
+                Some(files) => agent.confirm_rewind(files),
+                None => agent.cancel_rewind(),
+            }
+        }
+        s.refresh_assistant();
+    });
+}
+
+/// "Rewind to this point?": what goes, the files a file rewind restores, and the choices.
+fn rewind_card(offer: &crate::agent::RewindOffer, running: bool, root: Option<&Path>, font_size: f64) -> gtk4::Widget {
+    let lang = language();
+    let caption = (font_size - 2.0).max(9.0);
+    let card = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+    card.add_css_class("card");
+    card.add_css_class("pitex-rewind-card");
+    card.set_widget_name("pitex.assistant.rewindCard");
+    let title = gtk4::Label::new(Some(&tr(lang, "assistant.rewind.title")));
+    title.add_css_class("heading");
+    title.set_xalign(0.0);
+    card.append(&title);
+    let text = |value: &str, dim: bool| {
+        let label = gtk4::Label::new(Some(value));
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.set_attributes(Some(&font_attrs(caption)));
+        if dim {
+            label.add_css_class("dim-label");
+        }
+        label
+    };
+    card.append(&text(&tr(lang, "assistant.rewind.conversation"), false));
+    let files = offer.files.clone().unwrap_or_default();
+    match (&offer.files, &offer.files_note) {
+        (None, _) => {
+            let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+            row.append(&tool_status_widget(crate::agent::TranscriptStatus::Running));
+            row.append(&text(&tr(lang, "assistant.rewind.files_loading"), true));
+            card.append(&row);
+        }
+        (Some(_), Some(note)) => card.append(&text(note, true)),
+        (Some(list), None) if list.is_empty() => card.append(&text(&tr(lang, "assistant.rewind.files_none"), true)),
+        (Some(list), None) => {
+            card.append(&text(&tr(lang, "assistant.rewind.files_header"), false));
+            for path in list {
+                let shown = root.and_then(|r| Path::new(path).strip_prefix(r).ok()).map(|p| p.display().to_string()).unwrap_or_else(|| path.clone());
+                let label = mono_label(&shown, caption);
+                label.set_widget_name("pitex.assistant.rewindFile");
+                card.append(&label);
+            }
+        }
+    }
+    let buttons = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    buttons.set_halign(gtk4::Align::End);
+    // Waiting on the dry run or the confirmed rewind: one request at a time.
+    let busy = running || offer.request_id.is_some();
+    let cancel = gtk4::Button::with_label(&tr(lang, "assistant.rewind.cancel"));
+    a11y(&cancel, "pitex.assistant.rewindCancel", "assistant.rewind.cancel");
+    // The confirmed rewind cannot be called back: its reply reloads the chat and the files.
+    cancel.set_sensitive(!offer.is_rewinding());
+    cancel.connect_clicked(|_| rewind_card_action(None));
+    buttons.append(&cancel);
+    let conversation = gtk4::Button::with_label(&tr(lang, "assistant.rewind.conversation_only"));
+    a11y(&conversation, "pitex.assistant.rewindConversation", "assistant.rewind.conversation_only");
+    conversation.set_sensitive(!busy);
+    conversation.connect_clicked(|_| rewind_card_action(Some(false)));
+    buttons.append(&conversation);
+    if !files.is_empty() && offer.files_note.is_none() {
+        let both = gtk4::Button::with_label(&tr(lang, "assistant.rewind.both"));
+        both.add_css_class("destructive-action");
+        a11y(&both, "pitex.assistant.rewindBoth", "assistant.rewind.both");
+        both.set_sensitive(!busy);
+        both.connect_clicked(|_| rewind_card_action(Some(true)));
+        buttons.append(&both);
+    } else {
+        conversation.add_css_class("suggested-action");
+    }
+    card.append(&buttons);
+    card.update_property(&[gtk4::accessible::Property::Label(&tr(lang, "assistant.rewind.title"))]);
+    card.upcast()
 }
 
 thread_local! {
@@ -9648,7 +9976,7 @@ mod tool_card_tests {
             images: Vec::new(),
             meta: crate::agent::EntryMeta::None,
         };
-        let card = transcript_row(&entry, 13.0, None, &Default::default()).downcast::<gtk4::Expander>().unwrap();
+        let card = transcript_row(&entry, 13.0, None, &Default::default(), None).downcast::<gtk4::Expander>().unwrap();
         let header = card.label_widget().unwrap();
         let mut texts = Vec::new();
         let mut child = header.first_child();
@@ -9661,7 +9989,7 @@ mod tool_card_tests {
         assert_eq!(texts, ["bash", "latexmk main.tex"]);
         card.set_expanded(true);
         entry.detail = "Latexmk: done".into();
-        let rebuilt = transcript_row(&entry, 13.0, None, &Default::default()).downcast::<gtk4::Expander>().unwrap();
+        let rebuilt = transcript_row(&entry, 13.0, None, &Default::default(), None).downcast::<gtk4::Expander>().unwrap();
         assert!(rebuilt.is_expanded());
     }
 }

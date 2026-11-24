@@ -81,6 +81,17 @@ struct AgentPanel: View {
                 .padding(.bottom, 4)
             }
 
+            if coordinator.pendingApproval == nil, let offer = coordinator.rewindOffer {
+                AgentRewindCard(
+                    offer: offer, running: coordinator.isRunning, projectRoot: coordinator.projectRoot(),
+                    fontSize: settings.aiFontSize,
+                    confirm: { coordinator.confirmRewind(files: $0) },
+                    cancel: { coordinator.cancelRewind() }
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+            }
+
             if !coordinator.todos.isEmpty {
                 AgentTodoChecklist(items: coordinator.todos, isRunning: coordinator.isRunning, fontSize: settings.aiFontSize)
                     .padding(.horizontal, 10)
@@ -125,6 +136,14 @@ struct AgentPanel: View {
             if let insertion {
                 draft += insertion
                 coordinator.pendingComposerInsertion = nil
+            }
+        }
+        .onChange(of: coordinator.composerReplacement) { _, replacement in
+            // A forked or rewound prompt, or a quoted chat, replaces the draft.
+            if let replacement {
+                draft = replacement
+                coordinator.composerReplacement = nil
+                composerFocused = true
             }
         }
     }
@@ -756,7 +775,7 @@ struct AgentPanel: View {
     }
 
     private var canSend: Bool {
-        coordinator.connection != .piMissing
+        coordinator.connection != .piMissing && !coordinator.isBranching
             && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !coordinator.draftImages.isEmpty)
     }
 
@@ -892,17 +911,21 @@ struct AgentPanel: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     let root = coordinator.projectRoot()
-                    ForEach(coordinator.transcript) { entry in
-                        AgentEntryRow(
-                            entry: entry, fontSize: settings.aiFontSize, projectRoot: root,
-                            openFile: { coordinator.openToolFile($0) },
-                            openLink: { coordinator.openFile($0, $1) },
-                            retry: {
-                                scrollPin.jump()
-                                coordinator.retry()
+                    // Subagent calls nest under their card; finished turns fold their work.
+                    ForEach(coordinator.turnItems.map { (id: itemID($0), item: $0) }, id: \.id) { pair in
+                        switch pair.item {
+                        case let .row(index, children):
+                            entryRow(index, children: children, root: root)
+                        case let .summary(prompt, summary, rows):
+                            AgentTurnSummaryRow(line: summary.text { String(localized: String.LocalizationValue($0)) }, fontSize: settings.aiFontSize) {
+                                ForEach(rows.map { (id: itemID($0), item: $0) }, id: \.id) { folded in
+                                    if case let .row(index, children) = folded.item {
+                                        entryRow(index, children: children, root: root)
+                                    }
+                                }
                             }
-                        )
-                        .id(entry.id)
+                            .id("summary-\(coordinator.transcript[prompt].id)")
+                        }
                     }
                 }
                 .padding(.horizontal, 10)
@@ -923,7 +946,7 @@ struct AgentPanel: View {
                 if scrollPin.unseen {
                     Button {
                         scrollPin.jump()
-                        if let last = coordinator.transcript.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                        scrollToLatest(proxy)
                     } label: {
                         Label("assistant.jump_latest", systemImage: "arrow.down")
                             .font(.caption.weight(.medium))
@@ -940,9 +963,42 @@ struct AgentPanel: View {
         .accessibilityIdentifier("pitex.assistant.transcript")
     }
 
+    /// A stable id per drawn item: its row's entry, or its prompt for a summary.
+    private func itemID(_ item: AgentTurnView.Item) -> String {
+        switch item {
+        case let .row(index, _): return coordinator.transcript[index].id.uuidString
+        case let .summary(prompt, _, _): return "summary-\(coordinator.transcript[prompt].id)"
+        }
+    }
+
+    private func entryRow(_ index: Int, children: [Int], root: URL?) -> some View {
+        let entry = coordinator.transcript[index]
+        return AgentEntryRow(
+            entry: entry, fontSize: settings.aiFontSize, projectRoot: root,
+            children: children.map { coordinator.transcript[$0] },
+            menu: coordinator.messageMenu(index),
+            openFile: { coordinator.openToolFile($0) },
+            openLink: { coordinator.openFile($0, $1) },
+            retry: {
+                scrollPin.jump()
+                coordinator.retry()
+            }
+        )
+        .id(entry.id)
+    }
+
     private func followLatest(_ proxy: ScrollViewProxy) {
-        guard scrollPin.contentAdded(), let last = coordinator.transcript.last else { return }
-        proxy.scrollTo(last.id, anchor: .bottom)
+        guard scrollPin.contentAdded() else { return }
+        scrollToLatest(proxy)
+    }
+
+    /// The last drawn item: a subagent's newest call has no view of its own inside a closed card.
+    private func scrollToLatest(_ proxy: ScrollViewProxy) {
+        switch coordinator.turnItems.last {
+        case let .row(index, _)?: proxy.scrollTo(coordinator.transcript[index].id, anchor: .bottom)
+        case let .summary(prompt, _, _)?: proxy.scrollTo("summary-\(coordinator.transcript[prompt].id)", anchor: .bottom)
+        case nil: break
+        }
     }
 }
 
@@ -953,6 +1009,10 @@ private struct AgentEntryRow: View {
     let entry: AgentTranscriptEntry
     let fontSize: Double
     var projectRoot: URL?
+    /// A subagent card's nested calls.
+    var children: [AgentTranscriptEntry] = []
+    /// Fork and Rewind for a prompt or an answer.
+    var menu: AgentMessageMenu?
     var openFile: (AgentToolDetail) -> Void = { _ in }
     var openLink: (URL, Int?) -> Void = { _, _ in }
     var retry: () -> Void = {}
@@ -965,6 +1025,7 @@ private struct AgentEntryRow: View {
         case .user:
             HStack {
                 Spacer(minLength: 32)
+                messageMenuButton
                 VStack(alignment: .trailing, spacing: 6) {
                     Text(verbatim: entry.text)
                         .font(.system(size: fontSize))
@@ -1009,6 +1070,7 @@ private struct AgentEntryRow: View {
                         .help("assistant.markdown.copy_message")
                         .accessibilityLabel(Text("assistant.markdown.copy_message"))
                     }
+                    messageMenuButton
                 }
                 if !entry.text.isEmpty {
                     if entry.status == .failed {
@@ -1052,7 +1114,7 @@ private struct AgentEntryRow: View {
             }
             .accessibilityIdentifier("pitex.assistant.thinking")
         case .tool:
-            AgentToolCard(entry: entry, fontSize: fontSize, projectRoot: projectRoot, openFile: openFile)
+            AgentToolCard(entry: entry, fontSize: fontSize, projectRoot: projectRoot, openFile: openFile, children: children)
         case .notice:
             if let failure = entry.turnError {
                 turnErrorRow(failure)
@@ -1071,6 +1133,32 @@ private struct AgentEntryRow: View {
             .font(captionFont)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// ⋯ with Fork from here and Rewind to here; a blocked action says why in its tooltip.
+    @ViewBuilder
+    private var messageMenuButton: some View {
+        if let menu {
+            Menu {
+                Button("assistant.message.fork", action: menu.fork)
+                    .disabled(menu.forkBlocked != nil)
+                    .help(menu.forkBlocked ?? "")
+                    .accessibilityIdentifier("pitex.assistant.fork")
+                Button("assistant.message.rewind", action: menu.rewind)
+                    .disabled(menu.rewindBlocked != nil)
+                    .help(menu.rewindBlocked ?? "")
+                    .accessibilityIdentifier("pitex.assistant.rewind")
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .font(captionFont)
+            .help("assistant.message.actions")
+            .accessibilityLabel(Text("assistant.message.actions"))
+            .accessibilityIdentifier("pitex.assistant.messageMenu")
         }
     }
 
@@ -1217,12 +1305,37 @@ private struct AgentToolCard: View {
     let fontSize: Double
     let projectRoot: URL?
     let openFile: (AgentToolDetail) -> Void
+    /// A subagent's calls, drawn inside its card.
+    var children: [AgentTranscriptEntry] = []
     private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
     private var monoFont: Font { .system(size: max(fontSize - 2, 9), design: .monospaced) }
+
+    /// "2 tools" on a subagent card: the bridge's live count, else the nested rows.
+    private var callCount: String? {
+        guard entry.tool?.kind == .subAgent else { return nil }
+        let count = max(entry.tool?.toolUses ?? 0, children.count)
+        guard count > 0 else { return nil }
+        return count == 1
+            ? String(localized: "assistant.turn.tools.one")
+            : String(format: String(localized: "assistant.turn.tools.other"), "\(count)")
+    }
 
     var body: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 4) {
+                if !children.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(children) { child in
+                            AgentToolCard(entry: child, fontSize: fontSize, projectRoot: projectRoot, openFile: openFile)
+                                .id(child.id)
+                        }
+                    }
+                    .padding(.leading, 8)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Color.accentColor.opacity(0.35)).frame(width: 2)
+                    }
+                    .accessibilityIdentifier("pitex.assistant.subagentCalls")
+                }
                 if let tool = entry.tool {
                     fields(tool)
                 }
@@ -1260,6 +1373,13 @@ private struct AgentToolCard: View {
                     Text(verbatim: badge)
                         .font(monoFont)
                         .foregroundStyle(entry.tool?.kind == .shell ? Color.red : Color.secondary)
+                        .padding(.horizontal, 5)
+                        .background(Color.secondary.opacity(0.15), in: Capsule())
+                }
+                if let callCount {
+                    Text(verbatim: callCount)
+                        .font(captionFont)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
                         .background(Color.secondary.opacity(0.15), in: Capsule())
                 }
@@ -1386,6 +1506,107 @@ private struct AgentToolCard: View {
         case .thought: return String(localized: "assistant.tool.thought")
         case .exit: return String(localized: "assistant.tool.exit")
         }
+    }
+}
+
+/// "Worked for 1m 12s · 3 edits · …": a finished turn's work, opened on click (Paseo's turn summary).
+private struct AgentTurnSummaryRow<Content: View>: View {
+    let line: String
+    let fontSize: Double
+    @ViewBuilder let content: () -> Content
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .padding(.leading, 10)
+            .overlay(alignment: .leading) {
+                Rectangle().fill(Color.secondary.opacity(0.2)).frame(width: 2)
+            }
+            .padding(.top, 4)
+        } label: {
+            Label {
+                Text(verbatim: line)
+            } icon: {
+                Image(systemName: "list.bullet")
+            }
+            .font(.system(size: max(fontSize - 2, 9)))
+            .foregroundStyle(.secondary)
+            .accessibilityLabel(Text(verbatim: line))
+        }
+        .accessibilityIdentifier("pitex.assistant.turnSummary")
+    }
+}
+
+/// "Rewind to this point?": what goes, the files a file rewind restores, and the choices.
+private struct AgentRewindCard: View {
+    let offer: AgentRewindOffer
+    let running: Bool
+    let projectRoot: URL?
+    let fontSize: Double
+    let confirm: (Bool) -> Void
+    let cancel: () -> Void
+    private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
+    /// Waiting on the dry run or the confirmed rewind (one request at a time), or a turn started meanwhile.
+    private var busy: Bool { running || offer.requestID != nil }
+    private var files: [String] { offer.files ?? [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("assistant.rewind.title")
+                .font(.system(size: fontSize).weight(.semibold))
+            Text("assistant.rewind.conversation")
+                .font(captionFont)
+                .fixedSize(horizontal: false, vertical: true)
+            if offer.files == nil {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("assistant.rewind.files_loading").font(captionFont).foregroundStyle(.secondary)
+                }
+            } else if let note = offer.filesNote {
+                Text(verbatim: note).font(captionFont).foregroundStyle(.secondary)
+            } else if files.isEmpty {
+                Text("assistant.rewind.files_none").font(captionFont).foregroundStyle(.secondary)
+            } else {
+                Text("assistant.rewind.files_header").font(captionFont)
+                ForEach(files, id: \.self) { path in
+                    Text(verbatim: shown(path))
+                        .font(.system(size: max(fontSize - 2, 9), design: .monospaced))
+                        .textSelection(.enabled)
+                }
+            }
+            HStack {
+                Spacer()
+                // The confirmed rewind cannot be called back: its reply must reload the chat and files.
+                Button("assistant.rewind.cancel", action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(offer.isRewinding)
+                    .accessibilityIdentifier("pitex.assistant.rewindCancel")
+                Button("assistant.rewind.conversation_only") { confirm(false) }
+                    .disabled(busy)
+                    .accessibilityIdentifier("pitex.assistant.rewindConversation")
+                if !files.isEmpty, offer.filesNote == nil {
+                    Button("assistant.rewind.both", role: .destructive) { confirm(true) }
+                        .disabled(busy)
+                        .accessibilityIdentifier("pitex.assistant.rewindBoth")
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("pitex.assistant.rewindCard")
+    }
+
+    private func shown(_ path: String) -> String {
+        var file = AgentToolDetail(kind: .other)
+        file.path = path
+        return file.displayPath(root: projectRoot)
     }
 }
 

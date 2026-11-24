@@ -32,6 +32,11 @@ public struct AgentToolDetail: Equatable, Sendable {
     public var label: String?
     public var startLine: Int?
     public var endLine: Int?
+    /// The Task/Agent call this one ran inside (the event's `parentToolCallId`).
+    public var parentCallID: String?
+    /// sub_agent: the agent type and how many calls it started.
+    public var subAgentType: String?
+    public var toolUses: Int?
 
     public init(kind: Kind) {
         self.kind = kind
@@ -56,6 +61,8 @@ public struct AgentToolDetail: Equatable, Sendable {
         label = text("label")
         startLine = object["startLine"] as? Int
         endLine = object["endLine"] as? Int
+        subAgentType = text("subAgentType")
+        toolUses = object["toolUses"] as? Int
     }
 
     /// Paseo's merge rule: a later event fills in fields; an untyped
@@ -74,6 +81,9 @@ public struct AgentToolDetail: Equatable, Sendable {
         label = incoming.label ?? label
         startLine = incoming.startLine ?? startLine
         endLine = incoming.endLine ?? endLine
+        parentCallID = incoming.parentCallID ?? parentCallID
+        subAgentType = incoming.subAgentType ?? subAgentType
+        toolUses = incoming.toolUses ?? toolUses
     }
 
     /// `status` on the event: running, completed, failed or canceled.
@@ -161,6 +171,7 @@ public struct AgentToolDetail: Equatable, Sendable {
 
     /// The header badge: `exit 1` for a failing command, `+3 -1` for a diff.
     public func badge(phrase: (Phrase) -> String) -> String? {
+        if kind == .subAgent { return subAgentType }
         if kind == .shell {
             guard let exitCode, exitCode != 0 else { return nil }
             return phrase(.exit).replacingOccurrences(of: "%@", with: String(exitCode))

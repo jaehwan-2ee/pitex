@@ -64,6 +64,34 @@ struct AgentTranscriptEntry: Identifiable {
     var thinkingSeconds: Int?
     /// A failed turn: its code, the CLI for the wording, and whether Retry is offered.
     var turnError: AgentTurnError?
+    /// On a prompt: how long its turn ran (the folded turn's "Worked for").
+    var workedSeconds: Int?
+    /// A tool row's call id: subagent calls nest under the card with their parent's id.
+    var callID: String?
+}
+
+/// The rewind confirmation the panel shows for one message.
+struct AgentRewindOffer: Equatable {
+    /// Whole turns kept (`rewind.keepTurns`).
+    var keepTurns: Int
+    /// A rewound prompt goes back into the composer.
+    var draft: String?
+    /// Files a file rewind would restore; nil while the dry run is out.
+    var files: [String]?
+    /// Why files cannot be restored (no checkpoint, outside the project, unsupported).
+    var filesNote: String?
+    /// The dry run, then the confirmed rewind, in flight.
+    var requestID: String?
+    /// The confirmed rewind is out (the dry run, if any, has answered).
+    var isRewinding: Bool { files != nil && requestID != nil }
+}
+
+/// The ⋯ menu of a prompt or an answer: each action enabled, or the reason it is not.
+struct AgentMessageMenu {
+    var forkBlocked: String?
+    var rewindBlocked: String?
+    var fork: () -> Void
+    var rewind: () -> Void
 }
 
 /// A saved conversation for the current project — one pi session file.
@@ -107,6 +135,7 @@ final class AgentCoordinator: ObservableObject {
             // the transcript grows past it. Mutating inside didSet does not
             // re-trigger this observer.
             if transcript.count > historyLimit {
+                droppedPrompts += transcript.prefix(transcript.count - historyLimit).filter { $0.role == .user }.count
                 transcript.removeFirst(transcript.count - historyLimit)
                 assistantEntryIndex = nil
                 thinkingEntryIndex = nil
@@ -122,6 +151,18 @@ final class AgentCoordinator: ObservableObject {
     @Published private(set) var isRunning = false
     /// `get_state.capabilities`; pi omits it (see `AgentCapabilities(state:)`).
     @Published private(set) var capabilities = AgentCapabilities()
+    /// The rewind confirmation on screen (Rewind to here).
+    @Published private(set) var rewindOffer: AgentRewindOffer?
+    /// Replaces the composer text once (a forked or rewound prompt, a quoted chat).
+    @Published var composerReplacement: String?
+    /// The `fork_session` in flight, with the prompt a fork from a user message puts back.
+    @Published private var forkRequest: (id: String, draft: String?)?
+    /// When the running turn started (`agent_start`); its prompt row gets `workedSeconds`.
+    private var turnStarted: Date?
+    /// Prompt rows trimmed off the top by `historyLimit`, so turn counts stay right.
+    private var droppedPrompts = 0
+    /// A fork or rewind notice, shown under the chat once it is reloaded.
+    private var noticeAfterReload: String?
     /// Messages typed while a turn runs, sent one per agent_end.
     @Published private(set) var queue = AgentMessageQueue()
     /// Images attached to the draft, shown as chips above the composer.
@@ -325,6 +366,9 @@ final class AgentCoordinator: ObservableObject {
         permissionMode = nil
         // The list belonged to that process's session; the next one starts empty.
         todos = []
+        // A fork or rewind the process takes with it never answers.
+        forkRequest = nil
+        rewindOffer = nil
         prepareTask?.cancel()
         eventTask?.cancel()
         process?.terminate()
@@ -743,6 +787,8 @@ final class AgentCoordinator: ObservableObject {
         pendingApproval = nil
         permissionMode = nil
         todos = []
+        forkRequest = nil
+        rewindOffer = nil
         // A message cut off by the exit gets its final (non-streaming) render.
         finalizeEntries()
         guard !intentionalStop else { return }
@@ -790,7 +836,7 @@ final class AgentCoordinator: ObservableObject {
     func send(prompt: String, now: Bool = false) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         // Images alone are a message too.
-        guard !trimmed.isEmpty || !draftImages.isEmpty else { return }
+        guard !trimmed.isEmpty || !draftImages.isEmpty, !isBranching else { return }
         switch connection {
         case .piMissing:
             statusMessage = String(localized: "assistant.pi_missing")
@@ -914,6 +960,11 @@ final class AgentCoordinator: ObservableObject {
         default:
             break
         }
+        // The fork or rewind would close the query this message went to.
+        guard !isBranching else {
+            refuseDrain(id)
+            return
+        }
         flushDeltas()
         // A drained message gets its bubble once the backend accepts it (`handleResponse`),
         // so a refused one, back at the front of the queue, does not leave a duplicate.
@@ -1017,6 +1068,7 @@ final class AgentCoordinator: ObservableObject {
     }
 
     func newSession() {
+        guard !isBranching else { return }
         denyQueuedApprovals()
         guard let process, process.isRunning else { return }
         clearTranscript()
@@ -1077,6 +1129,195 @@ final class AgentCoordinator: ObservableObject {
         // The meter belongs to that chat; the next usage_update or stats reply refills it.
         usage = AgentUsage()
         sessionStats = nil
+        rewindOffer = nil
+        turnStarted = nil
+        droppedPrompts = 0
+    }
+
+    // MARK: - Turns, fork and rewind
+
+    /// `agent_end`: the turn's prompt row learns how long the turn ran.
+    private func noteTurnDuration() {
+        guard let started = turnStarted else { return }
+        turnStarted = nil
+        if let index = transcript.lastIndex(where: { $0.role == .user }) {
+            transcript[index].workedSeconds = Int(Date().timeIntervalSince(started))
+        }
+    }
+
+    /// The transcript as `AgentTurnView` items: subagent calls nested, finished turns folded.
+    var turnItems: [AgentTurnView.Item] {
+        AgentTurnView.items(transcript.map(Self.turnRow), running: isRunning)
+    }
+
+    private static func turnRow(_ entry: AgentTranscriptEntry) -> AgentTurnView.Row {
+        let role: AgentTurnView.Row.Role
+        switch entry.role {
+        case .user: role = .user
+        case .assistant: role = .assistant
+        case .thinking: role = .thinking
+        case .tool: role = .tool
+        case .notice: role = .notice
+        case .activity: role = .activity
+        }
+        let kind: AgentToolDetail.Kind? = entry.tool?.kind ?? (entry.role == .tool ? .other : nil)
+        return AgentTurnView.Row(role: role, toolKind: kind, path: entry.tool?.path,
+                                 callID: entry.callID, parentCallID: entry.tool?.parentCallID,
+                                 workedSeconds: entry.workedSeconds)
+    }
+
+    /// A fork or a confirmed rewind is out: sending, switching chats and branching again wait.
+    var isBranching: Bool { forkRequest != nil || rewindOffer?.isRewinding == true }
+
+    /// Prompts in this chat, counting rows trimmed off the top.
+    private var promptCount: Int { droppedPrompts + transcript.filter { $0.role == .user }.count }
+
+    private func turnCut(_ index: Int) -> (keep: Int, draft: String?)? {
+        guard let keep = AgentTurnView.turnCut(roles: transcript.map { Self.turnRow($0).role }, index: index, dropped: droppedPrompts) else { return nil }
+        return (keep, transcript[index].role == .user ? transcript[index].text : nil)
+    }
+
+    /// The ⋯ menu for row `index`, or nil for rows without one.
+    func messageMenu(_ index: Int) -> AgentMessageMenu? {
+        guard connection == .ready, let cut = turnCut(index) else { return nil }
+        let busy = String(localized: "assistant.message.busy")
+        let blocked = isRunning || isBranching
+        let rewindBlocked: String?
+        if blocked {
+            rewindBlocked = busy
+        } else if !capabilities.rewindConversation {
+            rewindBlocked = String(format: String(localized: "assistant.message.rewind_unavailable"), AgentErrorCode.cliName(provider: sessionBackend))
+        } else if cut.keep >= promptCount {
+            rewindBlocked = String(localized: "assistant.message.rewind_last")
+        } else {
+            rewindBlocked = nil
+        }
+        return AgentMessageMenu(
+            forkBlocked: blocked ? busy : nil,
+            rewindBlocked: rewindBlocked,
+            fork: { [weak self] in self?.fork(from: index) },
+            rewind: { [weak self] in self?.requestRewind(index) }
+        )
+    }
+
+    /// "Fork from here": the bridge copies the first turns into a new chat when it can;
+    /// otherwise a new chat starts with those turns quoted into the draft.
+    func fork(from index: Int) {
+        guard !isRunning, !isBranching, let cut = turnCut(index), let process, process.isRunning else { return }
+        if cut.keep > 0, capabilities.fork {
+            let id = UUID().uuidString
+            if (try? process.send(.forkSession(keepTurns: cut.keep, turns: promptCount), id: id)) != nil {
+                forkRequest = (id, cut.draft)
+            }
+            return
+        }
+        let rows = transcript.map { (role: Self.turnRow($0).role, text: $0.text) }
+        let quoted = AgentTurnView.quote(
+            rows, keep: max(0, cut.keep - droppedPrompts),
+            header: String(localized: "assistant.fork.quote_header"),
+            you: String(localized: "assistant.fork.quote_you"),
+            assistant: String(localized: "assistant.fork.quote_assistant")
+        )
+        newSession()
+        composerReplacement = [quoted, cut.draft ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        if cut.keep > 0 {
+            transcript.append(AgentTranscriptEntry(
+                role: .notice, title: "Assistant",
+                text: String(format: String(localized: "assistant.fork.quoted"), AgentErrorCode.cliName(provider: sessionBackend))
+            ))
+        }
+    }
+
+    /// "Rewind to here": opens the confirmation after a dry run lists the files a file rewind would restore.
+    func requestRewind(_ index: Int) {
+        guard !isRunning, !isBranching, capabilities.rewindConversation, let cut = turnCut(index), cut.keep < promptCount else { return }
+        var offer = AgentRewindOffer(keepTurns: cut.keep, draft: cut.draft)
+        if capabilities.rewindFiles, let process {
+            let id = UUID().uuidString
+            if (try? process.send(.rewind(keepTurns: cut.keep, turns: promptCount, conversation: false, files: true, dryRun: true), id: id)) != nil {
+                offer.requestID = id
+            }
+        }
+        if offer.requestID == nil {
+            offer.files = []
+            offer.filesNote = String(localized: "assistant.rewind.files_unsupported")
+        }
+        rewindOffer = offer
+    }
+
+    /// The confirmation's buttons: the conversation, and the files when `files`.
+    func confirmRewind(files: Bool) {
+        // One request at a time: a reply to the dry run must not be read as the rewind's.
+        guard !isRunning, var offer = rewindOffer, offer.requestID == nil, let process else { return }
+        let id = UUID().uuidString
+        if (try? process.send(.rewind(keepTurns: offer.keepTurns, turns: promptCount, conversation: true, files: files, dryRun: false), id: id)) != nil {
+            offer.requestID = id
+            rewindOffer = offer
+        }
+    }
+
+    /// The confirmed rewind cannot be called back: its reply reloads the chat and the files.
+    func cancelRewind() {
+        guard rewindOffer?.isRewinding != true else { return }
+        rewindOffer = nil
+    }
+
+    private func handleForkResponse(_ event: PiRPCEvent) {
+        guard let request = forkRequest, event.string("id") == request.id else { return }
+        forkRequest = nil
+        guard event.responseSucceeded else {
+            transcript.append(AgentTranscriptEntry(
+                role: .notice, title: "Assistant",
+                text: String(format: String(localized: "assistant.fork.failed"), event.responseError ?? ""), status: .failed
+            ))
+            return
+        }
+        clearTranscript()
+        noticeAfterReload = String(localized: "assistant.fork.done")
+        requestMessages()
+        sendModelSettings(.getState)
+        composerReplacement = request.draft
+    }
+
+    private func handleRewindResponse(_ event: PiRPCEvent) {
+        guard var offer = rewindOffer, offer.requestID != nil, event.string("id") == offer.requestID else { return }
+        offer.requestID = nil
+        let files = (event.responseData?["filesChanged"] as? [String]) ?? []
+        if offer.files == nil {
+            // The dry run: the list, or why files cannot be restored.
+            if event.responseSucceeded {
+                offer.files = files
+            } else {
+                offer.files = []
+                offer.filesNote = String(format: String(localized: "assistant.rewind.files_note"), event.responseError ?? "")
+            }
+            rewindOffer = offer
+            return
+        }
+        guard event.responseSucceeded else {
+            rewindOffer = nil
+            transcript.append(AgentTranscriptEntry(
+                role: .notice, title: "Assistant",
+                text: String(format: String(localized: "assistant.rewind.failed"), event.responseError ?? ""), status: .failed
+            ))
+            return
+        }
+        let draft = offer.draft
+        clearTranscript()
+        let root = projectRoot()
+        let shown = files.map { path -> String in
+            var file = AgentToolDetail(kind: .other)
+            file.path = path
+            return file.displayPath(root: root)
+        }
+        noticeAfterReload = shown.isEmpty
+            ? String(localized: "assistant.rewind.done")
+            : String(format: String(localized: "assistant.rewind.done_files"), shown.joined(separator: ", "))
+        requestMessages()
+        sendModelSettings(.getState)
+        composerReplacement = draft
+        // Restored files: the workspace reloads them like an agent edit.
+        Task { await agentActivityDidFinish() }
     }
 
     /// A new todo snapshot: one activity row per change, then the checklist follows it.
@@ -1138,7 +1379,7 @@ final class AgentCoordinator: ObservableObject {
     /// backend first and opens once it is up; a turned-off backend says so.
     func open(_ session: AgentSessionSummary, settings: SettingsStore) {
         showingSessionHistory = false
-        guard !isRunning else { return }
+        guard !isRunning, !isBranching else { return }
         if session.source == sessionBackend {
             resume(session)
         } else if catalogSlots.contains(where: { $0.backend == session.source }) {
@@ -1159,7 +1400,7 @@ final class AgentCoordinator: ObservableObject {
     /// messages (`switch_session` → `get_messages`).
     func resume(_ session: AgentSessionSummary) {
         showingSessionHistory = false
-        guard let process, process.isRunning, !isRunning else { return }
+        guard let process, process.isRunning, !isRunning, !isBranching else { return }
         clearTranscript()
         try? process.send(.switchSession(path: session.url.path))
     }
@@ -1226,7 +1467,8 @@ final class AgentCoordinator: ObservableObject {
                         let name = block["name"] as? String ?? "tool"
                         entries.append(AgentTranscriptEntry(
                             role: .tool, title: name, text: "",
-                            detail: toolSummary(name: name, args: block["arguments"] as? [String: Any])
+                            detail: toolSummary(name: name, args: block["arguments"] as? [String: Any]),
+                            callID: block["id"] as? String
                         ))
                         if let id = block["id"] as? String { toolRows[id] = entries.count - 1 }
                     default:
@@ -1240,7 +1482,8 @@ final class AgentCoordinator: ObservableObject {
                 if let status = Self.entryStatus(AgentToolDetail.status(message["status"] as? String)) {
                     entries[index].status = status
                 }
-                if let tool = AgentToolDetail(message["detail"] as? [String: Any]) {
+                if var tool = AgentToolDetail(message["detail"] as? [String: Any]) {
+                    tool.parentCallID = message["parentToolCallId"] as? String
                     if tool.kind != .other, tool.kind != .subAgent { entries[index].detail = "" }
                     entries[index].tool = tool
                 }
@@ -1591,7 +1834,9 @@ final class AgentCoordinator: ObservableObject {
             handleResponse(event)
         case "agent_start":
             isRunning = true
+            if turnStarted == nil { turnStarted = Date() }
         case "agent_end":
+            noteTurnDuration()
             isRunning = false
             finalizeEntries()
             noteTurnEnd(event)
@@ -1685,6 +1930,14 @@ final class AgentCoordinator: ObservableObject {
                 queue.failed(drain.item)
             }
         }
+        if event.responseCommand == "fork_session" {
+            handleForkResponse(event)
+            return
+        }
+        if event.responseCommand == "rewind" {
+            handleRewindResponse(event)
+            return
+        }
         if event.responseCommand == "refresh_sessions" {
             // Success or not (a signed-out backend refuses), the list shows what is on disk now;
             // a turn started meanwhile wins, since rows cannot be opened during it.
@@ -1773,7 +2026,16 @@ final class AgentCoordinator: ObservableObject {
             sendModelSettings(.getState)
         case "get_messages":
             guard event.string("id") == messagesRequestID else { return }
-            transcript = transcriptEntries(from: event.responseData?["messages"] as? [[String: Any]] ?? [])
+            let messages = event.responseData?["messages"] as? [[String: Any]] ?? []
+            droppedPrompts = 0
+            transcript = transcriptEntries(from: messages)
+            // Prompts the history limit left out still count for Fork and Rewind.
+            let prompts = messages.filter { $0["role"] as? String == "user" && !Self.userPromptText($0).isEmpty }.count
+            droppedPrompts = max(0, prompts - transcript.filter { $0.role == .user }.count)
+            if let notice = noticeAfterReload {
+                noticeAfterReload = nil
+                transcript.append(AgentTranscriptEntry(role: .notice, title: "Assistant", text: notice))
+            }
             // The last list of a resumed chat; no activity rows for it.
             todos = AgentTodoItem.list(event.responseData?["todos"])
             sendSilently(.getSessionStats)
@@ -1909,14 +2171,15 @@ final class AgentCoordinator: ObservableObject {
         settleThinking()
         guard let callID = event.string("toolCallId") else { return }
         let name = event.string("toolName") ?? "tool"
-        let tool = AgentToolDetail(event.nested("detail"))
+        var tool = AgentToolDetail(event.nested("detail"))
+        tool?.parentCallID = event.string("parentToolCallId")
         // A typed card shows its fields in the body; untyped (pi, MCP) and
         // sub-agent cards have no such fields, so they keep the args summary.
         let untyped = tool.map { $0.kind == .other || $0.kind == .subAgent } ?? true
         let summary = untyped ? toolSummary(name: name, args: event.nested("args")) : ""
         transcript.append(AgentTranscriptEntry(
             role: .tool, title: name, text: "", detail: summary,
-            status: toolStatus(event) ?? .running, tool: tool
+            status: toolStatus(event) ?? .running, tool: tool, callID: callID
         ))
         toolIndexByCallID[callID] = transcript.count - 1
     }
