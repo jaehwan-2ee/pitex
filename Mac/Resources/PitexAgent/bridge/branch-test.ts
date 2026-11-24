@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
@@ -258,7 +258,7 @@ test("fork_session copies the first turns into a new Claude session and switches
     assert.equal(forked.success, true, String(forked.error));
     assert.deepEqual(forks, [["sess-1", { dir, upToMessageId: "a1" }]]);
     const path = (forked.data as Json).sessionPath as string;
-    assert.equal(path, join(dir, "claude-forked-1.jsonl"));
+    assert.equal(resolve(path), join(dir, "claude-forked-1.jsonl"));
     const mirror = readFileSync(path, "utf8");
     assert.match(mirror, /First/);
     assert.doesNotMatch(mirror, /Second/);
