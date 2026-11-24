@@ -76,7 +76,7 @@
 "assistant.response_error" = "Ошибка ассистента: %@";
 "assistant.sign_in_chatgpt" = "Войти через ChatGPT";
 "assistant.new_session" = "Новый сеанс";
-"assistant.pi_missing" = "Pitex Agent ещё не установлен — он устанавливается автоматически при запуске; см. Настройки → AI.";
+"assistant.pi_missing" = "Pitex Agent ещё не установлен. Он устанавливается при запуске; если установка не завершилась или не удалась, нажмите «Установить Pitex Agent».";
 "assistant.context_attached" = "Контекст:";
 "assistant.context_none" = "Нет активного контекста документа";
 "assistant.selection_remove" = "Убрать выделение";
@@ -374,7 +374,7 @@
 "settings.ai.open_config" = "Открыть конфигурацию Pitex Agent (settings.json)";
 "settings.ai.install_runtime" = "Установить Pitex Agent";
 "settings.ai.reinstall_runtime" = "Переустановить Pitex Agent";
-"settings.ai.runtime_note" = "Pitex Agent устанавливается в собственную папку Pitex (Application Support ▸ Pitex ▸ pi-runtime) с навыками LaTeX, Humanizer и SciSpace. Переустанавливайте только если он отсутствует или повреждён. Использует Bun при наличии, иначе Node.js и npm.";
+"settings.ai.runtime_note" = "Pitex Agent устанавливается в собственную папку Pitex (Application Support ▸ Pitex ▸ pi-runtime) с навыками LaTeX, Humanizer и SciSpace. Переустанавливайте только если он отсутствует или повреждён. Использует Bun или Node.js, если они есть; иначе Pitex загружает Node.js с nodejs.org, проверяет его по зафиксированной контрольной сумме и хранит в той же папке.";
 "settings.ai.skills" = "Навыки";
 "settings.ai.install_skill" = "Установить источник навыка или расширения";
 "settings.ai.install" = "Установить";

@@ -198,6 +198,7 @@ struct AgentPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                installRuntimeButton
             case .ready:
                 EmptyView()
             case .failed(let message):
@@ -205,11 +206,18 @@ struct AgentPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                // Install failures (offline, checksum) land here; retry is one click.
+                if !PiExecutableLocator.appLocalRuntimeInstalled { installRuntimeButton }
             }
             Spacer()
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
+    }
+
+    private var installRuntimeButton: some View {
+        Button("settings.ai.install_runtime") { coordinator.installRuntime() }
+            .accessibilityIdentifier("pitex.assistant.installRuntime")
     }
 
     private func approvalRow(_ approval: AgentApprovalRequest) -> some View {

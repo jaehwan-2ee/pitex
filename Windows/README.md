@@ -101,7 +101,8 @@ installer and the portable zip.
 - TeX Live or MiKTeX with XeLaTeX for editing previews. MiKTeX must have
   the document packages installed without an interactive prompt. Final
   builds continue to use the compiler selected in settings.
-- Bun, or Node.js and npm, for the Pi assistant.
+- Nothing extra for the Pi assistant: Pitex uses Bun or Node.js when present,
+  otherwise it downloads a checksum-pinned Node.js on first use.
 
 ## Notes
 

@@ -56,6 +56,14 @@ pub mod pi_paths {
             .map(|p| p.join("pi-runtime"))
             .unwrap_or_else(|| PathBuf::from("pi-runtime"))
     }
+    /// Node.js that Pitex installs for itself (`pi_installer::install_pinned_node`).
+    pub fn pinned_node_directory() -> PathBuf {
+        runtime_directory().with_file_name("node")
+    }
+    /// The pinned Node's executable directory (Windows archives have no bin/).
+    pub fn pinned_node_bin() -> PathBuf {
+        if cfg!(windows) { pinned_node_directory() } else { pinned_node_directory().join("bin") }
+    }
     /// The app-local launcher. Unix publishes a `bin/pi` symlink into the
     /// package's `dist/cli.js`; Windows skips the indirection (no symlink
     /// privilege) and points straight at the installed `cli.js` — `launch`
@@ -398,6 +406,8 @@ impl PiToolchain {
                 );
             }
         }
+        // Last, so a user's own Bun or Node wins over the one Pitex installed.
+        paths.push(pi_paths::pinned_node_bin().to_string_lossy().into_owned());
         update_path(&mut result.environment, &paths);
         result.node = Self::find("node", &result.environment);
         result.npm = Self::find("npm", &result.environment);
@@ -426,6 +436,18 @@ impl PiToolchain {
             }
         }
         result.bun = Self::find("bun", &result.environment);
+        // A Node older than pi's minimum fails the install's smoke check:
+        // put the pinned Node first instead, or report none so the
+        // installer downloads it.
+        if result.bun.is_none()
+            && result.node.as_ref().is_some_and(|node| !node_meets_minimum(node, &result.environment, home))
+        {
+            paths.insert(0, pi_paths::pinned_node_bin().to_string_lossy().into_owned());
+            update_path(&mut result.environment, &paths);
+            result.node = Self::find("node", &result.environment)
+                .filter(|node| node_meets_minimum(node, &result.environment, home));
+            result.npm = result.node.as_ref().and_then(|_| Self::find("npm", &result.environment));
+        }
         result
     }
 
@@ -552,6 +574,23 @@ fn update_path(environment: &mut HashMap<String, String>, paths: &[String]) {
 /// `ProcessRunner().run(DirectCommandPlan…)` — a short-lived probe: run the
 /// command with the toolchain PATH and return stdout only on a clean
 /// completed exit(0).
+/// pi's `engines.node` (`@earendil-works/pi-coding-agent` 1.5.2 and its
+/// pi-codemode dependency both declare `>=22.19.0`).
+pub const MINIMUM_NODE_VERSION: &str = "22.19.0";
+
+/// `node --version` prints `v22.19.0`; an unreadable answer counts as too old.
+fn node_version_meets_minimum(output: &str) -> bool {
+    let version = output.trim().strip_prefix('v').unwrap_or("");
+    version.split('.').count() == 3
+        && version.split('.').all(|part| part.starts_with(|c: char| c.is_ascii_digit()))
+        && !pi_installer::is_older(version, MINIMUM_NODE_VERSION)
+}
+
+fn node_meets_minimum(node: &Path, environment: &HashMap<String, String>, home: &Path) -> bool {
+    run_probe(&node.to_string_lossy(), &["--version".into()], environment, home, 5)
+        .is_some_and(|output| node_version_meets_minimum(&String::from_utf8_lossy(&output)))
+}
+
 fn run_probe(
     executable: &str,
     arguments: &[String],
@@ -1593,7 +1632,7 @@ impl AgentCoordinator {
 
     /// Records a spawn failure. The empty transcript shows `connection`;
     /// once the user has typed, the same text moves to the status line.
-    fn fail_connection(&mut self, message: String) {
+    pub(crate) fn fail_connection(&mut self, message: String) {
         self.connection = Connection::Failed(message.clone());
         if !self.transcript.is_empty() {
             self.status_message = Some(message);
@@ -3187,7 +3226,7 @@ pub mod pi_installer {
 
     /// `InstallError.runtimeMissing` — shared with `PiToolchain.launch`.
     pub const RUNTIME_MISSING: &str =
-        "Bun or Node.js with npm was not found. Install Bun with Homebrew, npm, or the official installer, then retry.";
+        "Pitex Agent's JavaScript runtime is not installed yet. Click Install Pitex Agent in the Assistant or in Settings → AI.";
 
     /// Read package metadata without executing an `env node` launcher —
     /// walks up from the resolved launcher to `runtimeDirectory` looking for
@@ -3238,6 +3277,9 @@ pub mod pi_installer {
     /// `ensureInstalled` — install when missing or older than desired.
     /// Returns the npm output on failure for the settings pane.
     pub fn ensure_installed() -> Result<Option<String>, String> {
+        // A second caller (the Install button during the launch-time
+        // install) waits for the running install instead of failing.
+        drop(INSTALL_LOCK.lock());
         let needs_install = if !app_local_runtime_installed() {
             true
         } else if let Some(installed) = installed_version() {
@@ -3283,6 +3325,15 @@ pub mod pi_installer {
                     &dirs::home_dir().unwrap_or_default(), &PiToolchain::SYSTEM_DIRECTORIES);
                 &discovered
             }
+        };
+        let with_node;
+        let tools = if tools.bun.is_none() && tools.npm_command(&[]).is_none() {
+            install_pinned_node()?;
+            with_node = PiToolchain::discover(std::env::vars().collect(),
+                &dirs::home_dir().unwrap_or_default(), &PiToolchain::SYSTEM_DIRECTORIES);
+            &with_node
+        } else {
+            tools
         };
         let runtime = pi_paths::runtime_directory();
         let backup = runtime.with_file_name(format!("pi-runtime-backup-{}", crate::model::uuid_v4()));
@@ -3434,6 +3485,66 @@ pub mod pi_installer {
             }
         }
         install_bundled_skills()
+    }
+
+    /// Keep in step with `PinnedNode` in Mac/Sources/Features/PiAgentProcess.swift.
+    pub const PINNED_NODE_VERSION: &str = "24.22.2";
+    /// (platform, archive, SHA-256) from nodejs.org/dist/v24.22.2/SHASUMS256.txt.asc
+    /// (release-key signed).
+    const PINNED_NODE: [(&str, &str, &str); 4] = [
+        ("linux-x64", "tar.gz", "361718c444e49af2ca5a110c83ba6a8901143f23ab285ebbef0341f391f482a9"),
+        ("linux-arm64", "tar.gz", "95c264150aceb7f3437a29fd6984924f5f8d1511ea3cbd6c508b83f6c555dae2"),
+        ("win-x64", "zip", "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2"),
+        ("win-arm64", "zip", "f47968c213105077f64c6510f007632c0ca2574802a0b5067c327c49abe1c468"),
+    ];
+
+    /// Neither Bun nor Node was found: download the pinned Node.js, verify
+    /// its SHA-256, unpack it next to pi-runtime, then swap it in.
+    fn install_pinned_node() -> Result<(), String> {
+        let arch = match std::env::consts::ARCH { "x86_64" => "x64", "aarch64" => "arm64", other => other };
+        let platform = format!("{}-{arch}", if cfg!(windows) { "win" } else { "linux" });
+        let Some((_, extension, expected)) = PINNED_NODE.iter().find(|(p, ..)| *p == platform) else {
+            return Err(format!("Pitex has no Node.js build for {platform}. Install Bun or Node.js, then retry."));
+        };
+        let name = format!("node-v{PINNED_NODE_VERSION}-{platform}");
+        let target = pi_paths::pinned_node_directory();
+        let staging = target.with_file_name(format!("node-staging-{}", crate::model::uuid_v4()));
+        std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+        let result = (|| {
+            let archive = staging.join(format!("{name}.{extension}"));
+            let url = format!("https://nodejs.org/dist/v{PINNED_NODE_VERSION}/{name}.{extension}");
+            crate::update::curl(&["-fsSL", "-o", &archive.to_string_lossy(), &url], 600)
+                .map_err(|e| format!("Node.js could not be downloaded from nodejs.org: {e}"))?;
+            let data = std::fs::read(&archive).map_err(|e| e.to_string())?;
+            if hex(&tex_domain::sha256(&data)) != *expected {
+                return Err("The Node.js download did not match its pinned checksum, so it was not installed.".to_string());
+            }
+            // Windows' own bsdtar reads .zip; Git for Windows' GNU tar on PATH would not.
+            let tar = if cfg!(windows) {
+                format!("{}\\System32\\tar.exe", std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()))
+            } else {
+                "tar".into()
+            };
+            let unpack = run_install(Path::new(&tar),
+                &["-xf".into(), archive.to_string_lossy().into_owned(), "-C".into(), staging.to_string_lossy().into_owned()],
+                &std::collections::HashMap::new(), &staging, 300)?;
+            let unpacked = staging.join(&name);
+            let node = if cfg!(windows) { unpacked.join("node.exe") } else { unpacked.join("bin/node") };
+            if unpack.termination != (build_core::ProcessTermination::Exited { code: 0 }) || !node.is_file() {
+                return Err(format!("Node.js could not be unpacked: {}",
+                    tail(&String::from_utf8_lossy(&unpack.standard_error), 1_000)));
+            }
+            // C headers are only for native addons, which the install skips (--ignore-scripts).
+            let _ = std::fs::remove_dir_all(unpacked.join("include"));
+            if target.exists() { std::fs::remove_dir_all(&target).map_err(|e| e.to_string())?; }
+            std::fs::rename(&unpacked, &target).map_err(|e| e.to_string())
+        })();
+        let _ = std::fs::remove_dir_all(&staging);
+        result
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// The installed package's CLI entry — prefers the unbundled
@@ -3718,6 +3829,49 @@ pub mod pi_installer {
             std::fs::create_dir_all(&dir).unwrap();
             std::env::set_var("PI_CODING_AGENT_DIR", &dir);
             dir
+        }
+
+        #[test]
+        fn discover_replaces_a_too_old_node_with_the_pinned_one() {
+            let _env = env_lock();
+            let dir = sandbox("old-node");
+            let system = dir.parent().unwrap().join("system-bin");
+            executable(&system.join("node"), "#!/bin/sh\necho v18.19.1\n");
+            executable(&system.join("npm"), "#!/bin/sh\n");
+            let environment = HashMap::from([
+                ("PATH".to_string(), system.to_string_lossy().into_owned()),
+                ("SHELL".to_string(), "/bin/false".to_string()),
+            ]);
+            // Without the pinned Node there is no usable runtime, so the
+            // installer downloads it instead of failing pi's smoke check.
+            let tools = PiToolchain::discover(environment.clone(), dir.parent().unwrap(), &[]);
+            assert_eq!(tools.node, None);
+            assert!(tools.npm_command(&[]).is_none());
+            let pinned = pi_paths::pinned_node_bin();
+            executable(&pinned.join("node"), "#!/bin/sh\necho v24.22.2\n");
+            executable(&pinned.join("npm"), "#!/bin/sh\n");
+            let tools = PiToolchain::discover(environment, dir.parent().unwrap(), &[]);
+            assert_eq!(tools.node, Some(pinned.join("node")));
+            assert_eq!(tools.npm, Some(pinned.join("npm")));
+            let path = tools.environment.get("PATH").unwrap();
+            assert!(path.starts_with(&*pinned.to_string_lossy()), "pinned Node must lead PATH: {path}");
+            leave_sandbox(&dir);
+        }
+
+        #[test]
+        #[ignore = "downloads Node.js and pi from the network; run alone"]
+        fn pinned_node_runs_the_agent_install_without_a_system_runtime() {
+            let _env = env_lock();
+            let dir = sandbox("pinned-node");
+            install_pinned_node().unwrap();
+            // An empty PATH and no login shell: only the pinned Node exists.
+            let environment = HashMap::from([("PATH".to_string(), String::new()), ("SHELL".to_string(), "/bin/false".to_string())]);
+            let tools = PiToolchain::discover(environment, dir.parent().unwrap(), &[]);
+            assert!(tools.bun.is_none());
+            assert!(tools.node.as_ref().unwrap().starts_with(pi_paths::pinned_node_directory()));
+            install_with_tools(&tools).unwrap();
+            assert_eq!(installed_version().as_deref(), Some(DESIRED_VERSION));
+            leave_sandbox(&dir);
         }
 
         fn leave_sandbox(dir: &Path) {
@@ -4041,14 +4195,14 @@ mod toolchain_tests {
         let home = home("nvm");
         // v9 must not shadow v18/v20 — Foundation's numeric compare orders
         // digit runs numerically, not lexicographically.
-        for version in ["v9.11.2", "v18.20.4", "v20.11.0"] {
+        for version in ["v9.11.2", "v18.20.4", "v24.0.0"] {
             executable(
                 &home.join(format!(".nvm/versions/node/{version}/bin/node")),
-                "#!/bin/sh\n",
+                &format!("#!/bin/sh\necho {version}\n"),
             );
         }
         executable(
-            &home.join(".nvm/versions/node/v20.11.0/bin/npm"),
+            &home.join(".nvm/versions/node/v24.0.0/bin/npm"),
             "#!/bin/sh\n",
         );
         // Ambient PATH with no node — version-manager dirs are appended
@@ -4057,18 +4211,37 @@ mod toolchain_tests {
         assert_eq!(
             tools.node.as_deref(),
             Some(
-                home.join(".nvm/versions/node/v20.11.0/bin/node")
+                home.join(".nvm/versions/node/v24.0.0/bin/node")
                     .as_path()
                 )
         );
         assert_eq!(
             tools.npm.as_deref(),
             Some(
-                home.join(".nvm/versions/node/v20.11.0/bin/npm")
+                home.join(".nvm/versions/node/v24.0.0/bin/npm")
                     .as_path()
                 )
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn node_version_check_follows_pi_engines() {
+        for (output, supported) in [
+            ("v22.19.0\n", true),
+            ("v22.20.1", true),
+            ("v24.22.2", true),
+            ("v100.0.0", true),
+            ("v22.18.9", false),
+            ("v22.9.0", false),
+            ("v18.19.1", false),
+            ("v9.11.2", false),
+            ("22.19.0", false),
+            ("", false),
+            ("node: not found", false),
+        ] {
+            assert_eq!(node_version_meets_minimum(output), supported, "{output:?}");
+        }
     }
 
     #[test]

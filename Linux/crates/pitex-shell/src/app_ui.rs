@@ -4420,6 +4420,21 @@ impl AppState {
                     if !detail.is_empty() {
                         empty.set_description(Some(&detail));
                     }
+                    // Install failures (offline, checksum) land in Failed; retry is one click.
+                    if agent.connection == crate::agent::Connection::PiMissing
+                        || (matches!(agent.connection, crate::agent::Connection::Failed(_))
+                            && !crate::agent::app_local_runtime_installed())
+                    {
+                        let install = gtk4::Button::with_label(&tr(lang, "settings.ai.install_runtime"));
+                        install.set_halign(gtk4::Align::Center);
+                        install.add_css_class("pill");
+                        install.set_widget_name("pitex.assistant.installRuntime");
+                        install.connect_clicked(|button| {
+                            button.set_sensitive(false);
+                            install_agent_runtime();
+                        });
+                        empty.set_child(Some(&install));
+                    }
                     box_.append(&empty);
                 } else {
                     let keys: Vec<u64> = agent.transcript.iter()
@@ -6617,20 +6632,26 @@ fn build_chrome(
 
     // `applicationDidFinishLaunching` — the agent runtime self-installs on
     // first launch and refreshes its bundled skills every launch, then the
-    // agent is prepared. The install runs off the main thread; the prepare
-    // hop returns through an idle on the main context.
+    // agent is prepared.
+    install_agent_runtime();
+}
+
+/// Installs the agent runtime off the main thread (or waits for the one
+/// already running), then reconnects an Assistant that was already opened;
+/// a failure is shown in that Assistant with the Install button.
+fn install_agent_runtime() {
     std::thread::spawn(|| {
-        let _ = crate::agent::pi_installer::ensure_installed();
-        glib::idle_add_once(|| {
+        let result = crate::agent::pi_installer::ensure_installed();
+        glib::idle_add_once(move || {
             STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     if let Ok(mut st) = state.try_borrow_mut() {
                         if st.agent.is_some() {
-                            // Only an Assistant that was already opened
-                            // (e.g. it found pi missing before this
-                            // install finished) reconnects here.
                             if let Some(agent) = st.agent.as_mut().filter(|a| a.wants_connection) {
-                                agent.prepare();
+                                match result {
+                                    Ok(_) => agent.prepare(),
+                                    Err(error) => agent.fail_connection(error),
+                                }
                             }
                             st.refresh_assistant();
                         }

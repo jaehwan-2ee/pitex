@@ -76,7 +76,7 @@
 "assistant.response_error" = "助手错误：%@";
 "assistant.sign_in_chatgpt" = "使用 ChatGPT 登录";
 "assistant.new_session" = "新会话";
-"assistant.pi_missing" = "Pitex Agent 尚未安装——它会在启动时自动安装；请参阅设置 → AI。";
+"assistant.pi_missing" = "Pitex Agent 尚未安装。它会在启动时自动安装；如果尚未完成或安装失败，请点按“安装 Pitex Agent”。";
 "assistant.context_attached" = "上下文：";
 "assistant.context_none" = "没有活动的文档上下文";
 "assistant.selection_remove" = "移除所选内容";
@@ -374,7 +374,7 @@
 "settings.ai.open_config" = "打开 Pitex Agent 配置（settings.json）";
 "settings.ai.install_runtime" = "安装 Pitex Agent";
 "settings.ai.reinstall_runtime" = "重新安装 Pitex Agent";
-"settings.ai.runtime_note" = "Pitex Agent 会安装到 Pitex 自己的文件夹中（Application Support ▸ Pitex ▸ pi-runtime），并附带 LaTeX、Humanizer 和 SciSpace 技能。仅在其缺失或损坏时重新安装。优先使用 Bun，否则使用 Node.js 和 npm。";
+"settings.ai.runtime_note" = "Pitex Agent 会安装到 Pitex 自己的文件夹中（Application Support ▸ Pitex ▸ pi-runtime），并附带 LaTeX、Humanizer 和 SciSpace 技能。仅在其缺失或损坏时重新安装。若有 Bun 或 Node.js 则使用它们；否则 Pitex 会从 nodejs.org 下载 Node.js，按固定校验和验证后放在同一文件夹中。";
 "settings.ai.skills" = "技能";
 "settings.ai.install_skill" = "安装技能或扩展源";
 "settings.ai.install" = "安装";

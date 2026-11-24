@@ -76,7 +76,7 @@
 "assistant.response_error" = "アシスタントエラー：%@";
 "assistant.sign_in_chatgpt" = "ChatGPTでサインイン";
 "assistant.new_session" = "新規セッション";
-"assistant.pi_missing" = "Pitex Agent はまだインストールされていません — 起動時に自動でインストールされます。設定 → AI を確認してください。";
+"assistant.pi_missing" = "Pitex Agent はまだインストールされていません。起動時に自動でインストールされます。終わっていないか失敗した場合は「Pitex Agent をインストール」を押してください。";
 "assistant.context_attached" = "コンテキスト:";
 "assistant.context_none" = "アクティブな書類コンテキストなし";
 "assistant.selection_remove" = "選択範囲を削除";
@@ -375,7 +375,7 @@
 "settings.ai.open_config" = "Pitex Agent 設定を開く (settings.json)";
 "settings.ai.install_runtime" = "Pitex Agent をインストール";
 "settings.ai.reinstall_runtime" = "Pitex Agent を再インストール";
-"settings.ai.runtime_note" = "Pitex Agent は Pitex 専用フォルダ (Application Support ▸ Pitex ▸ pi-runtime) に LaTeX・Humanizer・SciSpace のスキルとともに自動インストールされます。紛失・破損した場合のみ再インストールしてください。 Bun がある場合は優先して使用し、ない場合は Node.js と npm を使用します。";
+"settings.ai.runtime_note" = "Pitex Agent は Pitex 専用フォルダ (Application Support ▸ Pitex ▸ pi-runtime) に LaTeX・Humanizer・SciSpace のスキルとともに自動インストールされます。紛失・破損した場合のみ再インストールしてください。 Bun または Node.js があればそれを使用し、なければ nodejs.org から Node.js をダウンロードし、固定のチェックサムで検証して同じフォルダに置きます。";
 "settings.ai.skills" = "スキル";
 "settings.ai.install_skill" = "スキルまたは拡張のソースをインストール";
 "settings.ai.install" = "インストール";
