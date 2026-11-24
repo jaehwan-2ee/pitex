@@ -12,6 +12,7 @@
 
 import type { ApprovalAction, ModeState } from "./adapter.ts";
 import { cleanDetail, newTurnId, patchDiff, stampTurn, unifiedDiff, type ToolDetail } from "./tool-detail.ts";
+import { foldClaudeTodo, sameTodos, TODO_TOOLS, type TodoItem } from "./todos.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -37,6 +38,8 @@ export interface ClaudeStreamState {
   toolIndexToId: Record<string, string>;
   transcript: Json[];
   draft: Json[];
+  /** The conversation's todo list (`todo_update`); kept across turns. */
+  todos: TodoItem[] | null;
 }
 
 export function createClaudeStreamState(): ClaudeStreamState {
@@ -60,6 +63,7 @@ export function createClaudeStreamState(): ClaudeStreamState {
     toolIndexToId: {},
     transcript: [],
     draft: [],
+    todos: null,
   };
 }
 
@@ -456,7 +460,6 @@ export function claudeToolDetail(name: string, input: Json): ToolDetail {
       label: textField(input, "description") || textField(input, "subagent_type"),
     });
   }
-  // TodoWrite stays generic until the todo list lands.
   return { kind: "other", label: name };
 }
 
@@ -597,6 +600,8 @@ function startTool(state: ClaudeStreamState, id: string, name: string, args: Jso
   if (state.toolStarted[id]) return;
   state.toolStarted[id] = true;
   ensureTurn(state, out);
+  // The checklist shows these calls once they succeed; a failed one gets its card in finishTool.
+  if (TODO_TOOLS.has(name)) return;
   out.push({
     type: "tool_execution_start",
     toolCallId: id,
@@ -622,14 +627,34 @@ function finishTool(
   }
   state.toolFinished[id] = true;
   const name = state.toolRawNameById[id] ?? "tool";
-  out.push({
-    type: "tool_execution_end",
-    toolCallId: id,
-    isError,
-    result: toolContent(text),
-    detail: claudeResultDetail(name, state.toolInputById[id] ?? {}, text, isError, result),
-    status: canceled ? "canceled" : isError ? "failed" : "completed",
-  });
+  const input = state.toolInputById[id] ?? {};
+  const todo = TODO_TOOLS.has(name);
+  // A rejected TodoWrite list never reaches the checklist.
+  if (todo && !isError) setTodos(state, foldClaudeTodo(state.todos, name, input, result, text), out);
+  const showCard = !todo || (isError && !canceled);
+  if (todo && showCard) {
+    out.push({ type: "tool_execution_start", toolCallId: id, toolName: name, args: {}, detail: claudeToolDetail(name, input), status: "running" });
+  }
+  if (showCard) {
+    out.push({
+      type: "tool_execution_end",
+      toolCallId: id,
+      isError,
+      result: toolContent(text),
+      detail: claudeResultDetail(name, input, text, isError, result),
+      status: canceled ? "canceled" : isError ? "failed" : "completed",
+    });
+  }
+  recordResult(state, id, text, isError);
+}
+
+function setTodos(state: ClaudeStreamState, items: TodoItem[] | null, out: Json[]): void {
+  if (!items || sameTodos(items, state.todos)) return;
+  state.todos = items;
+  out.push({ type: "todo_update", items });
+}
+
+function recordResult(state: ClaudeStreamState, id: string, text: string, isError: boolean): void {
   flushDraft(state);
   state.transcript.push({
     role: "toolResult",

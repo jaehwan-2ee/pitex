@@ -197,6 +197,7 @@ const TURN_EVENTS = new Set([
   "tool_execution_start",
   "tool_execution_update",
   "tool_execution_end",
+  "todo_update",
 ]);
 
 /** Put `turnId` on the turn, message and tool events of one batch. */

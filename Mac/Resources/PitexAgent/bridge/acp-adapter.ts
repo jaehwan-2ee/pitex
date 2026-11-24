@@ -665,7 +665,13 @@ export class AcpAdapter implements CliAdapter {
           await this.switchSession(command, host);
           return;
         case "get_messages":
-          host.respond("get_messages", true, { messages: historyMessages(this.history) }, undefined, command.id);
+          host.respond(
+            "get_messages",
+            true,
+            { messages: historyMessages(this.history), ...(this.history.todos ? { todos: this.history.todos } : {}) },
+            undefined,
+            command.id
+          );
           return;
         case "get_state":
           host.respond("get_state", true, this.stateData(), undefined, command.id);
