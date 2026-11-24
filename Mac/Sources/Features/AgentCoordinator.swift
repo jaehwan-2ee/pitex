@@ -58,6 +58,8 @@ struct AgentTranscriptEntry: Identifiable {
     /// Typed tool-call detail from a bridge backend; nil for pi's own
     /// provider, which keeps the plain name + detail rendering.
     var tool: AgentToolDetail?
+    /// Images the user sent with this message (thumbnails in the bubble).
+    var images: [AgentImage] = []
 }
 
 /// A saved conversation for the current project — one pi session file.
@@ -114,6 +116,14 @@ final class AgentCoordinator: ObservableObject {
     var preferredModelID: String?
     var historyLimit = 50
     @Published private(set) var isRunning = false
+    /// `get_state.capabilities`; pi omits it (see `AgentCapabilities(state:)`).
+    @Published private(set) var capabilities = AgentCapabilities()
+    /// Messages typed while a turn runs, sent one per agent_end.
+    @Published private(set) var queue = AgentMessageQueue()
+    /// Images attached to the draft, shown as chips above the composer.
+    @Published var draftImages: [AgentImage] = []
+    /// The `prompt` id of the queued message in flight, and that message's queue id.
+    private var drainRequest: (id: String, item: Int)?
     @Published private(set) var models: [PiModelDescriptor] = []
     @Published private(set) var currentModel: PiModelDescriptor?
     /// Session token/cost accounting, refreshed after every agent run.
@@ -281,6 +291,7 @@ final class AgentCoordinator: ObservableObject {
     }
 
     func shutdown() {
+        abandonDrain()
         intentionalStop = true
         processEpoch.retire()
         isRunning = false
@@ -690,6 +701,7 @@ final class AgentCoordinator: ObservableObject {
     private func processDidExit(_ token: UInt64) {
         guard processEpoch.isCurrent(token) else { return }
         flushDeltas()
+        abandonDrain()
         process = nil
         isRunning = false
         modelSettingsRequestID = nil
@@ -707,9 +719,12 @@ final class AgentCoordinator: ObservableObject {
 
     // MARK: - Send / stop / session
 
-    func send(prompt: String) {
+    /// Return (`now` false) or Cmd+Return (`now` true) with the draft's images:
+    /// send, steer the running turn, or queue (`AgentComposer.route`).
+    func send(prompt: String, now: Bool = false) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        // Images alone are a message too.
+        guard !trimmed.isEmpty || !draftImages.isEmpty else { return }
         switch connection {
         case .piMissing:
             statusMessage = String(localized: "assistant.pi_missing")
@@ -718,13 +733,127 @@ final class AgentCoordinator: ObservableObject {
             break
         }
         // pi's own /resume is an interactive TUI picker; here it opens the
-        // panel's history list instead.
+        // panel's history list instead. /clear is a new chat, so the panel and
+        // the backend's context agree. Either way the attached images stay.
         if trimmed == "/resume" {
             showSessionHistory()
             return
         }
+        if trimmed == "/clear" {
+            newSession()
+            return
+        }
+        let images = draftImages
+        draftImages = []
+        queue.paused = false
+        // A drained message not yet accepted counts as running: a second plain prompt would be refused.
+        let busy = isRunning || drainRequest != nil
+        switch AgentComposer.route(running: busy, approvalPending: pendingApproval != nil, now: now, canSteer: capabilities.steer && isRunning) {
+        case .send: dispatch(trimmed, images: images, steer: false)
+        case .steer: dispatch(trimmed, images: images, steer: true)
+        case .queue: queue.enqueue(trimmed, images: images)
+        }
+    }
+
+    /// "Send now" on a queued row is offered: steer into a running turn, or send
+    /// when idle (resumes a queue paused by Stop or a refused send).
+    var canSendQueuedNow: Bool {
+        pendingApproval == nil && (isRunning ? capabilities.steer : drainRequest == nil)
+    }
+
+    func sendQueuedNow(_ id: Int) {
+        guard canSendQueuedNow, let item = queue.remove(id) else { return }
+        queue.paused = false
+        dispatch(item.text, images: item.images, steer: isRunning)
+    }
+
+    /// Edit pulls the row out; the panel puts its text back in the composer.
+    func takeQueued(_ id: Int) -> AgentMessageQueue.Item? {
+        guard let item = queue.remove(id) else { return nil }
+        draftImages += item.images.prefix(max(0, AgentComposer.maxImages - draftImages.count))
+        return item
+    }
+
+    func deleteQueued(_ id: Int) {
+        _ = queue.remove(id)
+    }
+
+    func clearQueue() {
+        queue.clear()
+        drainRequest = nil
+    }
+
+    /// A pasted, dropped or picked image: a chip, or a status line saying why not.
+    func attachImage(name: String, mimeType: String, data: Data) {
+        guard capabilities.images else {
+            statusMessage = String(localized: "assistant.image.not_supported_backend")
+            return
+        }
+        do {
+            draftImages.append(try AgentImage(name: name, mimeType: mimeType, data: data, attached: draftImages.count))
+            statusMessage = nil
+        } catch {
+            let key = (error as? AgentImage.Problem)?.key ?? "assistant.image.unsupported"
+            statusMessage = String(localized: String.LocalizationValue(key))
+        }
+    }
+
+    /// Picked or dropped files: images become chips when the backend takes them;
+    /// every other file is inserted as a project-relative path.
+    func attach(urls: [URL]) {
+        var paths: [String] = []
+        let root = contextProvider().projectRoot
+        for url in urls {
+            if capabilities.images, let mime = AgentComposer.imageMIMEType(path: url.path) {
+                // Refuse an oversized file before reading it all on the main actor.
+                if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > AgentComposer.maxImageBytes {
+                    statusMessage = String(localized: String.LocalizationValue(AgentImage.Problem.tooLarge.key))
+                    continue
+                }
+                do {
+                    attachImage(name: url.lastPathComponent, mimeType: mime, data: try Data(contentsOf: url))
+                } catch {
+                    statusMessage = error.localizedDescription
+                }
+            } else if let root, let relative = try? WorkspaceModel.relativePath(for: url, root: root).rawValue {
+                paths.append(relative)
+            } else {
+                paths.append(url.path)
+            }
+        }
+        if !paths.isEmpty { insertIntoComposer(paths.joined(separator: " ") + " ") }
+    }
+
+    /// Project files for `@` mentions, relative to the root.
+    func mentionFiles() -> [String] {
+        contextProvider().projectFiles
+    }
+
+    /// One queued message per agent_end. A refused send goes back to the front
+    /// (`handleResponse`) and the queue waits for the user.
+    private func drainQueue() {
+        guard pendingApproval == nil, drainRequest == nil, let item = queue.takeNext() else { return }
+        let id = UUID().uuidString
+        drainRequest = (id, item.id)
+        dispatch(item.text, images: item.images, steer: false, id: id)
+    }
+
+    /// Persist dirty sessions first, then envelope + prompt (or steer).
+    private func dispatch(_ trimmed: String, images: [AgentImage], steer: Bool, id: String? = nil) {
+        switch connection {
+        case .piMissing:
+            statusMessage = "Pitex Agent is not installed yet — it installs automatically on launch; see Settings → AI."
+            refuseDrain(id)
+            return
+        default:
+            break
+        }
         flushDeltas()
-        transcript.append(AgentTranscriptEntry(role: .user, title: "You", text: trimmed))
+        // A drained message gets its bubble once the backend accepts it (`handleResponse`),
+        // so a refused one, back at the front of the queue, does not leave a duplicate.
+        if id == nil {
+            transcript.append(AgentTranscriptEntry(role: .user, title: "You", text: trimmed, images: images))
+        }
         statusMessage = nil
         Task {
             if let problem = await persistDirtySessions() {
@@ -733,6 +862,7 @@ final class AgentCoordinator: ObservableObject {
                     role: .notice, title: "Assistant",
                     text: problem, status: .failed
                 ))
+                refuseDrain(id)
                 return
             }
             if process == nil {
@@ -753,18 +883,40 @@ final class AgentCoordinator: ObservableObject {
                 } else {
                     statusMessage = "The agent is not running."
                 }
+                refuseDrain(id)
                 return
             }
             // Slash commands go raw so pi expands /skill:name and extension
             // commands itself; the editor-context envelope is for prose.
             let message = trimmed.hasPrefix("/") ? trimmed : await envelope(for: trimmed)
             do {
-                let behavior = isRunning ? "followUp" : nil
-                try process.send(.prompt(message: message, streamingBehavior: behavior))
+                if steer {
+                    try process.send(.steer(message: message, images: images))
+                } else {
+                    // A drained message may meet pi still settling (retry, compaction):
+                    // followUp waits for it there, and the bridges ignore it when idle.
+                    let behavior = isRunning || id != nil ? "followUp" : nil
+                    try process.send(.prompt(message: message, images: images, streamingBehavior: behavior), id: id)
+                }
             } catch {
                 statusMessage = "The prompt could not be sent: \(error.localizedDescription)"
+                refuseDrain(id)
             }
         }
+    }
+
+    /// The process went away with a queued message in flight: it goes back to the front.
+    private func abandonDrain() {
+        guard let drain = drainRequest else { return }
+        drainRequest = nil
+        queue.failed(drain.item)
+    }
+
+    /// A drained message that never went out goes back to the front of the queue.
+    private func refuseDrain(_ id: String?) {
+        guard let id, let drain = drainRequest, drain.id == id else { return }
+        drainRequest = nil
+        queue.failed(drain.item)
     }
 
     /// Stop tools before a forced SSH save takes its final source snapshot.
@@ -786,6 +938,8 @@ final class AgentCoordinator: ObservableObject {
 
     func stop() {
         denyQueuedApprovals()
+        // Stop keeps the queue but does not let agent_end send the next one.
+        queue.paused = true
         guard isRunning, let process else { return }
         try? process.send(.abort)
     }
@@ -835,6 +989,9 @@ final class AgentCoordinator: ObservableObject {
 
     private func clearTranscript() {
         flushDeltas()
+        // A new or another chat: the queue belonged to this one.
+        queue.clear()
+        drainRequest = nil
         transcript = []
         todos = []
         toolIndexByCallID = [:]
@@ -1363,6 +1520,7 @@ final class AgentCoordinator: ObservableObject {
             sendSilently(.getSessionStats)
             SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
             Task { await agentActivityDidFinish() }
+            drainQueue()
         case "message_start":
             handleMessageStart(event)
         case "message_update":
@@ -1435,6 +1593,18 @@ final class AgentCoordinator: ObservableObject {
         if isModelSettingsResponse {
             guard let id = modelSettingsRequestID, event.string("id") == id else { return }
         }
+        if event.responseCommand == "prompt", let drain = drainRequest, event.string("id") == drain.id {
+            drainRequest = nil
+            if event.responseSucceeded {
+                if let item = queue.items.first(where: { $0.id == drain.item }) {
+                    flushDeltas()
+                    transcript.append(AgentTranscriptEntry(role: .user, title: "You", text: item.text, images: item.images))
+                }
+                queue.sent(drain.item)
+            } else {
+                queue.failed(drain.item)
+            }
+        }
         if event.responseCommand == "refresh_sessions" {
             // Success or not (a signed-out backend refuses), the list shows what is on disk now;
             // a turn started meanwhile wins, since rows cannot be opened during it.
@@ -1479,6 +1649,7 @@ final class AgentCoordinator: ObservableObject {
                 thinkingLevel = level
             }
             permissionMode = AgentPermissionMode(event.responseData?["mode"])
+            capabilities = AgentCapabilities(state: event.responseData ?? [:])
             sendModelSettings(.getAvailableThinkingLevels, id: modelSettingsRequestID)
         case "get_available_thinking_levels":
             modelSettingsRequestID = nil

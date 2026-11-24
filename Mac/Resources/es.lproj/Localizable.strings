@@ -81,6 +81,24 @@
 "assistant.context_none" = "No hay contexto de documento activo";
 "assistant.selection_remove" = "Quitar selección";
 "assistant.usage" = "%@";
+"assistant.queue.label" = "Mensajes en cola";
+"assistant.queue.title" = "En cola (%@)";
+"assistant.queue.clear" = "Vaciar";
+"assistant.queue.images" = "Imágenes: %@";
+"assistant.queue.sending" = "Enviando…";
+"assistant.queue.edit" = "Editar";
+"assistant.queue.send_now" = "Enviar ahora";
+"assistant.queue.delete" = "Quitar de la cola";
+"assistant.queue.show_all" = "Mostrar los %@ en cola";
+"assistant.queue.show_less" = "Mostrar menos";
+"assistant.attach_help" = "Adjuntar imágenes o archivos (los archivos se añaden como rutas)";
+"assistant.mention.label" = "Archivos del proyecto y comandos";
+"assistant.image.label" = "Imágenes adjuntas";
+"assistant.image.remove" = "Quitar imagen";
+"assistant.image.too_large" = "Las imágenes deben ocupar 5 MB o menos.";
+"assistant.image.too_many" = "Un mensaje admite como máximo 8 imágenes.";
+"assistant.image.unsupported" = "Solo se pueden adjuntar imágenes PNG, JPEG, GIF y WebP.";
+"assistant.image.not_supported_backend" = "Este asistente no acepta imágenes; los archivos se añaden como rutas.";
 
 "command.project" = "Proyecto";
 "command.open" = "Abrir…";
@@ -235,7 +253,6 @@
 "editor.symbol_cat_ams_arrows" = "Flechas AMS";
 
 "assistant.attach_document" = "Adjuntar documento activo";
-"assistant.attach_files_help" = "Adjuntar archivos del proyecto al campo de entrada";
 "assistant.clear" = "Borrar conversación";
 "assistant.history" = "Historial de conversaciones";
 "assistant.history_empty" = "Aún no hay conversaciones guardadas para este proyecto.";

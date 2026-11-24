@@ -1250,15 +1250,36 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     ui.agent_todos.replace(Some(todos.clone()));
     root.append(&todos);
 
-    // Composer: attach, entry, permission mode, send/stop.
+    // Queued messages and attached images sit just above the composer;
+    // `refresh_assistant` fills both.
+    let queue_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    queue_box.set_margin_start(10);
+    queue_box.set_margin_end(10);
+    queue_box.set_visible(false);
+    queue_box.add_css_class("card");
+    queue_box.add_css_class("pitex-queue");
+    a11y(&queue_box, "pitex.assistant.queue", "assistant.queue.label");
+    ui.agent_queue_box.replace(Some(queue_box.clone()));
+    root.append(&queue_box);
+    let images_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    images_box.set_margin_start(10);
+    images_box.set_margin_end(10);
+    images_box.set_margin_top(4);
+    images_box.set_visible(false);
+    a11y(&images_box, "pitex.assistant.images", "assistant.image.label");
+    ui.agent_images_box.replace(Some(images_box.clone()));
+    root.append(&images_box);
+
+    // Composer: attach, a 1–8 line text view, permission mode, send/stop.
     let composer = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     composer.set_margin_start(10);
     composer.set_margin_end(10);
     composer.set_margin_top(6);
     composer.set_margin_bottom(10);
     let attach = gtk4::Button::from_icon_name("mail-attachment-symbolic");
-    compat::initial_tooltip(&attach, &tr(lang, "assistant.attach_files_help"));
-    a11y(&attach, "pitex.assistant.attach", "assistant.attach_files_help");
+    attach.set_valign(gtk4::Align::End);
+    compat::initial_tooltip(&attach, &tr(lang, "assistant.attach_help"));
+    a11y(&attach, "pitex.assistant.attach", "assistant.attach_help");
     {
         let state = state.clone();
         attach.connect_clicked(move |b| {
@@ -1268,115 +1289,302 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
             });
         });
     }
+    ui.agent_attach_button.replace(Some(attach.clone()));
     composer.append(&attach);
 
-    let entry = gtk4::Entry::new();
-    entry.set_hexpand(true);
+    let entry = gtk4::TextView::new();
+    entry.set_wrap_mode(gtk4::WrapMode::WordChar);
+    entry.set_accepts_tab(false);
+    entry.set_top_margin(6);
+    entry.set_bottom_margin(6);
+    entry.set_left_margin(8);
+    entry.set_right_margin(8);
     entry.add_css_class("pitex-conv-font");
-    entry.set_placeholder_text(Some(&tr(lang, "assistant.message_placeholder")));
+    entry.add_css_class("pitex-composer");
     a11y(&entry, "pitex.assistant.message", "assistant.message_placeholder");
+    let entry_scroll = gtk4::ScrolledWindow::new();
+    // External: wheel and caret still scroll past 8 lines, but a scrollbar's minimum
+    // length (46 px) no longer makes the one-line composer two lines tall.
+    entry_scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::External);
+    entry_scroll.set_propagate_natural_height(true);
+    // shortcut: about 8 lines at the default 13 pt; the cap does not follow ai.fontSize.
+    entry_scroll.set_max_content_height(180);
+    entry_scroll.set_child(Some(&entry));
+    entry_scroll.add_css_class("pitex-composer-frame");
+    // While the draft fits under the cap, keep its first line in view as it grows
+    // (the view scrolls to the caret before the frame has grown).
+    let keep_top = |adj: &gtk4::Adjustment| {
+        if adj.upper() <= 180.0 && adj.value() != 0.0 {
+            adj.set_value(0.0);
+        }
+    };
+    entry_scroll.vadjustment().connect_changed(keep_top);
+    entry_scroll.vadjustment().connect_value_changed(keep_top);
+    // TextView has no placeholder: a label over it while the buffer is empty.
+    let placeholder = gtk4::Label::new(Some(&tr(lang, "assistant.message_placeholder")));
+    placeholder.add_css_class("dim-label");
+    placeholder.add_css_class("pitex-conv-font");
+    placeholder.set_halign(gtk4::Align::Start);
+    placeholder.set_valign(gtk4::Align::Start);
+    placeholder.set_margin_start(10);
+    placeholder.set_margin_top(7);
+    placeholder.set_can_target(false);
+    placeholder.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    let overlay = gtk4::Overlay::new();
+    overlay.set_hexpand(true);
+    overlay.set_child(Some(&entry_scroll));
+    overlay.add_overlay(&placeholder);
     {
-        let state = state.clone();
-        entry.connect_activate(move |_| {
-            if let Ok(mut s) = state.try_borrow_mut() { s.send_agent_draft(); }
-        });
+        let placeholder = placeholder.clone();
+        entry.buffer().connect_changed(move |buffer| placeholder.set_visible(buffer.char_count() == 0));
     }
     ui.agent_composer.replace(Some(entry.clone()));
-    composer.append(&entry);
+    composer.append(&overlay);
     // Beside the composer, as in Claude Code and Paseo: the header row is already full.
+    mode_picker.set_valign(gtk4::Align::End);
     composer.append(&mode_picker);
 
-    // Slash-command completion — a popover on the entry listing
-    // `get_commands` results matching the typed prefix (max 8 rows).
-    let slash_list = gtk4::ListBox::new();
-    slash_list.set_selection_mode(gtk4::SelectionMode::Single);
-    let slash_scroll = gtk4::ScrolledWindow::new();
-    slash_scroll.set_max_content_height(280);
-    slash_scroll.set_propagate_natural_height(true);
-    slash_scroll.set_child(Some(&slash_list));
-    let slash_popover = gtk4::Popover::new();
-    slash_popover.set_child(Some(&slash_scroll));
-    slash_popover.set_position(gtk4::PositionType::Top);
-    slash_popover.set_has_arrow(false);
-    slash_popover.set_parent(&entry);
-    let slash_names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    // One completion popover for `/` commands (at the start of the draft) and
+    // `@` project files (nearest the caret). The caret stays in the composer:
+    // its key handler moves the selection.
+    let completion_list = gtk4::ListBox::new();
+    completion_list.set_selection_mode(gtk4::SelectionMode::Single);
+    completion_list.set_can_focus(false);
+    let completion_scroll = gtk4::ScrolledWindow::new();
+    completion_scroll.set_max_content_height(280);
+    completion_scroll.set_min_content_width(420);
+    completion_scroll.set_propagate_natural_height(true);
+    completion_scroll.set_child(Some(&completion_list));
+    let completion = gtk4::Popover::new();
+    completion.set_child(Some(&completion_scroll));
+    completion.set_position(gtk4::PositionType::Top);
+    completion.set_has_arrow(false);
+    completion.set_autohide(false);
+    completion.set_can_focus(false);
+    completion.set_parent(&overlay);
+    a11y(&completion_list, "pitex.assistant.completions", "assistant.mention.label");
     {
-        let entry = entry.clone();
-        let popover = slash_popover.clone();
-        let names = slash_names.clone();
-        slash_list.connect_row_activated(move |_, row| {
-            if let Some(name) = names.borrow().get(row.index().max(0) as usize) {
-                entry.set_text(&format!("/{name} "));
-                entry.set_position(-1);
-            }
-            popover.popdown();
-        });
+        // autohide is off so typing keeps the list; leaving the composer, or a click
+        // in the transcript (which takes no focus), closes it.
+        let popover = completion.clone();
+        let focus = gtk4::EventControllerFocus::new();
+        focus.connect_leave(move |_| popover.popdown());
+        entry.add_controller(focus);
+        let popover = completion.clone();
+        let click = gtk4::GestureClick::new();
+        click.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        click.connect_pressed(move |_, _, _, _| popover.popdown());
+        scroll.add_controller(click);
     }
-    {
-        let state = state.clone();
-        let popover = slash_popover.clone();
-        let list = slash_list.clone();
-        let names = slash_names.clone();
-        entry.connect_changed(move |e| {
-            let text = e.text().to_string();
-            if !text.starts_with('/') || text.contains(char::is_whitespace) {
-                popover.popdown();
-                return;
-            }
-            let prefix = text[1..].to_lowercase();
-            let Ok(s) = state.try_borrow() else { return };
-            let Some(agent) = s.agent.as_ref() else {
-                popover.popdown();
-                return;
+    // What each row inserts: the whole draft for a command, or the mention replacement.
+    let picks: Rc<RefCell<Vec<CompletionPick>>> = Rc::new(RefCell::new(Vec::new()));
+    let apply_pick: Rc<dyn Fn(usize)> = {
+        let entry = entry.clone();
+        let popover = completion.clone();
+        let picks = picks.clone();
+        Rc::new(move |index| {
+            let Some(pick) = picks.borrow().get(index).cloned() else { return };
+            let buffer = entry.buffer();
+            let (text, caret) = match pick {
+                CompletionPick::Command(name) => {
+                    let text = format!("/{name} ");
+                    let caret = text.chars().count();
+                    (text, caret)
+                }
+                CompletionPick::Mention(mention, path) => {
+                    let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+                    crate::composer::apply_mention(&text, &mention, &path)
+                }
             };
-            let matches: Vec<crate::agent::PiSlashCommand> = agent
-                .commands
-                .iter()
-                .filter(|c| c.name.to_lowercase().starts_with(&prefix))
-                .take(8)
-                .cloned()
-                .collect();
-            if matches.is_empty() {
+            popover.popdown();
+            buffer.set_text(&text);
+            buffer.place_cursor(&buffer.iter_at_offset(caret as i32));
+            entry.grab_focus();
+        })
+    };
+    {
+        let apply_pick = apply_pick.clone();
+        completion_list.connect_row_activated(move |_, row| apply_pick(row.index().max(0) as usize));
+    }
+    let update_completion: Rc<dyn Fn()> = {
+        let state = state.clone();
+        let entry = entry.clone();
+        let popover = completion.clone();
+        let list = completion_list.clone();
+        let picks = picks.clone();
+        Rc::new(move || {
+            let buffer = entry.buffer();
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+            let caret = buffer.cursor_position().max(0) as usize;
+            let Ok(s) = state.try_borrow() else { return };
+            let mut rows: Vec<(CompletionPick, String, Option<String>, Option<String>)> = Vec::new();
+            if text.starts_with('/') && !text.contains(char::is_whitespace) {
+                let prefix = text[1..].to_lowercase();
+                if let Some(agent) = s.agent.as_ref() {
+                    for command in agent.commands.iter().filter(|c| c.name.to_lowercase().starts_with(&prefix)).take(8) {
+                        let suffix = command.argument_hint.clone().filter(|h| !h.is_empty())
+                            .or_else(|| Some(command.source.clone()).filter(|s| !s.is_empty()));
+                        rows.push((CompletionPick::Command(command.name.clone()), format!("/{}", command.name), command.description.clone(), suffix));
+                    }
+                }
+            } else if let Some(mention) = crate::composer::active_mention(&text, caret) {
+                let files = s.mention_files();
+                for path in crate::composer::mention_matches(&files, &mention.query, 8) {
+                    let name = path.rsplit('/').next().unwrap_or(path).to_string();
+                    rows.push((CompletionPick::Mention(mention.clone(), path.clone()), name, Some(path.clone()), None));
+                }
+            }
+            drop(s);
+            if rows.is_empty() {
                 popover.popdown();
                 return;
             }
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
-            *names.borrow_mut() = matches.iter().map(|c| c.name.clone()).collect();
-            for command in &matches {
+            *picks.borrow_mut() = rows.iter().map(|row| row.0.clone()).collect();
+            for (_, title, subtitle, suffix) in &rows {
                 let row = adw::ActionRow::new();
-                row.set_title(&format!("/{}", command.name));
-                if let Some(description) = &command.description {
-                    row.set_subtitle(description);
+                row.set_title(&gtk4::glib::markup_escape_text(title));
+                if let Some(subtitle) = subtitle {
+                    row.set_subtitle(&gtk4::glib::markup_escape_text(subtitle));
                 }
-                if !command.source.is_empty() {
-                    let source = gtk4::Label::new(Some(&command.source));
-                    source.add_css_class("dim-label");
-                    source.add_css_class("caption");
-                    source.set_valign(gtk4::Align::Center);
-                    row.add_suffix(&source);
+                if let Some(suffix) = suffix {
+                    let label = gtk4::Label::new(Some(suffix));
+                    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                    label.set_max_width_chars(20);
+                    label.add_css_class("dim-label");
+                    label.add_css_class("caption");
+                    label.set_valign(gtk4::Align::Center);
+                    row.add_suffix(&label);
                 }
                 row.set_activatable(true);
+                row.set_can_focus(false);
+                row.update_property(&[gtk4::accessible::Property::Label(title)]);
                 list.append(&row);
             }
+            list.select_row(list.row_at_index(0).as_ref());
             popover.popup();
+        })
+    };
+    {
+        let update = update_completion.clone();
+        entry.buffer().connect_changed(move |_| update());
+    }
+    {
+        // Moving the caret onto or off an @word opens or closes the list.
+        let update = update_completion.clone();
+        entry.buffer().connect_notify_local(Some("cursor-position"), move |_, _| update());
+    }
+    let preedit = Rc::new(std::cell::Cell::new(false));
+    {
+        let preedit = preedit.clone();
+        entry.connect_preedit_changed(move |_, text| preedit.set(!text.is_empty()));
+    }
+    {
+        // Capture phase, before the view inserts a newline. An IME composition keeps its keys.
+        let keys = gtk4::EventControllerKey::new();
+        keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let state = state.clone();
+        let popover = completion.clone();
+        let list = completion_list.clone();
+        keys.connect_key_pressed(move |_, key, _, mods| {
+            use gtk4::gdk::Key;
+            if preedit.get() {
+                return gtk4::glib::Propagation::Proceed;
+            }
+            let enter = matches!(key, Key::Return | Key::KP_Enter | Key::ISO_Enter);
+            if popover.is_visible() {
+                let selected = list.selected_row().map(|row| row.index()).unwrap_or(-1);
+                let count = picks_len(&list);
+                match key {
+                    Key::Up | Key::Down => {
+                        let next = if key == Key::Up { (selected - 1).max(0) } else { (selected + 1).min(count - 1) };
+                        list.select_row(list.row_at_index(next).as_ref());
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    Key::Tab | Key::ISO_Left_Tab => {
+                        apply_pick(selected.max(0) as usize);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    Key::Escape => {
+                        popover.popdown();
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    _ if enter && !mods.contains(gtk4::gdk::ModifierType::SHIFT_MASK) => {
+                        apply_pick(selected.max(0) as usize);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    _ => {}
+                }
+            }
+            if !enter || mods.contains(gtk4::gdk::ModifierType::SHIFT_MASK) {
+                // Shift+Return falls through: the view inserts a newline.
+                return gtk4::glib::Propagation::Proceed;
+            }
+            let now = mods.intersects(gtk4::gdk::ModifierType::CONTROL_MASK | gtk4::gdk::ModifierType::META_MASK);
+            if let Ok(mut s) = state.try_borrow_mut() { s.send_agent_draft(now); }
+            gtk4::glib::Propagation::Stop
         });
+        entry.add_controller(keys);
+    }
+    // shortcut: paste and drop of images need GTK 4.6+ bindings; Ubuntu 22.04 builds attach images with the button only.
+    #[cfg(feature = "modern-gtk")]
+    {
+        // A pasted image becomes a chip; text pastes as usual.
+        let state = state.clone();
+        entry.connect_paste_clipboard(move |view| {
+            let clipboard = view.clipboard();
+            let formats = clipboard.formats();
+            if !formats.contains_type(gtk4::gdk::Texture::static_type()) || formats.contain_mime_type("text/plain") {
+                return;
+            }
+            view.stop_signal_emission_by_name("paste-clipboard");
+            let state = state.clone();
+            clipboard.read_texture_async(gtk4::gio::Cancellable::NONE, move |result| {
+                if let Ok(Some(texture)) = result {
+                    let bytes = texture.save_to_png_bytes();
+                    if let Ok(mut s) = state.try_borrow_mut() { s.attach_image_bytes("pasted.png", "image/png", &bytes); }
+                }
+            });
+        });
+    }
+    #[cfg(feature = "modern-gtk")]
+    {
+        // Dropped image files become chips; other files go in as paths.
+        let drop = gtk4::DropTarget::new(gtk4::gdk::FileList::static_type(), gtk4::gdk::DragAction::COPY);
+        drop.set_types(&[gtk4::gdk::FileList::static_type(), gtk4::gdk::Texture::static_type()]);
+        drop.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let state = state.clone();
+        drop.connect_drop(move |_, value, _, _| {
+            let Ok(mut s) = state.try_borrow_mut() else { return false };
+            if let Ok(texture) = value.get::<gtk4::gdk::Texture>() {
+                s.attach_image_bytes("dropped.png", "image/png", &texture.save_to_png_bytes());
+                return true;
+            }
+            let Ok(files) = value.get::<gtk4::gdk::FileList>() else { return false };
+            let paths: Vec<String> = files.files().iter().filter_map(|f| f.path()).map(|p| p.to_string_lossy().into_owned()).collect();
+            s.attach_files_action(paths);
+            true
+        });
+        composer.add_controller(drop);
     }
 
     let send = gtk4::Button::from_icon_name("go-up-symbolic");
+    send.set_valign(gtk4::Align::End);
     compat::initial_tooltip(&send, &tr(lang, "assistant.send_help"));
     a11y(&send, "pitex.assistantSend", "assistant.send");
     {
         let state = state.clone();
         send.connect_clicked(move |_| {
-            if let Ok(mut s) = state.try_borrow_mut() { s.send_agent_draft(); }
+            if let Ok(mut s) = state.try_borrow_mut() { s.send_agent_draft(false); }
         });
     }
     ui.agent_send_button.replace(Some(send.clone()));
     composer.append(&send);
 
     let stop = gtk4::Button::from_icon_name("media-playback-stop-symbolic");
+    stop.set_valign(gtk4::Align::End);
     compat::initial_tooltip(&stop, &tr(lang, "assistant.stop_help"));
     stop.set_visible(false);
     a11y(&stop, "pitex.assistantCancel", "assistant.stop");
@@ -3948,4 +4156,19 @@ fn session_history_row(
     row.append(&meta);
     row.update_property(&[gtk4::accessible::Property::Label(&spoken)]);
     row
+}
+
+/// What a completion row inserts.
+#[derive(Clone)]
+enum CompletionPick {
+    Command(String),
+    Mention(crate::composer::Mention, String),
+}
+
+fn picks_len(list: &gtk4::ListBox) -> i32 {
+    let mut count = 0;
+    while list.row_at_index(count).is_some() {
+        count += 1;
+    }
+    count
 }

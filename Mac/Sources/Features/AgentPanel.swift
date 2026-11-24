@@ -4,6 +4,7 @@ import BuildCore
 import GitCore
 import LanguageCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Native chat surface for the embedded pi agent, laid out like the host
 /// app's own assistant pane: a header row with the model picker, the
@@ -16,6 +17,12 @@ struct AgentPanel: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject private var subscriptionUsage = SubscriptionUsageStore.shared
     @State private var draft = ""
+    /// The highlighted row of the `/` or `@` list.
+    @State private var completionIndex = 0
+    @State private var showAllQueued = false
+    @FocusState private var composerFocused: Bool
+    /// Cmd+V with only an image on the pasteboard: caught before the field editor's paste.
+    @State private var pasteMonitor: Any?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -77,10 +84,27 @@ struct AgentPanel: View {
                     .padding(.bottom, 4)
             }
 
+            if !coordinator.queue.items.isEmpty {
+                queueList
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
+
+            if !coordinator.draftImages.isEmpty {
+                imageChips
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 2)
+            }
+
             composerRow
                 .padding(10)
         }
         .accessibilityIdentifier("pitex.assistant")
+        // Only while the composer has focus, so the monitor needs no view state.
+        .onChange(of: composerFocused) { _, focused in
+            if focused { installPasteMonitor() } else { removePasteMonitor() }
+        }
+        .onDisappear(perform: removePasteMonitor)
         .task {
             coordinator.reconcileEnablement(settings: settings)
             coordinator.prepare()
@@ -273,9 +297,12 @@ struct AgentPanel: View {
         VStack(alignment: .leading, spacing: 4) {
             if !slashMatches.isEmpty {
                 slashCompletionList
+            } else if !mentionMatches.isEmpty {
+                mentionCompletionList
             }
             composerInputRow
         }
+        .onDrop(of: [.fileURL, .image], isTargeted: nil, perform: dropItems)
     }
 
     private var composerInputRow: some View {
@@ -286,17 +313,36 @@ struct AgentPanel: View {
                 Image(systemName: "paperclip")
             }
             .buttonStyle(.borderless)
-            .help(String(localized: "assistant.attach_files_help"))
+            .help(String(localized: String.LocalizationValue(
+                coordinator.capabilities.images ? "assistant.attach_help" : "assistant.image.not_supported_backend"
+            )))
+            .accessibilityLabel(Text("assistant.attach_help"))
             .accessibilityIdentifier("pitex.assistant.attach")
 
             TextField("assistant.message_placeholder", text: $draft, axis: .vertical)
                 .font(.system(size: settings.aiFontSize))
                 .textFieldStyle(.roundedBorder)
                 // Grows with content up to 8 visible lines, then scrolls.
-                // Return still submits (onSubmit -> send); Option+Return inserts
-                // a newline.
+                // Return submits (queues while a turn runs); Option+Return inserts
+                // a newline; Cmd+Return sends now (steer) where the backend can.
                 .lineLimit(1...8)
-                .onSubmit(sendDraft)
+                .focused($composerFocused)
+                .onSubmit { sendDraft() }
+                .onKeyPress(.upArrow) { moveCompletion(-1) }
+                .onKeyPress(.downArrow) { moveCompletion(1) }
+                .onKeyPress(.tab) { applyCompletion() }
+                .onKeyPress(.escape) {
+                    guard completionCount > 0 else { return .ignored }
+                    dismissCompletion()
+                    return .handled
+                }
+                .onKeyPress(keys: [.return]) { press in
+                    if completionCount > 0 { return applyCompletion() }
+                    guard press.modifiers.contains(.command) else { return .ignored }
+                    sendDraft(now: true)
+                    return .handled
+                }
+                .onChange(of: draft) { _, _ in completionIndex = 0 }
                 .accessibilityIdentifier("pitex.assistant.message")
 
             if coordinator.isRunning {
@@ -310,27 +356,29 @@ struct AgentPanel: View {
                 .foregroundStyle(.secondary)
                 .help(String(localized: "assistant.stop_help"))
                 .accessibilityIdentifier("pitex.assistantCancel")
-            } else {
-                Button {
-                    sendDraft()
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
-                .disabled(!canSend)
-                .help(String(localized: "assistant.send_help"))
-                .keyboardShortcut(.return, modifiers: [.command])
-                .accessibilityIdentifier("pitex.assistantSend")
             }
+            // Stays beside Stop while a turn runs: a click then queues the draft,
+            // and its ⌘Return shortcut sends now (steers) where the backend can.
+            Button {
+                sendDraft(now: NSApp.currentEvent?.type == .keyDown)
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .disabled(!canSend)
+            .help(String(localized: "assistant.send_help"))
+            .keyboardShortcut(.return, modifiers: [.command])
+            .accessibilityIdentifier("pitex.assistantSend")
         }
     }
 
     /// `/`-prefixed drafts complete against pi's advertised commands
     /// (extensions, prompts, skills); picking one fills the composer.
     private var slashMatches: [PiSlashCommand] {
-        guard draft.hasPrefix("/"), draft.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return [] }
+        guard draft.hasPrefix("/"), draft.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              draft != dismissedDraft else { return [] }
         let query = String(draft.dropFirst())
         return coordinator.commands
             .filter { query.isEmpty || $0.name.lowercased().hasPrefix(query.lowercased()) }
@@ -340,7 +388,7 @@ struct AgentPanel: View {
 
     private var slashCompletionList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(slashMatches) { command in
+            ForEach(Array(slashMatches.enumerated()), id: \.element.id) { index, command in
                 Button {
                     draft = "/\(command.name) "
                 } label: {
@@ -354,19 +402,274 @@ struct AgentPanel: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 4)
-                        Text(verbatim: command.source)
+                        Text(verbatim: command.argumentHint ?? command.source)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
+                .background(index == completionIndex ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .accessibilityLabel(Text(verbatim: "/\(command.name) \(command.description ?? "")"))
+                .accessibilityAddTraits(index == completionIndex ? .isSelected : [])
             }
         }
         .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
         .accessibilityIdentifier("pitex.assistant.slashCommands")
+    }
+
+    /// A list the user closed with Escape stays closed until the draft changes.
+    @State private var dismissedDraft: String?
+
+    /// `@` nearest the end of the draft.
+    // shortcut: SwiftUI's TextField hides the caret, so the mention must end the draft; an NSTextView wrapper would allow mid-text mentions.
+    private var activeMention: AgentFileMention? {
+        guard draft != dismissedDraft else { return nil }
+        return AgentFileMention.active(in: draft, cursor: draft.count)
+    }
+
+    private var mentionMatches: [String] {
+        guard let mention = activeMention else { return [] }
+        return AgentFileMention.matches(coordinator.mentionFiles(), query: mention.query)
+    }
+
+    private var mentionCompletionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(mentionMatches.enumerated()), id: \.element) { index, path in
+                Button {
+                    insertMention(path)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text(verbatim: (path as NSString).lastPathComponent)
+                            .font(.callout)
+                        Text(verbatim: path)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 4)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(index == completionIndex ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .accessibilityLabel(Text(verbatim: path))
+                .accessibilityAddTraits(index == completionIndex ? .isSelected : [])
+            }
+        }
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("assistant.mention.label"))
+        .accessibilityIdentifier("pitex.assistant.completions")
+    }
+
+    private var completionCount: Int {
+        slashMatches.isEmpty ? mentionMatches.count : slashMatches.count
+    }
+
+    private func moveCompletion(_ step: Int) -> KeyPress.Result {
+        let count = completionCount
+        guard count > 0 else { return .ignored }
+        completionIndex = min(max(completionIndex + step, 0), count - 1)
+        return .handled
+    }
+
+    private func applyCompletion() -> KeyPress.Result {
+        let commands = slashMatches
+        if !commands.isEmpty {
+            draft = "/\(commands[min(completionIndex, commands.count - 1)].name) "
+            return .handled
+        }
+        let paths = mentionMatches
+        guard !paths.isEmpty else { return .ignored }
+        insertMention(paths[min(completionIndex, paths.count - 1)])
+        return .handled
+    }
+
+    private func dismissCompletion() {
+        dismissedDraft = draft
+    }
+
+    private func insertMention(_ path: String) {
+        guard let mention = activeMention else { return }
+        draft = mention.apply(to: draft, path: path).text
+        composerFocused = true
+    }
+
+    /// Queued messages: text, then Edit, Send now (when the backend can steer) and
+    /// Delete; more than three fold behind "Show all N queued".
+    private var queueList: some View {
+        let items = coordinator.queue.items
+        let canSendNow = coordinator.canSendQueuedNow
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(String(format: String(localized: "assistant.queue.title"), String(items.count)))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("assistant.queue.clear") { coordinator.clearQueue() }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .accessibilityIdentifier("pitex.assistant.queue.clear")
+            }
+            ForEach(showAllQueued ? items : Array(items.prefix(3))) { item in
+                HStack(spacing: 6) {
+                    Text(verbatim: item.text.split(separator: "\n", omittingEmptySubsequences: false).first.map(String.init) ?? "")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(item.text)
+                    if !item.images.isEmpty {
+                        Text(String(format: String(localized: "assistant.queue.images"), String(item.images.count)))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    if item.state == .sending {
+                        Text("assistant.queue.sending")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    queueButton("pencil", "assistant.queue.edit", item) {
+                        if let taken = coordinator.takeQueued(item.id) {
+                            let rest = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                            draft = rest.isEmpty ? taken.text : taken.text + "\n" + draft
+                            composerFocused = true
+                        }
+                    }
+                    if canSendNow {
+                        queueButton("arrow.up.circle", "assistant.queue.send_now", item) { coordinator.sendQueuedNow(item.id) }
+                    }
+                    queueButton("trash", "assistant.queue.delete", item) { coordinator.deleteQueued(item.id) }
+                }
+                .font(.callout)
+            }
+            if items.count > 3 {
+                Button {
+                    showAllQueued.toggle()
+                } label: {
+                    Text(showAllQueued
+                         ? String(localized: "assistant.queue.show_less")
+                         : String(format: String(localized: "assistant.queue.show_all"), String(items.count)))
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("assistant.queue.label"))
+        .accessibilityIdentifier("pitex.assistant.queue")
+    }
+
+    private func queueButton(_ symbol: String, _ key: String, _ item: AgentMessageQueue.Item, action: @escaping () -> Void) -> some View {
+        let title = String(localized: String.LocalizationValue(key))
+        return Button(action: action) {
+            Image(systemName: symbol)
+        }
+        .buttonStyle(.borderless)
+        .disabled(item.state == .sending)
+        .help(title)
+        .accessibilityLabel(Text(verbatim: "\(title) — \(item.text)"))
+    }
+
+    /// The draft's images: thumbnail, name and size, and a remove button.
+    private var imageChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(coordinator.draftImages) { image in
+                    let size = AgentComposer.byteSize(image.data.count)
+                    HStack(spacing: 4) {
+                        if let thumbnail = NSImage(data: image.data) {
+                            Image(nsImage: thumbnail)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 28, height: 28)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .accessibilityHidden(true)
+                        }
+                        Text(verbatim: "\(image.name) · \(size)")
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button {
+                            coordinator.draftImages.removeAll { $0.id == image.id }
+                        } label: {
+                            Image(systemName: "xmark").imageScale(.small)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help(String(localized: "assistant.image.remove"))
+                        .accessibilityLabel(Text(verbatim: "\(String(localized: "assistant.image.remove")) — \(image.name)"))
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(Text(verbatim: "\(image.name), \(size)"))
+                }
+            }
+        }
+        .accessibilityLabel(Text("assistant.image.label"))
+        .accessibilityIdentifier("pitex.assistant.images")
+    }
+
+    private func installPasteMonitor() {
+        guard pasteMonitor == nil else { return }
+        let coordinator = coordinator
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers == "v" else { return event }
+            // The monitor's closure is not main-actor isolated; local monitors run on the main thread.
+            let consumed = MainActor.assumeIsolated { () -> Bool in
+                let pasteboard = NSPasteboard.general
+                // Text (and a copied file's name) pastes as usual.
+                guard pasteboard.string(forType: .string) == nil,
+                      let image = NSImage(pasteboard: pasteboard),
+                      let tiff = image.tiffRepresentation,
+                      let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return false }
+                coordinator.attachImage(name: "pasted.png", mimeType: "image/png", data: png)
+                return true
+            }
+            return consumed ? nil : event
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
+        pasteMonitor = nil
+    }
+
+    /// Dropped image files become chips; other files go in as paths.
+    private func dropItems(_ providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers {
+            let coordinator = coordinator
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                handled = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in coordinator.attach(urls: [url]) }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                handled = true
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data, let rep = NSBitmapImageRep(data: data),
+                          let png = rep.representation(using: .png, properties: [:]) else { return }
+                    Task { @MainActor in coordinator.attachImage(name: "dropped.png", mimeType: "image/png", data: png) }
+                }
+            }
+        }
+        return handled
     }
 
     /// `12.3k/200k ctx (6%) · 5h 12% · 7d 34%` for OAuth subscription
@@ -461,12 +764,12 @@ struct AgentPanel: View {
 
     private var canSend: Bool {
         coordinator.connection != .piMissing
-            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !coordinator.draftImages.isEmpty)
     }
 
-    private func sendDraft() {
+    private func sendDraft(now: Bool = false) {
         guard canSend else { return }
-        coordinator.send(prompt: draft)
+        coordinator.send(prompt: draft, now: now)
         draft = ""
     }
 
@@ -476,14 +779,7 @@ struct AgentPanel: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
-        let paths = panel.urls.map { url -> String in
-            if let root = coordinator.contextProvider().projectRoot,
-               let relative = try? WorkspaceModel.relativePath(for: url, root: root).rawValue {
-                return relative
-            }
-            return url.path
-        }
-        coordinator.insertIntoComposer(paths.joined(separator: " ") + " ")
+        coordinator.attach(urls: panel.urls)
     }
 
     private var modelBinding: Binding<AssistantCatalog.RowID?> {
@@ -560,12 +856,28 @@ private struct AgentEntryRow: View {
         case .user:
             HStack {
                 Spacer(minLength: 32)
-                Text(verbatim: entry.text)
-                    .font(.system(size: fontSize))
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(verbatim: entry.text)
+                        .font(.system(size: fontSize))
+                        .textSelection(.enabled)
+                    if !entry.images.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(entry.images) { image in
+                                if let thumbnail = NSImage(data: image.data) {
+                                    Image(nsImage: thumbnail)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(maxWidth: 96, maxHeight: 96)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                        .accessibilityLabel(Text(verbatim: image.name))
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 3) {

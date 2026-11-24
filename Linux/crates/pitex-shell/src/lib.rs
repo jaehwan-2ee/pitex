@@ -13,6 +13,7 @@ pub mod chat_markdown;
 mod chat_view;
 pub mod compat;
 pub mod completion;
+pub mod composer;
 pub use app_ports::identity;
 #[cfg(feature = "equation-preview")]
 pub mod equation_preview;

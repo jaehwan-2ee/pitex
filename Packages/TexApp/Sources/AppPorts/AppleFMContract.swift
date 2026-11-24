@@ -231,6 +231,8 @@ public enum AppleFMEvents {
             data: .object([
                 "model": AppleFMCatalog.model(contextTokens: contextTokens),
                 "thinkingLevel": .string(AppleFMCatalog.thinkingLevel),
+                // One local turn at a time, text only: the composer queues and offers no images.
+                "capabilities": .object(["steer": .bool(false), "images": .bool(false)]),
             ])
         )
     }

@@ -123,6 +123,7 @@ final class AppleFMContractTests: XCTestCase {
         XCTAssertEqual(state.object("data")?["model"]?.string("id"), "system")
         XCTAssertEqual(state.object("data")?["model"]?.string("provider"), "apple")
         XCTAssertEqual(state.object("data")?["model"]?["contextWindow"], .int(4096))
+        XCTAssertEqual(state.object("data")?["capabilities"], .object(["steer": .bool(false), "images": .bool(false)]))
 
         let levels = AppleFMEvents.thinkingLevels(id: "req-1")
         XCTAssertEqual(levels.object("data")?["levels"], .array([.string("off")]))
