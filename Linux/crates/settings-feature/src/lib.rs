@@ -127,6 +127,14 @@ impl BuildPreferences {
             false,
         )
     }
+    /// The command a build runs: the build-command field, or the fallback
+    /// command when that field is blank.
+    pub fn build_command<'a>(&'a self, field: &'a str) -> &'a str {
+        match &self.shell_execution {
+            ShellExecutionPreference::Custom { command } if field.trim().is_empty() => command,
+            _ => field,
+        }
+    }
     pub fn acknowledging_custom_shell(&self) -> Result<Self, SettingsValidationError> {
         Self::new(
             self.engine,

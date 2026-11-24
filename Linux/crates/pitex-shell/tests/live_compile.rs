@@ -13,6 +13,7 @@ use pitex_shell::model::{
     ConsoleSection, WorkspaceBuildState, WorkspaceMessage, WorkspaceModel,
 };
 use pitex_shell::settings::{Preferences, SettingsStore};
+use settings_feature::ShellExecutionPreference;
 use pitex_shell::synctex::SyncTeXBinding;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -233,6 +234,7 @@ fn live_compile_scenarios() {
     retained_live_artifact_never_falls_back();
     custom_without_outdir_rejected();
     tectonic_preset_and_quoting();
+    blank_build_command_runs_fallback();
 }
 
 fn edit_coalescing_and_ime() {
@@ -1000,4 +1002,28 @@ fn tectonic_preset_and_quoting() {
         model.substitute_command_placeholders("latexmk -outdir={outdir} {file}", "/bin/bash"),
         "latexmk -outdir=. my file.tex"
     );
+}
+
+/// A blank build-command field runs the Settings fallback command, and only
+/// while the shell approval switch is on.
+fn blank_build_command_runs_fallback() {
+    let mut fx = Fixture::open("fallback", "main.tex", "  ");
+    fx.store.settings.build.shell_execution = ShellExecutionPreference::Custom {
+        command: "touch fallback-ran".into(),
+    };
+    let marker = fx._dir.join("fallback-ran");
+    fx.model.start_build(&fx.store, "en");
+    let _ = fx.finish_next();
+    assert!(marker.exists(), "the fallback command did not run");
+
+    std::fs::remove_file(&marker).unwrap();
+    fx.store.settings.build.custom_shell_acknowledged = false;
+    fx.model.start_build(&fx.store, "en");
+    assert!(fx.model.active_run.is_none());
+    assert!(
+        matches!(&fx.model.build_state, WorkspaceBuildState::Failed(m) if m.contains("Enable shell commands")),
+        "expected the approval error, got {:?}",
+        fx.model.build_state
+    );
+    assert!(!marker.exists());
 }

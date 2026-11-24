@@ -2065,6 +2065,8 @@ pub fn show_settings(state: &Rc<RefCell<AppState>>, parent: &gtk4::Window) {
             }
         });
     }
+    // `.help("settings.compile.fallback_help")`
+    fallback_row.set_tooltip_text(Some(&tr(lang, "settings.compile.fallback_help")));
     shell_group.add(&fallback_row);
     compile.add(&shell_group);
 
