@@ -248,6 +248,22 @@
 "assistant.reasoning_help" = "Nivel de razonamiento";
 "assistant.send_help" = "Enviar (⌘Retorno)";
 "assistant.stop_help" = "Detener el agente";
+"assistant.tool.ran" = "Ejecutó %@";
+"assistant.tool.edited" = "Editó %@";
+"assistant.tool.wrote" = "Escribió %@";
+"assistant.tool.read" = "Leyó %@";
+"assistant.tool.lines" = "líneas %@";
+"assistant.tool.searched" = "Buscó %@";
+"assistant.tool.matches" = "%@ coincidencias";
+"assistant.tool.fetched" = "Obtuvo %@";
+"assistant.tool.subagent" = "Subagente: %@";
+"assistant.tool.thought" = "Pensando";
+"assistant.tool.exit" = "código %@";
+"assistant.tool.open_file" = "Abrir archivo";
+"assistant.tool.status_running" = "En curso";
+"assistant.tool.status_completed" = "Completado";
+"assistant.tool.status_failed" = "Falló";
+"assistant.tool.status_canceled" = "Cancelado";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";

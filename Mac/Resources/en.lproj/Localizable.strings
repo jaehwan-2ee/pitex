@@ -247,6 +247,22 @@
 "assistant.reasoning_help" = "Reasoning effort";
 "assistant.send_help" = "Send (⌘Return)";
 "assistant.stop_help" = "Stop the agent";
+"assistant.tool.ran" = "Ran %@";
+"assistant.tool.edited" = "Edited %@";
+"assistant.tool.wrote" = "Wrote %@";
+"assistant.tool.read" = "Read %@";
+"assistant.tool.lines" = "lines %@";
+"assistant.tool.searched" = "Searched %@";
+"assistant.tool.matches" = "%@ matches";
+"assistant.tool.fetched" = "Fetched %@";
+"assistant.tool.subagent" = "Subagent: %@";
+"assistant.tool.thought" = "Thinking";
+"assistant.tool.exit" = "exit %@";
+"assistant.tool.open_file" = "Open file";
+"assistant.tool.status_running" = "Running";
+"assistant.tool.status_completed" = "Completed";
+"assistant.tool.status_failed" = "Failed";
+"assistant.tool.status_canceled" = "Canceled";
 "assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";

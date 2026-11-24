@@ -90,6 +90,47 @@ function askBash() {
   });
 }
 
+// One Read with a line range (of intro.tex, which the window journey writes),
+// one Edit with Claude Code's structuredPatch result, and one Bash call that
+// exits 1: the typed tool cards in the panel.
+function toolCards() {
+  const root = process.env.FAKE_ROOT ?? process.cwd();
+  const file = `${root}/main.tex`;
+  const call = (id, name, input) =>
+    send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } });
+  const result = (id, content, isError, toolUseResult) =>
+    send({
+      type: "user",
+      session_id: session,
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] },
+      ...(toolUseResult ? { tool_use_result: toolUseResult } : {}),
+    });
+  call("toolu_read", "Read", { file_path: `${root}/intro.tex`, offset: 1, limit: 40 });
+  result("toolu_read", "1\t\\documentclass{article}", false);
+  call("toolu_edit", "Edit", { file_path: file, old_string: "Title", new_string: "A Better Title\n\\maketitle" });
+  result("toolu_edit", "The file has been updated.", false, {
+    filePath: file,
+    structuredPatch: [
+      {
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        lines: [
+          "-\\documentclass{article}\\begin{document}Title\\end{document}",
+          "+\\documentclass{article}\\begin{document}A Better Title",
+          "+\\maketitle\\end{document}",
+        ],
+      },
+    ],
+  });
+  call("toolu_bash", "Bash", { command: "latexmk -pdf main.tex" });
+  result("toolu_bash", "Exit code 1\n! LaTeX Error: File `missing.sty' not found.", true);
+  streamText("Done");
+  send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: "Done" }] } });
+  finish("success", "Done");
+}
+
 function finish(subtype, result) {
   send({
     type: "result",
@@ -161,6 +202,10 @@ rl.on("line", (line) => {
         message: { role: "assistant", content: [{ type: "text", text: "pitex-ok" }] },
       });
       finish("success", "pitex-ok");
+      return;
+    }
+    if (text.includes("TOOLCARDS")) {
+      toolCards();
       return;
     }
     if (text.includes("TOUCH")) {

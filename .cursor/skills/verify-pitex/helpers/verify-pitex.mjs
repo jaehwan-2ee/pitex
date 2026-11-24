@@ -12,7 +12,7 @@ const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
 const PROVIDERS = ["codex", "claude", "grok", "agy"];
-const GTK_PROVIDERS = ["claude", "agy", "stale-codex", "stale-grok"];
+const GTK_PROVIDERS = ["claude", "claude-toolcards", "agy", "stale-codex", "stale-grok"];
 const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH", agy: "AGY_PATH" };
 const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", agy: "agy.mjs" };
 
@@ -60,7 +60,7 @@ function usage() {
   console.log(`verify-pitex doctor
 verify-pitex drive --provider <codex|claude|grok|agy|all>
 verify-pitex cleanup
-verify-pitex gtk --provider <claude|agy|stale-codex|stale-grok>`);
+verify-pitex gtk --provider <claude|claude-toolcards|agy|stale-codex|stale-grok>`);
 }
 
 function hiddenGtkProvider(provider) {
@@ -571,7 +571,8 @@ function driveGtk(provider) {
     console.log(JSON.stringify({ pass: false, observed: `missing ${binary}` }));
     return Promise.resolve(2);
   }
-  const run = prepareRun(provider, "gtk");
+  // claude-toolcards drives the Claude fake with the TOOLCARDS prompt.
+  const run = provider === "claude-toolcards" ? prepareRun("claude", "gtk-toolcards") : prepareRun(provider, "gtk");
   const env = {
     ...bridgeEnv(run, "ok"),
     HOME: run.home,

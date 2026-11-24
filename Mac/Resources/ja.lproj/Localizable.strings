@@ -247,6 +247,22 @@
 "assistant.reasoning_help" = "推論レベル";
 "assistant.send_help" = "送信 (⌘Return)";
 "assistant.stop_help" = "エージェントを停止";
+"assistant.tool.ran" = "%@ を実行";
+"assistant.tool.edited" = "%@ を編集";
+"assistant.tool.wrote" = "%@ を書き込み";
+"assistant.tool.read" = "%@ を読み取り";
+"assistant.tool.lines" = "%@ 行";
+"assistant.tool.searched" = "%@ を検索";
+"assistant.tool.matches" = "%@ 件一致";
+"assistant.tool.fetched" = "%@ から取得";
+"assistant.tool.subagent" = "サブエージェント: %@";
+"assistant.tool.thought" = "思考中";
+"assistant.tool.exit" = "終了コード %@";
+"assistant.tool.open_file" = "ファイルを開く";
+"assistant.tool.status_running" = "実行中";
+"assistant.tool.status_completed" = "完了";
+"assistant.tool.status_failed" = "失敗";
+"assistant.tool.status_canceled" = "キャンセル済み";
 "assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";

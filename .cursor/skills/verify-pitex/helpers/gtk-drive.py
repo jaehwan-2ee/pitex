@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -10,7 +11,14 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"claude": 248}
+MENU_Y = {"claude": 248, "claude-toolcards": 248}
+# The fake Claude answers TOOLCARDS with a Read, an Edit and a failing Bash call.
+TOOLCARDS = "claude-toolcards"
+# Expander rows of those three cards in the 1280x800 window, top to bottom.
+# The Read card's "Open file" button once all three cards are open.
+OPEN_FILE_CLICK = (497, 397)
+# Bottom card first, so expanding one never moves the next target.
+CARD_CLICKS = [(435, 383), (435, 352), (435, 321)]
 STALE_STORED = {
     "stale-codex": "codex",
     "stale-grok": "grok",
@@ -32,6 +40,8 @@ def main():
         seed_stale_provider(stored or seeded)
     tex = project / "main.tex"
     tex.write_text("\\documentclass{article}\\begin{document}Title\\end{document}\n")
+    if provider == TOOLCARDS:
+        (project / "intro.tex").write_text("\\section{Introduction}\n")
     log = open(evidence / "pitex.log", "w")
     child = subprocess.Popen([binary, str(tex)], stdout=log, stderr=subprocess.STDOUT)
     (evidence / "pids.json").write_text(json.dumps([child.pid]) + "\n")
@@ -74,11 +84,20 @@ def main():
         shot(evidence / "03-assistant.png")
         click(560, 752)
         time.sleep(0.15)
-        run(["xdotool", "type", "--delay", "12", "Fix the title"])
+        if provider == TOOLCARDS:
+            # Give the transcript room: drag the editor/console divider up.
+            run(["xdotool", "mousemove", "840", "538", "mousedown", "1", "mousemove", "840", "400", "mousemove", "840", "160", "mouseup", "1"])
+            time.sleep(0.4)
+            click(560, 752)
+            time.sleep(0.15)
+        prompt = "TOOLCARDS" if provider == TOOLCARDS else "Fix the title"
+        run(["xdotool", "type", "--delay", "12", prompt])
         time.sleep(0.15)
         run(["xdotool", "key", "Return"])
         time.sleep(2.5)
         shot(evidence / "04-sent.png")
+        if provider == TOOLCARDS:
+            return tool_cards(evidence, result)
         if not stored:
             click(470, 716)
             time.sleep(1.2)
@@ -124,6 +143,37 @@ def main():
         log.close()
 
 
+def tool_cards(evidence, result):
+    collapsed = screen_text(evidence / "04-sent.png")
+    for x, y in CARD_CLICKS:
+        click(x, y)
+        time.sleep(0.4)
+    time.sleep(0.6)
+    shot(evidence / "05-expanded.png")
+    expanded = screen_text(evidence / "05-expanded.png")
+    # "Open file" on the Read card activates intro.tex in the editor.
+    click(*OPEN_FILE_CLICK)
+    time.sleep(1.0)
+    shot(evidence / "06-open-file.png")
+    record_path = Path(os.environ["FAKE_RECORD"])
+    result["promptReachedCli"] = "TOOLCARDS" in record_path.read_text()
+    result["collapsedText"] = collapsed[-800:]
+    result["expandedText"] = expanded[-1500:]
+    result["titles"] = {
+        "edited": "Edited main.tex" in collapsed,
+        "ran": "Ran latexmk" in collapsed,
+        "read": "Read intro.tex" in collapsed,
+    }
+    result["diffShown"] = "maketitle" in expanded
+    # Without tesseract the shots are the evidence: look at 04 and 05.
+    result["ocr"] = bool(shutil.which("tesseract"))
+    checks = all(result["titles"].values()) and result["diffShown"] if result["ocr"] else True
+    result["pass"] = result["promptReachedCli"] and checks
+    result["steps"].append("cards")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
+
+
 def seed_stale_provider(stored):
     config = Path(os.environ["XDG_CONFIG_HOME"]) / "pitex"
     config.mkdir(parents=True, exist_ok=True)
@@ -140,7 +190,7 @@ def preferences_path():
 
 
 def screen_text(path):
-    if not path.exists():
+    if not path.exists() or not shutil.which("tesseract"):
         return ""
     proc = subprocess.run(["tesseract", str(path), "stdout"], capture_output=True, text=True)
     return proc.stdout or ""

@@ -248,6 +248,22 @@
 "assistant.reasoning_help" = "Уровень рассуждений";
 "assistant.send_help" = "Отправить (⌘Return)";
 "assistant.stop_help" = "Остановить агента";
+"assistant.tool.ran" = "Выполнено: %@";
+"assistant.tool.edited" = "Изменён %@";
+"assistant.tool.wrote" = "Записан %@";
+"assistant.tool.read" = "Прочитан %@";
+"assistant.tool.lines" = "строки %@";
+"assistant.tool.searched" = "Поиск %@";
+"assistant.tool.matches" = "совпадений: %@";
+"assistant.tool.fetched" = "Загружено: %@";
+"assistant.tool.subagent" = "Субагент: %@";
+"assistant.tool.thought" = "Размышление";
+"assistant.tool.exit" = "код выхода %@";
+"assistant.tool.open_file" = "Открыть файл";
+"assistant.tool.status_running" = "Выполняется";
+"assistant.tool.status_completed" = "Завершено";
+"assistant.tool.status_failed" = "Ошибка";
+"assistant.tool.status_canceled" = "Отменено";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";
