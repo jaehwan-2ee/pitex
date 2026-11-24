@@ -275,6 +275,16 @@
 "assistant.question.other_placeholder" = "Type your answer";
 "assistant.question.submit" = "Submit";
 "assistant.question.dismiss" = "Dismiss";
+"assistant.todo.title" = "Task list";
+"assistant.todo.summary" = "Tasks %1$ld/%2$ld";
+"assistant.todo.a11y" = "Task list, %1$ld of %2$ld done";
+"assistant.todo.created" = "Task list created (%@)";
+"assistant.todo.added" = "Added: %@";
+"assistant.todo.started" = "Started: %@";
+"assistant.todo.completed" = "Completed: %@";
+"assistant.todo.status.pending" = "Pending";
+"assistant.todo.status.in_progress" = "In progress";
+"assistant.todo.status.completed" = "Completed";
 "assistant.plan.title" = "Plan ready for review";
 "assistant.plan.approve" = "Approve plan";
 "assistant.plan.approve_accept_edits" = "Approve and accept edits";

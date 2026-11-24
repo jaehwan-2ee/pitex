@@ -276,6 +276,16 @@
 "assistant.question.other_placeholder" = "Введите ответ";
 "assistant.question.submit" = "Отправить";
 "assistant.question.dismiss" = "Закрыть";
+"assistant.todo.title" = "Список задач";
+"assistant.todo.summary" = "Задачи %1$ld/%2$ld";
+"assistant.todo.a11y" = "Список задач, выполнено %1$ld из %2$ld";
+"assistant.todo.created" = "Создан список задач (%@)";
+"assistant.todo.added" = "Добавлено: %@";
+"assistant.todo.started" = "Начато: %@";
+"assistant.todo.completed" = "Готово: %@";
+"assistant.todo.status.pending" = "Ожидает";
+"assistant.todo.status.in_progress" = "Выполняется";
+"assistant.todo.status.completed" = "Выполнено";
 "assistant.plan.title" = "План готов к проверке";
 "assistant.plan.approve" = "Одобрить план";
 "assistant.plan.approve_accept_edits" = "Одобрить и принимать правки";

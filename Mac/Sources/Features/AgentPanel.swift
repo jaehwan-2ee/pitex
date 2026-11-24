@@ -71,6 +71,12 @@ struct AgentPanel: View {
                 .padding(.bottom, 4)
             }
 
+            if !coordinator.todos.isEmpty {
+                AgentTodoChecklist(items: coordinator.todos, isRunning: coordinator.isRunning, fontSize: settings.aiFontSize)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
+
             composerRow
                 .padding(10)
         }
@@ -617,6 +623,108 @@ private struct AgentEntryRow: View {
                 .font(captionFont)
                 .foregroundStyle(entry.status == .failed ? Color.red : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
+        case .activity:
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: activitySymbol)
+                    .accessibilityHidden(true)
+                Text(verbatim: String(format: String(localized: String.LocalizationValue(entry.title)), entry.text))
+            }
+            .font(captionFont)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var activitySymbol: String {
+        switch entry.title {
+        case AgentTodoActivity.completed("").key: return "checkmark.circle"
+        case AgentTodoActivity.started("").key: return "play.circle"
+        default: return "checklist"
+        }
+    }
+}
+
+/// The agent's todo list, pinned above the composer while the chat has one.
+/// Collapsed it is one line ("Tasks 2/5", plus " · Fixing the citation" while a
+/// turn runs, and a progress bar); expanded it lists every item with its status
+/// mark, scrolling past 200 pt.
+private struct AgentTodoChecklist: View {
+    let items: [AgentTodoItem]
+    let isRunning: Bool
+    let fontSize: Double
+    @State private var expanded = false
+    private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
+
+    var body: some View {
+        let progress = AgentTodoList.progress(items)
+        DisclosureGroup(isExpanded: $expanded) {
+            // A long list scrolls instead of squeezing the transcript (Paseo caps its panel too).
+            ViewThatFits(in: .vertical) {
+                rows
+                ScrollView { rows }
+            }
+            .frame(maxHeight: 200)
+            .padding(.top, 4)
+        } label: {
+            HStack(spacing: 8) {
+                Text(verbatim: summary(progress))
+                    .font(captionFont.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                    .frame(width: 64)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: String(format: String(localized: "assistant.todo.a11y"), progress.done, progress.total)))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("pitex.assistant.todos")
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    mark(item.status)
+                    Text(verbatim: item.text)
+                        .strikethrough(item.status == .completed)
+                        .foregroundStyle(item.status == .completed ? Color.secondary : Color.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(captionFont)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: "\(statusTitle(item.status)): \(item.text)"))
+            }
+        }
+    }
+
+    private func summary(_ progress: (done: Int, total: Int)) -> String {
+        let counts = String(format: String(localized: "assistant.todo.summary"), progress.done, progress.total)
+        // After the turn, a present-tense step would claim work that is not running.
+        guard isRunning, let current = AgentTodoList.current(items) else { return counts }
+        return "\(counts) · \(current)"
+    }
+
+    @ViewBuilder
+    private func mark(_ status: AgentTodoItem.Status) -> some View {
+        switch status {
+        case .pending:
+            Image(systemName: "circle").foregroundStyle(.secondary)
+        case .inProgress:
+            Image(systemName: "circle.lefthalf.filled").foregroundStyle(Color.accentColor)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        }
+    }
+
+    private func statusTitle(_ status: AgentTodoItem.Status) -> String {
+        switch status {
+        case .pending: return String(localized: "assistant.todo.status.pending")
+        case .inProgress: return String(localized: "assistant.todo.status.in_progress")
+        case .completed: return String(localized: "assistant.todo.status.completed")
         }
     }
 }

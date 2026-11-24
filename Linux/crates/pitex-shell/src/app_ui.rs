@@ -189,6 +189,10 @@ pub struct UiHandles {
     /// The request the card was built for; rebuilt only when it changes,
     /// so a half-filled question keeps its picks across refreshes.
     pub agent_approval_shown: RefCell<Option<crate::agent::AgentApprovalRequest>>,
+    /// The todo checklist pinned above the composer; hidden while the list is empty.
+    pub agent_todos: RefCell<Option<gtk4::Expander>>,
+    /// The list, running state and font size the checklist was built for; rebuilt only when one changes.
+    pub agent_todos_shown: RefCell<(Vec<crate::agent::TodoItem>, bool, u64)>,
     /// Permission mode picker (bridge backends that report modes).
     pub agent_mode_picker: RefCell<Option<gtk4::DropDown>>,
     /// Right-aligned usage/context readout in the assistant controls row —
@@ -869,6 +873,7 @@ impl AppState {
                  .pitex-diff-filehdr {{ background-color: alpha(currentColor, 0.08); border-radius: 0; }}
                  .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}
                  .pitex-mode-edits > button {{ background-color: alpha(#e5a50a, 0.25); box-shadow: inset 0 0 0 1px alpha(#e5a50a, 0.8); }}
+                 .pitex-todos {{ padding: 4px 8px; }}
                  .pitex-md-code {{ background-color: alpha(currentColor, 0.06); border-radius: 6px; padding: 2px 8px 6px 8px; }}
                  .pitex-md-quote {{ border-left: 3px solid alpha(currentColor, 0.25); padding-left: 8px; }}
                  .pitex-md-cell {{ padding: 2px 0; border-bottom: 1px solid alpha(currentColor, 0.10); }}
@@ -4677,6 +4682,15 @@ impl AppState {
                 }
                 box_.set_visible(shown.is_some());
             }
+            if let Some(expander) = ui.agent_todos.borrow().as_ref() {
+                let font_size = self.store.ai_font_size();
+                let mut shown = ui.agent_todos_shown.borrow_mut();
+                if shown.0 != agent.todos || shown.1 != agent.is_running || shown.2 != font_size.to_bits() {
+                    fill_todo_checklist(expander, &agent.todos, agent.is_running, font_size, lang);
+                    *shown = (agent.todos.clone(), agent.is_running, font_size.to_bits());
+                }
+                expander.set_visible(!shown.0.is_empty());
+            }
         });
         self.refresh_selection_chip();
     }
@@ -6487,12 +6501,114 @@ fn approval_card(
     card.upcast()
 }
 
+/// The checklist header (`Tasks 2/5`, plus ` · <current step>` while a turn runs, and a progress
+/// bar) and one row per item. The expander itself is kept, so it stays open or closed across updates.
+pub(crate) fn fill_todo_checklist(
+    expander: &gtk4::Expander,
+    items: &[crate::agent::TodoItem],
+    running: bool,
+    font_size: f64,
+    lang: &str,
+) {
+    use crate::agent::TodoStatus;
+    let caption = (font_size - 2.0).max(9.0);
+    let (done, total) = crate::agent::todo_progress(items);
+    let counts = [done.to_string(), total.to_string()];
+    let counts = [counts[0].as_str(), counts[1].as_str()];
+    let mut summary = crate::l10n::trn(lang, "assistant.todo.summary", &counts);
+    // After the turn, a present-tense step would claim work that is not running.
+    if let Some(current) = crate::agent::todo_current(items).filter(|_| running) {
+        summary.push_str(" · ");
+        summary.push_str(current);
+    }
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    let label = gtk4::Label::new(Some(&summary));
+    label.set_attributes(Some(&font_attrs(caption)));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    header.append(&label);
+    let bar = gtk4::ProgressBar::new();
+    bar.set_fraction(if total == 0 { 0.0 } else { done as f64 / total as f64 });
+    bar.set_valign(gtk4::Align::Center);
+    bar.set_size_request(64, -1);
+    header.append(&bar);
+    expander.set_label_widget(Some(&header));
+
+    let list = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+    list.set_margin_top(4);
+    for item in items {
+        let (mark, key) = match item.status {
+            TodoStatus::Pending => ("○", "assistant.todo.status.pending"),
+            TodoStatus::InProgress => ("◐", "assistant.todo.status.in_progress"),
+            TodoStatus::Completed => ("✓", "assistant.todo.status.completed"),
+        };
+        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        let mark_label = gtk4::Label::new(Some(mark));
+        mark_label.set_valign(gtk4::Align::Start);
+        mark_label.set_attributes(Some(&font_attrs(caption)));
+        // The row's label already says the status.
+        mark_label.update_state(&[gtk4::accessible::State::Hidden(true)]);
+        let text = gtk4::Label::new(Some(&item.text));
+        let attrs = font_attrs(caption);
+        text.set_attributes(Some(&attrs));
+        text.set_xalign(0.0);
+        text.set_wrap(true);
+        text.set_hexpand(true);
+        match item.status {
+            TodoStatus::InProgress => mark_label.add_css_class("accent"),
+            TodoStatus::Completed => {
+                mark_label.add_css_class("success");
+                text.add_css_class("dim-label");
+                attrs.insert(gtk4::pango::AttrInt::new_strikethrough(true));
+                text.set_attributes(Some(&attrs));
+            }
+            TodoStatus::Pending => mark_label.add_css_class("dim-label"),
+        }
+        text.update_property(&[gtk4::accessible::Property::Label(&format!("{}: {}", tr(lang, key), item.text))]);
+        row.append(&mark_label);
+        row.append(&text);
+        list.append(&row);
+    }
+    // A long list scrolls instead of squeezing the transcript (Paseo caps its panel too).
+    let scroll = gtk4::ScrolledWindow::new();
+    scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_max_content_height(200);
+    scroll.set_child(Some(&list));
+    expander.set_child(Some(&scroll));
+    expander.update_property(&[gtk4::accessible::Property::Label(&crate::l10n::trn(lang, "assistant.todo.a11y", &counts))]);
+}
+
+/// One compact line for a todo-list change ("Started: Build the PDF").
+fn todo_activity_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64) -> gtk4::Widget {
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let icon = match entry.title.as_str() {
+        "assistant.todo.completed" => "object-select-symbolic",
+        "assistant.todo.started" => "media-playback-start-symbolic",
+        _ => "view-list-symbolic",
+    };
+    let image = gtk4::Image::from_icon_name(icon);
+    image.add_css_class("dim-label");
+    row.append(&image);
+    let label = gtk4::Label::new(Some(&crate::l10n::trn(language(), &entry.title, &[&entry.text])));
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.add_css_class("dim-label");
+    label.set_attributes(Some(&font_attrs((font_size - 2.0).max(9.0))));
+    row.append(&label);
+    row.upcast()
+}
+
 fn transcript_row(
     entry: &crate::agent::AgentTranscriptEntry,
     font_size: f64,
     root: Option<&Path>,
     theme: &crate::chat_view::ChatTheme,
 ) -> gtk4::Widget {
+    if entry.role == crate::agent::TranscriptRole::Activity {
+        return todo_activity_row(entry, font_size);
+    }
     if entry.role == crate::agent::TranscriptRole::Tool {
         // A history-rebuilt row has no detail: a generic card titled by the tool name.
         let generic = crate::agent::ToolDetail { kind: "other".into(), ..Default::default() };
@@ -6511,7 +6627,7 @@ fn transcript_row(
         crate::agent::TranscriptRole::Tool => {
             ("Tool".to_string(), "emblem-system-symbolic")
         }
-        crate::agent::TranscriptRole::Notice => {
+        crate::agent::TranscriptRole::Notice | crate::agent::TranscriptRole::Activity => {
             ("Status".to_string(), "dialog-information-symbolic")
         }
     };

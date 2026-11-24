@@ -275,6 +275,16 @@
 "assistant.question.other_placeholder" = "답변 입력";
 "assistant.question.submit" = "제출";
 "assistant.question.dismiss" = "닫기";
+"assistant.todo.title" = "작업 목록";
+"assistant.todo.summary" = "작업 %1$ld/%2$ld";
+"assistant.todo.a11y" = "작업 목록, %2$ld개 중 %1$ld개 완료";
+"assistant.todo.created" = "작업 목록 생성됨 (%@)";
+"assistant.todo.added" = "추가됨: %@";
+"assistant.todo.started" = "시작함: %@";
+"assistant.todo.completed" = "완료함: %@";
+"assistant.todo.status.pending" = "대기 중";
+"assistant.todo.status.in_progress" = "진행 중";
+"assistant.todo.status.completed" = "완료됨";
 "assistant.plan.title" = "검토할 계획";
 "assistant.plan.approve" = "계획 승인";
 "assistant.plan.approve_accept_edits" = "승인하고 편집 자동 승인";

@@ -276,6 +276,16 @@
 "assistant.question.other_placeholder" = "Escriba su respuesta";
 "assistant.question.submit" = "Enviar";
 "assistant.question.dismiss" = "Descartar";
+"assistant.todo.title" = "Lista de tareas";
+"assistant.todo.summary" = "Tareas %1$ld/%2$ld";
+"assistant.todo.a11y" = "Lista de tareas, %1$ld de %2$ld hechas";
+"assistant.todo.created" = "Lista de tareas creada (%@)";
+"assistant.todo.added" = "Añadida: %@";
+"assistant.todo.started" = "Iniciada: %@";
+"assistant.todo.completed" = "Completada: %@";
+"assistant.todo.status.pending" = "Pendiente";
+"assistant.todo.status.in_progress" = "En curso";
+"assistant.todo.status.completed" = "Completada";
 "assistant.plan.title" = "Plan listo para revisar";
 "assistant.plan.approve" = "Aprobar plan";
 "assistant.plan.approve_accept_edits" = "Aprobar y aceptar ediciones";

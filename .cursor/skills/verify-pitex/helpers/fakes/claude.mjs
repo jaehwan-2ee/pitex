@@ -131,6 +131,58 @@ function toolCards() {
   finish("success", "Done");
 }
 
+// TODOS: three TodoWrite snapshots 1.5 s apart (all pending, the first in
+// progress, two completed and the last in progress), then a short answer.
+const TODO_STEPS = [
+  ["Build the PDF", "Building the PDF"],
+  ["Fix the citation", "Fixing the citation"],
+  ["Check the log", "Checking the log"],
+];
+const TODO_SNAPSHOTS = [
+  ["pending", "pending", "pending"],
+  ["in_progress", "pending", "pending"],
+  ["completed", "completed", "in_progress"],
+];
+
+function todos() {
+  TODO_SNAPSHOTS.forEach((statuses, index) => {
+    setTimeout(() => {
+      const id = `toolu_todo_${index}`;
+      const input = { todos: TODO_STEPS.map(([content, activeForm], row) => ({ content, activeForm, status: statuses[row] })) };
+      send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "tool_use", id, name: "TodoWrite", input }] } });
+      send({
+        type: "user",
+        session_id: session,
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "Todos have been modified successfully." }] },
+      });
+      if (index < TODO_SNAPSHOTS.length - 1) return;
+      setTimeout(() => {
+        streamText("Built the PDF and fixed the citation; checking the log next.");
+        send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: "Built the PDF and fixed the citation; checking the log next." }] } });
+        finish("success", "Built the PDF and fixed the citation; checking the log next.");
+      }, 500);
+    }, 1500 * index);
+  });
+}
+
+// LONGTODOS: one 24-item TodoWrite (three done, the fourth in progress), held
+// 4 s while the turn runs so the expanded checklist can be seen scrolling.
+function longTodos() {
+  const id = "toolu_todo_long";
+  const todos = Array.from({ length: 24 }, (_, row) => ({
+    content: `Step ${row + 1}: check section ${row + 1}`,
+    activeForm: `Checking section ${row + 1}`,
+    status: row < 3 ? "completed" : row === 3 ? "in_progress" : "pending",
+  }));
+  send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "tool_use", id, name: "TodoWrite", input: { todos } }] } });
+  send({ type: "user", session_id: session, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "Todos have been modified successfully." }] } });
+  setTimeout(() => {
+    streamText("Checked three sections.");
+    send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: "Checked three sections." }] } });
+    finish("success", "Checked three sections.");
+  }, 4000);
+}
+
 // A Markdown answer streamed in two parts: the first ends inside an open
 // ```latex fence (drawn as an open code box), the rest closes it 4 s later.
 const MARKDOWN_ANSWER = [
@@ -292,6 +344,14 @@ rl.on("line", (line) => {
     if (text.includes("PLAN")) {
       streamText("Here is my plan.");
       askTool("perm-plan-1", "toolu_plan_1", "ExitPlanMode", { plan: PLANS[0] });
+      return;
+    }
+    if (text.includes("LONGTODOS")) {
+      longTodos();
+      return;
+    }
+    if (text.includes("TODOS")) {
+      todos();
       return;
     }
     if (text.includes("TOOLCARDS")) {
