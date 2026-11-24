@@ -603,3 +603,27 @@
 /* SSH manual save */
 "remote.autosave.unsupported" = "Автосохранение недоступно для проектов SSH. Используйте «Сохранить», чтобы отправить изменения и выполнить сборку на удалённом устройстве.";
 "remote.preview.unsupported" = "Локальный встроенный предпросмотр недоступен в этой сборке. Используйте «Сохранить» для сборки на удалённом устройстве.";
+
+/* Assistant usage, thinking and turn errors */
+"assistant.context.title" = "Окно контекста";
+"assistant.context.a11y" = "Использовано %@ процентов контекста";
+"assistant.context.used" = "Контекст: %1$@ из %2$@ токенов (%3$@%%)";
+"assistant.context.input" = "Ввод: %@";
+"assistant.context.cached" = "Из кэша: %@";
+"assistant.context.output" = "Вывод: %@";
+"assistant.context.thinking" = "Размышление: %@";
+"assistant.context.total" = "Токены: %@";
+"assistant.context.cost" = "Стоимость сеанса: %@";
+"assistant.thinking.title" = "Размышление";
+"assistant.thinking.done" = "Размышлял %@ с";
+"assistant.thinking.finished" = "Размышлял";
+"assistant.jump_latest" = "К последнему";
+"assistant.error.signed_out" = "Войдите в %@ в терминале и повторите попытку.";
+"assistant.error.rate_limited" = "%@ достиг лимита запросов или использования. Подождите немного и повторите попытку.";
+"assistant.error.network" = "Не удалось подключиться к %@. Проверьте соединение и повторите попытку.";
+"assistant.error.context_full" = "Разговор больше не помещается в контекст модели. Начните новый чат.";
+"assistant.error.context_full_compact" = "Разговор больше не помещается в контекст модели. Начните новый чат или выполните /compact.";
+"assistant.error.other" = "%@ остановился с ошибкой.";
+"assistant.error.crashed" = "%@ неожиданно остановился.";
+"assistant.error.details" = "Подробности";
+"assistant.error.retry" = "Повторить";

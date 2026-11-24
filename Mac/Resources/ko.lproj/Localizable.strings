@@ -604,3 +604,27 @@
 /* SSH manual save */
 "remote.autosave.unsupported" = "SSH 프로젝트에서는 자동 저장을 지원하지 않습니다. 저장을 실행하면 원격 기기에 업로드하고 빌드합니다.";
 "remote.preview.unsupported" = "이 빌드에서는 로컬 내장 미리보기를 사용할 수 없습니다. 저장을 실행하면 원격 기기에서 빌드합니다.";
+
+/* Assistant usage, thinking and turn errors */
+"assistant.context.title" = "컨텍스트 창";
+"assistant.context.a11y" = "컨텍스트 %@퍼센트 사용";
+"assistant.context.used" = "컨텍스트: %2$@ 토큰 중 %1$@ (%3$@%%)";
+"assistant.context.input" = "입력: %@";
+"assistant.context.cached" = "캐시: %@";
+"assistant.context.output" = "출력: %@";
+"assistant.context.thinking" = "생각: %@";
+"assistant.context.total" = "토큰: %@";
+"assistant.context.cost" = "세션 비용: %@";
+"assistant.thinking.title" = "생각 중";
+"assistant.thinking.done" = "%@초 동안 생각함";
+"assistant.thinking.finished" = "생각함";
+"assistant.jump_latest" = "최신으로 이동";
+"assistant.error.signed_out" = "터미널에서 %@에 로그인한 후 다시 시도하세요.";
+"assistant.error.rate_limited" = "%@의 요청 또는 사용 한도에 도달했습니다. 잠시 후 다시 시도하세요.";
+"assistant.error.network" = "%@에 연결할 수 없습니다. 연결을 확인한 후 다시 시도하세요.";
+"assistant.error.context_full" = "대화가 모델의 컨텍스트에 더 이상 맞지 않습니다. 새 채팅을 시작하세요.";
+"assistant.error.context_full_compact" = "대화가 모델의 컨텍스트에 더 이상 맞지 않습니다. 새 채팅을 시작하거나 /compact를 실행하세요.";
+"assistant.error.other" = "%@이(가) 오류로 중지되었습니다.";
+"assistant.error.crashed" = "%@이(가) 예기치 않게 중지되었습니다.";
+"assistant.error.details" = "세부 정보";
+"assistant.error.retry" = "다시 시도";

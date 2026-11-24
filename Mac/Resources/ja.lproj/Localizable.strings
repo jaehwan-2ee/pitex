@@ -604,3 +604,27 @@
 /* SSH manual save */
 "remote.autosave.unsupported" = "SSHプロジェクトでは自動保存を使用できません。「保存」でリモートデバイスにアップロードしてビルドします。";
 "remote.preview.unsupported" = "このビルドではローカルの埋め込みプレビューを使用できません。「保存」でリモートデバイス上でビルドします。";
+
+/* Assistant usage, thinking and turn errors */
+"assistant.context.title" = "コンテキストウィンドウ";
+"assistant.context.a11y" = "コンテキスト使用率 %@ パーセント";
+"assistant.context.used" = "コンテキスト: %2$@ トークン中 %1$@ (%3$@%%)";
+"assistant.context.input" = "入力: %@";
+"assistant.context.cached" = "キャッシュ: %@";
+"assistant.context.output" = "出力: %@";
+"assistant.context.thinking" = "思考: %@";
+"assistant.context.total" = "トークン: %@";
+"assistant.context.cost" = "セッション費用: %@";
+"assistant.thinking.title" = "思考中";
+"assistant.thinking.done" = "%@秒間思考";
+"assistant.thinking.finished" = "思考済み";
+"assistant.jump_latest" = "最新へ移動";
+"assistant.error.signed_out" = "ターミナルで %@ にサインインしてから再試行してください。";
+"assistant.error.rate_limited" = "%@ がレート制限または使用量の上限に達しました。しばらく待ってから再試行してください。";
+"assistant.error.network" = "%@ に接続できません。接続を確認してから再試行してください。";
+"assistant.error.context_full" = "会話がモデルのコンテキストに収まらなくなりました。新しいチャットを開始してください。";
+"assistant.error.context_full_compact" = "会話がモデルのコンテキストに収まらなくなりました。新しいチャットを開始するか /compact を実行してください。";
+"assistant.error.other" = "%@ がエラーで停止しました。";
+"assistant.error.crashed" = "%@ が予期せず停止しました。";
+"assistant.error.details" = "詳細";
+"assistant.error.retry" = "再試行";

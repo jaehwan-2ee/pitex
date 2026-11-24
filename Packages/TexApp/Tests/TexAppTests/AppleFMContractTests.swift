@@ -83,6 +83,9 @@ final class AppleFMContractTests: XCTestCase {
         let message = end?.array("messages")?.first
         XCTAssertEqual(message?.string("stopReason"), "error")
         XCTAssertEqual(message?.string("errorMessage"), "The turn was cancelled.")
+        XCTAssertEqual(end?.string("outcome"), "canceled")
+        let failed = cursor.close(stopReason: "error", errorMessage: "Model unavailable")
+        XCTAssertEqual(failed.last?.string("outcome"), "failed")
     }
 
     func testReadDoesNotAskAndWritesAndCommandsDo() {

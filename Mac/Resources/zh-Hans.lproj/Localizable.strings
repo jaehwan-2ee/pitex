@@ -603,3 +603,27 @@
 /* SSH manual save */
 "remote.autosave.unsupported" = "SSH 项目不支持自动保存。使用“保存”将更改上传到远程设备并构建。";
 "remote.preview.unsupported" = "此版本不提供本地嵌入式预览。使用“保存”在远程设备上构建。";
+
+/* Assistant usage, thinking and turn errors */
+"assistant.context.title" = "上下文窗口";
+"assistant.context.a11y" = "上下文已使用百分之 %@";
+"assistant.context.used" = "上下文：%2$@ 个令牌中的 %1$@（%3$@%%）";
+"assistant.context.input" = "输入：%@";
+"assistant.context.cached" = "缓存：%@";
+"assistant.context.output" = "输出：%@";
+"assistant.context.thinking" = "思考：%@";
+"assistant.context.total" = "令牌：%@";
+"assistant.context.cost" = "会话费用：%@";
+"assistant.thinking.title" = "思考中";
+"assistant.thinking.done" = "思考了 %@ 秒";
+"assistant.thinking.finished" = "已思考";
+"assistant.jump_latest" = "跳到最新";
+"assistant.error.signed_out" = "请在终端中登录 %@，然后重试。";
+"assistant.error.rate_limited" = "%@ 已达到速率或用量限制。请稍候再重试。";
+"assistant.error.network" = "无法连接到 %@。请检查网络连接，然后重试。";
+"assistant.error.context_full" = "对话已超出模型的上下文。请开始新对话。";
+"assistant.error.context_full_compact" = "对话已超出模型的上下文。请开始新对话或运行 /compact。";
+"assistant.error.other" = "%@ 因错误而停止。";
+"assistant.error.crashed" = "%@ 意外停止。";
+"assistant.error.details" = "详细信息";
+"assistant.error.retry" = "重试";

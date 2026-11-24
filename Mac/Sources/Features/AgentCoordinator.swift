@@ -60,6 +60,10 @@ struct AgentTranscriptEntry: Identifiable {
     var tool: AgentToolDetail?
     /// Images the user sent with this message (thumbnails in the bubble).
     var images: [AgentImage] = []
+    /// A thinking block's duration, set when the next non-reasoning event arrives.
+    var thinkingSeconds: Int?
+    /// A failed turn: its code, the CLI for the wording, and whether Retry is offered.
+    var turnError: AgentTurnError?
 }
 
 /// A saved conversation for the current project — one pi session file.
@@ -128,6 +132,25 @@ final class AgentCoordinator: ObservableObject {
     @Published private(set) var currentModel: PiModelDescriptor?
     /// Session token/cost accounting, refreshed after every agent run.
     @Published private(set) var sessionStats: PiSessionStats?
+    /// Latest pushed usage (`usage_update`); the meter falls back to `sessionStats` (pi).
+    @Published private(set) var usage = AgentUsage()
+    /// The model that wrote the current answer (`message_start.message.modelName`).
+    private var liveModelName: String?
+    /// When the open thinking block got its first delta.
+    private var thinkingStarted: Date?
+    /// The last message sent as a prompt, with its images: what Retry resends.
+    private var lastSent: AgentRetryPayload?
+    /// Retry after a crash: the message goes out once the restarted process is up.
+    private var pendingRetry = false
+
+    /// Context used of the window: pushed usage, else pi's pulled stats.
+    var contextMeter: AgentContextMeter? {
+        if let used = usage.contextUsed, let max = usage.contextMax {
+            return AgentContextMeter(used: used, max: max)
+        }
+        guard let used = sessionStats?.contextTokens, let max = sessionStats?.contextWindow else { return nil }
+        return AgentContextMeter(used: used, max: max)
+    }
     /// Slash commands pi advertises (extensions, prompts, skills) — drives
     /// the composer's `/` completion list.
     @Published private(set) var commands: [PiSlashCommand] = []
@@ -321,6 +344,9 @@ final class AgentCoordinator: ObservableObject {
         connection = .idle
         intentionalStop = false
         sessionStats = nil
+        usage = AgentUsage()
+        // Another backend may name no model; the picked one titles its answers.
+        liveModelName = nil
         commands = []
         if wantsConnection { prepare() }
     }
@@ -681,6 +707,10 @@ final class AgentCoordinator: ObservableObject {
         let token = attachedToken
         process = session
         connection = .ready
+        if pendingRetry {
+            pendingRetry = false
+            if let lastSent { dispatch(lastSent.text, images: lastSent.images, steer: false) }
+        }
         eventTask = Task { [weak self] in
             for await event in session.events {
                 guard let self, self.processEpoch.isCurrent(token) else { return }
@@ -702,6 +732,8 @@ final class AgentCoordinator: ObservableObject {
         guard processEpoch.isCurrent(token) else { return }
         flushDeltas()
         abandonDrain()
+        // Retry only resends a message the exit cut off (a turn running or not yet started).
+        let unanswered = isRunning || transcript.last?.role == .user
         process = nil
         isRunning = false
         modelSettingsRequestID = nil
@@ -715,6 +747,40 @@ final class AgentCoordinator: ObservableObject {
         finalizeEntries()
         guard !intentionalStop else { return }
         connection = .failed("The agent process exited unexpectedly.")
+        if !transcript.isEmpty {
+            appendTurnError(.crashed, text: "The agent process exited unexpectedly.", retry: unanswered)
+        }
+    }
+
+    /// Resends the last message (with its images) through the normal send path. After a
+    /// crash the process starts again first and the message follows once it is up.
+    func retry() {
+        guard let lastSent, !isRunning else { return }
+        if case .failed = connection {
+            // shortcut: the restarted process opens a new session, so the retried message
+            // goes without the earlier context; resuming the crashed session would keep it.
+            clearRetryOffers()
+            pendingRetry = true
+            restart()
+            return
+        }
+        dispatch(lastSent.text, images: lastSent.images, steer: false)
+    }
+
+    private func appendTurnError(_ code: AgentErrorCode, text: String, retry: Bool = true) {
+        clearRetryOffers()
+        let canCompact = commands.contains { $0.name == "compact" }
+        transcript.append(AgentTranscriptEntry(
+            role: .notice, title: "Assistant", text: text, status: .failed,
+            turnError: AgentTurnError(code: code, provider: sessionBackend, canCompact: canCompact, retry: retry && lastSent != nil)
+        ))
+    }
+
+    /// Only the newest failure offers Retry, and none once another message went out.
+    private func clearRetryOffers() {
+        for index in transcript.indices where transcript[index].turnError?.retry == true {
+            transcript[index].turnError?.retry = false
+        }
     }
 
     // MARK: - Send / stop / session
@@ -853,6 +919,12 @@ final class AgentCoordinator: ObservableObject {
         // so a refused one, back at the front of the queue, does not leave a duplicate.
         if id == nil {
             transcript.append(AgentTranscriptEntry(role: .user, title: "You", text: trimmed, images: images))
+        }
+        if !steer {
+            lastSent = AgentRetryPayload(text: trimmed, images: images)
+            // A new message replaces a crash Retry still waiting for the relaunch.
+            pendingRetry = false
+            clearRetryOffers()
         }
         statusMessage = nil
         Task {
@@ -997,6 +1069,14 @@ final class AgentCoordinator: ObservableObject {
         toolIndexByCallID = [:]
         assistantEntryIndex = nil
         thinkingEntryIndex = nil
+        thinkingStarted = nil
+        liveModelName = nil
+        // Retry belongs to that chat.
+        lastSent = nil
+        pendingRetry = false
+        // The meter belongs to that chat; the next usage_update or stats reply refills it.
+        usage = AgentUsage()
+        sessionStats = nil
     }
 
     /// A new todo snapshot: one activity row per change, then the checklist follows it.
@@ -1130,6 +1210,8 @@ final class AgentCoordinator: ObservableObject {
                     entries.append(AgentTranscriptEntry(role: .user, title: "You", text: text))
                 }
             case "assistant":
+                // The model that wrote it, when the backend saved one (Claude), not the picker's alias.
+                let title = (message["modelName"] as? String).flatMap { $0.isEmpty ? nil : "Pitex Agent · \($0)" } ?? assistantTitle
                 for block in message["content"] as? [[String: Any]] ?? [] {
                     switch block["type"] as? String {
                     case "thinking":
@@ -1138,7 +1220,7 @@ final class AgentCoordinator: ObservableObject {
                         }
                     case "text":
                         if let text = block["text"] as? String, !text.isEmpty {
-                            entries.append(AgentTranscriptEntry(role: .assistant, title: assistantTitle, text: text))
+                            entries.append(AgentTranscriptEntry(role: .assistant, title: title, text: text))
                         }
                     case "toolCall":
                         let name = block["name"] as? String ?? "tool"
@@ -1512,17 +1594,15 @@ final class AgentCoordinator: ObservableObject {
         case "agent_end":
             isRunning = false
             finalizeEntries()
-            if let failure = lastAssistantError(in: event) {
-                transcript.append(AgentTranscriptEntry(
-                    role: .notice, title: "Assistant", text: failure, status: .failed
-                ))
-            }
+            noteTurnEnd(event)
             sendSilently(.getSessionStats)
             SubscriptionUsageStore.shared.refresh(provider: currentModel?.provider)
             Task { await agentActivityDidFinish() }
             drainQueue()
         case "message_start":
             handleMessageStart(event)
+        case "usage_update":
+            usage.merge(event.object)
         case "message_update":
             handleMessageUpdate(event)
         case "message_end":
@@ -1712,6 +1792,7 @@ final class AgentCoordinator: ObservableObject {
         thinkingEntryIndex = nil
         textContentIndex = nil
         thinkingContentIndex = nil
+        if let name = message["modelName"] as? String, !name.isEmpty { liveModelName = name }
     }
 
     /// Accumulates one token onto an entry's pending text; the first delta
@@ -1748,9 +1829,11 @@ final class AgentCoordinator: ObservableObject {
         switch deltaType {
         case "text_start":
             flushDeltas()
+            settleThinking()
             textContentIndex = delta["contentIndex"] as? Int
             appendAssistantEntry()
         case "text_delta":
+            settleThinking()
             if delta["contentIndex"] as? Int != textContentIndex {
                 flushDeltas()
                 textContentIndex = delta["contentIndex"] as? Int
@@ -1807,7 +1890,7 @@ final class AgentCoordinator: ObservableObject {
             .compactMap { $0["text"] as? String }
             .joined(separator: "\n\n")
         if let index = assistantEntryIndex, transcript.indices.contains(index) {
-            transcript[index].text = text
+            transcript[index].text = AgentTranscriptText.finalText(streamed: transcript[index].text, messageEnd: text)
             transcript[index].status = (message["stopReason"] as? String) == "error" ? .failed : .done
         } else if !text.isEmpty {
             var entry = AgentTranscriptEntry(
@@ -1823,6 +1906,7 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func handleToolStart(_ event: PiRPCEvent) {
+        settleThinking()
         guard let callID = event.string("toolCallId") else { return }
         let name = event.string("toolName") ?? "tool"
         let tool = AgentToolDetail(event.nested("detail"))
@@ -1934,6 +2018,10 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func appendAssistantEntry() {
+        // The previous segment of this message is complete once a new one starts.
+        if let index = assistantEntryIndex, transcript.indices.contains(index), transcript[index].status == .streaming {
+            transcript[index].status = .done
+        }
         transcript.append(AgentTranscriptEntry(
             role: .assistant, title: assistantTitle, text: "", status: .streaming
         ))
@@ -1941,13 +2029,37 @@ final class AgentCoordinator: ObservableObject {
     }
 
     private func appendThinkingEntry() {
+        settleThinking()
         transcript.append(AgentTranscriptEntry(
             role: .thinking, title: "Thinking", text: "", status: .streaming
         ))
         thinkingEntryIndex = transcript.count - 1
+        thinkingStarted = Date()
+    }
+
+    /// Paseo: a thought is loading until the next event that is not reasoning; then it
+    /// closes as "Thought for Ns".
+    private func settleThinking() {
+        guard let started = thinkingStarted else { return }
+        thinkingStarted = nil
+        guard let index = thinkingEntryIndex, transcript.indices.contains(index) else { return }
+        transcript[index].status = .done
+        transcript[index].thinkingSeconds = Int(Date().timeIntervalSince(started))
+    }
+
+    /// `agent_end`: a failed turn gets an error row (friendly line, raw detail, Retry);
+    /// a stopped one a plain notice. pi sends no `outcome`; its errors read as `other`.
+    private func noteTurnEnd(_ event: PiRPCEvent) {
+        let fallback = lastAssistantError(in: event)
+        if let failure = AgentTurnError.failure(agentEnd: event.object, fallback: fallback) {
+            appendTurnError(failure.code, text: failure.text)
+        } else if event.string("outcome") == "canceled", let text = event.string("error") ?? fallback {
+            transcript.append(AgentTranscriptEntry(role: .notice, title: "Assistant", text: text))
+        }
     }
 
     private func finalizeEntries() {
+        settleThinking()
         if let index = assistantEntryIndex, transcript.indices.contains(index) {
             transcript[index].status = .done
         }
@@ -1960,8 +2072,10 @@ final class AgentCoordinator: ObservableObject {
         thinkingContentIndex = nil
     }
 
+    /// The model that answered when the backend says (Claude's "Default" alias hides it),
+    /// else the picked one.
     private var assistantTitle: String {
-        currentModel.map { "Pitex Agent · \($0.name)" } ?? "Pitex Agent"
+        (liveModelName ?? currentModel?.name).map { "Pitex Agent · \($0)" } ?? "Pitex Agent"
     }
 
     // MARK: - Prompt envelope

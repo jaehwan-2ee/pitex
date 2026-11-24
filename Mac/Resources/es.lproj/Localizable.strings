@@ -603,3 +603,27 @@
 /* SSH manual save */
 "remote.autosave.unsupported" = "El guardado automático no está disponible para proyectos SSH. Use Guardar para subir los cambios y compilar en el dispositivo remoto.";
 "remote.preview.unsupported" = "La vista previa integrada local no está disponible en esta versión. Use Guardar para compilar en el dispositivo remoto.";
+
+/* Assistant usage, thinking and turn errors */
+"assistant.context.title" = "Ventana de contexto";
+"assistant.context.a11y" = "Contexto usado al %@ por ciento";
+"assistant.context.used" = "Contexto: %1$@ de %2$@ tokens (%3$@%%)";
+"assistant.context.input" = "Entrada: %@";
+"assistant.context.cached" = "En caché: %@";
+"assistant.context.output" = "Salida: %@";
+"assistant.context.thinking" = "Razonamiento: %@";
+"assistant.context.total" = "Tokens: %@";
+"assistant.context.cost" = "Coste de la sesión: %@";
+"assistant.thinking.title" = "Pensando";
+"assistant.thinking.done" = "Pensó durante %@ s";
+"assistant.thinking.finished" = "Pensó";
+"assistant.jump_latest" = "Ir a lo último";
+"assistant.error.signed_out" = "Inicia sesión en %@ en un terminal y vuelve a intentarlo.";
+"assistant.error.rate_limited" = "%@ alcanzó un límite de uso o de velocidad. Espera un momento y vuelve a intentarlo.";
+"assistant.error.network" = "No se pudo conectar con %@. Comprueba la conexión y vuelve a intentarlo.";
+"assistant.error.context_full" = "La conversación ya no cabe en el contexto del modelo. Empieza un chat nuevo.";
+"assistant.error.context_full_compact" = "La conversación ya no cabe en el contexto del modelo. Empieza un chat nuevo o ejecuta /compact.";
+"assistant.error.other" = "%@ se detuvo con un error.";
+"assistant.error.crashed" = "%@ se detuvo inesperadamente.";
+"assistant.error.details" = "Detalles";
+"assistant.error.retry" = "Reintentar";
