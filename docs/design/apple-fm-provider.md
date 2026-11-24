@@ -21,14 +21,14 @@ AgentTransport = Pi | CliBridge | OnDevice
 | id | transport | Where it runs |
 | --- | --- | --- |
 | `pi` | `Pi` | `pi --mode rpc` |
-| `codex`, `claude`, `grok` | `CliBridge` | `pitex-agent-bridge` |
+| `codex`, `claude`, `grok`, `agy` | `CliBridge` | `pitex-agent-bridge` |
 | `apple-fm` | `OnDevice` | `LanguageModelSession` inside the Mac app |
 
-Each row also has `selectable`. `SHOW_DIRECT_CODEX_AND_GROK` is false, so `codex` and `grok` stay in the registry for launch plans and read back as `pi`. The raw preference is left on disk until the user picks a row. `normalize_agent_provider` accepts every selectable id. That includes `apple-fm`. Unknown ids, including the retired `agy` id, read as `pi`.
+Each row also has `selectable`. `SHOW_DIRECT_CODEX_AND_GROK` is false, so `codex` and `grok` stay in the registry for launch plans and read back as `pi`. The raw preference is left on disk until the user picks a row. `normalize_agent_provider` accepts every selectable id. That includes `apple-fm`. `agy` (Antigravity CLI) is a selectable bridge row. Unknown ids read as `pi`.
 
-The menu is one function, `visible_agent_providers()`. A row is listed when `selectable` is true and this shell can start the transport. The GTK shell cannot start `OnDevice`, so its menu is `pi` and `claude`. A stored `apple-fm` value stays stored. The menu shows pi until the user picks a row, and the caption is the unavailable sentence. `plan_launch("apple-fm")` returns that sentence and does not start pi.
+The menu is one function, `visible_agent_providers()`. A row is listed when `selectable` is true and this shell can start the transport. The GTK shell cannot start `OnDevice`, so its menu is `pi`, `claude` and `agy`. A stored `apple-fm` value stays stored. The menu shows pi until the user picks a row, and the caption is the unavailable sentence. `plan_launch("apple-fm")` returns that sentence and does not start pi.
 
-The Mac picker uses `ShippedAgentProvider.selectableCases` and the same rule. `pi` and `claude` are listed. `apple-fm` is listed only when `AppleFMRuntime.availability()` is `.available`. Otherwise the picker keeps the pi and Claude Code rows and shows that availability sentence. A stored `apple-fm` id is not rewritten to `pi`.
+The Mac picker uses `ShippedAgentProvider.selectableCases` and the same rule. `pi`, `claude` and `agy` are listed. `apple-fm` is listed only when `AppleFMRuntime.availability()` is `.available`. Otherwise the picker keeps the pi, Claude Code and Antigravity CLI rows and shows that availability sentence. A stored `apple-fm` id is not rewritten to `pi`.
 
 The sentence is `AppleFMHost.unavailableMessage`:
 

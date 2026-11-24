@@ -1274,6 +1274,8 @@ fn bridge_missing_message(provider: &str) -> String {
         "The Claude Code bridge is not installed with this Pitex build.".to_string()
     } else if provider == "grok" {
         "The Grok CLI bridge is not installed with this Pitex build.".to_string()
+    } else if provider == "agy" {
+        "The Antigravity CLI bridge is not installed with this Pitex build.".to_string()
     } else {
         "The Codex bridge is not installed with this Pitex build.".to_string()
     }
@@ -4380,11 +4382,21 @@ mod toolchain_tests {
         assert!(pi.arguments.iter().any(|arg| arg == "--mode"));
         assert!(!pi.environment.contains_key("PITEX_CLI_ADAPTER"));
         let agy = AgentCoordinator::plan_launch("agy", &node, &sessions, &tools).expect("agy plan");
-        assert_eq!(agy.executable, pi.executable);
-        assert_eq!(agy.arguments, pi.arguments);
-        assert_eq!(agy.environment, pi.environment);
-        assert!(agy.arguments.iter().any(|arg| arg == "--mode"));
-        assert!(!agy.environment.contains_key("PITEX_CLI_ADAPTER"));
+        assert_eq!(agy.executable, node);
+        assert!(agy.arguments.iter().any(|arg| arg.ends_with("bridge/cli.ts")));
+        assert!(!agy.arguments.iter().any(|arg| arg == "--mode"));
+        assert_eq!(
+            agy.environment.get("PITEX_CLI_ADAPTER").map(String::as_str),
+            Some("agy")
+        );
+        assert_eq!(
+            agy.environment.get("PITEX_SESSION_DIR").map(String::as_str),
+            Some(sessions.to_str().unwrap())
+        );
+        assert_eq!(
+            bridge_missing_message("agy"),
+            "The Antigravity CLI bridge is not installed with this Pitex build."
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -4825,19 +4837,19 @@ mod session_history_tests {
     }
 
     #[test]
-    fn agent_provider_lists_pi_and_claude_and_reads_hidden_cli_as_pi() {
+    fn agent_provider_lists_pi_claude_and_agy_and_reads_hidden_cli_as_pi() {
         assert_eq!(
             crate::settings::AGENT_PROVIDER_CHOICES
                 .iter()
                 .map(|choice| choice.id)
                 .collect::<Vec<_>>(),
-            ["pi", "codex", "claude", "grok", "apple-fm"]
+            ["pi", "codex", "claude", "agy", "grok", "apple-fm"]
         );
         assert_eq!(
             crate::settings::visible_agent_providers()
                 .map(|choice| choice.id)
                 .collect::<Vec<_>>(),
-            ["pi", "claude"]
+            ["pi", "claude", "agy"]
         );
         assert_eq!(
             crate::settings::AGENT_PROVIDER_CHOICES
@@ -4845,7 +4857,7 @@ mod session_history_tests {
                 .filter(|choice| choice.transport == crate::settings::AgentTransport::CliBridge)
                 .map(|choice| choice.id)
                 .collect::<Vec<_>>(),
-            ["codex", "claude", "grok"]
+            ["codex", "claude", "agy", "grok"]
         );
         let mut store = crate::settings::SettingsStore::new(Default::default());
         assert_eq!(store.agent_provider(), "pi");
@@ -4867,7 +4879,7 @@ mod session_history_tests {
             store.prefs().string("ai.agentProvider").as_deref(),
             Some("pi")
         );
-        for raw in ["codex", "grok", "agy"] {
+        for raw in ["codex", "grok"] {
             store.prefs_mut().set("ai.agentProvider", raw);
             assert_eq!(store.agent_provider(), "pi");
             assert_eq!(
@@ -4888,11 +4900,12 @@ mod session_history_tests {
             Some("apple-fm")
         );
         store.set_agent_provider("agy");
-        assert_eq!(store.agent_provider(), "pi");
+        assert_eq!(store.agent_provider(), "agy");
         assert_eq!(
             store.prefs().string("ai.agentProvider").as_deref(),
-            Some("pi")
+            Some("agy")
         );
+        store.set_agent_provider("pi");
         let mut agent = AgentCoordinator::new(&store);
         assert_eq!(agent.agent_provider, "pi");
         agent.set_agent_provider("codex");
@@ -4901,6 +4914,8 @@ mod session_history_tests {
         assert_eq!(agent.agent_provider, "pi");
         agent.set_agent_provider("claude");
         assert_eq!(agent.agent_provider, "claude");
+        agent.set_agent_provider("agy");
+        assert_eq!(agent.agent_provider, "agy");
         agent.set_agent_provider("apple-fm");
         assert_eq!(agent.agent_provider, "apple-fm");
         store.set_agent_provider("other");
@@ -5101,7 +5116,7 @@ mod session_history_tests {
             pdf_data: None,
         }));
         agent.handle(&response(json!({"type": "agent_start"})));
-        store.set_disabled_backend_ids(&["pi".into(), "claude".into()]);
+        store.set_disabled_backend_ids(&["pi".into(), "claude".into(), "agy".into()]);
         agent.reconcile_enablement(&mut store, "Switched assistant. The next message starts a new session.");
         assert!(!agent.is_running, "unchecking every backend ends the turn");
         assert_eq!(agent.agent_provider, "pi");

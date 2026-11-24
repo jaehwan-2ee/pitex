@@ -238,7 +238,7 @@ final class AssistantCatalogTests: XCTestCase {
 
     func testHiddenCLIIdsDoNotMoveTheSession() {
         let decided = plan(
-            stored: ["codex", "grok", "agy", "apple-fm"],
+            stored: ["codex", "grok", "apple-fm"],
             provider: "pi",
             onDevice: false,
             open: true,

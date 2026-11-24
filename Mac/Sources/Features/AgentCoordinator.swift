@@ -586,6 +586,9 @@ final class AgentCoordinator: ObservableObject {
         if adapter == "grok" {
             return "The Grok CLI bridge is not installed with this Pitex build."
         }
+        if adapter == "agy" {
+            return "The Antigravity CLI bridge is not installed with this Pitex build."
+        }
         return "The Codex bridge is not installed with this Pitex build."
     }
 
@@ -942,6 +945,8 @@ final class AgentCoordinator: ObservableObject {
             String(localized: "settings.ai.backend_pi")
         case ShippedAgentProvider.claude.rawValue:
             String(localized: "settings.ai.backend_claude")
+        case ShippedAgentProvider.agy.rawValue:
+            String(localized: "settings.ai.backend_agy")
         case ShippedAgentProvider.appleFM.rawValue:
             String(localized: "settings.ai.backend_apple_fm")
         case ShippedAgentProvider.codex.rawValue:

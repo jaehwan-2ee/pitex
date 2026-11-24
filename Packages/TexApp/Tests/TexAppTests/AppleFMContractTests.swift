@@ -173,7 +173,7 @@ final class AppleFMContractTests: XCTestCase {
         let settings = try source("Mac/Sources/Features/SettingsView.swift")
         XCTAssertTrue(settings.contains("case appleFM = \"apple-fm\""))
         XCTAssertTrue(settings.contains("settings.ai.backend_apple_fm"))
-        XCTAssertTrue(settings.contains("case .pi, .claude, .appleFM: true"))
+        XCTAssertTrue(settings.contains("case .pi, .claude, .agy, .appleFM: true"))
         XCTAssertTrue(settings.contains("AppleFMRuntime.availability()"))
         XCTAssertTrue(settings.contains("ForEach(ShippedAgentProvider.selectableCases"))
         let coordinator = try source("Mac/Sources/Features/AgentCoordinator.swift")

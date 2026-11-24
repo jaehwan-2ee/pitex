@@ -7,7 +7,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum ShippedAgentProvider: String, CaseIterable {
-    case pi, codex, claude, grok
+    case pi, codex, claude, agy, grok
     case appleFM = "apple-fm"
 
     /// Direct Codex and Grok rows. Flip this one line to show both again.
@@ -17,7 +17,7 @@ enum ShippedAgentProvider: String, CaseIterable {
     var isSelectable: Bool {
         switch self {
         case .codex, .grok: Self.showDirectCodexAndGrok
-        case .pi, .claude, .appleFM: true
+        case .pi, .claude, .agy, .appleFM: true
         }
     }
 
@@ -38,6 +38,7 @@ enum ShippedAgentProvider: String, CaseIterable {
         case .pi: "settings.ai.backend_pi"
         case .codex: "settings.ai.backend_codex"
         case .claude: "settings.ai.backend_claude"
+        case .agy: "settings.ai.backend_agy"
         case .grok: "settings.ai.backend_grok"
         case .appleFM: "settings.ai.backend_apple_fm"
         }
@@ -46,7 +47,7 @@ enum ShippedAgentProvider: String, CaseIterable {
     var bridgeAdapterID: String? {
         switch self {
         case .pi, .appleFM: nil
-        case .codex, .claude, .grok: rawValue
+        case .codex, .claude, .agy, .grok: rawValue
         }
     }
 }
