@@ -3,7 +3,7 @@
 // The history list keeps scanning *.jsonl; this index is not a jsonl file,
 // so it never shows up as its own conversation.
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import { storedTodos, type TodoItem } from "./todos.ts";
@@ -92,12 +92,15 @@ export function sessionTodosFor(sessionDir: string, sessionPath: string): TodoIt
 /** A pi-shaped session head so the existing history list can title the chat. */
 export function writeSessionPrelude(sessionPath: string, userText: string, cwd: string): void {
   mkdirSync(dirname(sessionPath), { recursive: true });
+  const source = sessionBackend(sessionPath);
   const header = {
     type: "session",
     version: 1,
     id: sessionKey(sessionPath),
     timestamp: new Date().toISOString(),
     cwd,
+    // The backend that owns the conversation; hosts badge history rows from the file prefix.
+    ...(source ? { source } : {}),
   };
   const message = {
     type: "message",
@@ -129,4 +132,68 @@ export function sessionBackend(sessionPath: string): string | null {
 
 export function foreignSessionMessage(owner: string): string {
   return `That conversation was started with another assistant (${owner}). Choose it in Settings to continue the conversation.`;
+}
+
+/** Most CLI sessions mirrored per scan (newest first). */
+export const SESSION_SCAN_LIMIT = 500;
+const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** Same folder on disk, so `/tmp/x` and its realpath compare equal. */
+function canonicalDir(path: string): string {
+  try {
+    return realpathSync(resolve(path));
+  } catch {
+    return resolve(path);
+  }
+}
+
+/**
+ * Mirror files for the CLI's own sessions in this project, so the history
+ * list (which scans `*.jsonl`) shows them. Each row is `{sessionId, cwd,
+ * title, updatedAt}` (ACP session/list, or Claude's listSessions mapped to
+ * it). A row is skipped when its cwd is another folder; a row already in the
+ * session index only moves its file's mtime forward to the CLI's last
+ * activity, so a rescan writes nothing. An existing file is never
+ * overwritten. Returns the files written.
+ */
+export function importListedSessions(sessionDir: string, prefix: string, rows: unknown[], projectRoot: string): string[] {
+  const root = canonicalDir(projectRoot);
+  const index = loadIndex(sessionDir);
+  const pathById = new Map(Object.entries(index.sessions).map(([path, record]) => [record.threadId, path]));
+  const written: string[] = [];
+  let changed = false;
+  for (const raw of rows) {
+    const row = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const id = typeof row.sessionId === "string" ? row.sessionId : "";
+    const cwd = typeof row.cwd === "string" ? row.cwd : "";
+    if (!id || !cwd || !SAFE_SESSION_ID.test(id) || canonicalDir(cwd) !== root) continue;
+    const updated = Date.parse(typeof row.updatedAt === "string" ? row.updatedAt : "");
+    const known = pathById.get(id);
+    if (known) {
+      // Continued in a terminal since the last scan: the row moves up the list.
+      touchForward(known, updated);
+      continue;
+    }
+    const path = join(sessionDir, `${prefix}-${id}.jsonl`);
+    pathById.set(id, path);
+    // One index write per scan instead of a rememberSession call per row.
+    index.sessions[sessionKey(path)] = { threadId: id, updatedAt: new Date().toISOString() };
+    changed = true;
+    if (existsSync(path)) continue;
+    const title = typeof row.title === "string" ? row.title.trim() : "";
+    writeSessionPrelude(path, title || "Untitled conversation", projectRoot);
+    if (Number.isFinite(updated)) utimesSync(path, new Date(updated), new Date(updated));
+    written.push(path);
+  }
+  if (changed) saveIndex(sessionDir, index);
+  return written;
+}
+
+function touchForward(path: string, updated: number): void {
+  if (!Number.isFinite(updated)) return;
+  try {
+    if (statSync(path).mtimeMs < updated) utimesSync(path, new Date(updated), new Date(updated));
+  } catch {
+    // The mirror was deleted; the index entry stays so it is not re-imported.
+  }
 }

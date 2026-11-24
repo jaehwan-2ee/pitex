@@ -115,6 +115,10 @@ interface ToolRecord {
   args: Json;
   output: string;
   isError: boolean;
+  /** A completed or failed status arrived; a call left open when the turn ended was canceled. */
+  done: boolean;
+  /** The typed card for a replayed transcript (`toolResult.detail`). */
+  detail: ToolDetail;
 }
 
 export interface HistoryState {
@@ -854,8 +858,10 @@ function commitTimeline(history: HistoryState): void {
         role: "toolResult",
         toolCallId: item.id,
         toolName: tool.name,
-        isError: tool.isError,
+        isError: tool.isError || !tool.done,
         content: [{ type: "text", text: tool.output }],
+        detail: tool.detail,
+        status: tool.isError ? "failed" : tool.done ? "completed" : "canceled",
       });
     }
   }
@@ -876,15 +882,23 @@ function rememberTool(history: HistoryState, update: Json): void {
   if (!id) return;
   const output = toolOutputText(update);
   const failed = update.status === "failed";
+  const done = failed || update.status === "completed";
   const existing = history.tools[id];
+  const detail = acpToolDetail(update);
   if (!existing) {
-    history.tools[id] = { name: toolName(update), args: toolArgs(update), output, isError: failed };
+    history.tools[id] = { name: toolName(update), args: toolArgs(update), output, isError: failed, done, detail };
     history.timeline.push({ kind: "tool", id });
     return;
   }
+  // The hosts' live merge: later fields fill in, and an untyped detail never replaces a typed one.
+  existing.detail =
+    detail.kind === "other" && existing.detail.kind !== "other"
+      ? { ...detail, ...existing.detail }
+      : { ...existing.detail, ...detail };
   if (output) existing.output = output;
   if (failed) existing.isError = true;
   if (update.status === "completed") existing.isError = false;
+  if (done) existing.done = true;
   if (asString(update.name)) existing.name = toolName(update);
   const args = toolArgs(update);
   if (Object.keys(args).length > 0) existing.args = args;

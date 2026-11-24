@@ -39,6 +39,7 @@ import {
   CLAUDE_MODES,
   claudeAnswers,
   claudeApprovalEvent,
+  claudeSessionRows,
   createClaudeStreamState,
   mapClaudeMessage,
   messagesFromState,
@@ -47,6 +48,7 @@ import {
   isClaudeMode,
   parseClaudeAuthStatus,
   permissionForDecision,
+  replayClaudeMessages,
   reportedPermissionMode,
   sessionIdOf,
   statsFromResult,
@@ -59,7 +61,9 @@ import {
 import {
   appendUserMessage,
   foreignSessionMessage,
+  importListedSessions,
   rememberSession,
+  SESSION_SCAN_LIMIT,
   sessionBackend,
   sessionModeFor,
   sessionTodosFor,
@@ -125,8 +129,15 @@ export type ClaudeQueryFn = (args: {
   options: ClaudeQueryOptions;
 }) => ClaudeQueryHandle;
 
+/** The SDK's session functions Pitex uses; they honour CLAUDE_CONFIG_DIR themselves. */
+export interface ClaudeSessionApi {
+  listSessions(options: { dir: string; limit: number; includeWorktrees: boolean }): Promise<unknown[]>;
+  getSessionMessages(sessionId: string, options: { dir: string }): Promise<unknown[]>;
+}
+
 export interface ClaudeAdapterDeps {
   query?: ClaudeQueryFn;
+  sessions?: ClaudeSessionApi;
   authStatus?: (
     binary: string,
     cwd: string,
@@ -252,6 +263,10 @@ async function defaultQuery(): Promise<ClaudeQueryFn> {
   return (args) => sdk.query(args);
 }
 
+async function defaultSessions(): Promise<ClaudeSessionApi> {
+  return (await import(SDK_URL.href)) as ClaudeSessionApi;
+}
+
 export function readPiMessages(sessionPath: string): Json[] {
   let text = "";
   try {
@@ -368,6 +383,7 @@ export class ClaudeAdapter implements CliAdapter {
       if (!parseClaudeAuthStatus(status.stdout, status.code)) throw new Error(CLAUDE_SIGNED_OUT);
       await this.openQuery(null);
       this.unavailableReason = null;
+      await this.importSessions();
     } catch (error) {
       await this.stop();
       this.unavailableReason = error instanceof Error ? error.message : CLAUDE_MISSING;
@@ -434,6 +450,10 @@ export class ClaudeAdapter implements CliAdapter {
           return;
         case "get_commands":
           host.respond("get_commands", true, { commands: [] }, undefined, command.id);
+          return;
+        case "refresh_sessions":
+          // Sessions started in a terminal while Pitex runs, before the history list opens.
+          host.respond("refresh_sessions", true, { imported: await this.importSessions() }, undefined, command.id);
           return;
         case "approval_response":
           this.resolveApproval(command);
@@ -620,6 +640,7 @@ export class ClaudeAdapter implements CliAdapter {
     this.mode = "default";
     await this.openQuery(null);
     this.emitMode();
+    await this.importSessions();
     host.respond("new_session", true, {}, undefined, id);
   }
 
@@ -644,9 +665,11 @@ export class ClaudeAdapter implements CliAdapter {
     this.allowKeys.clear();
     this.sessionPath = sessionPath;
     this.sessionId = threadId;
+    // Claude Code's own record has the typed cards and thinking; the mirror is the fallback.
+    const replay = await this.savedTranscript(threadId);
     this.stream = createClaudeStreamState();
-    this.stream.transcript = readPiMessages(sessionPath);
-    this.stream.todos = sessionTodosFor(this.sessionDir, sessionPath);
+    this.stream.transcript = replay?.transcript ?? readPiMessages(sessionPath);
+    this.stream.todos = sessionTodosFor(this.sessionDir, sessionPath) ?? replay?.todos ?? null;
     this.persistedTranscript = this.stream.transcript.length;
     this.running = false;
     // The mode picked for that conversation comes back with it; anything else starts in default.
@@ -762,6 +785,30 @@ export class ClaudeAdapter implements CliAdapter {
       this.persistedTranscript = this.stream.transcript.length;
     }
     this.remember();
+  }
+
+  /** Mirrors this project's Claude Code sessions into the history list; returns how many files it wrote. */
+  private async importSessions(): Promise<number> {
+    if (this.catalogProbe) return 0;
+    try {
+      const sessions = this.deps.sessions ?? (await defaultSessions());
+      const listed = await sessions.listSessions({ dir: this.cwd, limit: SESSION_SCAN_LIMIT, includeWorktrees: false });
+      return importListedSessions(this.sessionDir, this.id, claudeSessionRows(listed, this.cwd, SESSION_SCAN_LIMIT), this.cwd).length;
+    } catch {
+      // The history list is a convenience; a failed scan leaves it as it was.
+      return 0;
+    }
+  }
+
+  /** The conversation as Claude Code saved it, or null when the SDK has none. */
+  private async savedTranscript(threadId: string): Promise<ClaudeStreamState | null> {
+    try {
+      const sessions = this.deps.sessions ?? (await defaultSessions());
+      const replay = replayClaudeMessages(await sessions.getSessionMessages(threadId, { dir: this.cwd }));
+      return replay.transcript.length > 0 ? replay : null;
+    } catch {
+      return null;
+    }
   }
 
   private remember(): void {

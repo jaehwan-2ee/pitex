@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,19 +22,23 @@ import {
   type ClaudeQueryFn,
   type ClaudeQueryHandle,
   type ClaudeQueryOptions,
+  type ClaudeSessionApi,
 } from "./claude-adapter.ts";
 import {
   approvalPresentation,
   CLAUDE_MODES,
   claudeAnswers,
   claudeApprovalEvent,
+  claudeSessionRows,
   createClaudeStreamState,
   mapClaudeMessage,
   messagesFromState,
   parseClaudeAuthStatus,
   permissionForDecision,
+  replayClaudeMessages,
   type Json,
 } from "./claude-map.ts";
+import { loadIndex, rememberSession, writeSessionPrelude } from "./session-index.ts";
 
 const LOCAL_SUGGESTION = [
   {
@@ -1328,4 +1332,196 @@ test("a Claude todo list survives switching away and resuming the chat", async (
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/** A fake of the SDK's listSessions/getSessionMessages; `rows` and `saved` can change between calls. */
+function fakeSessions(rows: Json[], saved: Record<string, Json[]>): ClaudeSessionApi & { listCalls: Json[] } {
+  const listCalls: Json[] = [];
+  return {
+    listCalls,
+    async listSessions(options) {
+      listCalls.push(options as unknown as Json);
+      return rows.slice(0, options.limit);
+    },
+    async getSessionMessages(sessionId) {
+      return saved[sessionId] ?? [];
+    },
+  };
+}
+
+function sdkRow(id: string, minutesAgo: number, fields: Json = {}): Json {
+  return { sessionId: id, summary: `summary ${id}`, lastModified: Date.parse("2026-11-20T12:00:00Z") - minutesAgo * 60_000, ...fields };
+}
+
+test("Claude Code sessions for the project are mirrored once, newest 500, with a title fallback", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-import-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const sessionDir = join(dir, "sessions");
+  const own = join(sessionDir, "claude-own.jsonl");
+  writeSessionPrelude(own, "started in pitex", dir);
+  rememberSession(sessionDir, own, "sess-own");
+  const rows: Json[] = [
+    sdkRow("sess-title", 1, { customTitle: "Fix the bibliography", firstPrompt: "hello" }),
+    sdkRow("sess-prompt", 2, { firstPrompt: "Explain the intro" }),
+    sdkRow("sess-summary", 3),
+    sdkRow("sess-own", 4, { customTitle: "must not overwrite" }),
+    ...Array.from({ length: 498 }, (_, i) => sdkRow(`sess-bulk-${i}`, 10 + i)),
+    sdkRow("sess-oldest", 100_000),
+  ];
+  const sessions = fakeSessions(rows, {});
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery([], "script"),
+    sessions: { ...sessions, listSessions: async () => rows }, // the SDK may ignore limit; the bridge caps
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  const collected = collect();
+  try {
+    await adapter.start({ cwd: dir, sessionDir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary } });
+    const files = readdirSync(sessionDir).filter((name) => name.endsWith(".jsonl"));
+    // 500 newest rows, one of them pitex's own chat, plus that chat's own file.
+    assert.equal(files.length, 500);
+    assert.equal(files.includes("claude-sess-oldest.jsonl"), false, "the cap keeps the newest 500");
+    assert.equal(files.includes("claude-sess-own.jsonl"), false, "pitex's own chat is not mirrored again");
+    assert.equal(readFileSync(own, "utf8").includes("must not overwrite"), false);
+    const head = (id: string) => readFileSync(join(sessionDir, `claude-${id}.jsonl`), "utf8").split("\n");
+    assert.match(head("sess-title")[1], /Fix the bibliography/);
+    assert.match(head("sess-prompt")[1], /Explain the intro/);
+    assert.match(head("sess-summary")[1], /summary sess-summary/);
+    assert.equal(JSON.parse(head("sess-title")[0]).source, "claude");
+    assert.equal(statSync(join(sessionDir, "claude-sess-title.jsonl")).mtime.toISOString(), "2026-11-20T11:59:00.000Z");
+
+    // A rescan writes nothing; a session started in a terminal meanwhile appears on refresh_sessions.
+    await adapter.handleCommand({ type: "refresh_sessions", id: "r1" }, collected.host);
+    assert.deepEqual(response(collected.responses, "refresh_sessions").data, { imported: 0 });
+    rows.unshift(sdkRow("sess-terminal", 0, { firstPrompt: "reply with ok" }));
+    await adapter.handleCommand({ type: "refresh_sessions", id: "r2" }, collected.host);
+    assert.deepEqual(response(collected.responses, "refresh_sessions").data, { imported: 1 });
+    assert.match(head("sess-terminal")[1], /reply with ok/);
+    const ids = Object.values(loadIndex(sessionDir).sessions).map((record) => record.threadId);
+    assert.equal(new Set(ids).size, ids.length, "each Claude session is indexed once");
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a catalog probe does not import Claude Code sessions", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-import-probe-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const sessions = fakeSessions([sdkRow("sess-x", 1)], {});
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery([], "script"),
+    sessions,
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  try {
+    await adapter.start({ cwd: dir, sessionDir: dir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary, PITEX_CATALOG_PROBE: "1" } });
+    assert.equal(sessions.listCalls.length, 0);
+    assert.equal(readdirSync(dir).some((name) => name.endsWith(".jsonl")), false);
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** A Claude Code transcript as getSessionMessages returns it. */
+const SAVED_TRANSCRIPT: Json[] = [
+  { type: "user", is_meta: true, message: { role: "user", content: "Caveat: hidden" } },
+  { type: "user", message: { role: "user", content: "Tidy main.tex" } },
+  { type: "assistant", message: { role: "assistant", content: [{ type: "thinking", thinking: "Plan the edit" }] } },
+  { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t-todo", name: "TodoWrite", input: { todos: [{ content: "Edit the title", status: "in_progress", activeForm: "Editing the title" }] } }] } },
+  { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t-todo", content: "Todos updated" }] } },
+  { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t-edit", name: "Edit", input: { file_path: "/p/main.tex", old_string: "Title", new_string: "A Better Title" } }] } },
+  { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t-edit", content: "Edited" }] } },
+  { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t-bash", name: "Bash", input: { command: "latexmk -pdf main.tex" } }] } },
+  { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t-bash", is_error: true, content: "Exit code 12\nerror" }] } },
+  { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Done." }] } },
+  { type: "user", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] } },
+  { type: "user", message: { role: "user", content: "Now build it" } },
+  { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t-open", name: "Read", input: { file_path: "/p/a.tex" } }] } },
+];
+
+test("a resumed Claude Code session replays typed cards, thinking and the todo list from the SDK", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-replay-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const opened: Opened[] = [];
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery(opened, "script"),
+    sessions: fakeSessions([sdkRow("sess-old", 5, { firstPrompt: "Tidy main.tex" })], { "sess-old": SAVED_TRANSCRIPT }),
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  const collected = collect();
+  try {
+    await adapter.start({ cwd: dir, sessionDir: dir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary } });
+    const mirror = join(dir, "claude-sess-old.jsonl");
+    await adapter.handleCommand({ type: "switch_session", id: "sw", sessionPath: mirror }, collected.host);
+    assert.equal(response(collected.responses, "switch_session").success, true);
+    assert.equal(opened.at(-1)?.options.resume, "sess-old", "the imported session resumes by its Claude id");
+    await adapter.handleCommand({ type: "get_messages", id: "m" }, collected.host);
+    const data = response(collected.responses, "get_messages").data as { messages: Json[]; todos: unknown };
+    const roles = data.messages.map((message) => message.role);
+    // The live shape: each tool result closes the assistant blocks before it.
+    assert.deepEqual(roles, ["user", "assistant", "assistant", "toolResult", "assistant", "toolResult", "assistant", "user", "assistant", "toolResult"]);
+    assert.equal(JSON.stringify(data.messages).includes("TodoWrite"), false, "todo rows stay hidden");
+    assert.equal(JSON.stringify(data.messages).includes("Caveat"), false);
+    assert.equal(JSON.stringify(data.messages).includes("Request interrupted"), false);
+    assert.deepEqual((data.messages[1].content as Json[])[0], { type: "thinking", thinking: "Plan the edit" });
+    const results = data.messages.filter((message) => message.role === "toolResult");
+    const edit = results[0].detail as Json;
+    assert.equal(edit.kind, "edit");
+    assert.match(String(edit.diff), /\+A Better Title/);
+    assert.equal(results[0].status, "completed");
+    assert.deepEqual(results[1].detail, { kind: "shell", command: "latexmk -pdf main.tex", exitCode: 12 });
+    assert.equal(results[1].status, "failed");
+    assert.equal(results[2].status, "canceled", "a call with no saved result ends canceled");
+    assert.deepEqual(data.todos, [{ text: "Edit the title", status: "in_progress", activeForm: "Editing the title" }]);
+
+    // A follow-up continues that session and lands in the same mirror file.
+    await adapter.handleCommand({ type: "prompt", id: "p", message: "One more thing" }, collected.host);
+    assert.match(readFileSync(mirror, "utf8"), /One more thing/);
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("with nothing saved by Claude Code the mirror file is replayed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-replay-mirror-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const mirror = join(dir, "claude-mine.jsonl");
+  writeSessionPrelude(mirror, "kept by pitex", dir);
+  rememberSession(dir, mirror, "sess-gone");
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery([], "script"),
+    sessions: fakeSessions([], {}),
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  const collected = collect();
+  try {
+    await adapter.start({ cwd: dir, sessionDir: dir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary } });
+    await adapter.handleCommand({ type: "switch_session", id: "sw", sessionPath: mirror }, collected.host);
+    await adapter.handleCommand({ type: "get_messages", id: "m" }, collected.host);
+    const data = response(collected.responses, "get_messages").data as { messages: Json[] };
+    assert.match(JSON.stringify(data.messages), /kept by pitex/);
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the claude-map replay matches the live transcript shape for a whole turn", () => {
+  const state = replayClaudeMessages(SAVED_TRANSCRIPT.slice(0, 10));
+  assert.deepEqual(
+    state.transcript.map((message) => message.role),
+    ["user", "assistant", "toolResult", "assistant", "toolResult", "assistant", "toolResult", "assistant"]
+  );
+  assert.equal(state.turnOpen, false);
+  assert.deepEqual(
+    claudeSessionRows([sdkRow("b", 5), sdkRow("a", 1, { customTitle: "T" }), { sessionId: "x" }], "/p", 1),
+    [{ sessionId: "a", cwd: "/p", title: "T", updatedAt: "2026-11-20T11:59:00.000Z" }]
+  );
 });

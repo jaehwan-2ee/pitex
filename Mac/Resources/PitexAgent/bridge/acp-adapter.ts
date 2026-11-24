@@ -22,7 +22,7 @@
 
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, existsSync, constants as fsConstants, readFileSync, realpathSync, utimesSync } from "node:fs";
+import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
@@ -60,11 +60,10 @@ import {
 import { redactSecrets } from "./jsonrpc.ts";
 import {
   appendUserMessage,
-  loadIndex,
+  importListedSessions,
   rememberSession,
   sessionModeFor,
-  saveIndex,
-  sessionKey,
+  SESSION_SCAN_LIMIT,
   foreignSessionMessage,
   sessionBackend,
   threadIdFor,
@@ -74,15 +73,12 @@ import {
 const PROMPT_TIMEOUT_MS = 30 * 60 * 1000;
 const LOAD_TIMEOUT_MS = 120_000;
 const LIST_TIMEOUT_MS = 10_000;
-/** Most session/list rows read per scan, across pages. */
-const SESSION_SCAN_LIMIT = 500;
 /** Longest wait for a load replay to go quiet. */
 const REPLAY_WAIT_LIMIT_MS = 10_000;
 /** After a deferred end_turn and its commands, close this long after the follow-up reply's usage_update. */
 const DEFER_SETTLE_MS = 500;
 /** ... or this long after the last update while no finished reply has arrived (agy asks the model again first). */
 const DEFER_QUIET_LIMIT_MS = 120_000;
-const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export function findCli(profile: AcpProfile, env: NodeJS.ProcessEnv, platform = process.platform): string | null {
   const explicit = env[profile.pathEnv];
@@ -178,48 +174,6 @@ function authFailure(profile: AcpProfile, error: unknown): string | null {
   const message = error instanceof Error ? error.message : "";
   if (profile.keyringLocked && /keyring/i.test(message)) return profile.keyringLocked;
   return /auth|not logged in|log back in/i.test(message) ? profile.signedOut : null;
-}
-
-/** Same folder on disk, so `/tmp/x` and its realpath compare equal. */
-function canonicalDir(path: string): string {
-  try {
-    return realpathSync(resolve(path));
-  } catch {
-    return resolve(path);
-  }
-}
-
-/**
- * Mirror files for the CLI's own sessions in this project, so the history
- * list (which scans `*.jsonl`) shows them. Each row is `{sessionId, cwd,
- * title, updatedAt}` from ACP session/list. A row is skipped when its cwd is
- * another folder or its id is already in the session index, so a rescan is a
- * no-op. An existing file is never overwritten. Returns the files written.
- */
-export function importListedSessions(sessionDir: string, prefix: string, rows: unknown[], projectRoot: string): string[] {
-  const root = canonicalDir(projectRoot);
-  const index = loadIndex(sessionDir);
-  const known = new Set(Object.values(index.sessions).map((record) => record.threadId));
-  const written: string[] = [];
-  let changed = false;
-  for (const raw of rows) {
-    const row = asObject(raw);
-    const id = asString(row?.sessionId);
-    const cwd = asString(row?.cwd);
-    if (!id || !cwd || !SAFE_SESSION_ID.test(id) || known.has(id) || canonicalDir(cwd) !== root) continue;
-    const path = joinSession(sessionDir, `${prefix}-${id}.jsonl`);
-    known.add(id);
-    // One index write per scan instead of a rememberSession call per row.
-    index.sessions[sessionKey(path)] = { threadId: id, updatedAt: new Date().toISOString() };
-    changed = true;
-    if (existsSync(path)) continue;
-    writeSessionPrelude(path, asString(row?.title)?.trim() || "Untitled conversation", projectRoot);
-    const updated = Date.parse(asString(row?.updatedAt) ?? "");
-    if (Number.isFinite(updated)) utimesSync(path, new Date(updated), new Date(updated));
-    written.push(path);
-  }
-  if (changed) saveIndex(sessionDir, index);
-  return written;
 }
 
 /** A foreground command that agy may still be running after it sends end_turn. Daemons never finish. */
@@ -703,6 +657,10 @@ export class AcpAdapter implements CliAdapter {
         case "get_commands":
           host.respond("get_commands", true, { commands: this.commands }, undefined, command.id);
           return;
+        case "refresh_sessions":
+          // Sessions started in a terminal while Pitex runs, before the history list opens.
+          host.respond("refresh_sessions", true, { imported: await this.importSessions() }, undefined, command.id);
+          return;
         case "approval_response":
           this.resolveApproval(command);
           host.respond("approval_response", true, {}, undefined, command.id);
@@ -1137,8 +1095,9 @@ export class AcpAdapter implements CliAdapter {
     }
   }
 
-  private async importSessions(): Promise<void> {
-    if (!this.profile.importSessions || !this.listSessions || !this.rpc) return;
+  /** Mirrors the CLI's sessions for this project; returns how many files it wrote. */
+  private async importSessions(): Promise<number> {
+    if (!this.profile.importSessions || !this.listSessions || !this.rpc) return 0;
     const rows: unknown[] = [];
     let cursor: string | null = null;
     try {
@@ -1152,12 +1111,13 @@ export class AcpAdapter implements CliAdapter {
       } while (cursor && rows.length < SESSION_SCAN_LIMIT);
     } catch {
       // The history list is a convenience. A failed scan leaves it as it was.
-      return;
+      return 0;
     }
     try {
-      importListedSessions(this.sessionDir, this.profile.id, rows.slice(0, SESSION_SCAN_LIMIT), this.projectRoot());
+      return importListedSessions(this.sessionDir, this.profile.id, rows.slice(0, SESSION_SCAN_LIMIT), this.projectRoot()).length;
     } catch {
       // An unwritable session folder must not stop the chat.
+      return 0;
     }
   }
 
