@@ -24,6 +24,14 @@ export interface PiCommand {
   modeId?: string;
   /** prompt / steer: pi's ImageContent (base64 `data`). */
   images?: PiImage[];
+  /** fork_session / rewind: how many whole turns (a user message and everything after it, up to the next one) to keep. */
+  keepTurns?: number;
+  /** fork_session/rewind: how many prompts the host's chat shows; a cut is refused when the backend counts differently. */
+  turns?: number;
+  /** rewind: restore the conversation, the files the agent edited, or both; `dryRun` only lists the files. */
+  conversation?: boolean;
+  files?: boolean;
+  dryRun?: boolean;
 }
 
 /** pi's `ImageContent`; `type` is optional on the wire. */
@@ -37,6 +45,10 @@ export interface PiImage {
 export interface Capabilities {
   steer: boolean;
   images: boolean;
+  /** `fork_session` works; absent means the host forks by quoting the earlier chat into a new one. */
+  fork?: boolean;
+  /** What `rewind` can restore; absent means neither. */
+  rewind?: { conversation: boolean; files: boolean };
 }
 
 export const MAX_IMAGES = 8;

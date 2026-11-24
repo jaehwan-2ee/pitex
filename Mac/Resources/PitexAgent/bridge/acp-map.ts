@@ -302,6 +302,8 @@ const AGY_TOOL_KINDS: Record<string, ToolKind> = {
   codebase_search: "search",
   search_web: "search",
   read_url_content: "fetch",
+  // agy 1.5 runs a subagent as one call; ACP reports none of its own calls and no parent id.
+  invoke_subagent: "sub_agent",
 };
 
 const ACP_KINDS: Record<string, ToolKind> = {
@@ -356,6 +358,11 @@ export function acpToolDetail(update: Json): ToolDetail {
     label: asString(update.title) ?? (name || undefined),
   };
   if (kind === "shell") detail.command = commandText(update);
+  if (kind === "sub_agent") {
+    detail.description = firstString(raw, ["Role", "Description", "description"]);
+    detail.subAgentType = firstString(raw, ["TypeName", "subagent_type"]);
+    detail.label = detail.description ?? detail.subAgentType ?? detail.label;
+  }
   if (diffBlock && typeof diffBlock.newText === "string") {
     const oldText = typeof diffBlock.oldText === "string" ? diffBlock.oldText : null;
     kind = oldText === null ? "write" : "edit";

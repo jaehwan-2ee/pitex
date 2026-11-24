@@ -17,6 +17,8 @@ export interface SessionRecord {
   mode?: string;
   /** The last todo list, for CLIs whose own history does not replay it (Claude Code, Codex). */
   todos?: TodoItem[];
+  /** Claude Code: the message a rewound conversation resumes at, until the next prompt branches from it. */
+  resumeAt?: string;
   updatedAt: string;
 }
 
@@ -63,7 +65,8 @@ export function rememberSession(
   threadId: string,
   model?: string,
   mode?: string,
-  todos?: TodoItem[] | null
+  todos?: TodoItem[] | null,
+  resumeAt?: string | null
 ): void {
   const index = loadIndex(sessionDir);
   index.sessions[sessionKey(sessionPath)] = {
@@ -71,6 +74,7 @@ export function rememberSession(
     ...(model ? { model } : {}),
     ...(mode && mode !== "default" ? { mode } : {}),
     ...(todos && todos.length > 0 ? { todos } : {}),
+    ...(resumeAt ? { resumeAt } : {}),
     updatedAt: new Date().toISOString(),
   };
   saveIndex(sessionDir, index);
@@ -83,6 +87,10 @@ export function threadIdFor(sessionDir: string, sessionPath: string): string | n
 
 export function sessionModeFor(sessionDir: string, sessionPath: string): string | null {
   return loadIndex(sessionDir).sessions[sessionKey(sessionPath)]?.mode || null;
+}
+
+export function sessionResumeAtFor(sessionDir: string, sessionPath: string): string | null {
+  return loadIndex(sessionDir).sessions[sessionKey(sessionPath)]?.resumeAt || null;
 }
 
 export function sessionTodosFor(sessionDir: string, sessionPath: string): TodoItem[] | null {

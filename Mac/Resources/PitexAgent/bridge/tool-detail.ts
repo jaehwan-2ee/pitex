@@ -29,6 +29,11 @@ export interface ToolDetail {
   label?: string;
   startLine?: number;
   endLine?: number;
+  /** sub_agent: the agent type (Claude's `subagent_type`) and the task it was given. */
+  subAgentType?: string;
+  description?: string;
+  /** sub_agent: tool calls the subagent has started so far (live count). */
+  toolUses?: number;
 }
 
 type Json = Record<string, unknown>;

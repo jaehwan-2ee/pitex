@@ -28,9 +28,9 @@
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants as fsConstants, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, existsSync, constants as fsConstants, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { promptImages, statsFromUsage, type AdapterHost, type AdapterStartOptions, type CliAdapter, type ModeState, type PiCommand, type PiImage } from "./adapter.ts";
 import {
@@ -40,7 +40,10 @@ import {
   claudeAnswers,
   claudeApprovalEvent,
   claudeSessionRows,
+  claudePromptCount,
+  claudeTurnCut,
   createClaudeStreamState,
+  keepTurnsOf,
   mapClaudeMessage,
   messagesFromState,
   modelIdOfInit,
@@ -66,6 +69,7 @@ import {
   SESSION_SCAN_LIMIT,
   sessionBackend,
   sessionModeFor,
+  sessionResumeAtFor,
   sessionTodosFor,
   threadIdFor,
   writeSessionPrelude,
@@ -101,6 +105,10 @@ export interface ClaudeQueryOptions {
   persistSession: boolean;
   env: Record<string, string>;
   hooks: { PreToolUse: { matcher: string; hooks: (() => Promise<Json>)[] }[] };
+  /** Snapshots the files Claude's Edit/Write tools change (backups go under Claude's config dir), so rewind can restore them. */
+  enableFileCheckpointing: boolean;
+  /** A rewound conversation: resume with the history up to this message. */
+  resumeSessionAt?: string;
 }
 
 export interface CanUseToolOptions {
@@ -123,7 +131,16 @@ export interface ClaudeQueryHandle extends AsyncIterable<unknown> {
   supportedModels(): Promise<SdkModelInfo[]>;
   /** The slash commands this CLI offers; with `settingSources: []` only Claude Code's built-in ones. */
   supportedCommands?(): Promise<SdkSlashCommand[]>;
+  /** Restores the checkpointed files to their state at that user message (`dryRun` only lists them). */
+  rewindFiles?(userMessageId: string, options?: { dryRun?: boolean }): Promise<unknown>;
   close(): void;
+}
+
+/** The CLI's rewind_files reply. */
+interface RewindFilesResult {
+  canRewind?: boolean;
+  error?: string;
+  filesChanged?: string[];
 }
 
 export interface SdkSlashCommand {
@@ -174,6 +191,8 @@ export type ClaudeQueryFn = (args: {
 export interface ClaudeSessionApi {
   listSessions(options: { dir: string; limit: number; includeWorktrees: boolean }): Promise<unknown[]>;
   getSessionMessages(sessionId: string, options: { dir: string }): Promise<unknown[]>;
+  /** Copies the conversation up to `upToMessageId` into a new session; the original is left as it was. */
+  forkSession?(sessionId: string, options: { dir: string; upToMessageId?: string }): Promise<{ sessionId: string }>;
 }
 
 export interface ClaudeAdapterDeps {
@@ -405,6 +424,8 @@ export class ClaudeAdapter implements CliAdapter {
   /** A model-list probe must not write a Claude session for the project. */
   private catalogProbe = false;
   private stats: Json = { tokens: { total: 0 }, cost: 0, contextUsage: {} };
+  /** A rewound conversation resumes at this message until the next prompt branches from it. */
+  private resumeAt: string | null = null;
   private readonly deps: ClaudeAdapterDeps;
 
   constructor(deps: ClaudeAdapterDeps = {}) {
@@ -506,6 +527,12 @@ export class ClaudeAdapter implements CliAdapter {
           this.resolveApproval(command);
           host.respond("approval_response", true, {}, undefined, command.id);
           return;
+        case "fork_session":
+          await this.fork(command, host);
+          return;
+        case "rewind":
+          await this.rewind(command, host);
+          return;
         default:
           host.respond(command.type, false, undefined, `Unsupported command: ${command.type}`, command.id);
       }
@@ -585,12 +612,14 @@ export class ClaudeAdapter implements CliAdapter {
       mcpServers: {},
       persistSession: !this.catalogProbe,
       env: this.childEnv,
+      enableFileCheckpointing: !this.catalogProbe,
       // Every shell tool the CLI has (PowerShell is an opt-in preview on Windows).
       hooks: { PreToolUse: [{ matcher: "Bash|PowerShell|Monitor", hooks: [async () => this.shellHook()] }] },
     };
     if (this.modelId) options.model = this.modelId;
     if (this.effort) options.effort = this.effort;
     if (resumeId) options.resume = resumeId;
+    if (resumeId && this.resumeAt && resumeId === this.sessionId) options.resumeSessionAt = this.resumeAt;
     return options;
   }
 
@@ -671,6 +700,11 @@ export class ClaudeAdapter implements CliAdapter {
     this.noteUserMessage(message);
     this.running = true;
     this.pump.push(message, images);
+    // The CLI writes this prompt after the rewind point, so the conversation now resumes from its own end.
+    if (this.resumeAt) {
+      this.resumeAt = null;
+      this.remember();
+    }
     host.respond(command.type, true, {}, undefined, command.id);
   }
 
@@ -692,8 +726,14 @@ export class ClaudeAdapter implements CliAdapter {
   }
 
   private async newSession(host: AdapterHost, id?: string): Promise<void> {
+    await this.startFresh();
+    host.respond("new_session", true, {}, undefined, id);
+  }
+
+  private async startFresh(): Promise<void> {
     this.sessionPath = null;
     this.sessionId = null;
+    this.resumeAt = null;
     this.persistedTranscript = 0;
     this.stream = createClaudeStreamState();
     this.allowKeys.clear();
@@ -702,7 +742,6 @@ export class ClaudeAdapter implements CliAdapter {
     await this.openQuery(null);
     this.emitMode();
     await this.importSessions();
-    host.respond("new_session", true, {}, undefined, id);
   }
 
   private async switchSession(command: PiCommand, host: AdapterHost): Promise<void> {
@@ -723,9 +762,15 @@ export class ClaudeAdapter implements CliAdapter {
       );
       return;
     }
+    await this.openSession(sessionPath, threadId);
+    host.respond("switch_session", true, { cancelled: false }, undefined, command.id);
+  }
+
+  private async openSession(sessionPath: string, threadId: string): Promise<void> {
     this.allowKeys.clear();
     this.sessionPath = sessionPath;
     this.sessionId = threadId;
+    this.resumeAt = sessionResumeAtFor(this.sessionDir, sessionPath);
     // Claude Code's own record has the typed cards and thinking; the mirror is the fallback.
     const replay = await this.savedTranscript(threadId);
     this.stream = createClaudeStreamState();
@@ -738,7 +783,85 @@ export class ClaudeAdapter implements CliAdapter {
     this.mode = isClaudeMode(saved) ? saved : "default";
     await this.openQuery(threadId);
     this.emitMode();
-    host.respond("switch_session", true, { cancelled: false }, undefined, command.id);
+  }
+
+  /**
+   * The saved conversation rows (main chain), or a user-facing error. `turns` (the host's prompt
+   * count), this transcript and Claude's rows must agree, or `keepTurns` would cut the wrong turn
+   * (a crash restart under the host's old rows, compaction, a prompt the CLI kept no row for).
+   */
+  private async savedRows(turns: unknown): Promise<unknown[]> {
+    if (this.running) throw new Error("Wait for the current turn to finish first.");
+    if (!this.sessionId) throw new Error("This conversation has nothing saved yet.");
+    const sessions = this.deps.sessions ?? (await defaultSessions());
+    const all = await sessions.getSessionMessages(this.sessionId, { dir: this.cwd });
+    const rows = this.resumeAt ? rowsThrough(all, this.resumeAt) : all;
+    const shown = this.stream.transcript.filter((message) => message.role === "user").length;
+    if ((typeof turns === "number" && turns !== shown) || claudePromptCount(rows) !== shown) {
+      throw new Error("This chat no longer matches Claude Code's record of it. Reopen it from History, then try again.");
+    }
+    return rows;
+  }
+
+  /** `fork_session {keepTurns}`: a new Claude session holding the first turns; the original is not touched. */
+  private async fork(command: PiCommand, host: AdapterHost): Promise<void> {
+    const keep = turnCount(command.keepTurns);
+    if (keep < 1) throw new Error("Pick a message after the first one to fork from.");
+    const sessions = this.deps.sessions ?? (await defaultSessions());
+    if (!sessions.forkSession) throw new Error("This Claude Code SDK cannot fork conversations.");
+    const cut = claudeTurnCut(await this.savedRows(command.turns), keep);
+    if (!cut.keepUuid || !this.sessionId) throw new Error("Claude Code has no saved message to fork from.");
+    const { sessionId: forked } = await sessions.forkSession(this.sessionId, { dir: this.cwd, upToMessageId: cut.keepUuid });
+    const sessionPath = joinSession(this.sessionDir, `claude-${forked}.jsonl`);
+    writeMirror(sessionPath, keepTurnsOf(this.stream.transcript, keep), this.cwd);
+    rememberSession(this.sessionDir, sessionPath, forked, this.modelId ?? undefined, this.mode, this.stream.todos);
+    await this.openSession(sessionPath, forked);
+    host.respond("fork_session", true, { sessionPath }, undefined, command.id);
+  }
+
+  /**
+   * `rewind {keepTurns, conversation, files, dryRun}`. Files: the CLI's checkpoints of what its
+   * Edit/Write tools changed since the first dropped prompt; refused whole when any is outside the
+   * project. Conversation: the next turn resumes after the kept turns (`resumeSessionAt`).
+   */
+  private async rewind(command: PiCommand, host: AdapterHost): Promise<void> {
+    const keep = turnCount(command.keepTurns);
+    const conversation = command.conversation === true && command.dryRun !== true;
+    const files = command.files === true;
+    if (!conversation && !files) throw new Error("Choose what to rewind.");
+    const cut = claudeTurnCut(await this.savedRows(command.turns), keep);
+    if (!cut.dropPromptUuid) throw new Error("Nothing comes after this message.");
+    let filesChanged: string[] = [];
+    if (files) {
+      if (!this.query) await this.openQuery(this.sessionId);
+      if (!this.query?.rewindFiles) throw new Error("This Claude Code SDK cannot restore files.");
+      const preview = rewindResult(await this.query.rewindFiles(cut.dropPromptUuid, { dryRun: true }));
+      filesChanged = preview.filesChanged ?? [];
+      const outside = filesChanged.filter((path) => !insideProject(this.cwd, path));
+      if (outside.length > 0) throw new Error(`Pitex only restores files inside the project; Claude also changed ${outside.join(", ")}.`);
+      if (command.dryRun !== true && filesChanged.length > 0) {
+        // The real run may not list the files again (Claude Code 2.1.331 does not); the dry run did.
+        const restored = rewindResult(await this.query.rewindFiles(cut.dropPromptUuid)).filesChanged ?? [];
+        if (restored.length > 0) filesChanged = restored;
+      }
+    }
+    if (conversation) {
+      if (keep === 0 || !cut.keepUuid) {
+        await this.startFresh();
+      } else {
+        this.resumeAt = cut.keepUuid;
+        const kept = keepTurnsOf(this.stream.transcript, keep);
+        const todos = this.stream.todos;
+        this.stream = createClaudeStreamState();
+        this.stream.transcript = kept;
+        this.stream.todos = todos;
+        if (this.sessionPath) writeMirror(this.sessionPath, this.stream.transcript, this.cwd);
+        this.persistedTranscript = this.stream.transcript.length;
+        this.remember();
+        await this.openQuery(this.sessionId);
+      }
+    }
+    host.respond("rewind", true, { filesChanged, conversation, ...(command.dryRun === true ? { dryRun: true } : {}) }, undefined, command.id);
   }
 
   private async setModel(command: PiCommand, host: AdapterHost): Promise<void> {
@@ -867,7 +990,8 @@ export class ClaudeAdapter implements CliAdapter {
   private async savedTranscript(threadId: string): Promise<ClaudeStreamState | null> {
     try {
       const sessions = this.deps.sessions ?? (await defaultSessions());
-      const replay = replayClaudeMessages(await sessions.getSessionMessages(threadId, { dir: this.cwd }));
+      const rows = await sessions.getSessionMessages(threadId, { dir: this.cwd });
+      const replay = replayClaudeMessages(this.resumeAt ? rowsThrough(rows, this.resumeAt) : rows);
       return replay.transcript.length > 0 ? replay : null;
     } catch {
       return null;
@@ -876,7 +1000,7 @@ export class ClaudeAdapter implements CliAdapter {
 
   private remember(): void {
     if (!this.sessionPath || !this.sessionId) return;
-    rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined, this.mode, this.stream.todos);
+    rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined, this.mode, this.stream.todos, this.resumeAt);
   }
 
   /** The replayed transcript without todo tool rows, and the last todo list for the checklist. */
@@ -903,7 +1027,7 @@ export class ClaudeAdapter implements CliAdapter {
       thinkingLevel: this.thinkingLevel(),
       mode: this.modeState(),
       // A message pushed mid-turn becomes its own turn after this one (seen live), not a steer.
-      capabilities: { steer: false, images: true },
+      capabilities: { steer: false, images: true, fork: true, rewind: { conversation: true, files: true } },
     };
   }
 
@@ -1070,6 +1194,48 @@ export class ClaudeAdapter implements CliAdapter {
     this.pending.clear();
     for (const pending of outstanding) pending.finish(null);
   }
+}
+
+/** Rows up to and including `uuid` (a rewound conversation), or all of them when it is gone. */
+function rowsThrough(rows: unknown[], uuid: string): unknown[] {
+  const index = rows.findIndex((row) => asObject(row)?.uuid === uuid);
+  return index < 0 ? rows : rows.slice(0, index + 1);
+}
+
+function turnCount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("keepTurns must be a whole number of turns.");
+  return value;
+}
+
+function rewindResult(value: unknown): RewindFilesResult {
+  const result = (asObject(value) ?? {}) as RewindFilesResult;
+  if (result.canRewind !== true) throw new Error(result.error || "Claude Code has no file checkpoint for that message.");
+  return { ...result, filesChanged: Array.isArray(result.filesChanged) ? result.filesChanged.filter((path) => typeof path === "string") : [] };
+}
+
+/** True when `path` is the project folder or inside it (symlinked roots compare by their real path). */
+export function insideProject(root: string, path: string): boolean {
+  const real = (target: string) => {
+    try {
+      return realpathSync(target);
+    } catch {
+      return target;
+    }
+  };
+  const base = real(resolve(root));
+  const target = resolve(base, path);
+  // A file the rewind would recreate may not exist now; compare through its folder.
+  const full = existsSync(target) ? real(target) : join(real(dirname(target)), basename(target));
+  const rel = relative(base, full);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/** A Pitex mirror holding `messages` (the first must be the opening prompt, as in every mirror). */
+function writeMirror(sessionPath: string, messages: Json[], cwd: string): void {
+  const [first, ...rest] = messages;
+  const text = ((first?.content as Json[] | undefined) ?? []).map((block) => (typeof block.text === "string" ? block.text : "")).join("");
+  writeSessionPrelude(sessionPath, text || "Untitled conversation", cwd);
+  for (const message of rest) appendPiMessage(sessionPath, message);
 }
 
 function appendPiMessage(sessionPath: string, message: Json): void {
