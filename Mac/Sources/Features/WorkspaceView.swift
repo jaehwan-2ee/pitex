@@ -174,27 +174,32 @@ struct WorkspaceView: View {
             editorHeader
             conflictBanner
             remoteConflictBanner
-            // VSplitView gives the console's top edge a draggable divider,
-            // like the outer native split does for the side panes.
-            VSplitView {
-                VStack(spacing: 0) {
-                    editor
-                    editorFooter
-                }
-                .frame(minHeight: 160, maxHeight: .infinity)
-                .layoutPriority(1)
-                // An open commit diff covers the editor surface but keeps
-                // it mounted underneath, so scroll/undo state survives.
-                .overlay {
-                    if let diff = workspace.gitDiff {
-                        CommitDiffView(workspace: workspace, session: diff)
+            // A frame-based native split, like the outer one: neither the
+            // console's streaming content nor a divider drag can feed sizes
+            // back into Auto Layout (SwiftUI's VSplitView did, and AppKit
+            // threw from _postWindowNeedsUpdateConstraints).
+            EditorConsoleSplitView(
+                workspace: workspace,
+                editor: AnyView(
+                    VStack(spacing: 0) {
+                        editor
+                        editorFooter
                     }
-                }
-                if workspace.bottomPanelVisible {
-                    BottomConsoleView(workspace: workspace)
-                        .background(Color(nsColor: appearance.color(for: .gutterBackground)))
-                }
-            }
+                    // An open commit diff covers the editor surface but keeps
+                    // it mounted underneath, so scroll/undo state survives.
+                    .overlay {
+                        if let diff = workspace.gitDiff {
+                            CommitDiffView(workspace: workspace, session: diff)
+                        }
+                    }
+                ),
+                console: workspace.bottomPanelVisible
+                    ? AnyView(
+                        BottomConsoleView(workspace: workspace)
+                            .background(Color(nsColor: appearance.color(for: .gutterBackground)))
+                    )
+                    : nil
+            )
         }
         .frame(minWidth: 460, maxHeight: .infinity)
         .layoutPriority(1)
@@ -896,6 +901,171 @@ private final class WorkspaceNativeSplitView: NSSplitView {
 
     fileprivate func maximumDividerPosition(_ dividerIndex: Int) -> CGFloat {
         arrangedSubviews[dividerIndex + 1].frame.maxX - panes[dividerIndex + 1].minimum - dividerThickness
+    }
+}
+
+private struct EditorConsoleSplitView: NSViewRepresentable {
+    let workspace: WorkspaceModel
+    let editor: AnyView
+    let console: AnyView?
+
+    func makeNSView(context: Context) -> EditorConsoleNativeSplitView {
+        EditorConsoleNativeSplitView()
+    }
+
+    func updateNSView(_ split: EditorConsoleNativeSplitView, context: Context) {
+        // Same environment bridge as WorkspaceSplitView's panes.
+        func hosted(_ view: AnyView) -> AnyView {
+            AnyView(view.environment(\.self, context.environment).focusedSceneObject(workspace))
+        }
+        split.configure(editor: hosted(editor), console: console.map(hosted))
+    }
+}
+
+/// Editor above, console below, placed by frames. The hosts install no
+/// size constraints (`sizingOptions = []`), so content changes stay inside
+/// each host and a divider drag only moves frames.
+private final class EditorConsoleNativeSplitView: NSSplitView {
+    static let editorMinimum: CGFloat = 160
+    static let consoleMinimum: CGFloat = 300
+
+    private let editorHost = EditorConsoleNativeSplitView.makeHost()
+    private var consoleHost: NSHostingView<AnyView>?
+    /// The console's height as the user left it; 360 matches the old ideal.
+    private var consoleHeight: CGFloat = 360
+    private var placing = false
+    private var trackingDivider = false
+    private let layoutDelegate = EditorConsoleLayoutDelegate()
+
+    init() {
+        super.init(frame: .zero)
+        isVertical = false
+        dividerStyle = .thin
+        layoutDelegate.split = self
+        delegate = layoutDelegate
+        addArrangedSubview(editorHost)
+    }
+
+    deinit {
+        delegate = nil
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static func makeHost() -> NSHostingView<AnyView> {
+        let host = NSHostingView(rootView: AnyView(EmptyView()))
+        host.sizingOptions = []
+        host.autoresizingMask = []
+        return host
+    }
+
+    func configure(editor: AnyView, console: AnyView?) {
+        editorHost.rootView = editor
+        if let console {
+            if let consoleHost {
+                consoleHost.rootView = console
+            } else {
+                let host = Self.makeHost()
+                host.rootView = console
+                consoleHost = host
+                addArrangedSubview(host)
+            }
+        } else if let consoleHost {
+            consoleHost.removeFromSuperview()
+            self.consoleHost = nil
+        }
+        placePanes()
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        placePanes()
+    }
+
+    override func layout() {
+        super.layout()
+        placePanes()
+    }
+
+    private func placePanes() {
+        guard !placing, !trackingDivider, bounds.height > 0 else { return }
+        placing = true
+        defer { placing = false }
+        guard let consoleHost, arrangedSubviews.count == 2 else {
+            if editorHost.frame != bounds { editorHost.frame = bounds }
+            return
+        }
+        let available = max(0, bounds.height - dividerThickness)
+        let console = Self.consoleHeight(consoleHeight, available: available)
+        let editor = available - console
+        // Flipped: the editor is at the top.
+        let editorFrame = NSRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: editor)
+        let consoleFrame = NSRect(
+            x: bounds.minX, y: bounds.minY + editor + dividerThickness, width: bounds.width, height: console
+        )
+        if editorHost.frame != editorFrame { editorHost.frame = editorFrame }
+        if consoleHost.frame != consoleFrame { consoleHost.frame = consoleFrame }
+    }
+
+    /// The console keeps its height while both panes fit their minimums;
+    /// below that, both shrink in proportion to their minimums.
+    static func consoleHeight(_ wanted: CGFloat, available: CGFloat) -> CGFloat {
+        let minimumTotal = editorMinimum + consoleMinimum
+        guard available >= minimumTotal else { return available * consoleMinimum / minimumTotal }
+        return min(max(wanted, consoleMinimum), available - editorMinimum)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        trackingDivider = true
+        super.mouseDown(with: event)
+        trackingDivider = false
+        recordConsoleHeight()
+    }
+
+    override func setPosition(_ position: CGFloat, ofDividerAt dividerIndex: Int) {
+        let wasTracking = trackingDivider
+        trackingDivider = true
+        super.setPosition(
+            max(minimumDividerPosition(), min(maximumDividerPosition(), position)), ofDividerAt: dividerIndex
+        )
+        trackingDivider = wasTracking
+        recordConsoleHeight()
+    }
+
+    private func recordConsoleHeight() {
+        guard let consoleHost, consoleHost.frame.height > 0 else { return }
+        consoleHeight = consoleHost.frame.height
+    }
+
+    fileprivate func minimumDividerPosition() -> CGFloat {
+        bounds.minY + Self.editorMinimum
+    }
+
+    fileprivate func maximumDividerPosition() -> CGFloat {
+        bounds.maxY - Self.consoleMinimum - dividerThickness
+    }
+}
+
+/// Not the split view itself, for the reason given on LayoutDelegate.
+private final class EditorConsoleLayoutDelegate: NSObject, NSSplitViewDelegate {
+    weak var split: EditorConsoleNativeSplitView?
+
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        split?.minimumDividerPosition() ?? proposedMinimumPosition
+    }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        split?.maximumDividerPosition() ?? proposedMaximumPosition
     }
 }
 
