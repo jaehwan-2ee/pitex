@@ -32,7 +32,7 @@ import { accessSync, constants as fsConstants, readFileSync, writeFileSync } fro
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
-import type { AdapterHost, AdapterStartOptions, CliAdapter, ModeState, PiCommand } from "./adapter.ts";
+import { promptImages, type AdapterHost, type AdapterStartOptions, type CliAdapter, type ModeState, type PiCommand, type PiImage } from "./adapter.ts";
 import {
   allowKey,
   cancelOpenTools,
@@ -121,8 +121,49 @@ export interface ClaudeQueryHandle extends AsyncIterable<unknown> {
   setPermissionMode?(mode: string): Promise<void>;
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
   supportedModels(): Promise<SdkModelInfo[]>;
+  /** The slash commands this CLI offers; with `settingSources: []` only Claude Code's built-in ones. */
+  supportedCommands?(): Promise<SdkSlashCommand[]>;
   close(): void;
 }
+
+export interface SdkSlashCommand {
+  name: string;
+  description?: string;
+  argumentHint?: string;
+}
+
+/** Claude Code expands a slash command only from the last content block, so images go first. */
+export function claudeUserContent(text: string, images: PiImage[]): string | Json[] {
+  if (images.length === 0) return text;
+  return [
+    ...images.map((image) => ({
+      type: "image",
+      source: { type: "base64", media_type: image.mimeType, data: image.data },
+    })),
+    { type: "text", text },
+  ];
+}
+
+/** Commands that only drive the terminal UI or fight the panel's own model and effort pickers. */
+const HIDDEN_COMMANDS = new Set(["color", "config", "doctor", "effort", "fast", "focus", "heapdump", "model", "output-style"]);
+
+/** `get_commands` rows from `supportedCommands()`, without internal, removed and terminal-only rows. */
+export function claudeCommands(listed: SdkSlashCommand[]): Json[] {
+  return listed
+    .filter((command) => typeof command?.name === "string" && command.name.length > 0)
+    .filter((command) => {
+      const name = command.name.replace(/^\//, "");
+      return !name.startsWith("__") && !HIDDEN_COMMANDS.has(name) && !command.description?.startsWith("(removed)");
+    })
+    .map((command) => ({
+      name: command.name.replace(/^\//, ""),
+      ...(command.description ? { description: command.description } : {}),
+      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+      source: "claude",
+    }));
+}
+
+const COMMANDS_TTL_MS = 10 * 60 * 1000;
 
 export type ClaudeQueryFn = (args: {
   prompt: AsyncIterable<Json>;
@@ -294,10 +335,10 @@ class PromptPump implements AsyncIterator<Json> {
   private waiter: ((result: IteratorResult<Json>) => void) | null = null;
   private closed = false;
 
-  push(text: string): void {
+  push(text: string, images: PiImage[] = []): void {
     const message: Json = {
       type: "user",
-      message: { role: "user", content: text },
+      message: { role: "user", content: claudeUserContent(text, images) },
       parent_tool_use_id: null,
     };
     if (this.waiter) {
@@ -449,7 +490,7 @@ export class ClaudeAdapter implements CliAdapter {
           host.respond("get_session_stats", true, this.stats, undefined, command.id);
           return;
         case "get_commands":
-          host.respond("get_commands", true, { commands: [] }, undefined, command.id);
+          host.respond("get_commands", true, { commands: await this.commands() }, undefined, command.id);
           return;
         case "refresh_sessions":
           // Sessions started in a terminal while Pitex runs, before the history list opens.
@@ -601,17 +642,19 @@ export class ClaudeAdapter implements CliAdapter {
     for (const event of events) this.host.emit(event);
   }
 
+  /** `steer` and a prompt during a turn both go into the live streaming-input query at once. */
   private async prompt(command: PiCommand, host: AdapterHost): Promise<void> {
     const message = command.message ?? "";
     if (!message.trim()) {
       host.respond(command.type, false, undefined, "The prompt was empty.", command.id);
       return;
     }
+    const images = promptImages(command);
     if (!this.query || !this.pump) await this.openQuery(this.sessionId);
     if (!this.pump) throw new Error(CLAUDE_MISSING);
     this.noteUserMessage(message);
     this.running = true;
-    this.pump.push(message);
+    this.pump.push(message, images);
     host.respond(command.type, true, {}, undefined, command.id);
   }
 
@@ -839,7 +882,29 @@ export class ClaudeAdapter implements CliAdapter {
         : null,
       thinkingLevel: this.thinkingLevel(),
       mode: this.modeState(),
+      // A message pushed mid-turn becomes its own turn after this one (seen live), not a steer.
+      capabilities: { steer: false, images: true },
     };
+  }
+
+  private commandCache: { at: number; rows: Json[] } | null = null;
+
+  /** Cached for ten minutes like Paseo; an empty or failed listing is not cached. */
+  private async commands(): Promise<Json[]> {
+    if (this.commandCache && Date.now() - this.commandCache.at < COMMANDS_TTL_MS) return this.commandCache.rows;
+    if (!this.query?.supportedCommands) return [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const listed = await Promise.race([
+      this.query.supportedCommands().catch(() => [] as SdkSlashCommand[]),
+      new Promise<SdkSlashCommand[]>((resolve) => {
+        timer = setTimeout(() => resolve([]), 10000);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    const rows = claudeCommands(Array.isArray(listed) ? listed : []);
+    if (rows.length > 0) this.commandCache = { at: Date.now(), rows };
+    return rows;
   }
 
   private thinkingLevel(): string {

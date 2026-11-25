@@ -11,7 +11,7 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248, "claude-todos": 248}
+MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248, "claude-todos": 248, "claude-composer": 248}
 # The fake Claude answers TOOLCARDS with a Read, an Edit and a failing Bash call.
 TOOLCARDS = "claude-toolcards"
 # MARKDOWN streams a Markdown answer (heading, list, code, math, table, links).
@@ -21,6 +21,17 @@ MARKDOWN = "claude-markdown"
 APPROVALS = "claude-approvals"
 # TODOS gets three TodoWrite snapshots: the checklist above the composer and its activity rows.
 TODOS = "claude-todos"
+# COMPOSER queues two messages behind a slow turn, edits one, steers the other,
+# opens the @ and / lists, and pastes a PNG from the clipboard.
+COMPOSER = "claude-composer"
+# Measured in 1280x800 with the divider dragged up and the sidebar hidden. Running, a
+# Claude row has Edit and Delete (no steer); idle (after Stop) it has Edit, Send now, Delete.
+# Send now is on the first of three rows (the box grows upward).
+QUEUE_EDIT_FIRST = (1048, 683)
+QUEUE_SEND_NOW_FIRST = (1049, 647)
+STOP = (1094, 767)
+TRANSCRIPT = (600, 450)
+SIDEBAR_TOGGLE = (28, 28)
 # The checklist's header row (expander) just above the composer once the divider is dragged up.
 TODO_HEADER = (445, 728)
 # The header's trash button (new chat).
@@ -74,6 +85,9 @@ def main():
     tex.write_text("\\documentclass{article}\\begin{document}Title\\end{document}\n")
     if provider in (TOOLCARDS, MARKDOWN):
         (project / "intro.tex").write_text("\\section{Introduction}\n")
+    if provider == COMPOSER:
+        # The slow turn outlives the queueing, editing and steering below.
+        os.environ["FAKE_SLOW_MS"] = "16000"
     log = open(evidence / "pitex.log", "w")
     child = subprocess.Popen([binary, str(tex)], stdout=log, stderr=subprocess.STDOUT)
     (evidence / "pids.json").write_text(json.dumps([child.pid]) + "\n")
@@ -116,7 +130,7 @@ def main():
         shot(evidence / "03-assistant.png")
         click(560, 752)
         time.sleep(0.15)
-        if provider in (TOOLCARDS, MARKDOWN, APPROVALS, TODOS):
+        if provider in (TOOLCARDS, MARKDOWN, APPROVALS, TODOS, COMPOSER):
             # Give the transcript room: drag the editor/console divider up.
             run(["xdotool", "mousemove", "840", "538", "mousedown", "1", "mousemove", "840", "400", "mousemove", "840", "160", "mouseup", "1"])
             time.sleep(0.4)
@@ -126,6 +140,8 @@ def main():
             return approvals(evidence, result)
         if provider == TODOS:
             return todo_list(evidence, result)
+        if provider == COMPOSER:
+            return composer(evidence, result)
         prompt = {TOOLCARDS: "TOOLCARDS", MARKDOWN: "MARKDOWN"}.get(provider, "Fix the title")
         run(["xdotool", "type", "--delay", "12", prompt])
         time.sleep(0.15)
@@ -295,6 +311,127 @@ def todo_list(evidence, result):
     result["promptReachedCli"] = "TODOS" in record_path.read_text()
     result["pass"] = result["promptReachedCli"]
     result["steps"].append("todos")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
+
+
+def red_square_png(path, size=24):
+    import struct, zlib
+    raw = b"".join(b"\x00" + b"\xff\x00\x00" * size for _ in range(size))
+    chunk = lambda kind, data: struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def type_text(text):
+    run(["xdotool", "type", "--delay", "12", text])
+
+
+def clear_composer():
+    click(560, 752)
+    run(["xdotool", "key", "ctrl+a", "BackSpace"])
+
+
+def composer(evidence, result):
+    # The assistant pane is wider than a 1280 px window (pre-existing); hiding the
+    # sidebar brings the queue buttons and Stop on screen.
+    click(*SIDEBAR_TOGGLE)
+    time.sleep(0.6)
+    send_prompt("SLOW")
+    time.sleep(1.5)
+    type_text("PLAIN queued one")
+    run(["xdotool", "key", "Return"])
+    type_text("PLAIN queued two")
+    run(["xdotool", "key", "Return"])
+    time.sleep(0.8)
+    shot(evidence / "04-queued.png")
+    # Edit pulls the first row back into the composer; Return queues it again, last.
+    click(*QUEUE_EDIT_FIRST)
+    time.sleep(0.6)
+    shot(evidence / "05-editing.png")
+    run(["xdotool", "key", "End"])
+    type_text(" edited")
+    run(["xdotool", "key", "Return"])
+    time.sleep(0.6)
+    shot(evidence / "06-requeued.png")
+    # Claude cannot steer (a pushed message runs as its own turn): Ctrl+Return queues as well,
+    # and the send button beside Stop queues with the mouse.
+    type_text("PLAIN queued three")
+    run(["xdotool", "key", "ctrl+Return"])
+    time.sleep(0.6)
+    shot(evidence / "07-ctrl-return-queued.png")
+    # Stop pauses the queue; idle rows then offer Send now, which resumes it in order.
+    click(*STOP)
+    time.sleep(1.5)
+    shot(evidence / "08-stopped.png")
+    click(*QUEUE_SEND_NOW_FIRST)
+    time.sleep(3.0)
+    shot(evidence / "09-resumed.png")
+    # @ opens the project files; Tab inserts the path.
+    click(560, 752)
+    type_text("see @mai")
+    time.sleep(0.8)
+    shot(evidence / "10-mention.png")
+    run(["xdotool", "key", "Tab"])
+    time.sleep(0.4)
+    shot(evidence / "11-mention-inserted.png")
+    # Leaving the composer closes the list.
+    type_text("@mai")
+    time.sleep(0.6)
+    click(*TRANSCRIPT)
+    time.sleep(0.6)
+    shot(evidence / "12-mention-closed.png")
+    clear_composer()
+    # Shift+Return adds lines; the composer grows with them and keeps the first in view.
+    for line in ("first line", "second line", "third line"):
+        type_text(line)
+        run(["xdotool", "key", "shift+Return"])
+    time.sleep(0.4)
+    shot(evidence / "13-multiline.png")
+    clear_composer()
+    type_text("/")
+    time.sleep(0.8)
+    shot(evidence / "14-slash.png")
+    run(["xdotool", "key", "Escape"])
+    clear_composer()
+    # /clear is a new chat in the panel too, not only in Claude's context.
+    type_text("/clear")
+    run(["xdotool", "key", "Escape", "Return"])
+    time.sleep(1.5)
+    shot(evidence / "15-cleared.png")
+    # A PNG on the clipboard pastes as a chip and goes out as an image block.
+    png = evidence / "red-square.png"
+    red_square_png(png)
+    subprocess.Popen(["xclip", "-selection", "clipboard", "-t", "image/png", "-i", str(png)])
+    time.sleep(0.8)
+    click(560, 752)
+    run(["xdotool", "key", "ctrl+v"])
+    time.sleep(1.0)
+    shot(evidence / "16-image-chip.png")
+    type_text("what color is this square?")
+    run(["xdotool", "key", "Return"])
+    time.sleep(2.5)
+    shot(evidence / "17-image-sent.png")
+    # An image without text is a message too.
+    click(560, 752)
+    run(["xdotool", "key", "ctrl+v"])
+    time.sleep(1.0)
+    run(["xdotool", "key", "Return"])
+    time.sleep(2.5)
+    shot(evidence / "18-image-only.png")
+    notes = []
+    for line in Path(os.environ["FAKE_RECORD"]).read_text().splitlines():
+        row = json.loads(line)
+        if row.get("kind") == "note" and "user" in row:
+            notes.append({"user": row["user"], "images": row["images"]})
+    result["userMessages"] = notes
+    order = [note["user"] for note in notes]
+    result["orderOk"] = order[:4] == ["SLOW", "PLAIN queued two", "PLAIN queued one edited", "PLAIN queued three"]
+    result["clearStayedLocal"] = "/clear" not in order
+    images = [note for note in notes if note["images"] == ["image/png"]]
+    result["imageOk"] = len(images) == 2 and images[0]["user"] == "what color is this square?"
+    result["pass"] = result["orderOk"] and result["clearStayedLocal"] and result["imageOk"]
+    result["steps"].append("composer")
     write(evidence, result)
     return 0 if result["pass"] else 1
 

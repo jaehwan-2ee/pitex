@@ -410,6 +410,7 @@ impl GhostCompletionCoordinator {
                 .send(
                     &PiRPCCommand::Prompt {
                         message: prompt,
+                        images: Vec::new(),
                         streaming_behavior: None,
                     },
                     Some(&id),

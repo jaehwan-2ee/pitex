@@ -24,8 +24,9 @@ enum PiJSON {
 
 /// Outbound commands accepted by the pi rpc subprocess.
 enum PiRPCCommand {
-    case prompt(message: String, streamingBehavior: String?)
-    case steer(message: String)
+    case prompt(message: String, images: [AgentImage] = [], streamingBehavior: String?)
+    /// pi's own `steer`: into the running turn now (Claude Code, Codex).
+    case steer(message: String, images: [AgentImage] = [])
     case abort
     case newSession
     case switchSession(path: String)
@@ -46,12 +47,15 @@ enum PiRPCCommand {
 
     var object: [String: Any] {
         switch self {
-        case let .prompt(message, streamingBehavior):
+        case let .prompt(message, images, streamingBehavior):
             var object: [String: Any] = ["type": "prompt", "message": message]
+            if !images.isEmpty { object["images"] = images.map(\.wire) }
             if let streamingBehavior { object["streamingBehavior"] = streamingBehavior }
             return object
-        case let .steer(message):
-            return ["type": "steer", "message": message]
+        case let .steer(message, images):
+            var object: [String: Any] = ["type": "steer", "message": message]
+            if !images.isEmpty { object["images"] = images.map(\.wire) }
+            return object
         case .abort:
             return ["type": "abort"]
         case .newSession:
@@ -170,6 +174,8 @@ struct PiSessionStats {
 struct PiSlashCommand: Identifiable {
     let name: String
     let description: String?
+    /// Claude Code's `argumentHint` ("<optional instructions>").
+    let argumentHint: String?
     let source: String
 
     var id: String { name }
@@ -180,6 +186,34 @@ struct PiSlashCommand: Identifiable {
         else { return nil }
         self.name = name
         description = dictionary["description"] as? String
+        argumentHint = (dictionary["argumentHint"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         source = dictionary["source"] as? String ?? ""
+    }
+}
+
+/// `get_state.capabilities`: may the composer steer a running turn, and attach images.
+struct AgentCapabilities: Equatable {
+    var steer = false
+    var images = false
+
+    init(steer: Bool = false, images: Bool = false) {
+        self.steer = steer
+        self.images = images
+    }
+
+    /// The bridges report `capabilities`; pi does not, but has `steer` and takes
+    /// images when the model's `input` lists them.
+    init(state: [String: Any]) {
+        if let caps = state["capabilities"] as? [String: Any] {
+            steer = caps["steer"] as? Bool ?? false
+            images = caps["images"] as? Bool ?? false
+            return
+        }
+        steer = true
+        if let input = (state["model"] as? [String: Any])?["input"] as? [String] {
+            images = input.contains("image")
+        } else {
+            images = true
+        }
     }
 }

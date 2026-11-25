@@ -11,9 +11,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import type { AdapterHost } from "./adapter.ts";
+import { promptImages, type AdapterHost } from "./adapter.ts";
 import {
   CLAUDE_MISSING,
+  claudeCommands,
+  claudeUserContent,
   CLAUDE_SIGNED_OUT,
   ClaudeAdapter,
   claudeChildEnv,
@@ -1025,6 +1027,9 @@ test("claude answers a question, keeps planning with feedback, approves into acc
 
 class ScriptedQuery implements ClaudeQueryHandle {
   permissions: Json[] = [];
+  /** "record" mode: every user message the adapter pushed, in order. */
+  received: Json[] = [];
+  commandCalls = 0;
   modelsSet: string[] = [];
   modesSet: string[] = [];
   interruptCount = 0;
@@ -1068,6 +1073,14 @@ class ScriptedQuery implements ClaudeQueryHandle {
     this.modesSet.push(mode);
   }
 
+  async supportedCommands() {
+    this.commandCalls += 1;
+    return [
+      { name: "compact", description: "Clear history but keep a summary", argumentHint: "<optional instructions>" },
+      { name: "context", description: "Show context usage", argumentHint: "" },
+    ];
+  }
+
   async supportedModels() {
     return [
       {
@@ -1093,7 +1106,7 @@ interface Opened {
   query: ScriptedQuery;
 }
 
-function scriptedQuery(opened: Opened[], mode: "script" | "hold" | "mutate" | "ask" | "todos"): ClaudeQueryFn {
+function scriptedQuery(opened: Opened[], mode: "script" | "hold" | "mutate" | "ask" | "todos" | "record"): ClaudeQueryFn {
   return ({ prompt, options }) => {
     const query = new ScriptedQuery();
     opened.push({ options, query });
@@ -1113,10 +1126,15 @@ async function runTurns(
   prompt: AsyncIterable<Json>,
   options: ClaudeQueryOptions,
   query: ScriptedQuery,
-  mode: "script" | "hold" | "mutate" | "ask" | "todos"
+  mode: "script" | "hold" | "mutate" | "ask" | "todos" | "record"
 ): Promise<void> {
   try {
     for await (const message of prompt) {
+      if (mode === "record") {
+        // The turn stays open until the test pushes a result.
+        query.received.push(message);
+        continue;
+      }
       if (mode === "ask") {
         const text = String((message.message as Json).content);
         const result =
@@ -1524,4 +1542,92 @@ test("the claude-map replay matches the live transcript shape for a whole turn",
     claudeSessionRows([sdkRow("b", 5), sdkRow("a", 1, { customTitle: "T" }), { sessionId: "x" }], "/p", 1),
     [{ sessionId: "a", cwd: "/p", title: "T", updatedAt: "2026-11-20T11:59:00.000Z" }]
   );
+});
+
+test("claude images become base64 blocks ahead of the text, so a /command stays last", () => {
+  assert.equal(claudeUserContent("hi", []), "hi");
+  assert.deepEqual(claudeUserContent("/compact keep it short", [{ mimeType: "image/png", data: "AAAA" }]), [
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+    { type: "text", text: "/compact keep it short" },
+  ]);
+});
+
+test("claude supportedCommands map to get_commands rows with argument hints", () => {
+  assert.deepEqual(
+    claudeCommands([
+      { name: "/compact", description: "Summarize", argumentHint: "<instructions>" },
+      { name: "cost" },
+      { name: "" },
+      { name: "model", description: "Set the AI model" },
+      { name: "__remote-workflow", description: "Internal" },
+      { name: "agents", description: "(removed) Use /list-agents" },
+    ] as never),
+    [
+      { name: "compact", description: "Summarize", argumentHint: "<instructions>", source: "claude" },
+      { name: "cost", source: "claude" },
+    ]
+  );
+});
+
+test("image caps: at most 8 images of 5 MB each, PNG/JPEG/GIF/WebP only", () => {
+  const png = { mimeType: "image/png", data: "AAAA" };
+  assert.deepEqual(promptImages({ type: "prompt", images: [{ ...png, type: "image" }] }), [png]);
+  assert.throws(() => promptImages({ type: "prompt", images: Array(9).fill(png) }), /at most 8 images/);
+  const big = "A".repeat(Math.ceil(((5 * 1024 * 1024 + 1) * 4) / 3) + 4);
+  assert.throws(() => promptImages({ type: "prompt", images: [{ mimeType: "image/png", data: big }] }), /5 MB or smaller/);
+  assert.throws(() => promptImages({ type: "prompt", images: [{ mimeType: "image/tiff", data: "AAAA" }] }), /PNG, JPEG/);
+});
+
+test("claude reports no steer, a stray steer is pushed at once, images ride as blocks, commands are cached", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-composer-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const opened: Opened[] = [];
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery(opened, "record"),
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  const collected = collect();
+  try {
+    await adapter.start({ cwd: dir, sessionDir: dir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary } });
+    await adapter.handleCommand({ type: "get_state", id: "state" }, collected.host);
+    assert.deepEqual((response(collected.responses, "get_state").data as Json).capabilities, { steer: false, images: true });
+
+    const query = opened[0].query;
+    const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "What colour?", images: [image] }, collected.host);
+    await waitUntil(() => query.received.length === 1, "first prompt");
+    assert.deepEqual((query.received[0].message as Json).content, [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+      { type: "text", text: "What colour?" },
+    ]);
+    // Hosts never steer Claude (it runs a pushed message as its own turn), but pi's steer stays accepted.
+    await adapter.handleCommand({ type: "steer", id: "s1", message: "Answer in one word" }, collected.host);
+    await waitUntil(() => query.received.length === 2, "steer");
+    assert.equal((query.received[1].message as Json).content, "Answer in one word");
+    assert.equal(collected.events.some((event) => event.type === "agent_end"), false);
+
+    await adapter.handleCommand(
+      { type: "prompt", id: "big", message: "x", images: Array(9).fill(image) },
+      collected.host
+    );
+    const refused = collected.responses.find((item) => item.id === "big");
+    assert.equal(refused?.success, false);
+    assert.match(String(refused?.error), /at most 8 images/);
+    assert.equal(query.received.length, 2, "a refused prompt sends nothing");
+
+    await adapter.handleCommand({ type: "get_commands", id: "c1" }, collected.host);
+    await adapter.handleCommand({ type: "get_commands", id: "c2" }, collected.host);
+    const rows = (response(collected.responses, "get_commands").data as { commands: Json[] }).commands;
+    assert.deepEqual(rows[0], {
+      name: "compact",
+      description: "Clear history but keep a summary",
+      argumentHint: "<optional instructions>",
+      source: "claude",
+    });
+    assert.equal(query.commandCalls, 1, "the second listing comes from the cache");
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

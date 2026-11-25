@@ -81,6 +81,24 @@
 "assistant.context_none" = "Нет активного контекста документа";
 "assistant.selection_remove" = "Убрать выделение";
 "assistant.usage" = "%@";
+"assistant.queue.label" = "Сообщения в очереди";
+"assistant.queue.title" = "В очереди (%@)";
+"assistant.queue.clear" = "Очистить";
+"assistant.queue.images" = "Изображений: %@";
+"assistant.queue.sending" = "Отправка…";
+"assistant.queue.edit" = "Изменить";
+"assistant.queue.send_now" = "Отправить сейчас";
+"assistant.queue.delete" = "Убрать из очереди";
+"assistant.queue.show_all" = "Показать все в очереди (%@)";
+"assistant.queue.show_less" = "Свернуть";
+"assistant.attach_help" = "Прикрепить изображения или файлы (файлы добавляются как пути)";
+"assistant.mention.label" = "Файлы проекта и команды";
+"assistant.image.label" = "Прикреплённые изображения";
+"assistant.image.remove" = "Удалить изображение";
+"assistant.image.too_large" = "Изображение должно быть не больше 5 МБ.";
+"assistant.image.too_many" = "В одном сообщении можно отправить не больше 8 изображений.";
+"assistant.image.unsupported" = "Можно прикреплять только изображения PNG, JPEG, GIF и WebP.";
+"assistant.image.not_supported_backend" = "Этот ассистент не принимает изображения; файлы добавляются как пути.";
 
 "command.project" = "Проект";
 "command.open" = "Открыть…";
@@ -235,7 +253,6 @@
 "editor.symbol_cat_ams_arrows" = "Стрелки AMS";
 
 "assistant.attach_document" = "Прикрепить активный документ";
-"assistant.attach_files_help" = "Прикрепить файлы проекта к полю ввода";
 "assistant.clear" = "Очистить диалог";
 "assistant.history" = "История разговоров";
 "assistant.history_empty" = "Для этого проекта пока нет сохранённых разговоров.";

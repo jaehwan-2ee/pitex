@@ -175,7 +175,16 @@ pub struct UiHandles {
     pub agent_attach_toggle: RefCell<Option<gtk4::Switch>>,
     /// Anchor for the conversation-history popover (`/resume` opens it too).
     pub agent_history_button: RefCell<Option<gtk4::Button>>,
-    pub agent_composer: RefCell<Option<gtk4::Entry>>,
+    pub agent_composer: RefCell<Option<gtk4::TextView>>,
+    pub agent_attach_button: RefCell<Option<gtk4::Button>>,
+    /// Queued messages above the composer, and what they were drawn for.
+    pub agent_queue_box: RefCell<Option<gtk4::Box>>,
+    pub agent_queue_shown: Cell<u64>,
+    /// "Show all N queued" was clicked.
+    pub agent_queue_expanded: Cell<bool>,
+    /// Image chips of the draft, and what they were drawn for.
+    pub agent_images_box: RefCell<Option<gtk4::Box>>,
+    pub agent_images_shown: Cell<u64>,
     /// Reloaded (not re-added) whenever `ai.fontSize` changes so the composer
     /// entry tracks the conversation font.
     pub agent_composer_font: RefCell<Option<gtk4::CssProvider>>,
@@ -874,6 +883,11 @@ impl AppState {
                  .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}
                  .pitex-mode-edits > button {{ background-color: alpha(#e5a50a, 0.25); box-shadow: inset 0 0 0 1px alpha(#e5a50a, 0.8); }}
                  .pitex-todos {{ padding: 4px 8px; }}
+                 .pitex-queue {{ padding: 4px 8px; }}
+                 .pitex-composer-frame {{ border: 1px solid alpha(currentColor, 0.18); border-radius: 8px; }}
+                 .pitex-composer-frame:focus-within {{ border-color: @accent_color; }}
+                 textview.pitex-composer, textview.pitex-composer text {{ background-color: transparent; }}
+                 .pitex-image-chip {{ background-color: alpha(currentColor, 0.08); border-radius: 6px; padding: 2px 4px 2px 2px; }}
                  .pitex-history-badge {{ background-color: alpha(currentColor, 0.10); border-radius: 999px; padding: 0 6px; }}
                  .pitex-history-badge-other {{ background-color: alpha(@accent_color, 0.18); }}
                  .pitex-md-code {{ background-color: alpha(currentColor, 0.06); border-radius: 6px; padding: 2px 8px 6px 8px; }}
@@ -2991,28 +3005,87 @@ impl AppState {
         }
     }
 
-    pub fn send_agent_draft(&mut self) {
-        let draft = UI.with(|ui| {
+    fn composer_text() -> String {
+        UI.with(|ui| {
             ui.agent_composer
                 .borrow()
                 .as_ref()
-                .map(|e| e.text().to_string())
+                .map(|view| {
+                    let buffer = view.buffer();
+                    buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string()
+                })
                 .unwrap_or_default()
+        })
+    }
+
+    fn set_composer_text(text: &str) {
+        UI.with(|ui| {
+            if let Some(view) = ui.agent_composer.borrow().as_ref() {
+                view.buffer().set_text(text);
+                view.grab_focus();
+            }
         });
-        if draft.trim().is_empty() {
+    }
+
+    /// Return (`now` false) queues while a turn runs; Ctrl+Return (`now`) steers it.
+    pub fn send_agent_draft(&mut self, now: bool) {
+        let draft = Self::composer_text();
+        // Images alone are a message too.
+        if draft.trim().is_empty() && self.agent.as_ref().map_or(true, |agent| agent.draft_images.is_empty()) {
             return;
         }
         self.ensure_agent();
         *self.context_cell.borrow_mut() = self.model.agent_context();
         *self.persist_result.borrow_mut() = Some(self.model.persist_dirty_sessions());
         if let Some(agent) = self.agent.as_mut() {
-            agent.send(&draft);
+            let images = std::mem::take(&mut agent.draft_images);
+            agent.submit(&draft, images, now);
         }
-        UI.with(|ui| {
-            if let Some(e) = ui.agent_composer.borrow().as_ref() {
-                e.set_text("");
+        Self::set_composer_text("");
+        self.refresh_assistant();
+    }
+
+    /// Edit on a queued row: its text back in the composer (ahead of any draft), its images back as chips.
+    pub fn edit_queued(&mut self, id: u64) {
+        let Some(agent) = self.agent.as_mut() else { return };
+        let Some(item) = agent.take_queued(id) else { return };
+        for image in item.images {
+            if agent.draft_images.len() < crate::composer::MAX_IMAGES {
+                agent.draft_images.push(image);
             }
-        });
+        }
+        let draft = Self::composer_text();
+        Self::set_composer_text(&if draft.trim().is_empty() { item.text } else { format!("{}\n{}", item.text, draft) });
+        self.refresh_assistant();
+    }
+
+    /// Project files for `@` mentions, relative to the root.
+    pub fn mention_files(&self) -> Vec<String> {
+        let Some(root) = self.model.project_url.as_ref() else { return Vec::new() };
+        self.model
+            .project_files
+            .iter()
+            .filter_map(|f| WorkspaceModel::relative_path(f, root).ok().map(|p| p.raw_value().to_string()))
+            .collect()
+    }
+
+    /// A pasted, dropped or picked image: a chip, or a status line saying why not.
+    pub fn attach_image_bytes(&mut self, name: &str, mime: &str, bytes: &[u8]) {
+        self.ensure_agent();
+        let lang = self.language;
+        let Some(agent) = self.agent.as_mut() else { return };
+        if !agent.capabilities.images {
+            agent.status_message = Some(tr(lang, "assistant.image.not_supported_backend"));
+        } else {
+            match crate::composer::AgentImage::new(name, mime, bytes, agent.draft_images.len()) {
+                Ok(image) => {
+                    agent.draft_images.push(image);
+                    agent.status_message = None;
+                }
+                Err(error) => agent.status_message = Some(tr(lang, error.key())),
+            }
+        }
+        agent.ui_revision += 1;
         self.refresh_assistant();
     }
 
@@ -3024,9 +3097,8 @@ impl AppState {
             .and_then(|a| a.pending_composer_insertion.take());
         if let Some(text) = insertion {
             UI.with(|ui| {
-                if let Some(e) = ui.agent_composer.borrow().as_ref() {
-                    let mut pos = e.position();
-                    e.insert_text(&text, &mut pos);
+                if let Some(view) = ui.agent_composer.borrow().as_ref() {
+                    view.buffer().insert_at_cursor(&text);
                 }
             });
         }
@@ -3034,8 +3106,34 @@ impl AppState {
 
     /// `attachFiles()` — convert absolute paths to project-relative where
     /// possible, then insert them into the composer.
+    /// Images become chips when the backend takes them; every other file is inserted as a path.
     pub fn attach_files_action(&mut self, paths: Vec<String>) {
         self.ensure_agent();
+        let images_ok = self.agent.as_ref().is_some_and(|a| a.capabilities.images);
+        let (images, paths): (Vec<String>, Vec<String>) = paths
+            .into_iter()
+            .partition(|p| images_ok && crate::composer::image_mime(p).is_some());
+        for path in &images {
+            let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            // Refuse an oversized file before reading it all on the UI thread.
+            if std::fs::metadata(path).is_ok_and(|m| m.len() > crate::composer::MAX_IMAGE_BYTES as u64) {
+                if let Some(agent) = self.agent.as_mut() {
+                    agent.status_message = Some(tr(self.language, crate::composer::ImageError::TooLarge.key()));
+                }
+                continue;
+            }
+            match std::fs::read(path) {
+                Ok(bytes) => self.attach_image_bytes(&name, crate::composer::image_mime(path).unwrap_or("image/png"), &bytes),
+                Err(error) => {
+                    if let Some(agent) = self.agent.as_mut() {
+                        agent.status_message = Some(error.to_string());
+                    }
+                }
+            }
+        }
+        if paths.is_empty() {
+            return;
+        }
         let root = self.model.project_url.clone();
         let converted: Vec<String> = paths
             .iter()
@@ -4663,8 +4761,9 @@ impl AppState {
                     label.set_visible(false);
                 }
             }
+            // Stays beside Stop while a turn runs: a click then queues the draft.
             if let Some(b) = ui.agent_send_button.borrow().as_ref() {
-                b.set_visible(!agent.is_running);
+                b.set_visible(true);
             }
             if let Some(b) = ui.agent_stop_button.borrow().as_ref() {
                 b.set_visible(agent.is_running);
@@ -4684,6 +4783,26 @@ impl AppState {
                     *shown = agent.pending_approval.clone();
                 }
                 box_.set_visible(shown.is_some());
+            }
+            if let Some(box_) = ui.agent_queue_box.borrow().as_ref() {
+                let expanded = ui.agent_queue_expanded.get();
+                let key = view_key(&(&agent.queue.items, agent.is_running, agent.capabilities, agent.pending_approval.is_some(), expanded, lang));
+                if ui.agent_queue_shown.replace(key) != key {
+                    fill_queue(box_, agent, expanded, lang);
+                }
+                box_.set_visible(!agent.queue.items.is_empty());
+            }
+            if let Some(box_) = ui.agent_images_box.borrow().as_ref() {
+                let key = view_key(&(&agent.draft_images, lang));
+                if ui.agent_images_shown.replace(key) != key {
+                    fill_image_chips(box_, &agent.draft_images, lang);
+                }
+                box_.set_visible(!agent.draft_images.is_empty());
+            }
+            if let Some(button) = ui.agent_attach_button.borrow().as_ref() {
+                let help = if agent.capabilities.images { "assistant.attach_help" } else { "assistant.image.not_supported_backend" };
+                button.set_tooltip_text(Some(&tr(lang, help)));
+                button.update_property(&[gtk4::accessible::Property::Description(&tr(lang, help))]);
             }
             if let Some(expander) = ui.agent_todos.borrow().as_ref() {
                 let font_size = self.store.ai_font_size();
@@ -6603,6 +6722,155 @@ fn todo_activity_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64)
     row.upcast()
 }
 
+/// Runs `f` on the app state after the current handler returns, then redraws the assistant.
+fn with_app(f: impl FnOnce(&mut AppState) + 'static) {
+    glib::idle_add_local_once(move || {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+        let Ok(mut state) = state.try_borrow_mut() else { return };
+        f(&mut state);
+        state.refresh_assistant();
+    });
+}
+
+/// A thumbnail at most `size` px on its long side; None when the bytes do not decode.
+// shortcut: GTK 4.6 builds (Ubuntu 22.04) show no thumbnails; Texture::from_bytes is 4.6+ API they do not bind.
+#[cfg(not(feature = "modern-gtk"))]
+fn image_picture(_image: &crate::composer::AgentImage, _size: i32) -> Option<gtk4::Picture> {
+    None
+}
+
+#[cfg(feature = "modern-gtk")]
+fn image_picture(image: &crate::composer::AgentImage, size: i32) -> Option<gtk4::Picture> {
+    let texture = gdk::Texture::from_bytes(&glib::Bytes::from_owned(image.decoded())).ok()?;
+    let picture = gtk4::Picture::for_paintable(&texture);
+    compat::fit_picture(&picture);
+    picture.set_can_shrink(true);
+    let (w, h) = (texture.width().max(1), texture.height().max(1));
+    let scale = (size as f64 / w.max(h) as f64).min(1.0);
+    picture.set_size_request(((w as f64 * scale) as i32).max(16), ((h as f64 * scale) as i32).max(16));
+    picture.set_halign(gtk4::Align::Start);
+    Some(picture)
+}
+
+/// Rows for the queued messages: text, then Edit, Send now (when the backend
+/// can steer) and Delete; more than three fold behind "Show all N queued".
+fn fill_queue(box_: &gtk4::Box, agent: &AgentCoordinator, expanded: bool, lang: &str) {
+    while let Some(child) = box_.first_child() {
+        box_.remove(&child);
+    }
+    let items = &agent.queue.items;
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let title = gtk4::Label::new(Some(&tr1(lang, "assistant.queue.title", &items.len().to_string())));
+    title.add_css_class("caption-heading");
+    title.add_css_class("dim-label");
+    title.set_hexpand(true);
+    title.set_xalign(0.0);
+    header.append(&title);
+    let clear = gtk4::Button::with_label(&tr(lang, "assistant.queue.clear"));
+    clear.add_css_class("flat");
+    clear.add_css_class("caption");
+    a11y(&clear, "pitex.assistant.queue.clear", "assistant.queue.clear");
+    clear.connect_clicked(|_| with_app(|s| if let Some(agent) = s.agent.as_mut() { agent.clear_queue() }));
+    header.append(&clear);
+    box_.append(&header);
+    let can_send_now = agent.can_send_queued_now();
+    let shown = if expanded { items.len() } else { items.len().min(3) };
+    for item in &items[..shown] {
+        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        let mut text = item.text.lines().next().unwrap_or("").to_string();
+        if !item.images.is_empty() {
+            text = format!("{text}  ·  {}", tr1(lang, "assistant.queue.images", &item.images.len().to_string()));
+        }
+        let label = gtk4::Label::new(Some(&text));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        label.set_tooltip_text(Some(&item.text));
+        row.append(&label);
+        let sending = item.state == crate::composer::QueuedState::Sending;
+        if sending {
+            let note = gtk4::Label::new(Some(&tr(lang, "assistant.queue.sending")));
+            note.add_css_class("dim-label");
+            note.add_css_class("caption");
+            row.append(&note);
+        }
+        let id = item.id;
+        let button = |icon: &str, key: &str| {
+            let b = gtk4::Button::from_icon_name(icon);
+            b.add_css_class("flat");
+            b.set_tooltip_text(Some(&tr(lang, key)));
+            b.update_property(&[gtk4::accessible::Property::Label(&format!("{} — {}", tr(lang, key), item.text))]);
+            b.set_sensitive(!sending);
+            b
+        };
+        let edit = button("document-edit-symbolic", "assistant.queue.edit");
+        edit.set_widget_name("pitex.assistant.queue.edit");
+        edit.connect_clicked(move |_| with_app(move |s| s.edit_queued(id)));
+        row.append(&edit);
+        if can_send_now {
+            let now = button("mail-send-symbolic", "assistant.queue.send_now");
+            now.set_widget_name("pitex.assistant.queue.sendNow");
+            now.connect_clicked(move |_| with_app(move |s| if let Some(agent) = s.agent.as_mut() { agent.send_queued_now(id) }));
+            row.append(&now);
+        }
+        let delete = button("user-trash-symbolic", "assistant.queue.delete");
+        delete.set_widget_name("pitex.assistant.queue.delete");
+        delete.connect_clicked(move |_| with_app(move |s| if let Some(agent) = s.agent.as_mut() { drop(agent.take_queued(id)) }));
+        row.append(&delete);
+        box_.append(&row);
+    }
+    if items.len() > 3 {
+        let key = if expanded { tr(lang, "assistant.queue.show_less") } else { tr1(lang, "assistant.queue.show_all", &items.len().to_string()) };
+        let more = gtk4::Button::with_label(&key);
+        more.add_css_class("flat");
+        more.add_css_class("caption");
+        more.set_halign(gtk4::Align::Start);
+        more.connect_clicked(move |_| {
+            UI.with(|ui| ui.agent_queue_expanded.set(!expanded));
+            with_app(|_| {});
+        });
+        box_.append(&more);
+    }
+}
+
+/// The draft's images: thumbnail, name and size, and a remove button.
+fn fill_image_chips(box_: &gtk4::Box, images: &[crate::composer::AgentImage], lang: &str) {
+    while let Some(child) = box_.first_child() {
+        box_.remove(&child);
+    }
+    for (index, image) in images.iter().enumerate() {
+        let chip = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        chip.add_css_class("pitex-image-chip");
+        if let Some(picture) = image_picture(image, 32) {
+            chip.append(&picture);
+        }
+        let size = crate::composer::byte_size(image.bytes);
+        let label = gtk4::Label::new(Some(&format!("{} · {size}", image.name)));
+        label.add_css_class("caption");
+        label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        label.set_max_width_chars(18);
+        chip.append(&label);
+        let remove = gtk4::Button::from_icon_name("window-close-symbolic");
+        remove.add_css_class("flat");
+        remove.add_css_class("circular");
+        remove.set_tooltip_text(Some(&tr(lang, "assistant.image.remove")));
+        remove.update_property(&[gtk4::accessible::Property::Label(&format!("{} — {}", tr(lang, "assistant.image.remove"), image.name))]);
+        remove.connect_clicked(move |_| {
+            with_app(move |s| {
+                if let Some(agent) = s.agent.as_mut() {
+                    if index < agent.draft_images.len() {
+                        agent.draft_images.remove(index);
+                    }
+                    agent.ui_revision += 1;
+                }
+            })
+        });
+        chip.append(&remove);
+        chip.update_property(&[gtk4::accessible::Property::Label(&format!("{}, {size}", image.name))]);
+        box_.append(&chip);
+    }
+}
+
 fn transcript_row(
     entry: &crate::agent::AgentTranscriptEntry,
     font_size: f64,
@@ -6680,6 +6948,16 @@ fn transcript_row(
             _ => {}
         }
         row.append(&body);
+    }
+    if !entry.images.is_empty() {
+        let strip = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        for image in &entry.images {
+            if let Some(picture) = image_picture(image, 96) {
+                picture.update_property(&[gtk4::accessible::Property::Label(&image.name)]);
+                strip.append(&picture);
+            }
+        }
+        row.append(&strip);
     }
     if !entry.detail.is_empty() {
         let detail = gtk4::Label::new(Some(&entry.detail));
@@ -9180,6 +9458,7 @@ mod tool_card_tests {
             detail: "latexmk main.tex".into(),
             status: TranscriptStatus::Running,
             tool: Some(ToolDetail { call_id: "p1".into(), kind: "other".into(), ..Default::default() }),
+            images: Vec::new(),
         };
         let card = transcript_row(&entry, 13.0, None, &Default::default()).downcast::<gtk4::Expander>().unwrap();
         let header = card.label_widget().unwrap();

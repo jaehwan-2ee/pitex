@@ -234,7 +234,6 @@
 "editor.symbol_cat_ams_arrows" = "AMS矢印";
 
 "assistant.attach_document" = "アクティブな書類を添付";
-"assistant.attach_files_help" = "プロジェクトファイルを入力欄に添付";
 "assistant.clear" = "会話を消去";
 "assistant.history" = "会話履歴";
 "assistant.history_empty" = "このプロジェクトの保存済みの会話はまだありません。";
@@ -304,6 +303,24 @@
 "assistant.tool.status_failed" = "失敗";
 "assistant.tool.status_canceled" = "キャンセル済み";
 "assistant.usage" = "%@";
+"assistant.queue.label" = "待機中のメッセージ";
+"assistant.queue.title" = "待機中 (%@)";
+"assistant.queue.clear" = "消去";
+"assistant.queue.images" = "画像 %@ 枚";
+"assistant.queue.sending" = "送信中…";
+"assistant.queue.edit" = "編集";
+"assistant.queue.send_now" = "今すぐ送信";
+"assistant.queue.delete" = "キューから削除";
+"assistant.queue.show_all" = "待機中の %@ 件をすべて表示";
+"assistant.queue.show_less" = "折りたたむ";
+"assistant.attach_help" = "画像やファイルを添付(ファイルはパスとして追加)";
+"assistant.mention.label" = "プロジェクトファイルとコマンド";
+"assistant.image.label" = "添付した画像";
+"assistant.image.remove" = "画像を削除";
+"assistant.image.too_large" = "画像は 5 MB 以下にしてください。";
+"assistant.image.too_many" = "1 つのメッセージに添付できる画像は 8 枚までです。";
+"assistant.image.unsupported" = "添付できるのは PNG、JPEG、GIF、WebP 画像のみです。";
+"assistant.image.not_supported_backend" = "このアシスタントは画像を受け付けません。ファイルはパスとして追加されます。";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";

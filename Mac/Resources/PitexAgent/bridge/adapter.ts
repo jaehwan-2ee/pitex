@@ -22,6 +22,41 @@ export interface PiCommand {
   message?: string;
   /** set_mode */
   modeId?: string;
+  /** prompt / steer: pi's ImageContent (base64 `data`). */
+  images?: PiImage[];
+}
+
+/** pi's `ImageContent`; `type` is optional on the wire. */
+export interface PiImage {
+  type?: string;
+  mimeType: string;
+  data: string;
+}
+
+/** What `get_state.capabilities` reports: may the host steer a running turn, and send images. */
+export interface Capabilities {
+  steer: boolean;
+  images: boolean;
+}
+
+export const MAX_IMAGES = 8;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+/** The prompt's images after the caps every backend shares (Claude's own limits); throws a user-facing error. */
+export function promptImages(command: PiCommand): PiImage[] {
+  const images = Array.isArray(command.images) ? command.images : [];
+  if (images.length > MAX_IMAGES) throw new Error(`A message can carry at most ${MAX_IMAGES} images.`);
+  for (const image of images) {
+    if (!image || typeof image.data !== "string" || !IMAGE_TYPES.has(image.mimeType)) {
+      throw new Error("Only PNG, JPEG, GIF and WebP images can be sent.");
+    }
+    // base64: 4 characters carry 3 bytes.
+    if (Math.floor((image.data.length * 3) / 4) > MAX_IMAGE_BYTES) {
+      throw new Error("Images must be 5 MB or smaller.");
+    }
+  }
+  return images.map((image) => ({ mimeType: image.mimeType, data: image.data }));
 }
 
 /** One button on an approval card (`approval_request.actions`). Hosts localize known ids. */

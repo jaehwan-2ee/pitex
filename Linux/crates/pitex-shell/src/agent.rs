@@ -683,10 +683,13 @@ fn expand_tilde(value: &str, home: &Path) -> String {
 pub enum PiRPCCommand {
     Prompt {
         message: String,
+        images: Vec<crate::composer::AgentImage>,
         streaming_behavior: Option<String>,
     },
+    /// pi's own `steer`: into the running turn now (Claude Code, Codex).
     Steer {
         message: String,
+        images: Vec<crate::composer::AgentImage>,
     },
     Abort,
     NewSession,
@@ -728,15 +731,25 @@ impl PiRPCCommand {
         match self {
             Self::Prompt {
                 message,
+                images,
                 streaming_behavior,
             } => {
                 let mut o = json!({"type": "prompt", "message": message});
+                if !images.is_empty() {
+                    o["images"] = images.iter().map(|i| i.wire()).collect();
+                }
                 if let Some(b) = streaming_behavior {
                     o["streamingBehavior"] = json!(b);
                 }
                 o
             }
-            Self::Steer { message } => json!({"type": "steer", "message": message}),
+            Self::Steer { message, images } => {
+                let mut o = json!({"type": "steer", "message": message});
+                if !images.is_empty() {
+                    o["images"] = images.iter().map(|i| i.wire()).collect();
+                }
+                o
+            }
             Self::Abort => json!({"type": "abort"}),
             Self::NewSession => json!({"type": "new_session"}),
             Self::SwitchSession { path } => json!({"type": "switch_session", "sessionPath": path}),
@@ -773,6 +786,32 @@ impl PiRPCCommand {
             }
             Self::SetMode { mode_id } => json!({"type": "set_mode", "modeId": mode_id}),
         }
+    }
+}
+
+/// `get_state.capabilities`: may the composer steer a running turn, and attach images.
+/// Defaults to nothing the backend has not promised (before the first `get_state`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct AgentCapabilities {
+    pub steer: bool,
+    pub images: bool,
+}
+
+impl AgentCapabilities {
+    /// The bridges report `capabilities`; pi does not, but has `steer` and takes
+    /// images when the model's `input` lists them.
+    pub fn from_state(data: &serde_json::Map<String, Value>) -> Self {
+        if let Some(caps) = data.get("capabilities") {
+            return Self {
+                steer: caps.get("steer").and_then(Value::as_bool).unwrap_or(false),
+                images: caps.get("images").and_then(Value::as_bool).unwrap_or(false),
+            };
+        }
+        let images = match data.get("model").and_then(|m| m.get("input")).and_then(Value::as_array) {
+            Some(input) => input.iter().any(|kind| kind.as_str() == Some("image")),
+            None => true,
+        };
+        Self { steer: true, images }
     }
 }
 
@@ -1177,6 +1216,8 @@ impl PiSessionStats {
 pub struct PiSlashCommand {
     pub name: String,
     pub description: Option<String>,
+    /// Claude Code's `argumentHint` ("<optional instructions>").
+    pub argument_hint: Option<String>,
     pub source: String,
 }
 impl PiSlashCommand {
@@ -1186,6 +1227,10 @@ impl PiSlashCommand {
             name: d.get("name")?.as_str()?.to_string(),
             description: d
                 .get("description")
+                .and_then(|x| x.as_str())
+                .map(String::from),
+            argument_hint: d
+                .get("argumentHint")
                 .and_then(|x| x.as_str())
                 .map(String::from),
             source: d
@@ -1455,6 +1500,8 @@ pub struct AgentTranscriptEntry {
     /// Tool-call detail; `kind: "other"` with only the call id for pi's own
     /// provider. `None` on non-tool rows and history-rebuilt tool rows.
     pub tool: Option<ToolDetail>,
+    /// Images the user sent with this message (thumbnails in the transcript).
+    pub images: Vec<crate::composer::AgentImage>,
 }
 
 /// Cap for the diff text a tool card keeps (the bridge caps at the same size).
@@ -1867,6 +1914,8 @@ pub struct AgentCoordinator {
     approval_sent: Vec<(String, String)>,
     #[cfg(test)]
     approval_wire: Vec<Value>,
+    #[cfg(test)]
+    prompt_wire: Vec<Value>,
     /// The approval the panel is showing. Further requests wait behind it.
     pub pending_approval: Option<AgentApprovalRequest>,
     /// Bridge backends' permission mode; None hides the picker (pi).
@@ -1887,6 +1936,14 @@ pub struct AgentCoordinator {
     /// Bumped on every mutation of UI-visible state; the panel rebuilds
     /// only when this changes instead of on every agent event.
     pub ui_revision: u64,
+    /// `get_state.capabilities`; pi omits it (see `AgentCapabilities::from_state`).
+    pub capabilities: AgentCapabilities,
+    /// Messages typed while a turn runs, sent one per agent_end.
+    pub queue: crate::composer::MessageQueue,
+    /// The `prompt` id of the queued message in flight, and that message's queue id.
+    drain_request: Option<(String, u64)>,
+    /// Images attached to the draft, shown as chips above the composer.
+    pub draft_images: Vec<crate::composer::AgentImage>,
     /// Set by the first `prepare()` — pi spawns lazily when the Assistant
     /// is first shown, and restart/install hooks must not start it for a
     /// window whose Assistant was never opened (macOS `wantsConnection`).
@@ -2011,6 +2068,8 @@ impl AgentCoordinator {
             approval_sent: Vec::new(),
             #[cfg(test)]
             approval_wire: Vec::new(),
+            #[cfg(test)]
+            prompt_wire: Vec::new(),
             pending_approval: None,
             mode: None,
             todos: Vec::new(),
@@ -2024,6 +2083,10 @@ impl AgentCoordinator {
             model_settings_request_id: None,
             messages_request_id: None,
             ui_revision: 0,
+            capabilities: AgentCapabilities::default(),
+            queue: Default::default(),
+            drain_request: None,
+            draft_images: Vec::new(),
             wants_connection: false,
             pdf_text_cache: std::cell::RefCell::new(None),
             session_stats: None,
@@ -2266,6 +2329,7 @@ impl AgentCoordinator {
 
     /// Called by the UI when the process's `exited` channel fires.
     pub fn process_did_exit(&mut self) {
+        self.abandon_drain();
         self.process = None;
         self.is_running = false;
         self.toolchain_rx = None;
@@ -2286,6 +2350,7 @@ impl AgentCoordinator {
     }
 
     pub fn shutdown(&mut self) {
+        self.abandon_drain();
         self.intentional_stop = true;
         self.is_running = false;
         self.stop_catalog_probes();
@@ -2414,6 +2479,7 @@ impl AgentCoordinator {
                 detail: String::new(),
                 status: TranscriptStatus::Done,
                 tool: None,
+                images: Vec::new(),
             });
         }
         self.restart();
@@ -2735,33 +2801,108 @@ impl AgentCoordinator {
             .unwrap_or(false)
     }
 
-    /// `send(prompt:)` — persist dirty sessions first, then envelope+prompt.
-    /// Returns an error notice to append, or sends the prompt.
-    pub fn send(&mut self, prompt: &str) {
+    /// Return (`now` false) or Cmd/Ctrl+Return (`now` true): send, steer the
+    /// running turn, or queue (`composer::submit_route`).
+    pub fn submit(&mut self, prompt: &str, images: Vec<crate::composer::AgentImage>, now: bool) {
         let trimmed = prompt.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() && images.is_empty() {
             return;
         }
+        // pi's own /resume is an interactive TUI picker; here it opens the
+        // panel's history list instead. /clear is a new chat, so the panel and
+        // the backend's context agree. Either way the attached images stay.
+        if trimmed == "/resume" || trimmed == "/clear" {
+            self.draft_images = images;
+            if trimmed == "/resume" {
+                self.open_history();
+            } else {
+                self.new_session();
+            }
+            return;
+        }
+        self.queue.paused = false;
+        use crate::composer::SubmitRoute;
+        // A drained message not yet accepted counts as running: a second plain prompt would be refused.
+        let busy = self.is_running || self.drain_request.is_some();
+        match crate::composer::submit_route(busy, self.pending_approval.is_some(), now, self.capabilities.steer && self.is_running) {
+            SubmitRoute::Send => {
+                self.dispatch(trimmed, images, false, None);
+            }
+            SubmitRoute::Steer => {
+                self.dispatch(trimmed, images, true, None);
+            }
+            SubmitRoute::Queue => {
+                self.queue.enqueue(trimmed, images);
+                self.ui_revision += 1;
+            }
+        }
+    }
+
+    /// "Send now" on a queued row is offered: steer into a running turn, or send
+    /// when idle (resumes a queue paused by Stop or a refused send).
+    pub fn can_send_queued_now(&self) -> bool {
+        self.pending_approval.is_none()
+            && if self.is_running { self.capabilities.steer } else { self.drain_request.is_none() }
+    }
+
+    pub fn send_queued_now(&mut self, id: u64) {
+        if !self.can_send_queued_now() {
+            return;
+        }
+        let Some(item) = self.queue.remove(id) else { return };
+        self.queue.paused = false;
+        self.dispatch(&item.text, item.images, self.is_running, None);
+    }
+
+    /// Edit pulls the row back into the composer; the caller puts the text there.
+    pub fn take_queued(&mut self, id: u64) -> Option<crate::composer::QueuedMessage> {
+        let item = self.queue.remove(id);
+        self.ui_revision += 1;
+        item
+    }
+
+    /// The process went away with a queued message in flight: it goes back to the front.
+    fn abandon_drain(&mut self) {
+        if let Some((_, item)) = self.drain_request.take() {
+            self.queue.failed(item);
+        }
+    }
+
+    pub fn clear_queue(&mut self) {
+        self.queue.clear();
+        self.drain_request = None;
+        self.ui_revision += 1;
+    }
+
+    /// One queued message per agent_end. A refused send goes back to the front
+    /// (`handle_response`) and the queue waits for the user.
+    fn drain_queue(&mut self) {
+        if self.pending_approval.is_some() || self.drain_request.is_some() {
+            return;
+        }
+        let Some(item) = self.queue.take_next() else { return };
+        let id = uuid_v4();
+        self.drain_request = Some((id.clone(), item.id));
+        if !self.dispatch(&item.text, item.images, false, Some(&id)) {
+            self.drain_request = None;
+            self.queue.failed(item.id);
+        }
+    }
+
+    /// Persist dirty sessions first, then envelope + prompt (or steer). False when
+    /// nothing went out.
+    fn dispatch(&mut self, trimmed: &str, images: Vec<crate::composer::AgentImage>, steer: bool, id: Option<&str>) -> bool {
         if self.connection == Connection::PiMissing {
             self.status_message = Some(
                 "Pitex Agent is not installed yet — it installs automatically on launch; see Settings → AI.".into(),
             );
-            return;
+            return false;
         }
-        // pi's own /resume is an interactive TUI picker; here it opens the
-        // panel's history list instead.
-        if trimmed == "/resume" {
-            self.open_history();
-            return;
+        // A drained message gets its bubble once the backend accepts it (`handle_response`),
+        // so a refused one, back at the front of the queue, does not leave a duplicate.
+        if id.is_none() {
+            self.push_user_entry(trimmed, images.clone());
         }
-        self.push_entry(AgentTranscriptEntry {
-            role: TranscriptRole::User,
-            title: "You".into(),
-            text: trimmed.to_string(),
-            detail: String::new(),
-            status: TranscriptStatus::Done,
-            tool: None,
-        });
         self.status_message = None;
         if let Some(persist) = &mut self.persist_dirty_sessions {
             if let Some(problem) = (persist)() {
@@ -2772,9 +2913,35 @@ impl AgentCoordinator {
                     detail: String::new(),
                     status: TranscriptStatus::Failed,
                     tool: None,
+                    images: Vec::new(),
                 });
-                return;
+                return false;
             }
+        }
+        // Slash commands go raw — pi expands `/skill:name` and extension
+        // commands only when the message itself starts with '/'.
+        let message = if trimmed.starts_with('/') {
+            trimmed.to_string()
+        } else {
+            self.envelope(trimmed)
+        };
+        // A drained message may meet pi still settling (retry, compaction):
+        // followUp waits for it there, and the bridges ignore it when idle.
+        let command = if steer {
+            PiRPCCommand::Steer { message, images }
+        } else {
+            PiRPCCommand::Prompt {
+                message,
+                images,
+                streaming_behavior: (self.is_running || id.is_some()).then(|| "followUp".to_string()),
+            }
+        };
+        // Unit tests have no child process; they read what would have gone out.
+        #[cfg(test)]
+        if self.process.is_none() {
+            self.prompt_wire.push(command.object());
+            self.ui_revision += 1;
+            return true;
         }
         if self.process.is_none() {
             self.prepare();
@@ -2784,34 +2951,33 @@ impl AgentCoordinator {
                 self.connection = Connection::Connecting;
             }
             self.status_message = Some(self.not_running_message());
-            return;
+            return false;
         };
         if !process.is_running() {
             self.status_message = Some(self.not_running_message());
-            return;
+            return false;
         }
-        // Slash commands go raw — pi expands `/skill:name` and extension
-        // commands only when the message itself starts with '/'.
-        let message = if trimmed.starts_with('/') {
-            trimmed.to_string()
-        } else {
-            self.envelope(trimmed)
+        let sent = match process.send(&command, id) {
+            Ok(()) => true,
+            Err(e) => {
+                self.status_message = Some(format!("The prompt could not be sent: {e}"));
+                false
+            }
         };
-        let behavior = if self.is_running {
-            Some("followUp".to_string())
-        } else {
-            None
-        };
-        if let Err(e) = process.send(
-            &PiRPCCommand::Prompt {
-                message,
-                streaming_behavior: behavior,
-            },
-            None,
-        ) {
-            self.status_message = Some(format!("The prompt could not be sent: {e}"));
-        }
         self.ui_revision += 1;
+        sent
+    }
+
+    fn push_user_entry(&mut self, text: &str, images: Vec<crate::composer::AgentImage>) {
+        self.push_entry(AgentTranscriptEntry {
+            role: TranscriptRole::User,
+            title: "You".into(),
+            text: text.to_string(),
+            detail: String::new(),
+            status: TranscriptStatus::Done,
+            tool: None,
+            images,
+        });
     }
 
     fn not_running_message(&self) -> String {
@@ -2825,6 +2991,8 @@ impl AgentCoordinator {
 
     pub fn stop(&mut self) {
         self.deny_queued_approvals();
+        // Stop keeps the queue but does not let agent_end send the next one.
+        self.queue.paused = true;
         if !self.is_running {
             return;
         }
@@ -2953,6 +3121,7 @@ impl AgentCoordinator {
                 detail: String::new(),
                 status: TranscriptStatus::Done,
                 tool: None,
+                images: Vec::new(),
             });
         }
         self.todos = items;
@@ -2960,6 +3129,9 @@ impl AgentCoordinator {
     }
 
     fn clear_transcript(&mut self) {
+        // A new or another chat: the queue belonged to this one.
+        self.queue.clear();
+        self.drain_request = None;
         self.transcript.clear();
         self.todos.clear();
         self.tool_index_by_call_id.clear();
@@ -3031,6 +3203,7 @@ impl AgentCoordinator {
                 detail: String::new(),
                 status: TranscriptStatus::Done,
                 tool: None,
+                images: Vec::new(),
             });
         }
         self.ui_revision += 1;
@@ -3062,6 +3235,7 @@ impl AgentCoordinator {
             detail,
             status: TranscriptStatus::Done,
             tool: None,
+            images: Vec::new(),
         };
         let title = self.assistant_title();
         let mut entries: Vec<AgentTranscriptEntry> = Vec::new();
@@ -3214,11 +3388,13 @@ impl AgentCoordinator {
                         detail: String::new(),
                         status: TranscriptStatus::Failed,
                         tool: None,
+                        images: Vec::new(),
                     });
                 }
                 if let Some(cb) = &mut self.on_agent_activity_finished {
                     cb();
                 }
+                self.drain_queue();
             }
             "message_start" => self.handle_message_start(event),
             "message_update" => self.handle_message_update(event),
@@ -3238,6 +3414,7 @@ impl AgentCoordinator {
                     detail: String::new(),
                     status: TranscriptStatus::Done,
                     tool: None,
+                    images: Vec::new(),
                 });
             }
             "auto_retry_end" => {
@@ -3250,6 +3427,7 @@ impl AgentCoordinator {
                             detail: String::new(),
                             status: TranscriptStatus::Failed,
                             tool: None,
+                            images: Vec::new(),
                         });
                     }
                 }
@@ -3261,6 +3439,7 @@ impl AgentCoordinator {
                 detail: String::new(),
                 status: TranscriptStatus::Done,
                 tool: None,
+                images: Vec::new(),
             }),
             "compaction_end" => {
                 if event.bool("aborted") {
@@ -3271,6 +3450,7 @@ impl AgentCoordinator {
                         detail: String::new(),
                         status: TranscriptStatus::Done,
                         tool: None,
+                        images: Vec::new(),
                     });
                 } else if let Some(message) = event.string("errorMessage") {
                     self.push_entry(AgentTranscriptEntry {
@@ -3280,6 +3460,7 @@ impl AgentCoordinator {
                         detail: String::new(),
                         status: TranscriptStatus::Failed,
                         tool: None,
+                        images: Vec::new(),
                     });
                 }
             }
@@ -3305,6 +3486,7 @@ impl AgentCoordinator {
                     detail: String::new(),
                     status: TranscriptStatus::Failed,
                     tool: None,
+                    images: Vec::new(),
                 });
             }
             _ => {}
@@ -3337,6 +3519,21 @@ impl AgentCoordinator {
                 }
             }
             return;
+        }
+        if event.response_command().as_deref() == Some("prompt") {
+            if let Some((id, queued)) = self.drain_request.clone() {
+                if event.string("id").as_deref() == Some(id.as_str()) {
+                    self.drain_request = None;
+                    if event.response_succeeded() {
+                        if let Some(item) = self.queue.items.iter().find(|item| item.id == queued).cloned() {
+                            self.push_user_entry(&item.text, item.images);
+                        }
+                        self.queue.sent(queued);
+                    } else {
+                        self.queue.failed(queued);
+                    }
+                }
+            }
         }
         if !event.response_succeeded() {
             if is_model_settings_response {
@@ -3371,6 +3568,7 @@ impl AgentCoordinator {
                     detail: String::new(),
                     status: TranscriptStatus::Failed,
                     tool: None,
+                    images: Vec::new(),
                 });
             }
             return;
@@ -3386,6 +3584,7 @@ impl AgentCoordinator {
                         self.thinking_level = level.to_string();
                     }
                     self.mode = AgentMode::decode(data.get("mode"));
+                    self.capabilities = AgentCapabilities::from_state(data);
                 }
                 self.send_model_settings(
                     PiRPCCommand::GetAvailableThinkingLevels,
@@ -3458,6 +3657,7 @@ impl AgentCoordinator {
                 self.commands.insert(0, PiSlashCommand {
                     name: "resume".into(),
                     description: Some("Resume a past conversation of this project".into()),
+                    argument_hint: None,
                     source: "pitex".into(),
                 });
             }
@@ -3583,6 +3783,7 @@ impl AgentCoordinator {
                         detail: String::new(),
                         status: TranscriptStatus::Failed,
                         tool: None,
+                        images: Vec::new(),
                     });
                 }
             }
@@ -3633,6 +3834,7 @@ impl AgentCoordinator {
                         TranscriptStatus::Done
                     },
                     tool: None,
+                    images: Vec::new(),
                 };
                 if entry.text.is_empty() {
                     if let Some(e) = message.get("errorMessage").and_then(|m| m.as_str()) {
@@ -3665,6 +3867,7 @@ impl AgentCoordinator {
             detail,
             status: tool_status(event).unwrap_or(TranscriptStatus::Running),
             tool: Some(tool),
+            images: Vec::new(),
         });
         self.tool_index_by_call_id
             .insert(call_id, self.transcript.len() - 1);
@@ -3732,6 +3935,7 @@ impl AgentCoordinator {
                     detail: String::new(),
                     status: TranscriptStatus::Done,
                     tool: None,
+                    images: Vec::new(),
                 });
             }
             "notify" => {
@@ -3743,6 +3947,7 @@ impl AgentCoordinator {
                         detail: String::new(),
                         status: TranscriptStatus::Done,
                         tool: None,
+                        images: Vec::new(),
                     });
                 }
             }
@@ -3782,6 +3987,7 @@ impl AgentCoordinator {
             detail: String::new(),
             status: TranscriptStatus::Streaming,
             tool: None,
+            images: Vec::new(),
         });
         self.assistant_entry_index = Some(self.transcript.len() - 1);
     }
@@ -3793,6 +3999,7 @@ impl AgentCoordinator {
             detail: String::new(),
             status: TranscriptStatus::Streaming,
             tool: None,
+            images: Vec::new(),
         });
         self.thinking_entry_index = Some(self.transcript.len() - 1);
     }
@@ -5911,6 +6118,151 @@ mod session_history_tests {
         );
     }
 
+    fn queue_agent(steer: bool) -> AgentCoordinator {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.capabilities = AgentCapabilities { steer, images: true };
+        agent
+    }
+
+    fn png() -> crate::composer::AgentImage {
+        crate::composer::AgentImage::new("red.png", "image/png", &[137, 80, 78, 71], 0).unwrap()
+    }
+
+    #[test]
+    fn return_during_a_turn_queues_and_agent_end_sends_one_at_a_time() {
+        let mut agent = queue_agent(true);
+        agent.submit("start", Vec::new(), false);
+        assert_eq!(agent.prompt_wire.len(), 1, "idle: sent at once");
+        assert!(agent.prompt_wire[0].get("streamingBehavior").is_none());
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.submit("first", vec![png()], false);
+        agent.submit("second", Vec::new(), false);
+        assert_eq!(agent.prompt_wire.len(), 1, "running: Return queues");
+        assert_eq!(agent.queue.items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(), vec!["first", "second"]);
+        assert_eq!(agent.transcript.iter().filter(|e| e.role == TranscriptRole::User).count(), 1, "queued rows are not in the transcript yet");
+
+        agent.handle(&event(json!({"type": "agent_end"})));
+        assert_eq!(agent.prompt_wire.len(), 2);
+        let wire = &agent.prompt_wire[1];
+        assert_eq!(wire["type"], "prompt");
+        assert_eq!(wire["streamingBehavior"], "followUp");
+        assert_eq!(wire["images"][0], json!({"type": "image", "mimeType": "image/png", "data": png().data.to_string()}));
+        assert_eq!(agent.queue.items[0].state, crate::composer::QueuedState::Sending);
+        // Return before the drained prompt is accepted queues too: pi would refuse a second plain prompt.
+        agent.submit("third", Vec::new(), false);
+        assert_eq!(agent.prompt_wire.len(), 2);
+        assert_eq!(agent.queue.items.len(), 3);
+        assert!(!agent.can_send_queued_now(), "no Send now while a drained prompt is in flight");
+        assert_eq!(agent.transcript.iter().filter(|e| e.role == TranscriptRole::User).count(), 1, "the bubble waits for the response");
+        let id = agent.drain_request.clone().unwrap().0;
+        agent.handle(&event(json!({"type": "response", "command": "prompt", "success": true, "id": id})));
+        let user = agent.transcript.iter().rev().find(|e| e.role == TranscriptRole::User).unwrap();
+        assert_eq!((user.text.as_str(), user.images.len()), ("first", 1));
+        assert_eq!(agent.queue.items.len(), 2);
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.handle(&event(json!({"type": "agent_end"})));
+        assert!(agent.prompt_wire[2]["message"].as_str().unwrap().ends_with("
+second"), "the envelope wraps the text");
+    }
+
+    #[test]
+    fn a_refused_drain_goes_back_to_the_front_and_waits() {
+        let mut agent = queue_agent(true);
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.submit("one", Vec::new(), false);
+        agent.submit("two", Vec::new(), false);
+        agent.handle(&event(json!({"type": "agent_end"})));
+        let id = agent.drain_request.clone().unwrap().0;
+        agent.handle(&event(json!({"type": "response", "command": "prompt", "success": false, "id": id, "error": "busy"})));
+        assert_eq!(agent.queue.items[0].text, "one");
+        assert_eq!(agent.queue.items[0].state, crate::composer::QueuedState::Queued);
+        assert!(agent.queue.paused);
+        assert!(agent.transcript.iter().all(|e| e.role != TranscriptRole::User), "a refused drain leaves no bubble");
+        agent.handle(&event(json!({"type": "agent_end"})));
+        assert_eq!(agent.prompt_wire.len(), 1, "paused: nothing more goes out");
+        // Send now on the row, while idle, sends it as a plain prompt.
+        assert!(agent.can_send_queued_now(), "an idle paused queue offers Send now");
+        let head = agent.queue.items[0].id;
+        agent.send_queued_now(head);
+        assert!(agent.prompt_wire[1]["message"].as_str().unwrap().ends_with("
+one"), "the envelope wraps the text");
+        assert_eq!(agent.queue.items.len(), 1);
+    }
+
+    #[test]
+    fn steer_sends_into_the_turn_and_an_approval_forces_the_queue() {
+        let mut agent = queue_agent(true);
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.submit("now please", Vec::new(), true);
+        assert_eq!(agent.prompt_wire[0]["type"], "steer");
+        assert!(agent.prompt_wire[0]["message"].as_str().unwrap().ends_with("
+now please"), "the envelope wraps the text");
+        agent.submit("later", Vec::new(), false);
+        let queued = agent.queue.items[0].id;
+        agent.send_queued_now(queued);
+        assert_eq!(agent.prompt_wire[1]["type"], "steer");
+        assert!(agent.queue.items.is_empty());
+
+        agent.handle(&approval_event("1", "first"));
+        agent.submit("while asked", Vec::new(), true);
+        assert_eq!(agent.prompt_wire.len(), 2, "an approval card holds new text back");
+        assert_eq!(agent.queue.items.len(), 1);
+        let id = agent.queue.items[0].id;
+        agent.send_queued_now(id);
+        assert_eq!(agent.queue.items.len(), 1, "no Send now while the card waits");
+
+        let mut acp = queue_agent(false);
+        acp.handle(&event(json!({"type": "agent_start"})));
+        acp.submit("no steer", Vec::new(), true);
+        assert!(acp.prompt_wire.is_empty(), "no steer: Ctrl+Return queues");
+        assert_eq!(acp.queue.items.len(), 1);
+    }
+
+    #[test]
+    fn stop_keeps_the_queue_paused_edit_and_new_chat_clear_it() {
+        let mut agent = queue_agent(true);
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.submit("a", Vec::new(), false);
+        agent.submit("b", vec![png()], false);
+        agent.stop();
+        agent.handle(&event(json!({"type": "agent_end"})));
+        assert!(agent.prompt_wire.is_empty(), "stop: the queue stays put");
+        assert_eq!(agent.queue.items.len(), 2);
+        let b = agent.queue.items[1].id;
+        let edited = agent.take_queued(b).unwrap();
+        assert_eq!((edited.text.as_str(), edited.images.len()), ("b", 1));
+        agent.clear_transcript();
+        assert!(agent.queue.items.is_empty(), "a new chat drops the queue");
+    }
+
+    #[test]
+    fn images_alone_send_and_resume_or_clear_keep_them() {
+        let mut agent = queue_agent(false);
+        agent.submit("  ", vec![png()], false);
+        assert_eq!(agent.prompt_wire.len(), 1, "an image without text is a message");
+        assert_eq!(agent.prompt_wire[0]["images"].as_array().unwrap().len(), 1);
+        agent.submit("/resume", vec![png()], false);
+        assert_eq!(agent.draft_images.len(), 1, "/resume opens history and keeps the chips");
+        agent.submit("/clear", vec![png(), png()], false);
+        assert_eq!(agent.draft_images.len(), 2);
+        assert_eq!(agent.prompt_wire.len(), 1, "/clear never reaches the backend");
+    }
+
+    #[test]
+    fn capabilities_come_from_get_state_or_the_pi_model() {
+        let state = |v: Value| AgentCapabilities::from_state(v.as_object().unwrap());
+        assert_eq!(state(json!({"capabilities": {"steer": false, "images": true}})), AgentCapabilities { steer: false, images: true });
+        assert_eq!(state(json!({"model": {"input": ["text"]}})), AgentCapabilities { steer: true, images: false });
+        assert_eq!(state(json!({"model": {"input": ["text", "image"]}})), AgentCapabilities { steer: true, images: true });
+        assert_eq!(state(json!({})), AgentCapabilities { steer: true, images: true });
+        assert_eq!(
+            PiRPCCommand::Steer { message: "x".into(), images: Vec::new() }.object(),
+            json!({"type": "steer", "message": "x"})
+        );
+        let command = PiSlashCommand::from_value(&json!({"name": "compact", "argumentHint": "<instructions>", "source": "claude"})).unwrap();
+        assert_eq!(command.argument_hint.as_deref(), Some("<instructions>"));
+    }
+
     fn approval_event(id: &str, detail: &str) -> PiRPCEvent {
         let request = json!({
             "type": "approval_request",
@@ -6124,6 +6476,7 @@ mod session_history_tests {
             detail: String::new(),
             status: TranscriptStatus::Done,
             tool: None,
+            images: Vec::new(),
         }];
         let stale = json!({
             "type": "response",
@@ -6374,6 +6727,7 @@ mod session_history_tests {
             detail: String::new(),
             status: TranscriptStatus::Done,
             tool: None,
+            images: Vec::new(),
         });
         let start = json!({"type": "agent_start"});
         agent.handle(&response(start));
@@ -6456,6 +6810,7 @@ mod session_history_tests {
             detail: String::new(),
             status: TranscriptStatus::Done,
             tool: None,
+            images: Vec::new(),
         });
         let start = json!({"type": "agent_start"});
         agent.handle(&response(start));

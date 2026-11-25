@@ -234,7 +234,6 @@
 "editor.symbol_cat_ams_arrows" = "AMS 화살표";
 
 "assistant.attach_document" = "활성 문서 첨부";
-"assistant.attach_files_help" = "프로젝트 파일을 입력창에 첨부";
 "assistant.clear" = "대화 지우기";
 "assistant.history" = "대화 기록";
 "assistant.history_empty" = "이 프로젝트에 저장된 대화가 아직 없습니다.";
@@ -304,6 +303,24 @@
 "assistant.tool.status_failed" = "실패";
 "assistant.tool.status_canceled" = "취소됨";
 "assistant.usage" = "%@";
+"assistant.queue.label" = "대기 중인 메시지";
+"assistant.queue.title" = "대기 중 (%@)";
+"assistant.queue.clear" = "비우기";
+"assistant.queue.images" = "이미지 %@개";
+"assistant.queue.sending" = "보내는 중…";
+"assistant.queue.edit" = "편집";
+"assistant.queue.send_now" = "지금 보내기";
+"assistant.queue.delete" = "대기열에서 제거";
+"assistant.queue.show_all" = "대기 중인 %@개 모두 보기";
+"assistant.queue.show_less" = "간단히 보기";
+"assistant.attach_help" = "이미지 또는 파일 첨부 (파일은 경로로 추가됨)";
+"assistant.mention.label" = "프로젝트 파일과 명령";
+"assistant.image.label" = "첨부한 이미지";
+"assistant.image.remove" = "이미지 제거";
+"assistant.image.too_large" = "이미지는 5MB 이하여야 합니다.";
+"assistant.image.too_many" = "메시지 하나에 이미지는 최대 8개까지 보낼 수 있습니다.";
+"assistant.image.unsupported" = "PNG, JPEG, GIF, WebP 이미지만 첨부할 수 있습니다.";
+"assistant.image.not_supported_backend" = "이 어시스턴트는 이미지를 받지 않습니다. 파일은 경로로 추가됩니다.";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";

@@ -234,7 +234,6 @@
 "editor.symbol_cat_ams_arrows" = "Mũi tên AMS";
 
 "assistant.attach_document" = "Đính kèm tài liệu đang mở";
-"assistant.attach_files_help" = "Đính kèm tệp dự án vào khung soạn";
 "assistant.clear" = "Xóa hội thoại";
 "assistant.history" = "Lịch sử hội thoại";
 "assistant.history_empty" = "Dự án này chưa có cuộc hội thoại nào được lưu.";
@@ -304,6 +303,24 @@
 "assistant.tool.status_failed" = "Thất bại";
 "assistant.tool.status_canceled" = "Đã hủy";
 "assistant.usage" = "%@";
+"assistant.queue.label" = "Tin nhắn đang chờ";
+"assistant.queue.title" = "Đang chờ (%@)";
+"assistant.queue.clear" = "Xoá hết";
+"assistant.queue.images" = "%@ ảnh";
+"assistant.queue.sending" = "Đang gửi…";
+"assistant.queue.edit" = "Sửa";
+"assistant.queue.send_now" = "Gửi ngay";
+"assistant.queue.delete" = "Xoá khỏi hàng chờ";
+"assistant.queue.show_all" = "Hiện tất cả %@ tin đang chờ";
+"assistant.queue.show_less" = "Thu gọn";
+"assistant.attach_help" = "Đính kèm ảnh hoặc tệp (tệp được thêm dưới dạng đường dẫn)";
+"assistant.mention.label" = "Tệp dự án và lệnh";
+"assistant.image.label" = "Ảnh đã đính kèm";
+"assistant.image.remove" = "Xoá ảnh";
+"assistant.image.too_large" = "Ảnh phải từ 5 MB trở xuống.";
+"assistant.image.too_many" = "Mỗi tin nhắn chỉ mang tối đa 8 ảnh.";
+"assistant.image.unsupported" = "Chỉ đính kèm được ảnh PNG, JPEG, GIF và WebP.";
+"assistant.image.not_supported_backend" = "Trợ lý này không nhận ảnh; tệp được thêm dưới dạng đường dẫn.";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";

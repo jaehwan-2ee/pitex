@@ -234,7 +234,6 @@
 "editor.symbol_cat_ams_arrows" = "AMS Arrows";
 
 "assistant.attach_document" = "Attach activated document";
-"assistant.attach_files_help" = "Attach project files to the composer";
 "assistant.clear" = "Clear conversation";
 "assistant.history" = "Conversation history";
 "assistant.history_empty" = "No saved conversations for this project yet.";
@@ -304,6 +303,24 @@
 "assistant.tool.status_failed" = "Failed";
 "assistant.tool.status_canceled" = "Canceled";
 "assistant.usage" = "%@";
+"assistant.queue.label" = "Queued messages";
+"assistant.queue.title" = "Queued (%@)";
+"assistant.queue.clear" = "Clear";
+"assistant.queue.images" = "Images: %@";
+"assistant.queue.sending" = "Sending…";
+"assistant.queue.edit" = "Edit";
+"assistant.queue.send_now" = "Send now";
+"assistant.queue.delete" = "Remove from queue";
+"assistant.queue.show_all" = "Show all %@ queued";
+"assistant.queue.show_less" = "Show less";
+"assistant.attach_help" = "Attach images or files (files are added as paths)";
+"assistant.mention.label" = "Project files and commands";
+"assistant.image.label" = "Attached images";
+"assistant.image.remove" = "Remove image";
+"assistant.image.too_large" = "Images must be 5 MB or smaller.";
+"assistant.image.too_many" = "A message can carry at most 8 images.";
+"assistant.image.unsupported" = "Only PNG, JPEG, GIF and WebP images can be attached.";
+"assistant.image.not_supported_backend" = "This assistant does not accept images; files are added as paths.";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";

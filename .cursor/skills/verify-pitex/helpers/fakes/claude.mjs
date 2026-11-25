@@ -18,6 +18,15 @@ const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 
 let holding = false;
+// SLOW turn in progress: like the real CLI, later user messages wait and each
+// gets its own turn (and its own result) after it.
+let slowTimer = null;
+const waiting = [];
+
+function imageBlocks(msg) {
+  const content = msg.message?.content;
+  return Array.isArray(content) ? content.filter((part) => part?.type === "image") : [];
+}
 
 function userText(msg) {
   const content = msg.message?.content ?? msg.message?.message?.content;
@@ -42,7 +51,13 @@ function answerInitialize(msg) {
             supportedEffortLevels: ["low", "medium", "high"],
           },
         ],
-        commands: [],
+        commands: [
+          { name: "clear", description: "Clear conversation history and free up context", argumentHint: "" },
+          { name: "model", description: "Set the AI model for Claude Code", argumentHint: "[model]" },
+          { name: "compact", description: "Clear conversation history but keep a summary in context", argumentHint: "<optional custom summarization instructions>" },
+          { name: "context", description: "Visualize current context usage", argumentHint: "" },
+          { name: "cost", description: "Show the total cost and duration of the current session", argumentHint: "" },
+        ],
         agents: [],
       },
     },
@@ -260,6 +275,7 @@ function finish(subtype, result) {
     is_error: subtype !== "success",
     session_id: session,
     result,
+    ...(subtype === "success" ? {} : { errors: [result] }),
     usage: { input_tokens: 3, output_tokens: 2 },
     total_cost_usd: 0,
   });
@@ -283,6 +299,9 @@ rl.on("line", (line) => {
       response: { subtype: "success", request_id: msg.request_id, response: {} },
     });
     holding = false;
+    if (slowTimer) clearTimeout(slowTimer);
+    slowTimer = null;
+    waiting.length = 0;
     finish("error", "interrupted");
     return;
   }
@@ -308,6 +327,34 @@ rl.on("line", (line) => {
   }
   if (msg.type === "user" || msg.message) {
     const text = userText(msg);
+    const images = imageBlocks(msg);
+    recordNote({ user: text.split("\n").at(-1), images: images.map((part) => part.source?.media_type) });
+    if (slowTimer) {
+      waiting.push(text.split("\n").at(-1));
+      return;
+    }
+    if (text.includes("SLOW")) {
+      streamText("Working slowly");
+      slowTimer = setTimeout(() => {
+        slowTimer = null;
+        send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: "Done slowly" }] } });
+        finish("success", "Done slowly");
+        for (const later of waiting.splice(0)) {
+          const reply = `Late turn for: ${later}`;
+          streamText(reply);
+          send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: reply }] } });
+          finish("success", reply);
+        }
+      }, Number(process.env.FAKE_SLOW_MS || 8000));
+      return;
+    }
+    if (images.length > 0) {
+      const reply = `I see ${images.length} image(s): ${images.map((part) => part.source?.media_type).join(", ")}`;
+      streamText(reply);
+      send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "text", text: reply }] } });
+      finish("success", reply);
+      return;
+    }
     if (text.includes("HOLD")) {
       holding = true;
       streamText("Working");

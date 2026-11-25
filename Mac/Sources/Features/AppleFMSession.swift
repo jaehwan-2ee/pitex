@@ -54,7 +54,7 @@ final class AppleFMSession: AgentSession, @unchecked Sendable {
     func send(_ command: PiRPCCommand, id: String?) throws {
         guard isRunning else { throw PiAgentProcessError.notRunning }
         switch command {
-        case let .prompt(message, _):
+        case let .prompt(message, _, _):
             beginPrompt(message, id: id)
         case .abort:
             cancelTurn()
