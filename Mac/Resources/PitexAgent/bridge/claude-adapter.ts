@@ -51,7 +51,14 @@ import {
   type ListedClaudeModel,
   type SdkModelInfo,
 } from "./claude-map.ts";
-import { appendUserMessage, rememberSession, threadIdFor, writeSessionPrelude } from "./session-index.ts";
+import {
+  appendUserMessage,
+  foreignSessionMessage,
+  rememberSession,
+  sessionBackend,
+  threadIdFor,
+  writeSessionPrelude,
+} from "./session-index.ts";
 
 export const CLAUDE_MISSING =
   "Claude Code was not found. Install the official Claude Code CLI, then run `claude auth login`.";
@@ -592,6 +599,11 @@ export class ClaudeAdapter implements CliAdapter {
 
   private async switchSession(command: PiCommand, host: AdapterHost): Promise<void> {
     const sessionPath = command.sessionPath ?? "";
+    const owner = sessionBackend(sessionPath);
+    if (owner && owner !== this.id) {
+      host.respond("switch_session", false, undefined, foreignSessionMessage(owner), command.id);
+      return;
+    }
     const threadId = threadIdFor(this.sessionDir, sessionPath);
     if (!threadId) {
       host.respond(

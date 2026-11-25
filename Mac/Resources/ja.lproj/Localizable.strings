@@ -242,6 +242,7 @@
 "assistant.configure_hint" = "プロバイダとアカウントは Pitex Agent のサインイン手順で設定します。";
 "assistant.open_pi_config" = "Pitex Agent 設定を開く";
 "assistant.model_placeholder" = "モデルなし — 設定 → AI でログイン";
+"assistant.backend_unavailable" = "起動できませんでした。CLI がインストールされ、ログイン済みか確認してください。";
 "assistant.switched_backend" = "アシスタントを切り替えました。次のメッセージから新しいセッションです。";
 "assistant.reasoning_help" = "推論レベル";
 "assistant.send_help" = "送信 (⌘Return)";
@@ -360,7 +361,7 @@
 "settings.ai.backend_claude" = "Claude Code（ご自身のログイン）";
 "settings.ai.backend_grok" = "Grok CLI（ご自身のログイン）";
 "settings.ai.backend_agy" = "Antigravity CLI（ご自身のログイン）";
-"settings.ai.backend_note" = "pi は自身のプロバイダログインを使います。Claude Code は `claude` をこのコンピュータで使います。Pitex はそれらの資格情報ファイルを読みません。";
+"settings.ai.backend_note" = "pi は自身のプロバイダログインを使います。Claude Code は `claude` を、Antigravity CLI は `agy` をこのコンピュータで使います。Pitex はそれらの資格情報ファイルを読みません。Antigravity CLI はコマンドを実行する前に確認しますが、プロジェクト内のファイルは確認せずに編集します。";
 "settings.ai.backend_apple_fm" = "Apple Foundation Models（この Mac 上）";
 "settings.ai.backend_apple_fm_note" = "Apple Foundation Models は Apple Intelligence がオンのとき、この Mac 上で動きます。Pitex はチャットを pi 経由で送りません。";
 "settings.ai.backend_apple_fm_unavailable" = "Apple Foundation Models は Apple Intelligence がオンの Pitex Mac アプリで動きます。このビルドでは起動できません。";

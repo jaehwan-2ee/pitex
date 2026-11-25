@@ -169,6 +169,12 @@ pub(crate) const AGENT_PROVIDER_CHOICES: &[AgentProviderChoice] = &[
         selectable: true,
     },
     AgentProviderChoice {
+        id: "agy",
+        label_key: "settings.ai.backend_agy",
+        transport: AgentTransport::CliBridge,
+        selectable: true,
+    },
+    AgentProviderChoice {
         id: "grok",
         label_key: "settings.ai.backend_grok",
         transport: AgentTransport::CliBridge,
@@ -204,7 +210,7 @@ pub fn normalize_agent_provider(value: Option<&str>) -> &'static str {
         .unwrap_or("pi")
 }
 
-/// Codex, Claude Code, and Grok CLI launch the bundled bridge.
+/// Codex, Claude Code, Antigravity CLI, and Grok CLI launch the bundled bridge.
 pub fn agent_provider_uses_bridge(value: &str) -> bool {
     AGENT_PROVIDER_CHOICES.iter().any(|choice| {
         choice.transport == AgentTransport::CliBridge && choice.id == value

@@ -243,6 +243,7 @@
 "assistant.configure_hint" = "Провайдеры и учётные записи настраиваются через собственный процесс входа Pitex Agent.";
 "assistant.open_pi_config" = "Открыть конфигурацию Pitex Agent";
 "assistant.model_placeholder" = "Нет моделей — войдите через Настройки → AI";
+"assistant.backend_unavailable" = "Не удалось запустить. Проверьте, что CLI установлен и выполнен вход.";
 "assistant.switched_backend" = "Ассистент переключён. Следующее сообщение начнёт новый сеанс.";
 "assistant.reasoning_help" = "Уровень рассуждений";
 "assistant.send_help" = "Отправить (⌘Return)";
@@ -359,7 +360,7 @@
 "settings.ai.backend_claude" = "Claude Code (ваш вход)";
 "settings.ai.backend_grok" = "Grok CLI (ваш вход)";
 "settings.ai.backend_agy" = "Antigravity CLI (ваш вход)";
-"settings.ai.backend_note" = "pi входит через собственный вход провайдера. Claude Code использует `claude` на этом компьютере. Pitex не читает эти файлы учётных данных.";
+"settings.ai.backend_note" = "pi входит через собственный вход провайдера. Claude Code использует `claude`, а Antigravity CLI использует `agy` на этом компьютере. Pitex не читает эти файлы учётных данных. Antigravity CLI спрашивает перед запуском команды, но изменяет файлы проекта без запроса.";
 "settings.ai.backend_apple_fm" = "Apple Foundation Models (на этом Mac)";
 "settings.ai.backend_apple_fm_note" = "Apple Foundation Models работает на этом Mac, когда включена Apple Intelligence. Pitex не отправляет чат через pi.";
 "settings.ai.backend_apple_fm_unavailable" = "Apple Foundation Models работает в приложении Pitex для Mac, когда включена Apple Intelligence. Эта сборка не может их запустить.";

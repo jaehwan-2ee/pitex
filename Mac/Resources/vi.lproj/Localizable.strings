@@ -242,6 +242,7 @@
 "assistant.configure_hint" = "Nhà cung cấp và tài khoản được thiết lập qua quy trình đăng nhập của Pitex Agent.";
 "assistant.open_pi_config" = "Mở cấu hình Pitex Agent";
 "assistant.model_placeholder" = "Không có mô hình — đăng nhập trong Cài đặt → AI";
+"assistant.backend_unavailable" = "Không thể khởi động. Hãy kiểm tra CLI đã được cài đặt và đăng nhập.";
 "assistant.switched_backend" = "Đã chuyển trợ lý. Tin nhắn tiếp theo bắt đầu một phiên mới.";
 "assistant.reasoning_help" = "Mức suy luận";
 "assistant.send_help" = "Gửi (⌘Return)";
@@ -359,7 +360,7 @@
 "settings.ai.backend_claude" = "Claude Code (đăng nhập của bạn)";
 "settings.ai.backend_grok" = "Grok CLI (đăng nhập của bạn)";
 "settings.ai.backend_agy" = "Antigravity CLI (đăng nhập của bạn)";
-"settings.ai.backend_note" = "pi đăng nhập bằng nhà cung cấp của chính nó. Claude Code dùng `claude` trên máy này. Pitex không đọc các tệp thông tin đăng nhập đó.";
+"settings.ai.backend_note" = "pi đăng nhập bằng nhà cung cấp của chính nó. Claude Code dùng `claude` và Antigravity CLI dùng `agy` trên máy này. Pitex không đọc các tệp thông tin đăng nhập đó. Antigravity CLI hỏi trước khi chạy lệnh, nhưng sửa tệp trong dự án mà không hỏi.";
 "settings.ai.backend_apple_fm" = "Apple Foundation Models (trên Mac này)";
 "settings.ai.backend_apple_fm_note" = "Apple Foundation Models chạy trên Mac này khi Apple Intelligence được bật. Pitex không gửi cuộc trò chuyện qua pi.";
 "settings.ai.backend_apple_fm_unavailable" = "Apple Foundation Models chạy trong ứng dụng Pitex trên Mac khi Apple Intelligence được bật. Bản dựng này không thể khởi động chúng.";

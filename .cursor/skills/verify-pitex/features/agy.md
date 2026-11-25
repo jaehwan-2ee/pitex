@@ -1,29 +1,33 @@
 # Antigravity
 
-The window does not list Antigravity. A stored `agy` reads as pi and starts the built-in runtime. Headless stream-json cannot answer tool approvals, so this build does not start that adapter.
-
-The adapter source stays in the repo. `node --test Mac/Resources/PitexAgent/bridge/test.ts` still covers `new AgyAdapter()`.
+Settings, AI, Assistant backend, Antigravity CLI. The bridge runs `agy acp --sandbox --disable-telemetry` in the project folder with the user's own `HOME` and sign-in, and speaks ACP to it.
 
 ## Sub-features
 
-- The picker lists pi, Codex, Claude Code, and Grok.
-- A saved `agy` still opens the built-in assistant.
-- The assistant does not launch `cli.ts`.
+- Stream text and show `run_command` as a bash row.
+- Ask before a command. Approve sends `allow`, Deny sends `deny`. agy offers no allow_always, so Always allow sends `allow` and the bridge answers the same command again by itself until the next new or switched conversation.
+- Switch the session to mode `default` after `session/new` and `session/load`, so agy's own settings cannot leave it in accept-edits.
+- List the user's existing agy conversations for this project (ACP `session/list`) in the history list, once each, and replay one on resume.
+- Abort a held turn with `session/cancel`.
+- Report a missing `agy` binary, and a signed-out CLI, without exiting the bridge.
 
 ## How to get to it (user POV)
 
-Open a `.tex` file. Press Ctrl+comma. Open the AI page. Open Assistant backend. The menu has no Antigravity row. Close Settings and open the assistant. A prompt stays on the built-in runtime.
+Open a `.tex` file. Press Ctrl+comma. Open the AI page. Turn on Antigravity CLI. Open the assistant and send a prompt. A command shows an approval card. The history button lists the conversations agy already has for this folder.
 
 ## Driving it with verify-pitex
 
 ```sh
-node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider stale-agy
+node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs drive --provider agy
+node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider agy
 ```
 
-Pass means the menu screenshot is taken while `ai.agentProvider` is still `agy`, the assistant composer is on screen after the prompt, the fake CLI record does not contain `Fix the title`, and no descendant of the Pitex pid has `cli.ts` in its command line. The stored value may still be `agy` or it may be `pi`.
-
-A normal `gtk` run for Codex, Claude Code, or Grok saves `02-menu.png` while the picker is open, before the row click.
+Pass for the agy checks means the CLI record has `session/set_config_option` with mode `default`, the sessions folder has `agy-home-1.jsonl` titled `From the agy home` and no `agy-home-2.jsonl` (another folder), and a repeated `ALWAYS allow the build` prompt raises no approval row while the fake notes one more `"permission":"allow"`.
 
 ## Gotchas
 
-`drive --provider agy` is a usage error. Doctor does not require `helpers/fakes/agy.mjs`. The file stays on disk.
+The fake starts every session in `accept-edits`. A run that skips the mode switch fails `agy-mode-default`.
+
+Resume text is the replayed chunk `Restored`. It arrives after the `session/load` response, like the real agy.
+
+The fake is not a login. Never point a drive at the real `~/.gemini` folder or copy anything from it.

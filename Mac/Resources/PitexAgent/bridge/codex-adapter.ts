@@ -34,7 +34,9 @@ import {
 import { LineJsonRpc } from "./jsonrpc.ts";
 import {
   appendUserMessage,
+  foreignSessionMessage,
   rememberSession,
+  sessionBackend,
   threadIdFor,
   writeSessionPrelude,
 } from "./session-index.ts";
@@ -479,6 +481,11 @@ export class CodexAdapter implements CliAdapter {
 
   private async switchSession(command: PiCommand, host: AdapterHost): Promise<void> {
     const sessionPath = command.sessionPath ?? "";
+    const owner = sessionBackend(sessionPath);
+    if (owner && owner !== this.id) {
+      host.respond("switch_session", false, undefined, foreignSessionMessage(owner), command.id);
+      return;
+    }
     const threadId = threadIdFor(this.sessionDir, sessionPath);
     if (!threadId) {
       host.respond(

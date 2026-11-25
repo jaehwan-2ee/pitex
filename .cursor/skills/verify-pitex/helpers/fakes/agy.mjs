@@ -1,85 +1,157 @@
 #!/usr/bin/env node
+// Stand-in for `agy acp`: the ACP shapes measured against Antigravity CLI
+// 1.5.15. No authenticate method is needed, the session starts in
+// accept-edits so the bridge has to switch it to default, run_command asks
+// with only allow_once and reject_once, session/list spans every folder, and
+// session/load replays history after its response.
 import readline from "node:readline";
-import { writeSync } from "node:fs";
 
-import { recordLine, recordSpawn } from "./record.mjs";
+import { recordLine, recordNote, recordSpawn } from "./record.mjs";
 
 recordSpawn();
 
-const argv = process.argv.slice(2);
-const send = (value) => writeSync(1, `${JSON.stringify(value)}\n`);
+const auth = process.env.FAKE_AUTH || "ok";
+const project = process.env.FAKE_ROOT || process.cwd();
+const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
+const update = (u) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "sess", update: u } });
+const say = (text) => update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
 
-if (argv[0] === "models") {
-  if (process.env.FAKE_AUTH === "signed-out") {
-    writeSync(2, "authentication required\n");
-    process.exit(1);
-  }
-  writeSync(1, "gemini-4-argon-high       Gemini 4 Argon (High)\ngemini-3.8-flash-medium       Gemini 3.8 Flash (Medium)\n");
-  process.exit(0);
+let mode = "accept-edits";
+let created = 0;
+let promptId = null;
+let permissionId = 70;
+
+function configOptions() {
+  return [
+    { id: "model", category: "model", type: "select", currentValue: "gemini-test", options: [{ value: "gemini-test", name: "Gemini Test" }] },
+    {
+      id: "thought_level",
+      category: "thought_level",
+      type: "select",
+      currentValue: "high",
+      options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }],
+    },
+    { id: "mode", category: "mode", type: "select", currentValue: mode, options: [{ value: "default" }, { value: "accept-edits" }, { value: "plan" }] },
+  ];
 }
 
-const conversationIndex = argv.indexOf("--conversation");
-const conversation = conversationIndex >= 0 ? argv[conversationIndex + 1] : "conv-1";
-send({
-  event: "init",
-  conversation_id: conversation,
-  init: { cwd: process.cwd(), tools: ["run_command"], permission_mode: "request-review" },
+function finish(stopReason) {
+  if (promptId == null) return;
+  const id = promptId;
+  promptId = null;
+  send({ jsonrpc: "2.0", id, result: { stopReason } });
+}
+
+const tool = (status) => ({
+  sessionUpdate: status === "in_progress" ? "tool_call" : "tool_call_update",
+  toolCallId: "call-1",
+  name: "run_command",
+  kind: "execute",
+  title: "latexmk main.tex",
+  status,
+  rawInput: { CommandLine: "latexmk main.tex" },
 });
 
-let turns = 0;
-const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-rl.on("line", (line) => {
+function startPrompt(msg) {
+  promptId = msg.id;
+  const text = (msg.params?.prompt ?? []).map((part) => part?.text ?? "").join("\n");
+  if (text.includes("PLAIN")) {
+    say("Noted");
+    finish("end_turn");
+    return;
+  }
+  say(text.includes("HOLD") ? "Working" : "Hello");
+  if (text.includes("HOLD")) return;
+  update(tool("in_progress"));
+  send({
+    jsonrpc: "2.0",
+    id: permissionId++,
+    method: "session/request_permission",
+    params: {
+      sessionId: "sess",
+      toolCall: { ...tool("pending"), sessionUpdate: "tool_call" },
+      options: [
+        { optionId: "allow", name: "Allow", kind: "allow_once" },
+        { optionId: "deny", name: "Deny", kind: "reject_once" },
+      ],
+    },
+  });
+}
+
+function answered(msg) {
+  const outcome = msg.result?.outcome;
+  if (!outcome) return;
+  recordNote({ permission: outcome.optionId ?? outcome.outcome });
+  if (outcome.outcome === "cancelled") {
+    finish("cancelled");
+    return;
+  }
+  update({ ...tool(outcome.optionId === "allow" ? "completed" : "failed"), rawOutput: { output: "" } });
+  finish("end_turn");
+}
+
+function handle(msg) {
+  const reply = (result) => send({ jsonrpc: "2.0", id: msg.id, result });
+  switch (msg.method) {
+    case "initialize":
+      reply({
+        protocolVersion: 1,
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: { list: {}, load: {}, resume: {}, close: {} },
+          _meta: { antigravity: { systemPrompt: { append: true } } },
+        },
+        authMethods: [{ id: "oauth-personal" }],
+      });
+      return;
+    case "session/new":
+      if (auth === "signed-out") {
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "Authentication required" } });
+        return;
+      }
+      created += 1;
+      mode = "accept-edits";
+      reply({ sessionId: `sess-${created}`, configOptions: configOptions() });
+      return;
+    case "session/load":
+      reply({ configOptions: configOptions() });
+      setTimeout(() => say("Restored"), 60);
+      return;
+    case "session/list":
+      reply({
+        sessions: [
+          { sessionId: "home-1", cwd: project, title: "From the agy home", updatedAt: "2026-01-02T03:04:05Z" },
+          { sessionId: "home-2", cwd: "/elsewhere", title: "Other project", updatedAt: "2026-01-02T03:04:05Z" },
+        ],
+      });
+      return;
+    case "session/set_config_option":
+      if (msg.params?.configId === "mode") mode = msg.params.value;
+      reply({ configOptions: configOptions() });
+      return;
+    case "session/prompt":
+      startPrompt(msg);
+      return;
+    default:
+      reply({});
+  }
+}
+
+readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line", (line) => {
   recordLine(line);
-  let msg = null;
+  let msg;
   try {
     msg = JSON.parse(line);
   } catch {
-    msg = null;
-  }
-  if (!msg || msg.event !== "user") {
-    send({ event: "result", result: { status: "ERROR", error: "unsupported" } });
     return;
   }
-  turns += 1;
-  const text = typeof msg.message?.content === "string" ? msg.message.content : "";
-  if (text.includes("HOLD")) {
-    send({
-      event: "step_update",
-      step_update: { step_index: 1, step_type: "agent_response", state: "ACTIVE", text_delta: "Working" },
-    });
+  if (!msg.method) {
+    answered(msg);
     return;
   }
-  const reply = text.includes("PLAIN") ? "Noted" : "Hello there\n";
-  send({ event: "step_update", step_update: { step_index: 1, step_type: "agent_response", state: "ACTIVE", text_delta: reply } });
-  if (!text.includes("PLAIN")) {
-    send({
-      event: "step_update",
-      step_update: {
-        step_index: 2,
-        step_type: "tool",
-        state: "DONE",
-        tool_info: {
-          name: "run_command",
-          parameters: { CommandLine: "echo hello_headless_demo" },
-          output: "hello_headless_demo\n",
-        },
-      },
-    });
-    writeSync(2, 'a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow rule.\n');
+  if (!Object.prototype.hasOwnProperty.call(msg, "id")) {
+    if (msg.method === "session/cancel") finish("cancelled");
+    return;
   }
-  send({
-    event: "result",
-    conversation_id: conversation,
-    result: {
-      status: "SUCCESS",
-      response: reply,
-      usage: { input_tokens: 10, output_tokens: 4, thinking_tokens: 3, cache_read_tokens: 1, total_tokens: 14 },
-    },
-  });
-});
-
-process.on("SIGINT", () => {
-  recordLine("SIGINT");
-  send({ event: "result", result: { status: "INTERRUPTED", error: "interrupted", response: "" } });
-  process.exit(0);
+  handle(msg);
 });

@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn gtk_targets_omit_hidden_clis_and_apple_fm() {
         let ids: Vec<_> = gtk_slots().into_iter().map(|slot| slot.backend).collect();
-        assert_eq!(ids, ["pi", "claude"]);
+        assert_eq!(ids, ["pi", "claude", "agy"]);
     }
 
     #[test]
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn hidden_cli_ids_are_dropped_from_the_denylist_and_do_not_move_the_session() {
         let offered = offered(&["pi", "claude"]);
-        let stored = vec!["codex".into(), "grok".into(), "agy".into(), "apple-fm".into()];
+        let stored = vec!["codex".into(), "grok".into(), "apple-fm".into()];
         let disabled = DisabledBackends::parse(Some(&stored), &offered);
         assert!(disabled.ids().is_empty());
         let decided = plan(Some(&stored), "pi", false, true, &["pi", "claude"]);

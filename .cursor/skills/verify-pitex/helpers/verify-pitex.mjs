@@ -11,10 +11,10 @@ const EVIDENCE_ROOT = join(REPO, ".cursor/skills/verify-pitex/evidence");
 const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
-const PROVIDERS = ["codex", "claude", "grok"];
-const GTK_PROVIDERS = ["claude", "stale-agy", "stale-codex", "stale-grok"];
-const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH" };
-const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs" };
+const PROVIDERS = ["codex", "claude", "grok", "agy"];
+const GTK_PROVIDERS = ["claude", "agy", "stale-codex", "stale-grok"];
+const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH", agy: "AGY_PATH" };
+const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", agy: "agy.mjs" };
 
 const PROBE = {
   ANTHROPIC_API_KEY: "pitex-verify-probe-api-key",
@@ -53,13 +53,14 @@ const MISSING = {
   codex: "Codex CLI was not found",
   claude: "Claude Code was not found",
   grok: "Grok CLI was not found",
+  agy: "Antigravity CLI was not found",
 };
 
 function usage() {
   console.log(`verify-pitex doctor
-verify-pitex drive --provider <codex|claude|grok|all>
+verify-pitex drive --provider <codex|claude|grok|agy|all>
 verify-pitex cleanup
-verify-pitex gtk --provider <claude|stale-agy|stale-codex|stale-grok>`);
+verify-pitex gtk --provider <claude|agy|stale-codex|stale-grok>`);
 }
 
 function hiddenGtkProvider(provider) {
@@ -326,6 +327,7 @@ async function driveSession(provider) {
     checks.push(...(await oneTurn(bridge, run, { message: "DENY the build", decision: "deny", text: "Hello", tool: true, approval: true })).filter((item) => item.id === "approval-decision"));
     checks.push(...(await oneTurn(bridge, run, { message: "ALWAYS allow the build", decision: "always_allow", text: "Hello", tool: true, approval: true })).filter((item) => item.id === "approval-decision"));
     if (provider === "grok") checks.push(...(await jailTurn(bridge, run)));
+    if (provider === "agy") checks.push(...(await agyTurn(bridge, run)));
     checks.push(...(await abortTurn(bridge)));
     checks.push(...(await resumeTurn(bridge, run, provider)));
     checks.push(...envChecks(provider, run, bridge));
@@ -373,7 +375,8 @@ async function oneTurn(bridge, run, spec) {
 function decisionSeen(decision, recorded) {
   if (decision === "approve") return /accept"|allow-once|user_temporary|"allow"/.test(recorded);
   if (decision === "deny") return /decline|reject-once|user_reject|"deny"/.test(recorded);
-  return /acceptForSession|allow-always|user_permanent/.test(recorded);
+  // agy offers no allow_always, so Always allow is answered "allow" and remembered by the bridge.
+  return /acceptForSession|allow-always|user_permanent/.test(recorded) || (recorded.match(/"permission":"allow"/g) ?? []).length >= 2;
 }
 
 function decisionSnippet(recorded) {
@@ -403,6 +406,28 @@ async function jailTurn(bridge, run) {
     check("jail-outside-marker", outsideMarker === "outside-marker\n", outsideMarker),
     check("jail-terminal-cwd", terminalCwd === run.project && recorded.includes("scoped-ok"), `terminalCwd=${terminalCwd} proc=${cwdHit}`),
     check("grok-cwd", bridge.procs.some((fact) => fact.cmdline.some((part) => part.endsWith("grok.mjs")) && fact.cwd === run.project), "grok process cwd"),
+  ];
+}
+
+/** agy: mode forced to default, home sessions mirrored for this project only, and the session-only Always allow. */
+async function agyTurn(bridge, run) {
+  const recorded = recordText(run);
+  const forced = /set_config_option[^\n]*configId[^\n]*mode[^\n]*default/.test(recorded);
+  const mirrors = readdirSync(run.sessions).filter((name) => name.endsWith(".jsonl"));
+  const imported = existsSync(join(run.sessions, "agy-home-1.jsonl")) ? readFileSync(join(run.sessions, "agy-home-1.jsonl"), "utf8") : "";
+  const from = bridge.messages.length;
+  const allowsBefore = (recorded.match(/"permission":"allow"/g) ?? []).length;
+  bridge.send({ type: "prompt", id: "again", message: "ALWAYS allow the build" });
+  await bridge.waitFor(() => bridge.events("agent_end", from).length > 0, 15000, "repeat turn");
+  const allowsAfter = (recordText(run).match(/"permission":"allow"/g) ?? []).length;
+  return [
+    check("agy-mode-default", forced, forced ? "session/set_config_option mode default" : "no mode switch on the CLI stdin"),
+    check("agy-import", imported.includes("From the agy home") && !mirrors.includes("agy-home-2.jsonl"), mirrors.join(",")),
+    check(
+      "agy-always-allow-repeat",
+      bridge.events("approval_request", from).length === 0 && allowsAfter === allowsBefore + 1,
+      `approval rows=${bridge.events("approval_request", from).length} allow answers ${allowsBefore}->${allowsAfter}`
+    ),
   ];
 }
 
@@ -455,7 +480,7 @@ async function resumeTurn(bridge, run, provider) {
   bridge.send({ type: "get_messages", id: "history" });
   await bridge.waitFor(() => bridge.responses("get_messages", fromSwitch).length > 0, 10000, "get_messages");
   const history = JSON.stringify(bridge.responses("get_messages", fromSwitch)[0]?.data ?? {});
-  const restored = provider === "grok" ? history.includes("Restored") || history.includes("Fix the title") : history.includes("Fix the title") || history.includes("Hello");
+  const restored = provider === "grok" || provider === "agy" ? history.includes("Restored") || history.includes("Fix the title") : history.includes("Fix the title") || history.includes("Hello");
   checks.push(check("resumed-messages", restored, history.slice(0, 400)));
   return checks;
 }

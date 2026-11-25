@@ -242,6 +242,7 @@
 "assistant.configure_hint" = "Providers and accounts are configured through Pitex Agent's own sign-in flow.";
 "assistant.open_pi_config" = "Open Pitex Agent Configuration";
 "assistant.model_placeholder" = "No models — sign in via Settings → AI";
+"assistant.backend_unavailable" = "Could not start. Check that the CLI is installed and signed in.";
 "assistant.switched_backend" = "Switched assistant. The next message starts a new session.";
 "assistant.reasoning_help" = "Reasoning effort";
 "assistant.send_help" = "Send (⌘Return)";
@@ -359,7 +360,7 @@
 "settings.ai.backend_claude" = "Claude Code (your login)";
 "settings.ai.backend_grok" = "Grok CLI (your login)";
 "settings.ai.backend_agy" = "Antigravity CLI (your login)";
-"settings.ai.backend_note" = "pi signs in through its own provider login. Claude Code uses `claude` on this computer. Pitex never reads those credential files.";
+"settings.ai.backend_note" = "pi signs in through its own provider login. Claude Code uses `claude` and Antigravity CLI uses `agy` on this computer. Pitex never reads those credential files. Antigravity CLI asks before it runs a command, but it edits files in the project without asking.";
 "settings.ai.backend_apple_fm" = "Apple Foundation Models (on this Mac)";
 "settings.ai.backend_apple_fm_note" = "Apple Foundation Models run on this Mac when Apple Intelligence is on. Pitex does not send the chat through pi.";
 "settings.ai.backend_apple_fm_unavailable" = "Apple Foundation Models run in the Pitex Mac app when Apple Intelligence is on. This build cannot start them.";

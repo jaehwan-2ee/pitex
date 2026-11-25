@@ -1147,6 +1147,20 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     controls.append(&usage);
     root.append(&controls);
 
+    // Why an enabled backend lists no models; selectable to copy a command.
+    let catalog_notes = gtk4::Label::new(None);
+    catalog_notes.set_xalign(0.0);
+    catalog_notes.set_wrap(true);
+    catalog_notes.set_selectable(true);
+    catalog_notes.set_margin_start(10);
+    catalog_notes.set_margin_end(10);
+    catalog_notes.add_css_class("dim-label");
+    catalog_notes.add_css_class("caption");
+    catalog_notes.set_visible(false);
+    a11y(&catalog_notes, "pitex.assistant.catalogNotes", "assistant.model");
+    ui.agent_catalog_notes.replace(Some(catalog_notes.clone()));
+    root.append(&catalog_notes);
+
     // Transcript.
     let scroll = gtk4::ScrolledWindow::new();
     scroll.set_vexpand(true);

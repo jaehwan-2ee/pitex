@@ -43,8 +43,7 @@ export interface CliAdapter {
 }
 
 export async function createAdapter(id: string): Promise<CliAdapter> {
-  const selected = id === "agy" ? "codex" : id;
-  switch (selected) {
+  switch (id) {
     case "codex": {
       const { CodexAdapter } = await import("./codex-adapter.ts");
       return new CodexAdapter();
@@ -53,13 +52,15 @@ export async function createAdapter(id: string): Promise<CliAdapter> {
       const { ClaudeAdapter } = await import("./claude-adapter.ts");
       return new ClaudeAdapter();
     }
-    case "grok": {
-      const { GrokAdapter } = await import("./grok-adapter.ts");
-      return new GrokAdapter();
+    case "grok":
+    case "agy": {
+      const { AcpAdapter } = await import("./acp-adapter.ts");
+      const { AGY, GROK } = await import("./acp-profiles.ts");
+      return new AcpAdapter(id === "agy" ? AGY : GROK);
     }
     default:
       throw new Error(
-        `Unknown CLI adapter "${id}". This Pitex build can drive the Codex CLI, Claude Code, or the Grok CLI.`
+        `Unknown CLI adapter "${id}". This Pitex build can drive the Codex CLI, Claude Code, the Grok CLI, or the Antigravity CLI.`
       );
   }
 }

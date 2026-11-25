@@ -26,6 +26,19 @@ struct AgentPanel: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
 
+            // Why an enabled backend lists no models; selectable to copy a command.
+            if !coordinator.catalogNotes.isEmpty {
+                Text(verbatim: coordinator.catalogNotes.joined(separator: "\n"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+                    .accessibilityIdentifier("pitex.assistant.catalogNotes")
+            }
+
             transcriptArea
 
             if let status = coordinator.statusMessage {

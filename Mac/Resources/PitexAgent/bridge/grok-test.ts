@@ -11,7 +11,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
-import { GROK_SIGNED_OUT, GrokAdapter, findGrok, grokLaunchSpec, killProcessGroup, terminalSpawnSpec } from "./grok-adapter.ts";
+import { AcpAdapter, cliLaunchSpec, findCli, killProcessGroup, terminalSpawnSpec } from "./acp-adapter.ts";
+import { GROK } from "./acp-profiles.ts";
 import {
   approvalFromPermission,
   cancelledPermission,
@@ -29,7 +30,7 @@ import {
   terminalWorkingDirectory,
   visibleModels,
   writeProjectFile,
-} from "./grok-map.ts";
+} from "./acp-map.ts";
 
 const FAKE_SOURCE = `#!/usr/bin/env node
 import readline from "node:readline";
@@ -357,7 +358,7 @@ function parseLines(text: string): Record<string, any>[] {
 }
 
 interface Boot {
-  adapter: GrokAdapter;
+  adapter: AcpAdapter;
   collected: ReturnType<typeof collectHost>;
   dir: string;
   outside: string;
@@ -391,7 +392,7 @@ async function boot(options: { mode?: string; auth?: string; load?: string } = {
   const sessionDir = join(dir, "sessions");
   writeFileSync(binary, FAKE_SOURCE, { mode: 0o755 });
   writeFileSync(record, "");
-  const adapter = new GrokAdapter();
+  const adapter = new AcpAdapter(GROK);
   const collected = collectHost();
   await adapter.start({
     cwd: dir,
@@ -607,7 +608,7 @@ test("model catalogs come from config options, session config, and model state",
         ],
       },
     ],
-  });
+  }, GROK);
   assert.equal(config.modelConfigId, "model");
   assert.equal(config.effortConfigId, "thought");
   assert.equal(config.currentModelId, "grok-2");
@@ -629,7 +630,7 @@ test("model catalogs come from config options, session config, and model state",
         ],
       },
     },
-  });
+  }, GROK);
   assert.equal(session.currentModelId, "grok-4");
   assert.equal(session.effortUsesMode, true);
   assert.equal(session.currentEffort, "low");
@@ -642,7 +643,7 @@ test("model catalogs come from config options, session config, and model state",
         availableModels: [{ modelId: "grok-test", name: "Grok Test", reasoningEfforts: ["low", "high"] }],
       },
     },
-  });
+  }, GROK);
   assert.equal(state.currentModelId, "grok-test");
   assert.deepEqual(state.efforts, ["low", "high"]);
   assert.deepEqual(visibleModels(state.models), [{ id: "grok-test", provider: "grok", name: "Grok Test" }]);
@@ -685,34 +686,34 @@ test("findGrok honors GROK_PATH and a Windows cmd shim is quoted", () => {
   try {
     const binary = join(dir, "grok");
     writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-    assert.equal(findGrok({ GROK_PATH: binary, PATH: "", HOME: dir }), binary);
-    assert.equal(findGrok({ PATH: dir, HOME: dir }), binary);
-    assert.equal(findGrok({ GROK_PATH: join(dir, "missing"), PATH: "", HOME: dir }), null);
+    assert.equal(findCli(GROK, { GROK_PATH: binary, PATH: "", HOME: dir }), binary);
+    assert.equal(findCli(GROK, { PATH: dir, HOME: dir }), binary);
+    assert.equal(findCli(GROK, { GROK_PATH: join(dir, "missing"), PATH: "", HOME: dir }), null);
     const exe = join(dir, "grok.exe");
     writeFileSync(exe, "", { mode: 0o755 });
-    assert.equal(findGrok({ PATH: dir, HOME: dir }, "win32"), exe);
+    assert.equal(findCli(GROK, { PATH: dir, HOME: dir }, "win32"), exe);
     const cmd = join(dir, "grok.cmd");
     writeFileSync(cmd, "@ECHO off\r\n");
-    const spec = grokLaunchSpec(cmd, "win32");
+    const spec = cliLaunchSpec(GROK, cmd, "win32");
     assert.equal(spec.command, "cmd.exe");
     assert.deepEqual(spec.args, ["/d", "/s", "/c", `"${cmd}" --no-auto-update agent stdio`]);
     assert.equal(spec.windowsVerbatimArguments, true);
-    assert.throws(() => grokLaunchSpec(join(dir, "bad%PATH%.cmd"), "win32"), /cmd\.exe/);
-    assert.deepEqual(grokLaunchSpec(binary, "linux"), {
+    assert.throws(() => cliLaunchSpec(GROK, join(dir, "bad%PATH%.cmd"), "win32"), /cmd\.exe/);
+    assert.deepEqual(cliLaunchSpec(GROK, binary, "linux"), {
       command: binary,
       args: ["--no-auto-update", "agent", "stdio"],
     });
-    assert.deepEqual(grokLaunchSpec(exe, "win32"), {
+    assert.deepEqual(cliLaunchSpec(GROK, exe, "win32"), {
       command: exe,
       args: ["--no-auto-update", "agent", "stdio"],
     });
     const nodeShim = join(dir, "grok-node");
     writeFileSync(nodeShim, "#!/usr/bin/env node\nconsole.log(1)\n", { mode: 0o755 });
-    assert.deepEqual(grokLaunchSpec(nodeShim, "win32"), {
+    assert.deepEqual(cliLaunchSpec(GROK, nodeShim, "win32"), {
       command: process.execPath,
       args: [nodeShim, "--no-auto-update", "agent", "stdio"],
     });
-    assert.deepEqual(grokLaunchSpec(binary, "win32"), {
+    assert.deepEqual(cliLaunchSpec(GROK, binary, "win32"), {
       command: binary,
       args: ["--no-auto-update", "agent", "stdio"],
     });
@@ -723,7 +724,7 @@ test("findGrok honors GROK_PATH and a Windows cmd shim is quoted", () => {
 
 test("Grok adapter sources do not reference credential files", () => {
   const needles = ["auth.json", ".codex", ".claude", "XAI_API_KEY", "GROK_AUTH", "credentials.json", "~/.grok"];
-  for (const name of ["grok-adapter.ts", "grok-map.ts"]) {
+  for (const name of ["acp-adapter.ts", "acp-map.ts", "acp-profiles.ts"]) {
     const source = readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
     for (const needle of needles) {
       assert.equal(source.includes(needle), false, `${name} contains ${needle}`);
@@ -767,12 +768,6 @@ test("a fake Grok CLI round-trips a prompt, an approval, and a cancel", { timeou
     await waitUntil("approval 42", () =>
       collected.events.some((event) => event.type === "approval_request" && event.id === "42")
     );
-    await adapter.handleCommand({ type: "prompt", id: "busy", message: "too soon" }, collected.host);
-    assert.equal(responseById(collected.responses, "busy").success, false);
-    assert.match(String(responseById(collected.responses, "busy").error), /still working/);
-    await adapter.handleCommand({ type: "steer", id: "steer", message: "change" }, collected.host);
-    assert.equal(responseById(collected.responses, "steer").success, false);
-    assert.match(String(responseById(collected.responses, "steer").error), /steer/);
 
     await adapter.handleCommand({ type: "approval_response", id: "42", decision: "always_allow" }, collected.host);
     await waitUntil("first agent_end", () => collected.events.some((event) => event.type === "agent_end"));
@@ -821,6 +816,32 @@ test("a fake Grok CLI round-trips a prompt, an approval, and a cancel", { timeou
     const cancelled = collected.events.filter((event) => event.type === "agent_end").at(-1);
     const message = (cancelled?.messages as { errorMessage?: string }[] | undefined)?.[0];
     assert.equal(message?.errorMessage, "The turn was cancelled.");
+  } finally {
+    await shutdown(booted);
+  }
+});
+
+test("a prompt or steer sent mid-turn waits and runs after the turn ends", { timeout: 20_000 }, async () => {
+  const booted = await boot();
+  const { adapter, collected, record } = booted;
+  try {
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "First" }, collected.host);
+    await waitUntil("approval 42", () => collected.events.some((event) => event.type === "approval_request" && event.id === "42"));
+    await adapter.handleCommand({ type: "steer", id: "later", message: "Queued follow-up" }, collected.host);
+    assert.equal(responseById(collected.responses, "later").success, true);
+    assert.deepEqual(responseById(collected.responses, "later").data, { queued: true });
+    const prompts = () => parseLines(readFileSync(record, "utf8")).filter((line) => line.method === "session/prompt");
+    assert.equal(prompts().length, 1);
+    await adapter.handleCommand({ type: "approval_response", id: "42", decision: "approve" }, collected.host);
+    await waitUntil("approval 43", () => collected.events.some((event) => event.type === "approval_request" && event.id === "43"));
+    assert.equal(prompts()[1]?.params.prompt[0].text, "Queued follow-up");
+    const firstEnd = collected.events.findIndex((event) => event.type === "agent_end");
+    const secondStart = collected.events.findIndex((event, index) => index > firstEnd && event.type === "agent_start");
+    assert.ok(firstEnd >= 0 && secondStart > firstEnd);
+    await adapter.handleCommand({ type: "prompt", id: "p3", message: "Dropped" }, collected.host);
+    await adapter.handleCommand({ type: "abort", id: "stop" }, collected.host);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(prompts().length, 2);
   } finally {
     await shutdown(booted);
   }
@@ -911,7 +932,7 @@ test("a shell command line and an argv command both run as approved", { timeout:
 
 test("a missing or signed-out Grok CLI is reported without forwarding auth text", { timeout: 20_000 }, async () => {
   const empty = mkdtempSync(join(tmpdir(), "pitex-grok-empty-"));
-  const missing = new GrokAdapter();
+  const missing = new AcpAdapter(GROK);
   const host = collectHost();
   await missing.start({ cwd: empty, sessionDir: empty, env: { PATH: "", HOME: empty, GROK_PATH: "" } });
   assert.match(missing.unavailableReason ?? "", /grok login/);
@@ -930,7 +951,7 @@ test("a missing or signed-out Grok CLI is reported without forwarding auth text"
 
   const failed = await boot({ auth: "fail" });
   try {
-    assert.equal(failed.adapter.unavailableReason, GROK_SIGNED_OUT);
+    assert.equal(failed.adapter.unavailableReason, GROK.signedOut);
     assert.equal((failed.adapter.unavailableReason ?? "").includes("leaked"), false);
     const auth = parseLines(readFileSync(failed.record, "utf8")).find((line) => line.method === "authenticate");
     assert.deepEqual(auth?.params, { methodId: "cached_token", _meta: { headless: true } });
@@ -958,7 +979,7 @@ test("resume degrades when the CLI does not advertise loadSession", { timeout: 2
       { type: "switch_session", id: "missing", sessionPath: join(sessionDir, "missing.jsonl") },
       collected.host
     );
-    assert.match(String(responseById(collected.responses, "missing").error), /no Grok session/);
+    assert.match(String(responseById(collected.responses, "missing").error), /no Grok CLI session/);
     await adapter.handleCommand({ type: "switch_session", id: "saved", sessionPath }, collected.host);
     assert.equal(responseById(collected.responses, "saved").success, false);
     assert.match(String(responseById(collected.responses, "saved").error), /loadSession/);

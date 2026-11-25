@@ -12,10 +12,12 @@ if runtime:
 
 MENU_Y = {"claude": 248}
 STALE_STORED = {
-    "stale-agy": "agy",
     "stale-codex": "codex",
     "stale-grok": "grok",
 }
+# Selectable providers whose switch row has no measured coordinate yet. The
+# preference is written before launch, and the run then clicks Approve like claude.
+SEEDED = {"agy": "agy"}
 
 
 def main():
@@ -25,8 +27,9 @@ def main():
     binary = os.environ["PITEX_BIN"]
     evidence.mkdir(parents=True, exist_ok=True)
     stored = STALE_STORED.get(provider)
-    if stored:
-        seed_stale_provider(stored)
+    seeded = SEEDED.get(provider)
+    if stored or seeded:
+        seed_stale_provider(stored or seeded)
     tex = project / "main.tex"
     tex.write_text("\\documentclass{article}\\begin{document}Title\\end{document}\n")
     log = open(evidence / "pitex.log", "w")
@@ -55,6 +58,9 @@ def main():
         result["steps"].append("menu-open")
         if stored:
             result["storedAtMenu"] = stored_provider(preferences_path().read_text() if preferences_path().exists() else "")
+            run(["xdotool", "key", "--window", settings, "Escape"])
+            time.sleep(0.3)
+        elif seeded:
             run(["xdotool", "key", "--window", settings, "Escape"])
             time.sleep(0.3)
         else:
@@ -219,6 +225,8 @@ def approval_reached(provider, record):
         return "user_temporary" in record and "allow" in record
     if provider == "grok":
         return "allow-once" in record
+    if provider == "agy":
+        return '"permission":"allow"' in record
     return 'decision\\":\\"accept' in record or '"decision":"accept"' in record
 
 
