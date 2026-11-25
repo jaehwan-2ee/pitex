@@ -6,6 +6,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+import { storedTodos, type TodoItem } from "./todos.ts";
+
 export const INDEX_NAME = "codex-session-index.json";
 
 export interface SessionRecord {
@@ -13,6 +15,8 @@ export interface SessionRecord {
   model?: string;
   /** Permission mode the user picked for this conversation; absent means default. */
   mode?: string;
+  /** The last todo list, for CLIs whose own history does not replay it (Claude Code, Codex). */
+  todos?: TodoItem[];
   updatedAt: string;
 }
 
@@ -58,13 +62,15 @@ export function rememberSession(
   sessionPath: string,
   threadId: string,
   model?: string,
-  mode?: string
+  mode?: string,
+  todos?: TodoItem[] | null
 ): void {
   const index = loadIndex(sessionDir);
   index.sessions[sessionKey(sessionPath)] = {
     threadId,
     ...(model ? { model } : {}),
     ...(mode && mode !== "default" ? { mode } : {}),
+    ...(todos && todos.length > 0 ? { todos } : {}),
     updatedAt: new Date().toISOString(),
   };
   saveIndex(sessionDir, index);
@@ -77,6 +83,10 @@ export function threadIdFor(sessionDir: string, sessionPath: string): string | n
 
 export function sessionModeFor(sessionDir: string, sessionPath: string): string | null {
   return loadIndex(sessionDir).sessions[sessionKey(sessionPath)]?.mode || null;
+}
+
+export function sessionTodosFor(sessionDir: string, sessionPath: string): TodoItem[] | null {
+  return storedTodos(loadIndex(sessionDir).sessions[sessionKey(sessionPath)]?.todos);
 }
 
 /** A pi-shaped session head so the existing history list can title the chat. */

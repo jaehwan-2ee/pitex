@@ -478,9 +478,7 @@ test("ACP session updates become pi transcript events", () => {
       "tool_execution_start",
       "tool_execution_update",
       "tool_execution_end",
-      "tool_execution_start",
-      "tool_execution_update",
-      "tool_execution_end",
+      "todo_update",
       "message_end",
       "turn_end",
       "agent_end",
@@ -494,18 +492,18 @@ test("ACP session updates become pi transcript events", () => {
   const tool = events.find((event) => event.type === "tool_execution_start" && event.toolCallId === "c1");
   assert.equal(tool?.toolName, "bash");
   assert.deepEqual(tool?.args, { command: "latexmk" });
-  const plan = events.find((event) => event.type === "tool_execution_start" && event.toolCallId === "acp-plan");
-  assert.equal(plan?.toolName, "plan");
+  const plan = events.find((event) => event.type === "todo_update");
+  assert.deepEqual(plan?.items, [{ text: "Write", status: "pending" }]);
+  assert.equal(events.some((event) => event.toolCallId === "acp-plan" || event.toolName === "plan"), false);
   const end = events.find((event) => event.type === "message_end");
   assert.equal((end?.message as { stopReason?: string }).stopReason, "stop");
   assert.equal(state.turnOpen, false);
-  assert.equal(state.planStarted, false);
 
   const again = mapSessionUpdate(
     { sessionUpdate: "plan", entries: [{ content: "Next", status: "pending" }] },
     state
   );
-  assert.equal(again.some((event) => event.type === "tool_execution_start" && event.toolCallId === "acp-plan"), true);
+  assert.deepEqual(again, [{ type: "todo_update", items: [{ text: "Next", status: "pending" }], turnId: state.turnId }]);
   const cancelled = closeTurn(state, "cancelled");
   const failed = cancelled.find((event) => event.type === "message_end");
   assert.equal((failed?.message as { stopReason?: string; errorMessage?: string }).stopReason, "error");

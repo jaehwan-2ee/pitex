@@ -35,6 +35,9 @@ struct AgentTranscriptEntry: Identifiable {
         case thinking
         case tool
         case notice
+        /// A todo-list change: `title` is its `assistant.todo.*` key and `text` the
+        /// key's argument, so the row is localized when drawn.
+        case activity
     }
 
     enum Status {
@@ -134,6 +137,8 @@ final class AgentCoordinator: ObservableObject {
     @Published private(set) var pendingApproval: AgentApprovalItem?
     /// Bridge backends' permission mode; nil hides the picker (pi, Codex).
     @Published private(set) var permissionMode: AgentPermissionMode?
+    /// The conversation's todo list; empty hides the checklist above the composer.
+    @Published private(set) var todos: [AgentTodoItem] = []
     /// FIFO keyed by request id. Stop and new-session deny every entry.
     private var approvalQueue = AgentApprovalQueue()
     /// Whether the active document/selection is folded into each prompt's
@@ -276,6 +281,8 @@ final class AgentCoordinator: ObservableObject {
         approvalQueue.clear()
         pendingApproval = nil
         permissionMode = nil
+        // The list belonged to that process's session; the next one starts empty.
+        todos = []
         prepareTask?.cancel()
         eventTask?.cancel()
         process?.terminate()
@@ -677,6 +684,7 @@ final class AgentCoordinator: ObservableObject {
         approvalQueue.clear()
         pendingApproval = nil
         permissionMode = nil
+        todos = []
         // A message cut off by the exit gets its final (non-streaming) render.
         finalizeEntries()
         guard !intentionalStop else { return }
@@ -814,9 +822,26 @@ final class AgentCoordinator: ObservableObject {
     private func clearTranscript() {
         flushDeltas()
         transcript = []
+        todos = []
         toolIndexByCallID = [:]
         assistantEntryIndex = nil
         thinkingEntryIndex = nil
+    }
+
+    /// A new todo snapshot: one activity row per change, then the checklist follows it.
+    private func noteTodos(_ items: [AgentTodoItem]) {
+        guard items != todos else { return }
+        let allPending = items.allSatisfy { $0.status == .pending }
+        for activity in AgentTodoList.activities(from: todos, to: items) {
+            // A list built one TaskCreate at a time reads as one "created" row.
+            if case .added = activity, allPending, let last = transcript.indices.last,
+               transcript[last].role == .activity, transcript[last].title == AgentTodoActivity.created(0).key {
+                transcript[last].text = String(items.count)
+                continue
+            }
+            transcript.append(AgentTranscriptEntry(role: .activity, title: activity.key, text: activity.argument))
+        }
+        todos = items
     }
 
     // MARK: - Conversation history
@@ -1333,6 +1358,8 @@ final class AgentCoordinator: ObservableObject {
             showApprovalHead()
         case "mode_changed":
             permissionMode = AgentPermissionMode(event.object["mode"])
+        case "todo_update":
+            noteTodos(AgentTodoItem.list(event.object["items"]))
         case "extension_error":
             let message = event.string("error") ?? "extension error"
             transcript.append(AgentTranscriptEntry(
@@ -1431,6 +1458,8 @@ final class AgentCoordinator: ObservableObject {
         case "get_messages":
             guard event.string("id") == messagesRequestID else { return }
             transcript = transcriptEntries(from: event.responseData?["messages"] as? [[String: Any]] ?? [])
+            // The last list of a resumed chat; no activity rows for it.
+            todos = AgentTodoItem.list(event.responseData?["todos"])
             sendSilently(.getSessionStats)
         default:
             break

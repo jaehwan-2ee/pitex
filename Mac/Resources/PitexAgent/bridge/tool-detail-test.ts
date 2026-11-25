@@ -87,7 +87,7 @@ test("Claude Bash with a nonzero exit is a failed shell card with the exit code"
   assert.deepEqual(end.detail, { kind: "shell", command: "latexmk -pdf main.tex", exitCode: 12 });
 });
 
-test("Claude Read, Grep, WebFetch, Task and TodoWrite map to their kinds", () => {
+test("Claude Read, Grep, WebFetch and Task map to their kinds; TodoWrite becomes a todo list", () => {
   const state = createClaudeStreamState();
   const events: Json[] = [];
   events.push(...mapClaudeMessage(sdkAssistantTool("r", "Read", { file_path: "/p/main.tex", offset: 10, limit: 31 }), state));
@@ -95,6 +95,7 @@ test("Claude Read, Grep, WebFetch, Task and TodoWrite map to their kinds", () =>
   events.push(...mapClaudeMessage(sdkAssistantTool("f", "WebFetch", { url: "https://ctan.org/pkg/x", prompt: "p" }), state));
   events.push(...mapClaudeMessage(sdkAssistantTool("t", "Task", { description: "Check refs", prompt: "p" }), state));
   events.push(...mapClaudeMessage(sdkAssistantTool("w", "TodoWrite", { todos: [] }), state));
+  events.push(...mapClaudeMessage(sdkToolResult("w", "ok", false), state));
   const byId = Object.fromEntries(
     events.filter((event) => event.type === "tool_execution_start").map((event) => [event.toolCallId, event.detail])
   );
@@ -102,7 +103,8 @@ test("Claude Read, Grep, WebFetch, Task and TodoWrite map to their kinds", () =>
   assert.deepEqual(byId.g, { kind: "search", query: "\\cite", label: "Grep" });
   assert.deepEqual(byId.f, { kind: "fetch", url: "https://ctan.org/pkg/x" });
   assert.deepEqual(byId.t, { kind: "sub_agent", label: "Check refs" });
-  assert.deepEqual(byId.w, { kind: "other", label: "TodoWrite" });
+  assert.equal(byId.w, undefined);
+  assert.deepEqual(events.find((event) => event.type === "todo_update")?.items, []);
   // files_with_matches mode reports only numFiles: that is not a match count.
   mapClaudeMessage(sdkAssistantTool("g2", "Grep", { pattern: "x" }), state);
   const filesOnly = mapClaudeMessage(sdkToolResult("g2", "a.tex", false, { numFiles: 2 }), state).find(

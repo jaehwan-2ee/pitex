@@ -325,6 +325,9 @@ test("claude child env drops API-key and billing overrides", () => {
   assert.equal(env.PITEX_TEST, "1");
   assert.equal(env.ANTHROPIC_MODEL, "claude-sonnet-4-5");
   assert.equal(env.emptyValue, "");
+  // The todo tools are on unless the user turned them off.
+  assert.equal(env.CLAUDE_CODE_ENABLE_TODO_TOOLS, "1");
+  assert.equal(claudeChildEnv({ CLAUDE_CODE_ENABLE_TODO_TOOLS: "0" }).CLAUDE_CODE_ENABLE_TODO_TOOLS, "0");
   const removed = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -1086,7 +1089,7 @@ interface Opened {
   query: ScriptedQuery;
 }
 
-function scriptedQuery(opened: Opened[], mode: "script" | "hold" | "mutate" | "ask"): ClaudeQueryFn {
+function scriptedQuery(opened: Opened[], mode: "script" | "hold" | "mutate" | "ask" | "todos"): ClaudeQueryFn {
   return ({ prompt, options }) => {
     const query = new ScriptedQuery();
     opened.push({ options, query });
@@ -1106,7 +1109,7 @@ async function runTurns(
   prompt: AsyncIterable<Json>,
   options: ClaudeQueryOptions,
   query: ScriptedQuery,
-  mode: "script" | "hold" | "mutate" | "ask"
+  mode: "script" | "hold" | "mutate" | "ask" | "todos"
 ): Promise<void> {
   try {
     for await (const message of prompt) {
@@ -1122,6 +1125,16 @@ async function runTurns(
               : await options.canUseTool("ExitPlanMode", { plan: PLAN_TEXT }, bareTool(`toolu_${text}`));
         query.permissions.push(result);
         query.push({ type: "result", subtype: "success", result: "ok", session_id: "sess-1" });
+        continue;
+      }
+      if (mode === "todos") {
+        const todos = [
+          { content: "Build the PDF", status: "completed", activeForm: "Building the PDF" },
+          { content: "Fix the citation", status: "in_progress", activeForm: "Fixing the citation" },
+        ];
+        query.push({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_todo", name: "TodoWrite", input: { todos } }] } });
+        query.push({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_todo", content: "Todos updated" }] } });
+        query.push({ type: "result", subtype: "success", result: "Done", session_id: "sess-1" });
         continue;
       }
       if (mode === "hold") {
@@ -1276,3 +1289,43 @@ async function waitUntil(predicate: () => boolean, label: string): Promise<void>
   }
   throw new Error(`timed out waiting for ${label}`);
 }
+
+test("a Claude todo list survives switching away and resuming the chat", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pitex-claude-todos-"));
+  const binary = join(dir, "claude");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const opened: Opened[] = [];
+  const adapter = new ClaudeAdapter({
+    query: scriptedQuery(opened, "todos"),
+    authStatus: async () => ({ stdout: '{"loggedIn":true}', code: 0 }),
+  });
+  const collected = collect();
+  const expected = [
+    { text: "Build the PDF", status: "completed", activeForm: "Building the PDF" },
+    { text: "Fix the citation", status: "in_progress", activeForm: "Fixing the citation" },
+  ];
+  try {
+    await adapter.start({ cwd: dir, sessionDir: dir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary } });
+    await adapter.handleCommand({ type: "prompt", id: "p", message: "Plan it" }, collected.host);
+    await waitUntil(() => collected.events.some((event) => event.type === "agent_end"), "agent end");
+    const update = collected.events.find((event) => event.type === "todo_update");
+    assert.deepEqual(update?.items, expected);
+    assert.equal(typeof update?.turnId, "string");
+    assert.equal(collected.events.some((event) => String(event.type).startsWith("tool_execution")), false);
+
+    const session = claudeSession(dir);
+    await adapter.handleCommand({ type: "new_session", id: "new" }, collected.host);
+    await adapter.handleCommand({ type: "get_messages", id: "empty" }, collected.host);
+    assert.equal((response(collected.responses, "get_messages").data as Json).todos, undefined);
+
+    await adapter.handleCommand({ type: "switch_session", id: "sw", sessionPath: session }, collected.host);
+    await adapter.handleCommand({ type: "get_messages", id: "msgs" }, collected.host);
+    const data = response(collected.responses, "get_messages").data as { messages: Json[]; todos: unknown };
+    assert.deepEqual(data.todos, expected);
+    assert.equal(JSON.stringify(data.messages).includes("TodoWrite"), false);
+    assert.deepEqual(data.messages.map((message) => message.role), ["user", "assistant"]);
+  } finally {
+    await adapter.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

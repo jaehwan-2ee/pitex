@@ -904,6 +904,111 @@ impl AgentApprovalRequest {
     }
 }
 
+/// One row of the agent's todo list (`todo_update.items`, `get_messages.todos`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub id: Option<String>,
+    pub text: String,
+    pub status: TodoStatus,
+    pub active_form: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+/// One transcript line for a change between two todo snapshots (Paseo's task activity).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TodoActivity {
+    Created(usize),
+    Added(String),
+    Started(String),
+    Completed(String),
+}
+
+impl TodoActivity {
+    /// The `assistant.todo.<kind>` string key and its argument.
+    pub fn key_and_arg(&self) -> (&'static str, String) {
+        match self {
+            Self::Created(count) => ("assistant.todo.created", count.to_string()),
+            Self::Added(text) => ("assistant.todo.added", text.clone()),
+            Self::Started(text) => ("assistant.todo.started", text.clone()),
+            Self::Completed(text) => ("assistant.todo.completed", text.clone()),
+        }
+    }
+}
+
+impl TodoItem {
+    /// The bridge's list; rows without text are dropped.
+    pub fn decode_list(value: Option<&Value>) -> Vec<Self> {
+        let Some(rows) = value.and_then(|v| v.as_array()) else { return Vec::new() };
+        let text = |row: &Value, key: &str| {
+            row.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
+        };
+        rows.iter()
+            .filter_map(|row| {
+                Some(Self {
+                    id: text(row, "id"),
+                    text: text(row, "text")?,
+                    status: match row.get("status").and_then(|v| v.as_str()) {
+                        Some("completed") => TodoStatus::Completed,
+                        Some("in_progress") => TodoStatus::InProgress,
+                        _ => TodoStatus::Pending,
+                    },
+                    active_form: text(row, "activeForm"),
+                })
+            })
+            .collect()
+    }
+}
+
+/// What changed from `previous` to `current`: a new list, new rows, and rows that
+/// started or finished. Rows match by id, else by text (the first unmatched row
+/// with it), so a dropped or moved row does not shift the rest. A list that shares
+/// no row with the previous one is a new list.
+pub fn todo_activities(previous: &[TodoItem], current: &[TodoItem]) -> Vec<TodoActivity> {
+    if current.is_empty() {
+        return Vec::new();
+    }
+    let mut unmatched: Vec<&TodoItem> = previous.iter().collect();
+    let activities: Vec<TodoActivity> = current
+        .iter()
+        .filter_map(|item| {
+            let found = unmatched.iter().position(|was| match (&was.id, &item.id) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => was.text == item.text,
+                _ => false,
+            });
+            let was = found.map(|at| unmatched.remove(at).status);
+            match (was, item.status) {
+                (None, _) => Some(TodoActivity::Added(item.text.clone())),
+                (Some(was), now) if was == now => None,
+                (Some(_), TodoStatus::Completed) => Some(TodoActivity::Completed(item.text.clone())),
+                (Some(_), TodoStatus::InProgress) => Some(TodoActivity::Started(item.text.clone())),
+                (Some(_), TodoStatus::Pending) => None,
+            }
+        })
+        .collect();
+    if unmatched.len() == previous.len() {
+        return vec![TodoActivity::Created(current.len())];
+    }
+    activities
+}
+
+/// (done, total) for the checklist header and its accessible label.
+pub fn todo_progress(items: &[TodoItem]) -> (usize, usize) {
+    (items.iter().filter(|item| item.status == TodoStatus::Completed).count(), items.len())
+}
+
+/// What the agent is doing now: the first in-progress row's active form, or its text.
+pub fn todo_current(items: &[TodoItem]) -> Option<&str> {
+    let item = items.iter().find(|item| item.status == TodoStatus::InProgress)?;
+    Some(item.active_form.as_deref().unwrap_or(&item.text))
+}
+
 /// The bridge's permission mode (`get_state.mode`, `mode_changed.mode`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentMode {
@@ -1324,6 +1429,9 @@ pub enum TranscriptRole {
     Thinking,
     Tool,
     Notice,
+    /// A todo-list change. `title` holds the `assistant.todo.*` key and `text` its argument,
+    /// so the row is localized when drawn.
+    Activity,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TranscriptStatus {
@@ -1701,6 +1809,8 @@ pub struct AgentCoordinator {
     pub pending_approval: Option<AgentApprovalRequest>,
     /// Bridge backends' permission mode; None hides the picker (pi).
     pub mode: Option<AgentMode>,
+    /// The conversation's todo list; empty hides the checklist.
+    pub todos: Vec<TodoItem>,
     pub attach_active_document: bool,
     pub pending_composer_insertion: Option<String>,
     pub selection_attachment: Option<AgentSelectionAttachment>,
@@ -1839,6 +1949,7 @@ impl AgentCoordinator {
             approval_wire: Vec::new(),
             pending_approval: None,
             mode: None,
+            todos: Vec::new(),
             attach_active_document: store
                 .prefs()
                 .bool(Self::ATTACH_DOCUMENT_KEY)
@@ -2092,6 +2203,8 @@ impl AgentCoordinator {
         self.is_updating_model_settings = false;
         self.clear_approvals();
         self.mode = None;
+        // The list belonged to that process's session; the next one starts empty.
+        self.todos.clear();
         // A message cut off by the exit gets its final (non-streaming) render.
         self.finalize_entries();
         if !self.intentional_stop {
@@ -2114,6 +2227,7 @@ impl AgentCoordinator {
         self.is_updating_model_settings = false;
         self.clear_approvals();
         self.mode = None;
+        self.todos.clear();
         self.finalize_entries();
         self.ui_revision += 1;
     }
@@ -2745,8 +2859,37 @@ impl AgentCoordinator {
         let _ = process.send(&command, None);
     }
 
+    /// A new todo snapshot: one activity row per change, then the checklist follows it.
+    fn note_todos(&mut self, items: Vec<TodoItem>) {
+        if items == self.todos {
+            return;
+        }
+        for activity in todo_activities(&self.todos, &items) {
+            // A list built one TaskCreate at a time reads as one "created" row.
+            let all_pending = items.iter().all(|item| item.status == TodoStatus::Pending);
+            if let (TodoActivity::Added(_), true, Some(last)) = (&activity, all_pending, self.transcript.last_mut()) {
+                if last.role == TranscriptRole::Activity && last.title == "assistant.todo.created" {
+                    last.text = items.len().to_string();
+                    continue;
+                }
+            }
+            let (key, arg) = activity.key_and_arg();
+            self.push_entry(AgentTranscriptEntry {
+                role: TranscriptRole::Activity,
+                title: key.into(),
+                text: arg,
+                detail: String::new(),
+                status: TranscriptStatus::Done,
+                tool: None,
+            });
+        }
+        self.todos = items;
+        self.ui_revision += 1;
+    }
+
     fn clear_transcript(&mut self) {
         self.transcript.clear();
+        self.todos.clear();
         self.tool_index_by_call_id.clear();
         self.assistant_entry_index = None;
         self.thinking_entry_index = None;
@@ -3013,6 +3156,7 @@ impl AgentCoordinator {
                 self.mode = AgentMode::decode(event.object.get("mode"));
                 self.ui_revision += 1;
             }
+            "todo_update" => self.note_todos(TodoItem::decode_list(event.object.get("items"))),
             "extension_error" => {
                 let message = event.string("error").unwrap_or_else(|| "extension error".into());
                 self.push_entry(AgentTranscriptEntry {
@@ -3203,6 +3347,8 @@ impl AgentCoordinator {
                     .cloned()
                     .unwrap_or_default();
                 self.transcript = self.transcript_from_messages(&messages);
+                // The last list of a resumed chat; no activity rows for it.
+                self.todos = TodoItem::decode_list(event.response_data().and_then(|d| d.get("todos")));
                 if let Some(process) = &self.process {
                     let _ = process.send(&PiRPCCommand::GetSessionStats, None);
                 }
@@ -5715,6 +5861,145 @@ mod session_history_tests {
         });
         agent.handle(&response(current));
         assert_eq!(agent.transcript[0].text, "fresh");
+    }
+
+    fn todo(text: &str, status: TodoStatus) -> TodoItem {
+        TodoItem { id: None, text: text.into(), status, active_form: None }
+    }
+
+    #[test]
+    fn todo_snapshot_diffs_become_activity_rows() {
+        use TodoStatus::*;
+        let pending = [todo("Build the PDF", Pending), todo("Fix the citation", Pending), todo("Rebuild", Pending)];
+        assert_eq!(todo_activities(&[], &pending), [TodoActivity::Created(3)]);
+        assert!(todo_activities(&[], &[]).is_empty());
+        let started = [todo("Build the PDF", InProgress), todo("Fix the citation", Pending), todo("Rebuild", Pending)];
+        assert_eq!(todo_activities(&pending, &started), [TodoActivity::Started("Build the PDF".into())]);
+        let two_done = [todo("Build the PDF", Completed), todo("Fix the citation", Completed), todo("Rebuild", InProgress)];
+        assert_eq!(
+            todo_activities(&started, &two_done),
+            [
+                TodoActivity::Completed("Build the PDF".into()),
+                TodoActivity::Completed("Fix the citation".into()),
+                TodoActivity::Started("Rebuild".into()),
+            ]
+        );
+        let mut grown = two_done.to_vec();
+        grown.push(todo("Check the log", Pending));
+        assert_eq!(todo_activities(&two_done, &grown), [TodoActivity::Added("Check the log".into())]);
+        // Back to pending is not news; the same list is no change.
+        assert!(todo_activities(&started, &pending).is_empty());
+        assert!(todo_activities(&two_done, &two_done).is_empty());
+        // Rows with ids match by id even when they move.
+        let a = TodoItem { id: Some("1".into()), ..todo("A", Pending) };
+        let b = TodoItem { id: Some("2".into()), ..todo("B", Pending) };
+        let moved = [TodoItem { status: Completed, ..b.clone() }, a.clone()];
+        assert_eq!(todo_activities(&[a, b], &moved), [TodoActivity::Completed("B".into())]);
+        // Rows without ids match by text, so dropping one does not shift the rest.
+        let dropped = [todo("Fix the citation", Completed), todo("Rebuild", InProgress)];
+        assert_eq!(
+            todo_activities(&[todo("Build the PDF", Pending), todo("Fix the citation", InProgress), todo("Rebuild", Pending)], &dropped),
+            [TodoActivity::Completed("Fix the citation".into()), TodoActivity::Started("Rebuild".into())]
+        );
+        // A list that shares no row with the old one is a new list, not one "Added" row per item.
+        assert_eq!(todo_activities(&dropped, &[todo("Write the abstract", InProgress)]), [TodoActivity::Created(1)]);
+        // Duplicate texts pair in order.
+        let twice = [todo("Rebuild", Completed), todo("Rebuild", Pending)];
+        assert_eq!(
+            todo_activities(&[todo("Rebuild", Pending), todo("Rebuild", Pending)], &twice),
+            [TodoActivity::Completed("Rebuild".into())]
+        );
+    }
+
+    #[test]
+    fn a_backend_switch_or_exit_clears_the_checklist() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        agent.handle(&event(json!({"type": "todo_update", "items": [{"text": "A", "status": "in_progress"}]})));
+        assert_eq!(agent.todos.len(), 1);
+        agent.restart();
+        assert!(agent.todos.is_empty(), "a restart (backend switch) starts a fresh session");
+        agent.handle(&event(json!({"type": "todo_update", "items": [{"text": "A", "status": "in_progress"}]})));
+        agent.process_did_exit();
+        assert!(agent.todos.is_empty());
+    }
+
+    #[test]
+    fn todo_progress_counts_done_rows_and_names_the_current_step() {
+        use TodoStatus::*;
+        let items = [
+            todo("Build the PDF", Completed),
+            todo("Fix the citation", Completed),
+            TodoItem { active_form: Some("Rebuilding".into()), ..todo("Rebuild", InProgress) },
+            todo("Check the log", Pending),
+            todo("Commit", Pending),
+        ];
+        assert_eq!(todo_progress(&items), (2, 5));
+        assert_eq!(todo_current(&items), Some("Rebuilding"));
+        assert_eq!(todo_current(&[todo("Fix", InProgress)]), Some("Fix"));
+        assert_eq!(todo_current(&items[..2]), None);
+        assert_eq!(todo_progress(&[]), (0, 0));
+        let summary = crate::l10n::trn("en", "assistant.todo.summary", &["2", "5"]);
+        assert_eq!(summary, "Tasks 2/5");
+        assert_eq!(crate::l10n::trn("en", "assistant.todo.a11y", &["2", "5"]), "Task list, 2 of 5 done");
+        assert_eq!(crate::l10n::trn("ko", "assistant.todo.a11y", &["2", "5"]), "작업 목록, 5개 중 2개 완료");
+    }
+
+    #[test]
+    fn todo_update_events_drive_the_checklist_and_resume_restores_it() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        let list = |statuses: [&str; 3]| {
+            json!({"type": "todo_update", "turnId": "t", "items": [
+                {"text": "Build the PDF", "status": statuses[0], "activeForm": "Building the PDF"},
+                {"text": "Fix the citation", "status": statuses[1]},
+                {"text": "Rebuild", "status": statuses[2]},
+                {"text": "  ", "status": "pending"}]})
+        };
+        agent.handle(&event(list(["pending", "pending", "pending"])));
+        agent.handle(&event(list(["in_progress", "pending", "pending"])));
+        agent.handle(&event(list(["in_progress", "pending", "pending"])));
+        agent.handle(&event(list(["completed", "completed", "in_progress"])));
+        assert_eq!(agent.todos.len(), 3, "a row without text is dropped");
+        assert_eq!(todo_progress(&agent.todos), (2, 3));
+        let rows: Vec<(String, String)> = agent
+            .transcript
+            .iter()
+            .filter(|entry| entry.role == TranscriptRole::Activity)
+            .map(|entry| (entry.title.clone(), entry.text.clone()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("assistant.todo.created".into(), "3".into()),
+                ("assistant.todo.started".into(), "Build the PDF".into()),
+                ("assistant.todo.completed".into(), "Build the PDF".into()),
+                ("assistant.todo.completed".into(), "Fix the citation".into()),
+                ("assistant.todo.started".into(), "Rebuild".into()),
+            ]
+        );
+        assert_eq!(crate::l10n::trn("en", &rows[1].0, &[&rows[1].1]), "Started: Build the PDF");
+
+        // A list built one row at a time stays one "created" row.
+        agent.clear_transcript();
+        assert!(agent.todos.is_empty(), "a new chat clears the checklist");
+        agent.handle(&event(json!({"type": "todo_update", "items": [{"id": "1", "text": "A", "status": "pending"}]})));
+        agent.handle(&event(json!({"type": "todo_update", "items": [{"id": "1", "text": "A", "status": "pending"}, {"id": "2", "text": "B", "status": "pending"}]})));
+        assert_eq!(agent.transcript.len(), 1);
+        assert_eq!(agent.transcript[0].text, "2");
+
+        // Resume: get_messages carries the last list and adds no activity rows.
+        agent.clear_transcript();
+        agent.messages_request_id = Some("m".into());
+        agent.handle(&response(json!({
+            "type": "response", "id": "m", "command": "get_messages", "success": true,
+            "data": {"messages": [{"role": "user", "content": "Fix it"}],
+                     "todos": [{"text": "Build the PDF", "status": "completed"}, {"text": "Rebuild", "status": "in_progress"}]}
+        })));
+        assert_eq!(todo_progress(&agent.todos), (1, 2));
+        assert!(agent.transcript.iter().all(|entry| entry.role != TranscriptRole::Activity));
+        agent.handle(&response(json!({
+            "type": "response", "id": "m", "command": "get_messages", "success": true, "data": {"messages": []}
+        })));
+        assert!(agent.todos.is_empty(), "a chat without a list shows none");
     }
 
     #[test]

@@ -275,6 +275,16 @@
 "assistant.question.other_placeholder" = "回答を入力";
 "assistant.question.submit" = "送信";
 "assistant.question.dismiss" = "閉じる";
+"assistant.todo.title" = "タスクリスト";
+"assistant.todo.summary" = "タスク %1$ld/%2$ld";
+"assistant.todo.a11y" = "タスクリスト、%2$ld 件中 %1$ld 件完了";
+"assistant.todo.created" = "タスクリストを作成 (%@)";
+"assistant.todo.added" = "追加: %@";
+"assistant.todo.started" = "開始: %@";
+"assistant.todo.completed" = "完了: %@";
+"assistant.todo.status.pending" = "未着手";
+"assistant.todo.status.in_progress" = "進行中";
+"assistant.todo.status.completed" = "完了";
 "assistant.plan.title" = "計画の確認";
 "assistant.plan.approve" = "計画を承認";
 "assistant.plan.approve_accept_edits" = "承認して編集を自動承認";

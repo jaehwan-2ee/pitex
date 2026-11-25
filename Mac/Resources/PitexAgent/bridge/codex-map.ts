@@ -13,6 +13,7 @@
 // This file is original Pitex code written against that protocol, not a copy.
 
 import { cleanDetail, newTurnId, stampTurn, unifiedDiff, type ToolDetail } from "./tool-detail.ts";
+import { todosFromCodexPlan } from "./todos.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -387,6 +388,10 @@ function mapCodexNotification(method: string, params: Json, state: StreamState):
       return out;
     case "turn/completed":
       closeTurn(state, asObject(params.turn), out);
+      return out;
+    case "turn/plan/updated":
+      // The update_plan checklist, always the whole list.
+      out.push({ type: "todo_update", items: todosFromCodexPlan(params) });
       return out;
     default:
       return out;

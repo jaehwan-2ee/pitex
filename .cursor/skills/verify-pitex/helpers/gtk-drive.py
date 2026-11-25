@@ -11,7 +11,7 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248}
+MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248, "claude-todos": 248}
 # The fake Claude answers TOOLCARDS with a Read, an Edit and a failing Bash call.
 TOOLCARDS = "claude-toolcards"
 # MARKDOWN streams a Markdown answer (heading, list, code, math, table, links).
@@ -19,6 +19,15 @@ MARKDOWN = "claude-markdown"
 # APPROVALS switches the mode picker to Plan, answers a question card, keeps
 # planning once with feedback, then approves the revised plan with accept edits.
 APPROVALS = "claude-approvals"
+# TODOS gets three TodoWrite snapshots: the checklist above the composer and its activity rows.
+TODOS = "claude-todos"
+# The checklist's header row (expander) just above the composer once the divider is dragged up.
+TODO_HEADER = (445, 728)
+# The header's trash button (new chat).
+NEW_CHAT = (1161, 227)
+# The history button beside it, and the newest conversation in its list.
+HISTORY = (1203, 227)
+HISTORY_FIRST_ROW = (1200, 300)
 # The mode picker sits on the composer row, right of the message entry.
 MODE_PICKER = (1188, 767)
 # Approval card in the 1280x800 window once the divider is dragged up. Its buttons sit
@@ -107,7 +116,7 @@ def main():
         shot(evidence / "03-assistant.png")
         click(560, 752)
         time.sleep(0.15)
-        if provider in (TOOLCARDS, MARKDOWN, APPROVALS):
+        if provider in (TOOLCARDS, MARKDOWN, APPROVALS, TODOS):
             # Give the transcript room: drag the editor/console divider up.
             run(["xdotool", "mousemove", "840", "538", "mousedown", "1", "mousemove", "840", "400", "mousemove", "840", "160", "mouseup", "1"])
             time.sleep(0.4)
@@ -115,6 +124,8 @@ def main():
             time.sleep(0.15)
         if provider == APPROVALS:
             return approvals(evidence, result)
+        if provider == TODOS:
+            return todo_list(evidence, result)
         prompt = {TOOLCARDS: "TOOLCARDS", MARKDOWN: "MARKDOWN"}.get(provider, "Fix the title")
         run(["xdotool", "type", "--delay", "12", prompt])
         time.sleep(0.15)
@@ -232,6 +243,58 @@ def markdown(evidence, result):
     result["promptReachedCli"] = "MARKDOWN" in record_path.read_text()
     result["pass"] = result["promptReachedCli"] and result["copiedCode"]
     result["steps"].append("markdown")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
+
+
+def todo_list(evidence, result):
+    send_prompt("TODOS")
+    # The fake sends a snapshot every 1.5 s, then answers.
+    time.sleep(0.9)
+    shot(evidence / "04-todos-created.png")
+    time.sleep(1.5)
+    shot(evidence / "05-todos-started.png")
+    time.sleep(2.5)
+    shot(evidence / "06-todos-collapsed.png")
+    click(*TODO_HEADER)
+    time.sleep(0.6)
+    shot(evidence / "07-todos-expanded.png")
+    # The trash button starts a new chat: the checklist goes away.
+    click(*NEW_CHAT)
+    time.sleep(1.0)
+    shot(evidence / "08-new-chat.png")
+    # Reopen the chat from history: the transcript and the last list come back.
+    click(*HISTORY)
+    time.sleep(1.0)
+    shot(evidence / "09-history.png")
+    click(*HISTORY_FIRST_ROW)
+    time.sleep(2.5)
+    shot(evidence / "10-resumed.png")
+    # A 24-item list: the expanded checklist scrolls instead of squeezing the transcript.
+    send_prompt("LONGTODOS")
+    time.sleep(1.5)
+    shot(evidence / "11-todos-long-running.png")
+    time.sleep(4.0)
+    shot(evidence / "12-todos-long-done.png")
+    # Switch backend (Antigravity on, Claude Code off): the old checklist goes away.
+    run(["xdotool", "key", "ctrl+comma"])
+    settings = wait_window("^Settings$")
+    if settings:
+        click_window(settings, 448, 518)
+        time.sleep(0.3)
+        click_window(settings, 520, 248)
+        time.sleep(0.3)
+        click_window(settings, 520, 193)
+        time.sleep(0.4)
+        shot(evidence / "13-switch-settings.png")
+        click_window(settings, 690, 22)
+        time.sleep(2.0)
+        shot(evidence / "14-switched.png")
+        result["steps"].append("switched")
+    record_path = Path(os.environ["FAKE_RECORD"])
+    result["promptReachedCli"] = "TODOS" in record_path.read_text()
+    result["pass"] = result["promptReachedCli"]
+    result["steps"].append("todos")
     write(evidence, result)
     return 0 if result["pass"] else 1
 

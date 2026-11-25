@@ -62,9 +62,11 @@ import {
   rememberSession,
   sessionBackend,
   sessionModeFor,
+  sessionTodosFor,
   threadIdFor,
   writeSessionPrelude,
 } from "./session-index.ts";
+import { withoutTodoTools } from "./todos.ts";
 
 export const CLAUDE_MISSING =
   "Claude Code was not found. Install the official Claude Code CLI, then run `claude auth login`.";
@@ -187,6 +189,9 @@ export function claudeChildEnv(env: NodeJS.ProcessEnv): Record<string, string> {
     if (typeof value !== "string" || isClaudeBillingOverride(key)) continue;
     out[key] = value;
   }
+  // Claude Code 2.1.331 turns its todo tools (TaskCreate/TaskUpdate/TaskList) off for SDK
+  // sessions but on in the terminal; Pitex shows them as the checklist, so opt in.
+  out.CLAUDE_CODE_ENABLE_TODO_TOOLS ??= "1";
   return out;
 }
 
@@ -392,7 +397,7 @@ export class ClaudeAdapter implements CliAdapter {
           await this.switchSession(command, host);
           return;
         case "get_messages":
-          host.respond("get_messages", true, { messages: messagesFromState(this.stream) }, undefined, command.id);
+          host.respond("get_messages", true, this.messagesData(), undefined, command.id);
           return;
         case "get_state":
           host.respond("get_state", true, this.stateData(), undefined, command.id);
@@ -568,6 +573,7 @@ export class ClaudeAdapter implements CliAdapter {
     const before = this.stream.transcript.length;
     const events = mapClaudeMessage(message, this.stream);
     this.persistFrom(before);
+    if (events.some((event) => event.type === "todo_update")) this.remember();
     const stats = statsFromResult(message);
     if (stats) this.stats = stats;
     if (events.some((event) => event.type === "agent_end")) this.running = false;
@@ -640,6 +646,7 @@ export class ClaudeAdapter implements CliAdapter {
     this.sessionId = threadId;
     this.stream = createClaudeStreamState();
     this.stream.transcript = readPiMessages(sessionPath);
+    this.stream.todos = sessionTodosFor(this.sessionDir, sessionPath);
     this.persistedTranscript = this.stream.transcript.length;
     this.running = false;
     // The mode picked for that conversation comes back with it; anything else starts in default.
@@ -759,7 +766,13 @@ export class ClaudeAdapter implements CliAdapter {
 
   private remember(): void {
     if (!this.sessionPath || !this.sessionId) return;
-    rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined, this.mode);
+    rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined, this.mode, this.stream.todos);
+  }
+
+  /** The replayed transcript without todo tool rows, and the last todo list for the checklist. */
+  private messagesData(): Json {
+    const todos = this.stream.todos;
+    return { messages: withoutTodoTools(messagesFromState(this.stream)), ...(todos ? { todos } : {}) };
   }
 
   private persistFrom(before: number): void {

@@ -37,9 +37,11 @@ import {
   foreignSessionMessage,
   rememberSession,
   sessionBackend,
+  sessionTodosFor,
   threadIdFor,
   writeSessionPrelude,
 } from "./session-index.ts";
+import type { TodoItem } from "./todos.ts";
 
 export const CODEX_MISSING =
   "Codex CLI was not found. Install the official Codex CLI, then run `codex login`.";
@@ -253,6 +255,8 @@ export class CodexAdapter implements CliAdapter {
   private threadId: string | null = null;
   private turnId: string | null = null;
   private sessionPath: string | null = null;
+  /** The last `turn/plan/updated` list. thread/read does not return it, so the session index keeps it. */
+  private todos: TodoItem[] | null = null;
   private modelId: string | null = null;
   private effort: string | null = null;
   private models: ListedModel[] = [];
@@ -346,6 +350,7 @@ export class CodexAdapter implements CliAdapter {
           this.threadId = null;
           this.turnId = null;
           this.sessionPath = null;
+          this.todos = null;
           this.running = false;
           host.respond("new_session", true, {}, undefined, command.id);
           return;
@@ -430,7 +435,7 @@ export class CodexAdapter implements CliAdapter {
     if (!this.sessionPath) {
       this.sessionPath = joinSession(this.sessionDir, `codex-${randomUUID()}.jsonl`);
       writeSessionPrelude(this.sessionPath, message, this.cwd);
-      if (this.threadId) rememberSession(this.sessionDir, this.sessionPath, this.threadId, this.modelId ?? undefined);
+      this.remember();
     } else {
       appendUserMessage(this.sessionPath, message);
     }
@@ -499,12 +504,19 @@ export class CodexAdapter implements CliAdapter {
     }
     await this.openThread(threadId);
     this.sessionPath = sessionPath;
+    this.todos = sessionTodosFor(this.sessionDir, sessionPath);
     host.respond("switch_session", true, { cancelled: false }, undefined, command.id);
+  }
+
+  private remember(): void {
+    if (this.threadId && this.sessionPath) {
+      rememberSession(this.sessionDir, this.sessionPath, this.threadId, this.modelId ?? undefined, undefined, this.todos);
+    }
   }
 
   private async getMessages(command: PiCommand, host: AdapterHost): Promise<void> {
     if (!this.threadId || !this.rpc) {
-      host.respond("get_messages", true, { messages: [] }, undefined, command.id);
+      host.respond("get_messages", true, { messages: [], ...(this.todos ? { todos: this.todos } : {}) }, undefined, command.id);
       return;
     }
     const read = asObject(
@@ -516,7 +528,7 @@ export class CodexAdapter implements CliAdapter {
       const items = await this.pageItems();
       messages = itemsToPiMessages(items);
     }
-    host.respond("get_messages", true, { messages }, undefined, command.id);
+    host.respond("get_messages", true, { messages, ...(this.todos ? { todos: this.todos } : {}) }, undefined, command.id);
   }
 
   private async pageItems(): Promise<unknown[]> {
@@ -635,6 +647,10 @@ export class CodexAdapter implements CliAdapter {
     if (!this.host) return;
     for (const event of mapNotification(method, params, this.stream)) {
       if (event.type === "agent_end") this.running = false;
+      if (event.type === "todo_update") {
+        this.todos = event.items as TodoItem[];
+        this.remember();
+      }
       if (event.type === "turn/started") this.running = true;
       this.host.emit(event);
     }

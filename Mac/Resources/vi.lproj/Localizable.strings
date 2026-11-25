@@ -275,6 +275,16 @@
 "assistant.question.other_placeholder" = "Nhập câu trả lời";
 "assistant.question.submit" = "Gửi";
 "assistant.question.dismiss" = "Bỏ qua";
+"assistant.todo.title" = "Danh sách việc";
+"assistant.todo.summary" = "Việc %1$ld/%2$ld";
+"assistant.todo.a11y" = "Danh sách việc, xong %1$ld trên %2$ld";
+"assistant.todo.created" = "Đã tạo danh sách việc (%@)";
+"assistant.todo.added" = "Đã thêm: %@";
+"assistant.todo.started" = "Đã bắt đầu: %@";
+"assistant.todo.completed" = "Đã xong: %@";
+"assistant.todo.status.pending" = "Đang chờ";
+"assistant.todo.status.in_progress" = "Đang làm";
+"assistant.todo.status.completed" = "Đã xong";
 "assistant.plan.title" = "Kế hoạch cần duyệt";
 "assistant.plan.approve" = "Duyệt kế hoạch";
 "assistant.plan.approve_accept_edits" = "Duyệt và chấp nhận chỉnh sửa";

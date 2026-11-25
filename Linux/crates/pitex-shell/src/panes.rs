@@ -1243,6 +1243,18 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     ui.agent_approval_box.replace(Some(approval.clone()));
     root.append(&approval);
 
+    // The agent's todo list, pinned while the chat has one; `refresh_assistant` fills it.
+    let todos = gtk4::Expander::new(None);
+    todos.set_margin_start(10);
+    todos.set_margin_end(10);
+    todos.set_margin_bottom(4);
+    todos.set_visible(false);
+    todos.add_css_class("card");
+    todos.add_css_class("pitex-todos");
+    a11y(&todos, "pitex.assistant.todos", "assistant.todo.title");
+    ui.agent_todos.replace(Some(todos.clone()));
+    root.append(&todos);
+
     // Composer: attach, entry, permission mode, send/stop.
     let composer = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     composer.set_margin_start(10);

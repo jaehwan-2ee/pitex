@@ -276,6 +276,16 @@
 "assistant.question.other_placeholder" = "输入你的回答";
 "assistant.question.submit" = "提交";
 "assistant.question.dismiss" = "忽略";
+"assistant.todo.title" = "任务列表";
+"assistant.todo.summary" = "任务 %1$ld/%2$ld";
+"assistant.todo.a11y" = "任务列表，已完成 %1$ld/%2$ld";
+"assistant.todo.created" = "已创建任务列表 (%@)";
+"assistant.todo.added" = "已添加：%@";
+"assistant.todo.started" = "已开始：%@";
+"assistant.todo.completed" = "已完成：%@";
+"assistant.todo.status.pending" = "待处理";
+"assistant.todo.status.in_progress" = "进行中";
+"assistant.todo.status.completed" = "已完成";
 "assistant.plan.title" = "计划待审核";
 "assistant.plan.approve" = "批准计划";
 "assistant.plan.approve_accept_edits" = "批准并接受编辑";

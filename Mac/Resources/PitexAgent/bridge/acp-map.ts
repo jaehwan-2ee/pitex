@@ -21,6 +21,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AcpProfile } from "./acp-profiles.ts";
 import type { ApprovalAction, ModeState } from "./adapter.ts";
 import { cleanDetail, newTurnId, stampTurn, unifiedDiff, type ToolDetail, type ToolKind } from "./tool-detail.ts";
+import { todosFromAcpPlan, type TodoItem } from "./todos.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -30,7 +31,6 @@ export interface StreamState {
   thinkingIndexByKey: Record<string, number>;
   toolStarted: Record<string, true>;
   toolEnded: Record<string, true>;
-  planStarted: boolean;
   thinkingParts: string[];
   assistantText: string;
   turnOpen: boolean;
@@ -44,7 +44,6 @@ export function createStreamState(): StreamState {
     thinkingIndexByKey: {},
     toolStarted: {},
     toolEnded: {},
-    planStarted: false,
     thinkingParts: [],
     assistantText: "",
     turnOpen: false,
@@ -122,10 +121,12 @@ export interface HistoryState {
   messages: Json[];
   timeline: HistoryItem[];
   tools: Record<string, ToolRecord>;
+  /** The last `plan` update (live or replayed by session/load), for the checklist. */
+  todos: TodoItem[] | null;
 }
 
 export function createHistory(): HistoryState {
-  return { messages: [], timeline: [], tools: {} };
+  return { messages: [], timeline: [], tools: {}, todos: null };
 }
 
 function asObject(value: unknown): Json | null {
@@ -369,21 +370,6 @@ function approvalShape(tool: Json): { kind: ApprovalView["kind"]; title: string 
   return { kind: "permissions", title: asString(tool.title) || "Allow action" };
 }
 
-function planText(update: Json): string {
-  const entries = Array.isArray(update.entries) ? update.entries : [];
-  return entries
-    .map((entry) => {
-      const row = asObject(entry);
-      if (!row) return "";
-      const content = asString(row.content) ?? "";
-      const status = asString(row.status) ?? "pending";
-      if (!content) return "";
-      return `${status}: ${content}`;
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
 function appendText(state: StreamState, key: string, delta: string, out: Json[]): void {
   if (!delta) return;
   ensureTurn(state, out);
@@ -451,8 +437,6 @@ function endTool(state: StreamState, id: string, update: Json, failed: boolean, 
   });
 }
 
-const PLAN_ID = "acp-plan";
-
 /**
  * Project one `session/update` payload into pi events.
  * Unknown `sessionUpdate` values produce nothing so a newer Grok can add
@@ -485,27 +469,10 @@ function mapUpdate(update: Json, state: StreamState): Json[] {
       }
       return out;
     }
-    case "plan": {
-      const text = planText(update);
-      if (!text) return out;
-      ensureTurn(state, out);
-      if (!state.planStarted) {
-        state.planStarted = true;
-        state.toolStarted[PLAN_ID] = true;
-        out.push({
-          type: "tool_execution_start",
-          toolCallId: PLAN_ID,
-          toolName: "plan",
-          args: { plan: text },
-        });
-      }
-      out.push({
-        type: "tool_execution_update",
-        toolCallId: PLAN_ID,
-        partialResult: toolContent(text),
-      });
+    case "plan":
+      // Every plan update is the whole list (ACP v1 agent-plan).
+      out.push({ type: "todo_update", items: todosFromAcpPlan(update) });
       return out;
-    }
     default:
       return out;
   }
@@ -515,15 +482,6 @@ function mapUpdate(update: Json, state: StreamState): Json[] {
 export function closeTurn(state: StreamState, stopReason: string | null, errorMessage?: string): Json[] {
   const out: Json[] = [];
   ensureTurn(state, out);
-  if (state.planStarted && !state.toolEnded[PLAN_ID]) {
-    state.toolEnded[PLAN_ID] = true;
-    out.push({
-      type: "tool_execution_end",
-      toolCallId: PLAN_ID,
-      isError: false,
-      result: toolContent(""),
-    });
-  }
   // A call still open when the turn closes was cut off: abort, cancel, or an early end.
   for (const id of Object.keys(state.toolStarted)) {
     if (state.toolEnded[id]) continue;
@@ -560,7 +518,6 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
   state.thinkingIndexByKey = {};
   state.toolStarted = {};
   state.toolEnded = {};
-  state.planStarted = false;
   return stampTurn(out, state.turnId);
 }
 
@@ -962,20 +919,9 @@ export function recordSessionUpdate(history: HistoryState, update: Json): void {
     case "tool_call_update":
       rememberTool(history, update);
       return;
-    case "plan": {
-      const text = planText(update);
-      if (!text) return;
-      rememberTool(history, {
-        sessionUpdate: "tool_call_update",
-        toolCallId: PLAN_ID,
-        name: "plan",
-        title: "Plan",
-        status: "in_progress",
-        rawInput: { plan: text },
-        content: [{ type: "content", content: { type: "text", text } }],
-      });
+    case "plan":
+      history.todos = todosFromAcpPlan(update);
       return;
-    }
     default:
       return;
   }
