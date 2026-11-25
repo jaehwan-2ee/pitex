@@ -395,6 +395,10 @@ export class CodexAdapter implements CliAdapter {
         case "get_commands":
           host.respond("get_commands", true, { commands: [] }, undefined, command.id);
           return;
+        case "refresh_sessions":
+          // Codex threads are not imported; the host lists what is on disk.
+          host.respond("refresh_sessions", true, { imported: 0 }, undefined, command.id);
+          return;
         case "approval_response":
           this.resolveApproval(command);
           host.respond("approval_response", true, {}, undefined, command.id);

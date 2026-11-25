@@ -239,6 +239,15 @@
 "assistant.clear" = "Borrar conversación";
 "assistant.history" = "Historial de conversaciones";
 "assistant.history_empty" = "Aún no hay conversaciones guardadas para este proyecto.";
+"assistant.history_search" = "Buscar conversaciones";
+"assistant.history_no_match" = "Ninguna conversación coincide con la búsqueda.";
+"assistant.history_other_backend" = "Se abre en %@";
+"assistant.history_backend_off" = "Esta conversación pertenece a %@, que está desactivado. Actívalo en Ajustes → AI para abrirla.";
+"assistant.time_now" = "Ahora mismo";
+"assistant.time_minutes" = "hace %ld min";
+"assistant.time_hours" = "hace %ld h";
+"assistant.time_yesterday" = "Ayer";
+"assistant.time_days" = "hace %ld días";
 "assistant.empty_headline" = "Pregunta cualquier cosa sobre tu LaTeX";
 "assistant.configure_hint" = "Los proveedores y las cuentas se configuran mediante el propio flujo de inicio de sesión de Pitex Agent.";
 "assistant.open_pi_config" = "Abrir configuración de Pitex Agent";

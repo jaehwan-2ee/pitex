@@ -8,11 +8,11 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
-import { AcpAdapter, cliLaunchSpec, findCli, importListedSessions } from "./acp-adapter.ts";
+import { AcpAdapter, cliLaunchSpec, findCli } from "./acp-adapter.ts";
 import {
   approvalFromPermission,
   approvalKey,
@@ -23,18 +23,19 @@ import {
   permissionResultForAction,
 } from "./acp-map.ts";
 import { AGY } from "./acp-profiles.ts";
-import { loadIndex, rememberSession, writeSessionPrelude } from "./session-index.ts";
+import { importListedSessions, loadIndex, rememberSession, writeSessionPrelude } from "./session-index.ts";
 
 const FAKE_AGY = `#!/usr/bin/env node
 import readline from "node:readline";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 
 const record = process.env.FAKE_RECORD;
 const auth = process.env.FAKE_AUTH || "ok";
 const sticky = process.env.FAKE_STICKY_MODE === "1";
 const noMode = process.env.FAKE_NO_MODE === "1";
 const newDelay = Number(process.env.FAKE_NEW_DELAY_MS || 0);
-const sessions = JSON.parse(process.env.FAKE_SESSIONS || "[]");
+// FAKE_SESSIONS_FILE is re-read on each session/list, so a test can add a session mid-run.
+const listed = () => JSON.parse(process.env.FAKE_SESSIONS_FILE ? readFileSync(process.env.FAKE_SESSIONS_FILE, "utf8") : process.env.FAKE_SESSIONS || "[]");
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const update = (u) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s", update: u } });
 let mode = process.env.FAKE_START_MODE || "default";
@@ -190,9 +191,12 @@ function handle(msg) {
       // agy replays history after the load response.
       setTimeout(() => update({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Earlier question" } }), 60);
       setTimeout(() => update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Restored answer" } }), 160);
+      setTimeout(() => update({ sessionUpdate: "tool_call", toolCallId: "w1", name: "write_file", kind: "edit", status: "in_progress", title: "Write refs.bib", rawInput: { TargetFile: "refs.bib" } }), 170);
+      setTimeout(() => update({ sessionUpdate: "tool_call_update", toolCallId: "w1", status: "completed", content: [{ type: "diff", path: "refs.bib", newText: "@misc{x}\\n" }] }), 180);
       return;
     case "session/list": {
       const start = Number(msg.params.cursor || 0);
+      const sessions = listed();
       const page = sessions.slice(start, start + 2);
       const result = { sessions: page };
       if (start + 2 < sessions.length) result.nextCursor = String(start + 2);
@@ -701,7 +705,7 @@ test("agy sessions for this project are mirrored once into the history list", { 
       { sessionId: "../escape", cwd: project, title: "Bad id", updatedAt: "2026-01-02T03:04:05Z" },
     ];
     const written = importListedSessions(sessionDir, "agy", rows, project);
-    assert.deepEqual(written.map((path) => path.split("/").pop()), ["agy-s-1.jsonl", "agy-s-2.jsonl"]);
+    assert.deepEqual(written.map((path) => basename(path)), ["agy-s-1.jsonl", "agy-s-2.jsonl"]);
     const first = readFileSync(join(sessionDir, "agy-s-1.jsonl"), "utf8");
     assert.match(first, /Fix the intro/);
     assert.match(readFileSync(join(sessionDir, "agy-s-2.jsonl"), "utf8"), /Untitled conversation/);
@@ -727,7 +731,9 @@ test("agy session/list import pages, survives a restart, and a picked session re
     { sessionId: "far", cwd: prepared.dir, title: "Other folder", updatedAt: "2026-01-01T00:00:00Z" },
     { sessionId: "old-2", cwd: prepared.project, title: "Old two", updatedAt: "2026-01-03T00:00:00Z" },
   ];
-  prepared.env.FAKE_SESSIONS = JSON.stringify(rows);
+  const listFile = join(prepared.dir, "listed.json");
+  writeFileSync(listFile, JSON.stringify(rows));
+  prepared.env.FAKE_SESSIONS_FILE = listFile;
   const first = await boot(prepared);
   const mirrors = () => readdirSync(prepared.sessionDir).filter((name) => name.endsWith(".jsonl")).sort();
   try {
@@ -760,12 +766,27 @@ test("agy session/list import pages, survives a restart, and a picked session re
     const blob = JSON.stringify(response(responses, "history").data);
     assert.match(blob, /Earlier question/);
     assert.match(blob, /Restored answer/);
+    // The replayed tool call keeps its typed card.
+    const messages = (response(responses, "history").data as { messages: Record<string, unknown>[] }).messages;
+    const written = messages.find((message) => message.role === "toolResult");
+    assert.equal((written?.detail as Record<string, unknown>)?.kind, "write");
+    assert.match(String((written?.detail as Record<string, unknown>)?.diff), /\+@misc\{x\}/);
+    assert.equal(written?.status, "completed");
+
+    // A session started in a terminal meanwhile appears on refresh_sessions, once.
+    writeFileSync(listFile, JSON.stringify([...rows, { sessionId: "new-1", cwd: prepared.project, title: "From the terminal", updatedAt: "2026-01-04T00:00:00Z" }]));
+    await adapter.handleCommand({ type: "refresh_sessions", id: "r1" }, host);
+    assert.deepEqual(response(responses, "r1").data, { imported: 1 });
+    await adapter.handleCommand({ type: "refresh_sessions", id: "r2" }, host);
+    assert.deepEqual(response(responses, "r2").data, { imported: 0 });
+    assert.deepEqual(mirrors(), ["agy-new-1.jsonl", "agy-old-1.jsonl", "agy-old-2.jsonl"]);
+    writeFileSync(listFile, JSON.stringify(rows));
 
     await adapter.handleCommand({ type: "prompt", id: "p", message: "touch it" }, host);
     await waitUntil("approval", () => count(events, "approval_request") === 1);
     await adapter.handleCommand({ type: "abort", id: "stop" }, host);
     await adapter.handleCommand({ type: "new_session", id: "fresh" }, host);
-    assert.deepEqual(mirrors(), ["agy-old-1.jsonl", "agy-old-2.jsonl"]);
+    assert.deepEqual(mirrors(), ["agy-new-1.jsonl", "agy-old-1.jsonl", "agy-old-2.jsonl"]);
     writeFileSync(join(prepared.sessionDir, "claude-x.jsonl"), "");
     await adapter.handleCommand(
       { type: "switch_session", id: "foreign", sessionPath: join(prepared.sessionDir, "claude-x.jsonl") },

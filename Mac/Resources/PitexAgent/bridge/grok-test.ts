@@ -554,6 +554,13 @@ test("ACP session updates become pi transcript events", () => {
   assert.equal(result.toolName, "bash");
   assert.equal(result.isError, false);
   assert.deepEqual(result.content, [{ type: "text", text: "main.tex" }]);
+  assert.equal((messages[2] as { status?: string }).status, "completed");
+
+  // A call still in progress when the replayed turn ends was canceled, as in a Claude replay.
+  recordSessionUpdate(history, { sessionUpdate: "tool_call", toolCallId: "c2", kind: "edit", status: "in_progress", rawInput: { path: "a.tex" } });
+  const open = historyMessages(history).at(-1) as { status?: string; isError?: boolean };
+  assert.equal(open.status, "canceled");
+  assert.equal(open.isError, true);
 });
 
 test("permission decisions select an offered ACP option", () => {

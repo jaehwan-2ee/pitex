@@ -635,17 +635,19 @@ function finishTool(
   if (todo && showCard) {
     out.push({ type: "tool_execution_start", toolCallId: id, toolName: name, args: {}, detail: claudeToolDetail(name, input), status: "running" });
   }
+  const detail = claudeResultDetail(name, input, text, isError, result);
+  const status = canceled ? "canceled" : isError ? "failed" : "completed";
   if (showCard) {
     out.push({
       type: "tool_execution_end",
       toolCallId: id,
       isError,
       result: toolContent(text),
-      detail: claudeResultDetail(name, input, text, isError, result),
-      status: canceled ? "canceled" : isError ? "failed" : "completed",
+      detail,
+      status,
     });
   }
-  recordResult(state, id, text, isError);
+  recordResult(state, id, text, isError, detail, status);
 }
 
 function setTodos(state: ClaudeStreamState, items: TodoItem[] | null, out: Json[]): void {
@@ -654,7 +656,8 @@ function setTodos(state: ClaudeStreamState, items: TodoItem[] | null, out: Json[
   out.push({ type: "todo_update", items });
 }
 
-function recordResult(state: ClaudeStreamState, id: string, text: string, isError: boolean): void {
+/** The result row keeps the typed card (`detail`, `status`) so a resumed chat draws it again. */
+function recordResult(state: ClaudeStreamState, id: string, text: string, isError: boolean, detail: ToolDetail, status: string): void {
   flushDraft(state);
   state.transcript.push({
     role: "toolResult",
@@ -662,6 +665,8 @@ function recordResult(state: ClaudeStreamState, id: string, text: string, isErro
     toolName: state.toolNameById[id] ?? "tool",
     isError,
     content: [{ type: "text", text }],
+    detail,
+    status,
   });
 }
 
@@ -863,6 +868,64 @@ export function mapClaudeMessage(message: unknown, state: ClaudeStreamState): Js
       break;
   }
   return stampTurn(out, state.turnId);
+}
+
+/** CLI bookkeeping that Claude Code stores as user text but never shows as a prompt. */
+const HIDDEN_USER_TEXT = /^(\[Request interrupted|<command-|<local-command-)/;
+
+/**
+ * A saved conversation (the SDK's getSessionMessages: `{type, message, is_meta?}` rows) as the
+ * same transcript the live stream builds: typed tool results, thinking, and the todo list,
+ * with no events. Calls that never got a result end as canceled.
+ */
+export function replayClaudeMessages(messages: unknown[]): ClaudeStreamState {
+  const state = createClaudeStreamState();
+  const none: Json[] = [];
+  for (const raw of messages) {
+    const row = asObject(raw);
+    if (!row || row.is_meta === true) continue;
+    if (row.type === "assistant") {
+      for (const block of contentBlocks(row)) {
+        if (block.type === "text" && asString(block.text)) state.draft.push({ type: "text", text: block.text });
+        if (block.type === "thinking" && asString(block.thinking)) state.draft.push({ type: "thinking", thinking: block.thinking });
+        const id = asString(block.id);
+        if (block.type === "tool_use" && id) startTool(state, id, asString(block.name) ?? "tool", asObject(block.input) ?? {}, none);
+      }
+      continue;
+    }
+    if (row.type !== "user") continue;
+    if (contentBlocks(row).some((block) => block.type === "tool_result")) {
+      applyUser(state, row, none);
+      continue;
+    }
+    const text = blockText(asObject(row.message)?.content).trim();
+    if (!text || HIDDEN_USER_TEXT.test(text)) continue;
+    cancelOpen(state, none);
+    flushDraft(state);
+    state.transcript.push({ role: "user", content: [{ type: "text", text }] });
+  }
+  cancelOpen(state, none);
+  flushDraft(state);
+  resetTurnBuffers(state);
+  return state;
+}
+
+/**
+ * The SDK's listSessions rows (`{sessionId, summary, lastModified, customTitle?, firstPrompt?}`)
+ * as importListedSessions rows, newest first. The SDK already scoped them to `projectRoot`.
+ */
+export function claudeSessionRows(listed: unknown, projectRoot: string, limit: number): Json[] {
+  const rows = (Array.isArray(listed) ? listed : []).map((item) => asObject(item)).filter((row): row is Json => row !== null);
+  return rows
+    .filter((row) => typeof row.lastModified === "number")
+    .sort((a, b) => (b.lastModified as number) - (a.lastModified as number))
+    .slice(0, limit)
+    .map((row) => ({
+      sessionId: row.sessionId,
+      cwd: projectRoot,
+      title: asString(row.customTitle) ?? asString(row.firstPrompt) ?? asString(row.summary) ?? "",
+      updatedAt: new Date(row.lastModified as number).toISOString(),
+    }));
 }
 
 export function sessionIdOf(message: unknown): string | null {
