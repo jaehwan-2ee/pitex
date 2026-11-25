@@ -65,7 +65,7 @@ struct BottomConsoleView: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
-            // The VSplitView console height is user-adjustable: when the
+            // The console height is user-adjustable: when the
             // pane below wants more room than the console has, the VStack
             // compresses this row — fixedSize keeps the tabs at intrinsic
             // height and lets the pane scroll instead.
