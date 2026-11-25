@@ -109,6 +109,8 @@ struct Inner {
     creating: Cell<bool>,
     closed: Cell<bool>,
     navigated: Cell<bool>,
+    /// The first reason the engine failed, for diagnostics.
+    failure: Cell<Option<&'static str>>,
     next_call: Cell<u64>,
     pending: RefCell<HashMap<u64, Completion>>,
     loaded: Box<dyn Fn()>,
@@ -149,6 +151,7 @@ impl Engine {
             creating: Cell::new(false),
             closed: Cell::new(false),
             navigated: Cell::new(false),
+            failure: Cell::new(None),
             next_call: Cell::new(0),
             pending: RefCell::new(HashMap::new()),
             loaded: Box::new(loaded),
@@ -195,7 +198,7 @@ impl Engine {
         glib::timeout_add_local_once(Duration::from_secs(15), move || {
             if let Some(inner) = weak.upgrade() {
                 if inner.live.borrow().is_none() {
-                    inner.fail();
+                    inner.fail("startup timeout");
                 }
             }
         });
@@ -271,7 +274,7 @@ impl Inner {
             return;
         }
         let Some(loader) = loader() else {
-            self.fail();
+            self.fail("no WebView2 loader");
             return;
         };
         let parent = self.editor.borrow().upgrade().and_then(|v| hwnd(&v));
@@ -288,12 +291,12 @@ impl Inner {
         self.creating.set(true);
         let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         let Some(dir) = dirs::data_local_dir() else {
-            self.fail();
+            self.fail("no local data folder");
             return;
         };
         let dir = dir.join(crate::identity::current().xdg_dir_name).join("EquationWebView2");
         if std::fs::create_dir_all(&dir).is_err() {
-            self.fail();
+            self.fail("data folder");
             return;
         }
         let weak = Rc::downgrade(self);
@@ -305,7 +308,7 @@ impl Inner {
                     }
                     match (result, environment) {
                         (Ok(()), Some(environment)) => inner.environment_ready(environment, parent),
-                        _ => inner.fail(),
+                        _ => inner.fail("environment"),
                     }
                 }
                 Ok(())
@@ -321,7 +324,7 @@ impl Inner {
         }
         .is_err()
         {
-            self.fail();
+            self.fail("environment request");
         }
     }
 
@@ -338,13 +341,13 @@ impl Inner {
                             .is_err()
                         {
                             let _ = unsafe { controller.Close() };
-                            inner.fail();
+                            inner.fail("controller setup");
                             }
                         }
                         (_, Some(controller)) => {
                             let _ = unsafe { controller.Close() };
                         }
-                        _ => inner.fail(),
+                        _ => inner.fail("controller"),
                     }
                 } else if let Some(controller) = controller {
                     let _ = unsafe { controller.Close() };
@@ -360,7 +363,7 @@ impl Inner {
             environment10.CreateCoreWebView2ControllerWithOptions(parent, &options, &handler)
         })();
         if result.is_err() {
-            self.fail();
+            self.fail("controller request");
         }
     }
 
@@ -496,7 +499,7 @@ impl Inner {
                     }
                 });
             } else {
-                inner.fail();
+                inner.fail("navigation");
             }
             Ok(())
         }));
@@ -543,7 +546,7 @@ impl Inner {
         let weak = Rc::downgrade(self);
         let crashed = ProcessFailedEventHandler::create(Box::new(move |_, _| {
             if let Some(inner) = weak.upgrade() {
-                inner.fail();
+                inner.fail("browser process failed");
             }
             Ok(())
         }));
@@ -600,7 +603,10 @@ impl Inner {
         }
     }
 
-    fn fail(self: &Rc<Self>) {
+    fn fail(self: &Rc<Self>, reason: &'static str) {
+        if self.failure.get().is_none() {
+            self.failure.set(Some(reason));
+        }
         let weak = Rc::downgrade(self);
         glib::idle_add_local_once(move || {
             if let Some(inner) = weak.upgrade() {
@@ -688,17 +694,30 @@ mod tests {
             move || failed.set(true),
             |_| {},
         );
-        engine.start();
-        let pump = |condition: &dyn Fn() -> bool| {
-            let end = std::time::Instant::now() + Duration::from_secs(30);
+        let started = std::time::Instant::now();
+        // A cold WebView2 runtime (its first start on a fresh CI runner) loaded
+        // the page in 7-19 s and sometimes outlived the app's 15 s startup bound
+        // in `start`; warm starts load in 0.4 s. This contract is about the
+        // renderer, not that bound, so it starts the engine without the
+        // watchdog and gives the first page load 120 s.
+        engine.inner.start();
+        let pump_for = |limit: Duration, condition: &dyn Fn() -> bool| {
+            let end = std::time::Instant::now() + limit;
             while !condition() && !failure.get() && std::time::Instant::now() < end {
                 glib::MainContext::default().iteration(false);
                 std::thread::sleep(Duration::from_millis(1));
             }
-            assert!(!failure.get(), "WebView2 renderer failed");
-            assert!(condition(), "WebView2 timed out");
+            assert!(
+                !failure.get(),
+                "WebView2 renderer failed: {} after {:.1?}",
+                engine.inner.failure.get().unwrap_or("unknown"),
+                started.elapsed()
+            );
+            assert!(condition(), "WebView2 timed out after {:.1?}", started.elapsed());
         };
-        pump(&|| loaded.get());
+        let pump = |condition: &dyn Fn() -> bool| pump_for(Duration::from_secs(30), condition);
+        pump_for(Duration::from_secs(120), &|| loaded.get());
+        eprintln!("renderer page loaded after {:.1?}", started.elapsed());
         let evaluate = |body, payload: serde_json::Value| {
             let result = Rc::new(RefCell::new(None));
             let sink = result.clone();
