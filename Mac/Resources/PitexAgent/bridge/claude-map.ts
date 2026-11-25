@@ -10,7 +10,7 @@
 //
 // This file is original Pitex code written against that SDK reference.
 
-import type { ApprovalAction, ModeState } from "./adapter.ts";
+import { markOutcome, mergeUsage, usageEvent, type ApprovalAction, type ErrorCode, type ModeState, type Usage } from "./adapter.ts";
 import { cleanDetail, newTurnId, patchDiff, stampTurn, unifiedDiff, type ToolDetail } from "./tool-detail.ts";
 import { foldClaudeTodo, sameTodos, TODO_TOOLS, type TodoItem } from "./todos.ts";
 
@@ -40,6 +40,18 @@ export interface ClaudeStreamState {
   draft: Json[];
   /** The conversation's todo list (`todo_update`); kept across turns. */
   todos: TodoItem[] | null;
+  /** Text and thinking since the last tool call: one assistant row each on the hosts. */
+  segmentText: string;
+  segmentThinking: string;
+  /** Latest usage; kept across turns (the context window and the session cost). */
+  usage: Usage;
+  /** The model the CLI reports (init, then each API message); names replayed and live answers. */
+  model: string | null;
+  /** Set by Stop while a turn runs: the turn ends as canceled, not failed. */
+  canceled: boolean;
+  /** An API error the CLI reported as an assistant message (`error`, its text). */
+  apiError: string | null;
+  apiErrorText: string | null;
 }
 
 export function createClaudeStreamState(): ClaudeStreamState {
@@ -64,8 +76,84 @@ export function createClaudeStreamState(): ClaudeStreamState {
     transcript: [],
     draft: [],
     todos: null,
+    segmentText: "",
+    segmentThinking: "",
+    usage: {},
+    model: null,
+    canceled: false,
+    apiError: null,
+    apiErrorText: null,
   };
 }
+
+/** "claude-sonnet-4-5-20250929" → "Claude Sonnet 4.5"; other ids stay as they are. */
+export function claudeModelName(id: string): string {
+  const match = /^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(id);
+  if (!match) return id;
+  const family = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+  const version = match[3] ? `${match[2]}.${match[3]}` : match[2];
+  return `Claude ${family} ${version}${match[4] ? " (1M)" : ""}`;
+}
+
+/** Context windows Claude reported (`modelUsage[model].contextWindow`), by model id, for this bridge's life. */
+const knownWindows = new Map<string, number>();
+
+/**
+ * The context window before this turn's result reports one: a window seen for this model, or 1M
+ * when the id asks for it. Otherwise none, so the hosts show no percentage they would have to guess.
+ */
+function seedContextWindow(model: string | null): number | undefined {
+  if (!model) return undefined;
+  return knownWindows.get(model.replace(/\[1m\]$/i, "")) ?? (/\[1m\]/i.test(model) ? 1_000_000 : undefined);
+}
+
+function numberOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** One Anthropic API `usage` object; the context holds input, both cache counts and output. */
+function noteApiUsage(state: ClaudeStreamState, usage: Json | null, out: Json[]): void {
+  if (!usage) return;
+  // The first API message opens the turn, so its usage carries this turn's id.
+  ensureTurn(state, out);
+  const fresh = (numberOf(usage.input_tokens) ?? 0) + (numberOf(usage.cache_creation_input_tokens) ?? 0);
+  const cached = numberOf(usage.cache_read_input_tokens);
+  const output = numberOf(usage.output_tokens);
+  const patch: Usage = {};
+  // message_delta repeats only output_tokens; keep the message's input counts.
+  if (usage.input_tokens !== undefined) {
+    patch.inputTokens = fresh;
+    patch.cachedInputTokens = cached ?? 0;
+  }
+  if (output !== undefined) patch.outputTokens = output;
+  const input = patch.inputTokens ?? state.usage.inputTokens ?? 0;
+  const read = patch.cachedInputTokens ?? state.usage.cachedInputTokens ?? 0;
+  patch.contextUsed = input + read + (patch.outputTokens ?? state.usage.outputTokens ?? 0);
+  if (state.usage.contextMax === undefined) patch.contextMax = seedContextWindow(state.model);
+  if (mergeUsage(state.usage, patch)) out.push(usageEvent(state.usage, state.turnId));
+}
+
+/** The result's cost and the model's real context window, pushed at turn end. */
+function noteResultUsage(state: ClaudeStreamState, message: Json, out: Json[]): void {
+  const patch: Usage = { costUsd: numberOf(message.total_cost_usd) };
+  const models = asObject(message.modelUsage);
+  if (models) {
+    const rows = Object.entries(models).map(([id, row]) => [id, asObject(row)] as const);
+    const own = rows.find(([id]) => state.model !== null && id === state.model.replace(/\[1m\]$/i, ""));
+    // Otherwise the model that wrote the most (background calls use a small one).
+    const main = own ?? [...rows].sort((a, b) => (numberOf(b[1]?.outputTokens) ?? 0) - (numberOf(a[1]?.outputTokens) ?? 0))[0];
+    patch.contextMax = numberOf(main?.[1]?.contextWindow);
+    if (main && patch.contextMax) knownWindows.set(main[0], patch.contextMax);
+  }
+  if (state.usage.contextMax === undefined && patch.contextMax === undefined) patch.contextMax = seedContextWindow(state.model);
+  mergeUsage(state.usage, patch);
+  out.push(usageEvent(state.usage, state.turnId));
+}
+
+const API_ERROR_CODES: Record<string, ErrorCode> = {
+  authentication_failed: "signed_out",
+  rate_limit: "rate_limited",
+};
 
 /** Completed messages plus the assistant blocks still streaming. */
 export function messagesFromState(state: ClaudeStreamState): Json[] {
@@ -508,12 +596,16 @@ function ensureTurn(state: ClaudeStreamState, out: Json[]): void {
   state.turnOpen = true;
   state.turnId = newTurnId();
   out.push({ type: "agent_start" });
-  out.push({ type: "message_start", message: { role: "assistant" } });
+  const message: Json = { role: "assistant" };
+  if (state.model) message.modelName = claudeModelName(state.model);
+  out.push({ type: "message_start", message });
 }
 
 function flushDraft(state: ClaudeStreamState): void {
   if (state.draft.length === 0) return;
-  state.transcript.push({ role: "assistant", content: state.draft });
+  const message: Json = { role: "assistant", content: state.draft };
+  if (state.model) message.modelName = claudeModelName(state.model);
+  state.transcript.push(message);
   state.draft = [];
   state.textDraftByKey = {};
   state.thinkingDraftByKey = {};
@@ -544,6 +636,7 @@ function appendText(state: ClaudeStreamState, key: string, delta: string, out: J
     out.push(textEvent("text_start", index));
   }
   state.assistantText += delta;
+  state.segmentText += delta;
   out.push(textEvent("text_delta", index, delta));
   appendDraftText(state, key, "text", delta);
 }
@@ -558,13 +651,15 @@ function appendThinking(state: ClaudeStreamState, key: string, delta: string, ou
     out.push(textEvent("thinking_start", index));
   }
   state.thinkingText += delta;
+  state.segmentThinking += delta;
   out.push(textEvent("thinking_delta", index, delta));
   appendDraftText(state, key, "thinking", delta);
 }
 
+/** A whole text block from an assistant message: only what the stream has not sent for this segment. */
 function emitFullText(state: ClaudeStreamState, text: string, out: Json[]): void {
   if (!text) return;
-  const already = state.assistantText;
+  const already = state.segmentText;
   if (text === already) return;
   const rest = already && text.startsWith(already) ? text.slice(already.length) : already ? "" : text;
   if (rest) appendText(state, "assistant", rest, out);
@@ -572,7 +667,7 @@ function emitFullText(state: ClaudeStreamState, text: string, out: Json[]): void
 
 function emitFullThinking(state: ClaudeStreamState, text: string, out: Json[]): void {
   if (!text) return;
-  const already = state.thinkingText;
+  const already = state.segmentThinking;
   if (text === already) return;
   const rest = already && text.startsWith(already) ? text.slice(already.length) : already ? "" : text;
   if (rest) appendThinking(state, "thinking", rest, out);
@@ -599,6 +694,9 @@ function startTool(state: ClaudeStreamState, id: string, name: string, args: Jso
   upsertToolDraft(state, id);
   if (state.toolStarted[id]) return;
   state.toolStarted[id] = true;
+  // Text after this call is a new segment (a new row on the hosts).
+  state.segmentText = "";
+  state.segmentThinking = "";
   ensureTurn(state, out);
   // The checklist shows these calls once they succeed; a failed one gets its card in finishTool.
   if (TODO_TOOLS.has(name)) return;
@@ -687,6 +785,11 @@ function resetTurnBuffers(state: ClaudeStreamState): void {
   state.turnOpen = false;
   state.assistantText = "";
   state.thinkingText = "";
+  state.segmentText = "";
+  state.segmentThinking = "";
+  state.canceled = false;
+  state.apiError = null;
+  state.apiErrorText = null;
   state.textIndexByKey = {};
   state.thinkingIndexByKey = {};
   state.textDraftByKey = {};
@@ -702,17 +805,19 @@ function resetTurnBuffers(state: ClaudeStreamState): void {
 }
 
 function closeTurn(state: ClaudeStreamState, message: Json, out: Json[]): void {
-  const failed = message.subtype !== "success" || message.is_error === true;
+  const failed = message.subtype !== "success" || message.is_error === true || state.apiError !== null;
   if (!state.assistantText && !failed && typeof message.result === "string") {
     appendText(state, "final", message.result, out);
   }
   cancelOpen(state, out);
   flushDraft(state);
   ensureTurn(state, out);
-  const errorText = resultError(message);
+  noteResultUsage(state, message, out);
+  const errorText = state.apiErrorText ?? resultError(message) ?? (failed ? "Claude Code stopped before finishing." : null);
+  // pi's message_end is the last message: the text since the last tool, which the hosts already streamed.
   const content: Json[] = [];
-  if (state.thinkingText) content.push({ type: "thinking", thinking: state.thinkingText });
-  if (state.assistantText) content.push({ type: "text", text: state.assistantText });
+  if (state.segmentThinking) content.push({ type: "thinking", thinking: state.segmentThinking });
+  if (state.segmentText) content.push({ type: "text", text: state.segmentText });
   const assistant: Json = {
     role: "assistant",
     stopReason: failed ? "error" : "stop",
@@ -723,6 +828,8 @@ function closeTurn(state: ClaudeStreamState, message: Json, out: Json[]): void {
   out.push({ type: "turn_end" });
   const agentEnd: Json = { type: "agent_end" };
   if (failed) agentEnd.messages = [assistant];
+  const outcome = state.canceled ? "canceled" : failed ? "failed" : "completed";
+  markOutcome(agentEnd, outcome, errorText, state.apiError ? API_ERROR_CODES[state.apiError] : null);
   out.push(agentEnd);
   resetTurnBuffers(state);
 }
@@ -759,6 +866,17 @@ function contentBlocks(message: Json): Json[] {
 
 function applyStreamEvent(state: ClaudeStreamState, event: Json, out: Json[]): void {
   const index = typeof event.index === "number" ? String(event.index) : "0";
+  if (event.type === "message_start") {
+    const message = asObject(event.message);
+    const model = asString(message?.model);
+    if (model) state.model = model;
+    noteApiUsage(state, asObject(message?.usage), out);
+    return;
+  }
+  if (event.type === "message_delta") {
+    noteApiUsage(state, asObject(event.usage), out);
+    return;
+  }
   if (event.type === "content_block_start") {
     const block = asObject(event.content_block);
     if (!block) return;
@@ -812,6 +930,19 @@ function applyStreamEvent(state: ClaudeStreamState, event: Json, out: Json[]): v
 }
 
 function applyAssistant(state: ClaudeStreamState, message: Json, out: Json[]): void {
+  const inner = asObject(message.message);
+  const model = asString(inner?.model);
+  // A subagent's call (Task/Agent) runs its own context and often a smaller model.
+  const subagent = typeof message.parent_tool_use_id === "string";
+  if (model && model !== "<synthetic>" && !subagent) state.model = model;
+  // An API failure (rate limit, sign-in) comes as an assistant message: an error row, not an answer.
+  const apiError = asString(message.error);
+  if (apiError) {
+    state.apiError = apiError;
+    state.apiErrorText = contentBlocks(message).map((block) => (typeof block.text === "string" ? block.text : "")).join("\n").trim() || apiError;
+    return;
+  }
+  if (!subagent) noteApiUsage(state, asObject(inner?.usage), out);
   for (const block of contentBlocks(message)) {
     if (block.type === "text") {
       emitFullText(state, typeof block.text === "string" ? block.text : "", out);
@@ -885,6 +1016,8 @@ export function replayClaudeMessages(messages: unknown[]): ClaudeStreamState {
     const row = asObject(raw);
     if (!row || row.is_meta === true) continue;
     if (row.type === "assistant") {
+      const model = asString(asObject(row.message)?.model);
+      if (model && model !== "<synthetic>") state.model = model;
       for (const block of contentBlocks(row)) {
         if (block.type === "text" && asString(block.text)) state.draft.push({ type: "text", text: block.text });
         if (block.type === "thinking" && asString(block.thinking)) state.draft.push({ type: "thinking", thinking: block.thinking });

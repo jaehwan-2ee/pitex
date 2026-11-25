@@ -5,12 +5,15 @@
 // with only allow_once and reject_once, session/list spans every folder, and
 // session/load replays history after its response.
 import readline from "node:readline";
+import { readFileSync } from "node:fs";
 
 import { recordLine, recordNote, recordSpawn } from "./record.mjs";
 
 recordSpawn();
 
 const auth = process.env.FAKE_AUTH || "ok";
+// FAKE_AUTH_FILE is re-read on each session/new, so a run can sign in midway.
+const authNow = () => (process.env.FAKE_AUTH_FILE ? readFileSync(process.env.FAKE_AUTH_FILE, "utf8").trim() : auth);
 const project = process.env.FAKE_ROOT || process.cwd();
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const update = (u) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "sess", update: u } });
@@ -105,7 +108,7 @@ function handle(msg) {
       });
       return;
     case "session/new":
-      if (auth === "signed-out") {
+      if (authNow() === "signed-out") {
         send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "Authentication required" } });
         return;
       }

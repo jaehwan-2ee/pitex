@@ -204,9 +204,20 @@ pub struct UiHandles {
     pub agent_todos_shown: RefCell<(Vec<crate::agent::TodoItem>, bool, u64)>,
     /// Permission mode picker (bridge backends that report modes).
     pub agent_mode_picker: RefCell<Option<gtk4::DropDown>>,
-    /// Right-aligned usage/context readout in the assistant controls row —
-    /// populated from `get_session_stats`, hidden until stats arrive.
+    /// The context meter in the composer row: its button (with the details
+    /// popover), bar, "38% · 76k/200k" label and the popover's text.
+    pub agent_meter: RefCell<Option<gtk4::Button>>,
+    pub agent_meter_bar: RefCell<Option<gtk4::LevelBar>>,
     pub agent_usage_label: RefCell<Option<gtk4::Label>>,
+    pub agent_meter_details: RefCell<Option<gtk4::Label>>,
+    /// Shown over the transcript when new content arrived while scrolled up.
+    pub agent_jump_button: RefCell<Option<gtk4::Button>>,
+    pub transcript_pin: Cell<crate::turn_state::ScrollPin>,
+    /// `upper` of the transcript adjustment at the last layout, to tell growth from a resize.
+    pub transcript_upper: Cell<f64>,
+    /// The transcript rows changed since the last growth, so growth is new content
+    /// (not an expander the user opened, or text rewrapping in a narrower pane).
+    pub transcript_fresh: Cell<bool>,
     pub selection_chip: RefCell<Option<gtk4::Box>>,
     pub selection_chip_label: RefCell<Option<gtk4::Label>>,
     pub search_bar: RefCell<Option<gtk4::SearchBar>>,
@@ -884,6 +895,10 @@ impl AppState {
                  .pitex-mode-edits > button {{ background-color: alpha(#e5a50a, 0.25); box-shadow: inset 0 0 0 1px alpha(#e5a50a, 0.8); }}
                  .pitex-todos {{ padding: 4px 8px; }}
                  .pitex-queue {{ padding: 4px 8px; }}
+                 .pitex-turn-error {{ padding: 8px 10px; border: 1px solid alpha(@error_color, 0.5); }}
+                 levelbar.pitex-meter block.filled {{ background-color: alpha(currentColor, 0.55); }}
+                 levelbar.pitex-meter-warning block.filled {{ background-color: @warning_color; }}
+                 levelbar.pitex-meter-danger block.filled {{ background-color: @error_color; }}
                  .pitex-composer-frame {{ border: 1px solid alpha(currentColor, 0.18); border-radius: 8px; }}
                  .pitex-composer-frame:focus-within {{ border-color: @accent_color; }}
                  textview.pitex-composer, textview.pitex-composer text {{ background-color: transparent; }}
@@ -3041,7 +3056,29 @@ impl AppState {
             let images = std::mem::take(&mut agent.draft_images);
             agent.submit(&draft, images, now);
         }
+        // Sending follows the transcript again.
+        UI.with(|ui| {
+            let mut pin = ui.transcript_pin.get();
+            pin.jump();
+            ui.transcript_pin.set(pin);
+        });
         Self::set_composer_text("");
+        self.refresh_assistant();
+    }
+
+    /// Retry on a failed turn: the last message again, with fresh editor context.
+    pub fn retry_agent(&mut self) {
+        self.ensure_agent();
+        *self.context_cell.borrow_mut() = self.model.agent_context();
+        *self.persist_result.borrow_mut() = Some(self.model.persist_dirty_sessions());
+        if let Some(agent) = self.agent.as_mut() {
+            agent.retry();
+        }
+        UI.with(|ui| {
+            let mut pin = ui.transcript_pin.get();
+            pin.jump();
+            ui.transcript_pin.set(pin);
+        });
         self.refresh_assistant();
     }
 
@@ -4639,11 +4676,14 @@ impl AppState {
                         child = row.next_sibling();
                         box_.remove(&row);
                     }
+                    if *previous != keys {
+                        ui.transcript_fresh.set(true);
+                    }
                     *previous = keys;
                 }
-                if let Some(scroll) = ui.transcript_scroll.borrow().as_ref() {
-                    let adj = scroll.vadjustment();
-                    adj.set_value(adj.upper());
+                // Scrolling follows from the adjustment's `changed` handler (`ScrollPin`).
+                if agent.transcript.is_empty() {
+                    ui.transcript_pin.set(Default::default());
                 }
             }
             if let Some(label) = ui.agent_status_label.borrow().as_ref() {
@@ -4747,18 +4787,32 @@ impl AppState {
                     t.set_active(agent.attach_active_document);
                 }
             }
-            // Usage/context readout — `get_session_stats` payload formatted
-            // compactly ("12.3k/200k ctx (6%) · 45.2k tok · $0.12").
-            if let Some(label) = ui.agent_usage_label.borrow().as_ref() {
-                if let Some(stats) = &agent.session_stats {
-                    label.set_text(&crate::l10n::tr1(
-                        lang,
-                        "assistant.usage",
-                        &format_session_stats(stats),
-                    ));
-                    label.set_visible(true);
-                } else {
-                    label.set_visible(false);
+            // Context meter: pushed usage_update, else the stats pull (pi).
+            if let Some(button) = ui.agent_meter.borrow().as_ref() {
+                let meter = agent.context_meter();
+                button.set_visible(meter.is_some());
+                if let Some(meter) = meter {
+                    if let Some(label) = ui.agent_usage_label.borrow().as_ref() {
+                        label.set_text(&meter.label());
+                    }
+                    if let Some(bar) = ui.agent_meter_bar.borrow().as_ref() {
+                        bar.set_value(meter.percent);
+                        for (band, class) in [
+                            (crate::turn_state::MeterBand::Warning, "pitex-meter-warning"),
+                            (crate::turn_state::MeterBand::Danger, "pitex-meter-danger"),
+                        ] {
+                            if meter.band() == band { bar.add_css_class(class) } else { bar.remove_css_class(class) }
+                        }
+                    }
+                    let percent = (meter.percent.round() as u64).to_string();
+                    button.update_property(&[gtk4::accessible::Property::Label(&crate::l10n::tr1(lang, "assistant.context.a11y", &percent))]);
+                    button.set_tooltip_text(Some(&crate::l10n::tr1(lang, "assistant.context.a11y", &percent)));
+                    if let Some(details) = ui.agent_meter_details.borrow().as_ref() {
+                        let text = usage_details(lang, &meter, &agent.usage, agent.session_stats.as_ref());
+                        if details.text() != text {
+                            details.set_text(&text);
+                        }
+                    }
                 }
             }
             // Stays beside Stop while a turn runs: a click then queues the draft.
@@ -5386,7 +5440,7 @@ impl AppState {
 // ─── module-level shared handles ─────────────────────────────────────────────
 
 thread_local! {
-    static UI: UiHandles = UiHandles::default();
+    pub(crate) static UI: UiHandles = UiHandles::default();
     pub(crate) static STATE: RefCell<Option<Rc<RefCell<AppState>>>> = const { RefCell::new(None) };
     /// The pending autosave `glib` source — removed and re-armed on every
     /// edit, which is the `autosaveTask?.cancel()` half of Swift's debounce.
@@ -6098,28 +6152,41 @@ pub(crate) fn font_attrs(size: f64) -> gtk4::pango::AttrList {
     attrs
 }
 
-/// Compact token count — "45.2k" past 999, raw below.
-fn compact_tokens(n: u64) -> String {
-    if n >= 1000 {
-        format!("{:.1}k", n as f64 / 1000.0)
-    } else {
-        n.to_string()
-    }
-}
-
-/// `12.3k/200k ctx (6%) · 45.2k tok · $0.12` — the assistant usage readout.
-fn format_session_stats(stats: &crate::agent::PiSessionStats) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if let (Some(tokens), Some(window)) = (stats.context_tokens, stats.context_window) {
-        let mut ctx = format!("{}/{} ctx", compact_tokens(tokens), compact_tokens(window));
-        if let Some(percent) = stats.context_percent {
-            ctx.push_str(&format!(" ({:.0}%)", percent));
+/// The meter popover: context, the token counts the backend reported, and the cost.
+fn usage_details(
+    lang: &str,
+    meter: &crate::turn_state::ContextMeter,
+    usage: &crate::turn_state::Usage,
+    stats: Option<&crate::agent::PiSessionStats>,
+) -> String {
+    use crate::l10n::{tr, tr1, trn};
+    use crate::turn_state::compact_tokens;
+    let mut lines = vec![
+        tr(lang, "assistant.context.title"),
+        trn(lang, "assistant.context.used", &[&compact_tokens(meter.used), &compact_tokens(meter.max), &(meter.percent.round() as u64).to_string()]),
+    ];
+    for (key, value) in [
+        ("assistant.context.input", usage.input_tokens),
+        ("assistant.context.cached", usage.cached_input_tokens),
+        ("assistant.context.output", usage.output_tokens),
+        ("assistant.context.thinking", usage.thinking_tokens),
+    ] {
+        if let Some(value) = value {
+            lines.push(tr1(lang, key, &compact_tokens(value)));
         }
-        parts.push(ctx);
     }
-    parts.push(format!("{} tok", compact_tokens(stats.total_tokens)));
-    parts.push(format!("${:.2}", stats.cost));
-    parts.join(" · ")
+    // pi pushes nothing: its pulled totals stand in.
+    if usage.input_tokens.is_none() {
+        if let Some(stats) = stats.filter(|s| s.total_tokens > 0) {
+            lines.push(tr1(lang, "assistant.context.total", &compact_tokens(stats.total_tokens)));
+        }
+    }
+    let cost = usage.cost_usd.or_else(|| stats.map(|s| s.cost)).filter(|c| *c > 0.0);
+    if let Some(cost) = cost {
+        let text = if cost < 0.01 { format!("${cost:.4}") } else { format!("${cost:.2}") };
+        lines.push(tr1(lang, "assistant.context.cost", &text));
+    }
+    lines.join("\n")
 }
 
 thread_local! {
@@ -6880,6 +6947,12 @@ fn transcript_row(
     if entry.role == crate::agent::TranscriptRole::Activity {
         return todo_activity_row(entry, font_size);
     }
+    if entry.role == crate::agent::TranscriptRole::Thinking {
+        return thinking_row(entry, font_size);
+    }
+    if let crate::agent::EntryMeta::TurnError { code, backend, can_compact, retry } = &entry.meta {
+        return turn_error_row(entry, *code, backend, *can_compact, *retry, font_size);
+    }
     if entry.role == crate::agent::TranscriptRole::Tool {
         // A history-rebuilt row has no detail: a generic card titled by the tool name.
         let generic = crate::agent::ToolDetail { kind: "other".into(), ..Default::default() };
@@ -6969,6 +7042,120 @@ fn transcript_row(
         detail.set_attributes(Some(&font_attrs(caption_size)));
         row.append(&detail);
     }
+    row.upcast()
+}
+
+thread_local! {
+    /// Thinking blocks the user opened or closed, by the start of their text, so a
+    /// rebuilt row keeps that choice. shortcut: a toggle while the first 80 characters
+    /// still stream is forgotten on the next delta.
+    static THINKING_TOGGLED: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
+}
+
+/// Reasoning: open with a spinner while it streams, then closed as "Thought for Ns".
+fn thinking_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64) -> gtk4::Widget {
+    let lang = language();
+    let caption_size = (font_size - 2.0).max(9.0);
+    let streaming = entry.status == crate::agent::TranscriptStatus::Streaming;
+    let key: String = entry.text.chars().take(80).collect();
+    let choice = THINKING_TOGGLED.with(|toggled| toggled.borrow().get(&key).copied());
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    header.append(&gtk4::Image::from_icon_name("weather-fog-symbolic"));
+    let title = match entry.meta {
+        _ if streaming => tr(lang, "assistant.thinking.title"),
+        // Under a second reads "<1s", not "0s".
+        crate::agent::EntryMeta::Thought { seconds: Some(0) } => crate::l10n::tr1(lang, "assistant.thinking.done", "<1"),
+        crate::agent::EntryMeta::Thought { seconds: Some(seconds) } => {
+            crate::l10n::tr1(lang, "assistant.thinking.done", &seconds.to_string())
+        }
+        // Reloaded from history: no duration, but finished.
+        _ => tr(lang, "assistant.thinking.finished"),
+    };
+    let label = gtk4::Label::new(Some(&title));
+    label.add_css_class("dim-label");
+    label.set_attributes(Some(&font_attrs(caption_size)));
+    header.append(&label);
+    if streaming {
+        header.append(&tool_status_widget(crate::agent::TranscriptStatus::Running));
+    }
+    let expander = gtk4::Expander::new(None);
+    expander.set_label_widget(Some(&header));
+    let body = gtk4::Label::new(Some(&entry.text));
+    body.set_xalign(0.0);
+    body.set_wrap(true);
+    body.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+    body.set_selectable(true);
+    body.add_css_class("dim-label");
+    body.set_attributes(Some(&font_attrs(caption_size)));
+    body.set_margin_start(22);
+    expander.set_child(Some(&body));
+    expander.set_expanded(crate::turn_state::thinking_expanded(streaming, choice));
+    expander.connect_expanded_notify(move |expander| {
+        THINKING_TOGGLED.with(|toggled| toggled.borrow_mut().insert(key.clone(), expander.is_expanded()));
+    });
+    a11y(&expander, "pitex.assistant.thinking", "assistant.thinking.title");
+    // Screen readers hear what the row shows ("Thought for 3s"), not a fixed "Thinking".
+    expander.update_property(&[gtk4::accessible::Property::Label(&title)]);
+    expander.upcast()
+}
+
+/// A failed turn: a short line for its code, the raw error under Details, and Retry.
+fn turn_error_row(
+    entry: &crate::agent::AgentTranscriptEntry,
+    code: crate::turn_state::ErrorCode,
+    backend: &str,
+    can_compact: bool,
+    retry: bool,
+    font_size: f64,
+) -> gtk4::Widget {
+    let lang = language();
+    let row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    row.add_css_class("card");
+    row.add_css_class("pitex-turn-error");
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+    icon.add_css_class("error");
+    header.append(&icon);
+    let line = crate::l10n::tr1(lang, code.message_key(can_compact), crate::turn_state::cli_name(backend));
+    let message = gtk4::Label::new(Some(&line));
+    message.set_xalign(0.0);
+    message.set_wrap(true);
+    message.set_hexpand(true);
+    message.set_attributes(Some(&font_attrs(font_size)));
+    header.append(&message);
+    row.append(&header);
+    if !entry.text.is_empty() && entry.text != line {
+        let details = gtk4::Expander::new(Some(&tr(lang, "assistant.error.details")));
+        let raw = gtk4::Label::new(Some(&entry.text));
+        raw.set_xalign(0.0);
+        raw.set_wrap(true);
+        raw.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        raw.set_selectable(true);
+        raw.add_css_class("monospace");
+        raw.add_css_class("dim-label");
+        raw.set_attributes(Some(&font_attrs((font_size - 2.0).max(9.0))));
+        details.set_child(Some(&raw));
+        a11y(&details, "pitex.assistant.errorDetails", "assistant.error.details");
+        row.append(&details);
+    }
+    if retry {
+        let button = gtk4::Button::with_label(&tr(lang, "assistant.error.retry"));
+        button.set_halign(gtk4::Align::Start);
+        button.add_css_class("suggested-action");
+        a11y(&button, "pitex.assistant.retry", "assistant.error.retry");
+        button.connect_clicked(|_| {
+            // Deferred: the click lands while a refresh may hold the state.
+            glib::idle_add_local_once(|| {
+                let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+                let Ok(mut st) = state.try_borrow_mut() else { return };
+                st.retry_agent();
+            });
+        });
+        row.append(&button);
+    }
+    row.set_widget_name("pitex.assistant.turnError");
+    // The card is named by its friendly line, not "Details".
+    row.update_property(&[gtk4::accessible::Property::Label(&line)]);
     row.upcast()
 }
 
@@ -9459,6 +9646,7 @@ mod tool_card_tests {
             status: TranscriptStatus::Running,
             tool: Some(ToolDetail { call_id: "p1".into(), kind: "other".into(), ..Default::default() }),
             images: Vec::new(),
+            meta: crate::agent::EntryMeta::None,
         };
         let card = transcript_row(&entry, 13.0, None, &Default::default()).downcast::<gtk4::Expander>().unwrap();
         let header = card.label_widget().unwrap();

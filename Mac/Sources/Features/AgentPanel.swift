@@ -23,6 +23,9 @@ struct AgentPanel: View {
     @FocusState private var composerFocused: Bool
     /// Cmd+V with only an image on the pasteboard: caught before the field editor's paste.
     @State private var pasteMonitor: Any?
+    /// Follow new transcript content only while the view is at the bottom.
+    @State private var scrollPin = AgentScrollPin()
+    @State private var showingContextDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -94,6 +97,12 @@ struct AgentPanel: View {
                 imageChips
                     .padding(.horizontal, 10)
                     .padding(.bottom, 2)
+            }
+
+            if showingContextDetails, let meter = coordinator.contextMeter {
+                contextDetails(meter)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
             }
 
             composerRow
@@ -227,6 +236,7 @@ struct AgentPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .accessibilityIdentifier("pitex.assistant.usage")
             }
         }
@@ -344,6 +354,10 @@ struct AgentPanel: View {
                 }
                 .onChange(of: draft) { _, _ in completionIndex = 0 }
                 .accessibilityIdentifier("pitex.assistant.message")
+
+            if let meter = coordinator.contextMeter {
+                contextMeter(meter)
+            }
 
             if coordinator.isRunning {
                 Button {
@@ -672,32 +686,11 @@ struct AgentPanel: View {
         return handled
     }
 
-    /// `12.3k/200k ctx (6%) · 5h 12% · 7d 34%` for OAuth subscription
-    /// providers (Claude, Codex); `… · 45.2k tok · $0.12` for API-token providers.
+    /// `5h 12% · 7d 34%` for OAuth subscription providers (Claude, Codex). The context
+    /// meter in the composer row shows the window, the tokens and the cost.
     private var usageText: String? {
-        var parts: [String] = []
-        if let stats = coordinator.sessionStats,
-           let tokens = stats.contextTokens, let window = stats.contextWindow {
-            var context = "\(Self.compactTokens(tokens))/\(Self.compactTokens(window)) ctx"
-            if let percent = stats.contextPercent {
-                context += " (\(Int(percent.rounded()))%)"
-            }
-            parts.append(context)
-        }
-        if let windows = subscriptionUsage.windows, !windows.isEmpty {
-            parts += windows.map { "\($0.label) \(Int($0.percent.rounded()))%" }
-        } else if let stats = coordinator.sessionStats {
-            parts.append("\(Self.compactTokens(stats.totalTokens)) tok")
-            parts.append(String(format: "$%.2f", stats.cost))
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private static func compactTokens(_ value: Int) -> String {
-        if value >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
+        guard let windows = subscriptionUsage.windows, !windows.isEmpty else { return nil }
+        return windows.map { "\($0.label) \(Int($0.percent.rounded()))%" }.joined(separator: " · ")
     }
 
     private struct CatalogSection: Identifiable {
@@ -771,6 +764,86 @@ struct AgentPanel: View {
         guard canSend else { return }
         coordinator.send(prompt: draft, now: now)
         draft = ""
+        // Sending follows the transcript again.
+        scrollPin.jump()
+    }
+
+    /// Ring and "38% · 76k/200k"; amber from 70 %, red above 90 %. A click shows the
+    /// tokens and the session cost.
+    private func contextMeter(_ meter: AgentContextMeter) -> some View {
+        let tint: Color = switch meter.band {
+        case .normal: .secondary
+        case .warning: .orange
+        case .danger: .red
+        }
+        let spoken = String(format: String(localized: "assistant.context.a11y"), "\(meter.roundedPercent)")
+        return Button {
+            showingContextDetails.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                ZStack {
+                    Circle().stroke(Color.secondary.opacity(0.25), lineWidth: 2.5)
+                    Circle()
+                        .trim(from: 0, to: meter.percent / 100)
+                        .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 14, height: 14)
+                Text(verbatim: meter.label)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, 4)
+        .help(spoken)
+        .accessibilityLabel(Text(verbatim: spoken))
+        .accessibilityIdentifier("pitex.assistant.contextMeter")
+        .accessibilityAddTraits(showingContextDetails ? .isSelected : [])
+    }
+
+    /// Inline, not a popover: a popover open while the turn streams crashed AppKit's layout.
+    private func contextDetails(_ meter: AgentContextMeter) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("assistant.context.title").font(.caption.weight(.semibold))
+            ForEach(contextDetailLines(meter), id: \.self) { line in
+                Text(verbatim: line).font(.caption.monospacedDigit())
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+        .textSelection(.enabled)
+        .accessibilityIdentifier("pitex.assistant.contextDetails")
+    }
+
+    /// The details: context, the token counts the backend reported, and the cost.
+    private func contextDetailLines(_ meter: AgentContextMeter) -> [String] {
+        let usage = coordinator.usage
+        let compact = AgentContextMeter.compactTokens
+        var lines = [String(
+            format: String(localized: "assistant.context.used"),
+            compact(meter.used), compact(meter.max), "\(meter.roundedPercent)"
+        )]
+        let counts: [(String, Int?)] = [
+            ("assistant.context.input", usage.inputTokens),
+            ("assistant.context.cached", usage.cachedInputTokens),
+            ("assistant.context.output", usage.outputTokens),
+            ("assistant.context.thinking", usage.thinkingTokens),
+        ]
+        for (key, value) in counts {
+            if let value { lines.append(String(format: String(localized: String.LocalizationValue(key)), compact(value))) }
+        }
+        // pi pushes nothing: its pulled totals stand in.
+        if usage.inputTokens == nil, let total = coordinator.sessionStats?.totalTokens, total > 0 {
+            lines.append(String(format: String(localized: "assistant.context.total"), compact(total)))
+        }
+        if let cost = usage.costUsd ?? coordinator.sessionStats?.cost, cost > 0 {
+            let text = cost < 0.01 ? String(format: "$%.4f", cost) : String(format: "$%.2f", cost)
+            lines.append(String(format: String(localized: "assistant.context.cost"), text))
+        }
+        return lines
     }
 
     private func attachFiles() {
@@ -808,6 +881,12 @@ struct AgentPanel: View {
         )
     }
 
+    /// Offset and distance from the bottom; only an offset change is a scroll.
+    private struct ScrollSpot: Equatable {
+        var offset: Double
+        var distanceFromBottom: Double
+    }
+
     private var transcriptView: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -817,7 +896,11 @@ struct AgentPanel: View {
                         AgentEntryRow(
                             entry: entry, fontSize: settings.aiFontSize, projectRoot: root,
                             openFile: { coordinator.openToolFile($0) },
-                            openLink: { coordinator.openFile($0, $1) }
+                            openLink: { coordinator.openFile($0, $1) },
+                            retry: {
+                                scrollPin.jump()
+                                coordinator.retry()
+                            }
                         )
                         .id(entry.id)
                     }
@@ -825,18 +908,41 @@ struct AgentPanel: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
             }
-            .onChange(of: coordinator.transcript.count) { _, _ in
-                if let last = coordinator.transcript.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
+            .onScrollGeometryChange(for: ScrollSpot.self) { geometry in
+                ScrollSpot(
+                    offset: geometry.contentOffset.y,
+                    distanceFromBottom: geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height
+                )
+            } action: { old, new in
+                // Content growth moves only the distance; the user (or scrollTo) moves the offset.
+                if old.offset != new.offset { scrollPin.scrolled(distanceFromBottom: new.distanceFromBottom) }
             }
-            .onChange(of: coordinator.transcript.last?.text) { _, _ in
-                if let last = coordinator.transcript.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+            .onChange(of: coordinator.transcript.count) { _, _ in followLatest(proxy) }
+            .onChange(of: coordinator.transcript.last?.text) { _, _ in followLatest(proxy) }
+            .overlay(alignment: .bottom) {
+                if scrollPin.unseen {
+                    Button {
+                        scrollPin.jump()
+                        if let last = coordinator.transcript.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    } label: {
+                        Label("assistant.jump_latest", systemImage: "arrow.down")
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(.regularMaterial, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("pitex.assistant.jumpLatest")
                 }
             }
         }
         .accessibilityIdentifier("pitex.assistant.transcript")
+    }
+
+    private func followLatest(_ proxy: ScrollViewProxy) {
+        guard scrollPin.contentAdded(), let last = coordinator.transcript.last else { return }
+        proxy.scrollTo(last.id, anchor: .bottom)
     }
 }
 
@@ -849,6 +955,9 @@ private struct AgentEntryRow: View {
     var projectRoot: URL?
     var openFile: (AgentToolDetail) -> Void = { _ in }
     var openLink: (URL, Int?) -> Void = { _, _ in }
+    var retry: () -> Void = {}
+    /// The user opened or closed this thinking block; nil follows the streaming state.
+    @State private var thinkingChoice: Bool?
     private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
 
     var body: some View {
@@ -914,28 +1023,45 @@ private struct AgentEntryRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         case .thinking:
-            DisclosureGroup {
+            // Open with a spinner while it streams, then closed as "Thought for Ns".
+            DisclosureGroup(isExpanded: Binding(
+                get: { AgentThinking.isExpanded(streaming: entry.status == .streaming, userChoice: thinkingChoice) },
+                set: { thinkingChoice = $0 }
+            )) {
                 Text(verbatim: entry.text)
                     .font(captionFont)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             } label: {
                 HStack(spacing: 5) {
-                    Text(verbatim: entry.title)
-                        .font(captionFont.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    if entry.status != .streaming, let seconds = entry.thinkingSeconds {
+                        // Under a second reads "<1s", not "0s".
+                        Text(verbatim: String(format: String(localized: "assistant.thinking.done"), seconds > 0 ? "\(seconds)" : "<1"))
+                            .font(captionFont.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        // A row reloaded from history has no duration but is finished.
+                        Text(LocalizedStringKey(entry.status == .streaming ? "assistant.thinking.title" : "assistant.thinking.finished"))
+                            .font(captionFont.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                     if entry.status == .streaming {
                         ProgressView().controlSize(.mini)
                     }
                 }
             }
+            .accessibilityIdentifier("pitex.assistant.thinking")
         case .tool:
             AgentToolCard(entry: entry, fontSize: fontSize, projectRoot: projectRoot, openFile: openFile)
         case .notice:
-            Text(verbatim: entry.text)
-                .font(captionFont)
-                .foregroundStyle(entry.status == .failed ? Color.red : Color.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
+            if let failure = entry.turnError {
+                turnErrorRow(failure)
+            } else {
+                Text(verbatim: entry.text)
+                    .font(captionFont)
+                    .foregroundStyle(entry.status == .failed ? Color.red : Color.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
         case .activity:
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Image(systemName: activitySymbol)
@@ -946,6 +1072,46 @@ private struct AgentEntryRow: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// A failed turn: a short line for its code, the raw error under Details, and Retry.
+    private func turnErrorRow(_ failure: AgentTurnError) -> some View {
+        let line = String(
+            format: String(localized: String.LocalizationValue(failure.code.messageKey(canCompact: failure.canCompact))),
+            AgentErrorCode.cliName(provider: failure.provider)
+        )
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .accessibilityHidden(true)
+                Text(verbatim: line)
+                    .font(.system(size: fontSize))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !entry.text.isEmpty, entry.text != line {
+                DisclosureGroup("assistant.error.details") {
+                    Text(verbatim: entry.text)
+                        .font(.system(size: max(fontSize - 2, 9), design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(captionFont)
+            }
+            if failure.retry {
+                Button("assistant.error.retry", action: retry)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("pitex.assistant.retry")
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.45)))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("pitex.assistant.turnError")
     }
 
     private var activitySymbol: String {

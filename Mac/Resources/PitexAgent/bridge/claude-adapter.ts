@@ -32,7 +32,7 @@ import { accessSync, constants as fsConstants, readFileSync, writeFileSync } fro
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
-import { promptImages, type AdapterHost, type AdapterStartOptions, type CliAdapter, type ModeState, type PiCommand, type PiImage } from "./adapter.ts";
+import { promptImages, statsFromUsage, type AdapterHost, type AdapterStartOptions, type CliAdapter, type ModeState, type PiCommand, type PiImage } from "./adapter.ts";
 import {
   allowKey,
   cancelOpenTools,
@@ -487,7 +487,13 @@ export class ClaudeAdapter implements CliAdapter {
           await this.setMode(command, host);
           return;
         case "get_session_stats":
-          host.respond("get_session_stats", true, this.stats, undefined, command.id);
+          host.respond(
+            "get_session_stats",
+            true,
+            { ...this.stats, contextUsage: statsFromUsage(this.stream.usage).contextUsage },
+            undefined,
+            command.id
+          );
           return;
         case "get_commands":
           host.respond("get_commands", true, { commands: await this.commands() }, undefined, command.id);
@@ -610,9 +616,18 @@ export class ClaudeAdapter implements CliAdapter {
       }
     } catch (error) {
       if (generation !== this.generation) return;
-      const text = error instanceof Error ? error.message : "Claude Code stopped.";
+      const text = publicClaudeError(error instanceof Error ? error.message : "Claude Code stopped.");
+      const turnOpen = this.running || this.stream.turnOpen;
       this.running = false;
-      this.host?.emit({ type: "extension_error", error: publicClaudeError(text) });
+      // The next prompt starts the CLI again on this conversation (Retry).
+      this.closeActiveQuery();
+      if (!turnOpen) {
+        this.host?.emit({ type: "extension_error", error: text });
+        return;
+      }
+      // A CLI that died mid-turn ends the turn as failed, so the hosts offer Retry.
+      const failure = { type: "result", subtype: "error_during_execution", is_error: true, errors: [text] };
+      for (const event of mapClaudeMessage(failure, this.stream)) this.host?.emit(event);
     }
   }
 
@@ -630,6 +645,7 @@ export class ClaudeAdapter implements CliAdapter {
     }
     const initModel = modelIdOfInit(message);
     if (initModel && !this.modelPinned) this.modelId = initModel;
+    if (initModel) this.stream.model = initModel;
     this.observeMode(message);
     const before = this.stream.transcript.length;
     const events = mapClaudeMessage(message, this.stream);
@@ -661,6 +677,8 @@ export class ClaudeAdapter implements CliAdapter {
   private async abort(host: AdapterHost, id?: string): Promise<void> {
     // Close open tool cards first; the results the interrupt produces are then ignored.
     const before = this.stream.transcript.length;
+    // The interrupt's result then ends the turn as canceled, not failed.
+    if (this.running) this.stream.canceled = true;
     for (const event of cancelOpenTools(this.stream)) host.emit(event);
     this.persistFrom(before);
     this.denyOutstanding();
@@ -727,6 +745,8 @@ export class ClaudeAdapter implements CliAdapter {
     if (command.modelId) {
       this.modelId = command.modelId;
       this.modelPinned = true;
+      // The next turn reports the new model's window.
+      delete this.stream.usage.contextMax;
     }
     if (this.query?.setModel && this.modelId) {
       try {

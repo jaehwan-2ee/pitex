@@ -1502,6 +1502,19 @@ pub struct AgentTranscriptEntry {
     pub tool: Option<ToolDetail>,
     /// Images the user sent with this message (thumbnails in the transcript).
     pub images: Vec<crate::composer::AgentImage>,
+    pub meta: EntryMeta,
+}
+
+/// Row state beyond role and status: how long a thinking block took, or a failed turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub enum EntryMeta {
+    #[default]
+    None,
+    /// Seconds from the first reasoning delta to the next non-reasoning event.
+    Thought { seconds: Option<u64> },
+    /// `text` is the raw error. `backend` is the provider id for the wording;
+    /// `retry` is true on the newest failure while its message can be resent.
+    TurnError { code: crate::turn_state::ErrorCode, backend: String, can_compact: bool, retry: bool },
 }
 
 /// Cap for the diff text a tool card keeps (the bridge caps at the same size).
@@ -1902,6 +1915,16 @@ pub struct AgentCoordinator {
     /// `get_session_stats` payload — refreshed after spawn and on every
     /// `agent_end`; `None` until the first reply lands.
     pub session_stats: Option<PiSessionStats>,
+    /// Latest pushed usage (`usage_update`); the meter falls back to `session_stats` (pi).
+    pub usage: crate::turn_state::Usage,
+    /// The model that wrote the current answer (`message_start.message.modelName`).
+    live_model_name: Option<String>,
+    /// When the open thinking block got its first delta.
+    thinking_started: Option<std::time::Instant>,
+    /// The last message sent as a prompt, with its images: what Retry resends.
+    last_sent: Option<(String, Vec<crate::composer::AgentImage>)>,
+    /// Retry after a crash: the message goes out once the restarted process is up.
+    pending_retry: bool,
     /// `get_commands` payload — slash commands the composer completes.
     pub commands: Vec<PiSlashCommand>,
     pub status_message: Option<String>,
@@ -2090,6 +2113,11 @@ impl AgentCoordinator {
             wants_connection: false,
             pdf_text_cache: std::cell::RefCell::new(None),
             session_stats: None,
+            usage: Default::default(),
+            live_model_name: None,
+            thinking_started: None,
+            last_sent: None,
+            pending_retry: false,
             commands: Vec::new(),
             context_provider: None,
             persist_dirty_sessions: None,
@@ -2255,6 +2283,11 @@ impl AgentCoordinator {
             Ok(agent) => {
                 self.process = Some(agent);
                 self.connection = Connection::Ready;
+                if std::mem::take(&mut self.pending_retry) {
+                    if let Some((text, images)) = self.last_sent.clone() {
+                        self.dispatch(&text, images, false, None);
+                    }
+                }
                 if let Some(path) = self.pending_resume.take() {
                     self.resume(&path);
                 }
@@ -2330,6 +2363,8 @@ impl AgentCoordinator {
     /// Called by the UI when the process's `exited` channel fires.
     pub fn process_did_exit(&mut self) {
         self.abandon_drain();
+        // Retry only resends a message the exit cut off (a turn running or not yet started).
+        let unanswered = self.is_running || self.transcript.last().is_some_and(|e| e.role == TranscriptRole::User);
         self.process = None;
         self.is_running = false;
         self.toolchain_rx = None;
@@ -2345,6 +2380,12 @@ impl AgentCoordinator {
         self.finalize_entries();
         if !self.intentional_stop {
             self.connection = Connection::Failed("The agent process exited unexpectedly.".into());
+            if !self.transcript.is_empty() {
+                self.push_turn_error(crate::turn_state::ErrorCode::Crashed, "The agent process exited unexpectedly.".into());
+                if !unanswered {
+                    self.clear_retry_offers();
+                }
+            }
         }
         self.ui_revision += 1;
     }
@@ -2377,6 +2418,9 @@ impl AgentCoordinator {
         self.connection = Connection::Idle;
         self.intentional_stop = false;
         self.session_stats = None;
+        self.usage = Default::default();
+        // Another backend may name no model; the picked one titles its answers.
+        self.live_model_name = None;
         self.commands.clear();
         if self.wants_connection {
             self.prepare();
@@ -2480,6 +2524,7 @@ impl AgentCoordinator {
                 status: TranscriptStatus::Done,
                 tool: None,
                 images: Vec::new(),
+                meta: EntryMeta::None,
             });
         }
         self.restart();
@@ -2565,6 +2610,18 @@ impl AgentCoordinator {
             .find(|choice| choice.id == backend)
             .map(|choice| crate::l10n::tr(lang, choice.label_key))
             .unwrap_or_else(|| backend.to_string())
+    }
+
+    /// Context used of the window: pushed `usage_update`, else pi's `get_session_stats`.
+    pub fn context_meter(&self) -> Option<crate::turn_state::ContextMeter> {
+        let (used, max) = match (self.usage.context_used, self.usage.context_max) {
+            (Some(used), Some(max)) => (used, max),
+            _ => {
+                let stats = self.session_stats.as_ref()?;
+                (stats.context_tokens?, stats.context_window?)
+            }
+        };
+        crate::turn_state::ContextMeter::new(used, max)
     }
 
     fn note_live_models(&mut self) {
@@ -2903,6 +2960,12 @@ impl AgentCoordinator {
         if id.is_none() {
             self.push_user_entry(trimmed, images.clone());
         }
+        if !steer {
+            self.last_sent = Some((trimmed.to_string(), images.clone()));
+            // A new message replaces a crash Retry still waiting for the relaunch.
+            self.pending_retry = false;
+            self.clear_retry_offers();
+        }
         self.status_message = None;
         if let Some(persist) = &mut self.persist_dirty_sessions {
             if let Some(problem) = (persist)() {
@@ -2914,6 +2977,7 @@ impl AgentCoordinator {
                     status: TranscriptStatus::Failed,
                     tool: None,
                     images: Vec::new(),
+                    meta: EntryMeta::None,
                 });
                 return false;
             }
@@ -2977,6 +3041,7 @@ impl AgentCoordinator {
             status: TranscriptStatus::Done,
             tool: None,
             images,
+            meta: EntryMeta::None,
         });
     }
 
@@ -3122,6 +3187,7 @@ impl AgentCoordinator {
                 status: TranscriptStatus::Done,
                 tool: None,
                 images: Vec::new(),
+                meta: EntryMeta::None,
             });
         }
         self.todos = items;
@@ -3137,6 +3203,14 @@ impl AgentCoordinator {
         self.tool_index_by_call_id.clear();
         self.assistant_entry_index = None;
         self.thinking_entry_index = None;
+        self.thinking_started = None;
+        self.live_model_name = None;
+        // Retry belongs to that chat.
+        self.last_sent = None;
+        self.pending_retry = false;
+        // The meter belongs to that chat; the next usage_update or stats reply refills it.
+        self.usage = Default::default();
+        self.session_stats = None;
     }
 
     pub fn load_past_sessions(&mut self) {
@@ -3204,6 +3278,7 @@ impl AgentCoordinator {
                 status: TranscriptStatus::Done,
                 tool: None,
                 images: Vec::new(),
+                meta: EntryMeta::None,
             });
         }
         self.ui_revision += 1;
@@ -3236,6 +3311,7 @@ impl AgentCoordinator {
             status: TranscriptStatus::Done,
             tool: None,
             images: Vec::new(),
+            meta: EntryMeta::None,
         };
         let title = self.assistant_title();
         let mut entries: Vec<AgentTranscriptEntry> = Vec::new();
@@ -3249,6 +3325,13 @@ impl AgentCoordinator {
                     }
                 }
                 Some("assistant") => {
+                    // The model that wrote it, when the backend saved one (Claude), not the picker's alias.
+                    let title = message
+                        .get("modelName")
+                        .and_then(|n| n.as_str())
+                        .filter(|n| !n.is_empty())
+                        .map(|n| format!("Pitex Agent · {n}"))
+                        .unwrap_or_else(|| title.clone());
                     let blocks = message.get("content").and_then(|c| c.as_array());
                     for block in blocks.into_iter().flatten() {
                         let text = |key: &str| block.get(key).and_then(|t| t.as_str()).unwrap_or("").to_string();
@@ -3380,23 +3463,14 @@ impl AgentCoordinator {
                 }
                 self.is_running = false;
                 self.finalize_entries();
-                if let Some(failure) = self.last_assistant_error(event) {
-                    self.push_entry(AgentTranscriptEntry {
-                        role: TranscriptRole::Notice,
-                        title: "Assistant".into(),
-                        text: failure,
-                        detail: String::new(),
-                        status: TranscriptStatus::Failed,
-                        tool: None,
-                        images: Vec::new(),
-                    });
-                }
+                self.note_turn_end(event);
                 if let Some(cb) = &mut self.on_agent_activity_finished {
                     cb();
                 }
                 self.drain_queue();
             }
             "message_start" => self.handle_message_start(event),
+            "usage_update" => self.usage.merge(&event.object),
             "message_update" => self.handle_message_update(event),
             "message_end" => self.handle_message_end(event),
             "turn_end" => self.finalize_entries(),
@@ -3415,6 +3489,7 @@ impl AgentCoordinator {
                     status: TranscriptStatus::Done,
                     tool: None,
                     images: Vec::new(),
+                    meta: EntryMeta::None,
                 });
             }
             "auto_retry_end" => {
@@ -3428,6 +3503,7 @@ impl AgentCoordinator {
                             status: TranscriptStatus::Failed,
                             tool: None,
                             images: Vec::new(),
+                            meta: EntryMeta::None,
                         });
                     }
                 }
@@ -3440,6 +3516,7 @@ impl AgentCoordinator {
                 status: TranscriptStatus::Done,
                 tool: None,
                 images: Vec::new(),
+                meta: EntryMeta::None,
             }),
             "compaction_end" => {
                 if event.bool("aborted") {
@@ -3451,6 +3528,7 @@ impl AgentCoordinator {
                         status: TranscriptStatus::Done,
                         tool: None,
                         images: Vec::new(),
+                        meta: EntryMeta::None,
                     });
                 } else if let Some(message) = event.string("errorMessage") {
                     self.push_entry(AgentTranscriptEntry {
@@ -3461,6 +3539,7 @@ impl AgentCoordinator {
                         status: TranscriptStatus::Failed,
                         tool: None,
                         images: Vec::new(),
+                        meta: EntryMeta::None,
                     });
                 }
             }
@@ -3487,6 +3566,7 @@ impl AgentCoordinator {
                     status: TranscriptStatus::Failed,
                     tool: None,
                     images: Vec::new(),
+                    meta: EntryMeta::None,
                 });
             }
             _ => {}
@@ -3569,6 +3649,7 @@ impl AgentCoordinator {
                     status: TranscriptStatus::Failed,
                     tool: None,
                     images: Vec::new(),
+                    meta: EntryMeta::None,
                 });
             }
             return;
@@ -3717,6 +3798,9 @@ impl AgentCoordinator {
         self.thinking_entry_index = None;
         self.text_content_index = None;
         self.thinking_content_index = None;
+        if let Some(name) = message.get("modelName").and_then(|n| n.as_str()).filter(|n| !n.is_empty()) {
+            self.live_model_name = Some(name.to_string());
+        }
     }
 
     fn handle_message_update(&mut self, event: &PiRPCEvent) {
@@ -3724,10 +3808,12 @@ impl AgentCoordinator {
         let Some(delta_type) = delta.get("type").and_then(|t| t.as_str()) else { return };
         match delta_type {
             "text_start" => {
+                self.settle_thinking();
                 self.text_content_index = delta.get("contentIndex").and_then(|v| v.as_i64());
                 self.append_assistant_entry();
             }
             "text_delta" => {
+                self.settle_thinking();
                 if delta.get("contentIndex").and_then(|v| v.as_i64()) != self.text_content_index {
                     self.text_content_index =
                         delta.get("contentIndex").and_then(|v| v.as_i64());
@@ -3784,6 +3870,7 @@ impl AgentCoordinator {
                         status: TranscriptStatus::Failed,
                         tool: None,
                         images: Vec::new(),
+                        meta: EntryMeta::None,
                     });
                 }
             }
@@ -3815,7 +3902,11 @@ impl AgentCoordinator {
         if let Some(text) = text {
             if let Some(index) = self.assistant_entry_index {
                 if index < self.transcript.len() {
-                    self.transcript[index].text = text;
+                    // The streamed row already holds its own segment. message_end can carry a
+                    // whole turn (text, tools, more text), which would repeat earlier rows here.
+                    if self.transcript[index].text.is_empty() {
+                        self.transcript[index].text = text;
+                    }
                     self.transcript[index].status = if failed {
                         TranscriptStatus::Failed
                     } else {
@@ -3835,6 +3926,7 @@ impl AgentCoordinator {
                     },
                     tool: None,
                     images: Vec::new(),
+                    meta: EntryMeta::None,
                 };
                 if entry.text.is_empty() {
                     if let Some(e) = message.get("errorMessage").and_then(|m| m.as_str()) {
@@ -3848,6 +3940,7 @@ impl AgentCoordinator {
     }
 
     fn handle_tool_start(&mut self, event: &PiRPCEvent) {
+        self.settle_thinking();
         let Some(call_id) = event.string("toolCallId") else { return };
         let name = event.string("toolName").unwrap_or_else(|| "tool".into());
         let summary = tool_summary(&name, event.nested("args"));
@@ -3868,6 +3961,7 @@ impl AgentCoordinator {
             status: tool_status(event).unwrap_or(TranscriptStatus::Running),
             tool: Some(tool),
             images: Vec::new(),
+            meta: EntryMeta::None,
         });
         self.tool_index_by_call_id
             .insert(call_id, self.transcript.len() - 1);
@@ -3936,6 +4030,7 @@ impl AgentCoordinator {
                     status: TranscriptStatus::Done,
                     tool: None,
                     images: Vec::new(),
+                    meta: EntryMeta::None,
                 });
             }
             "notify" => {
@@ -3948,6 +4043,7 @@ impl AgentCoordinator {
                         status: TranscriptStatus::Done,
                         tool: None,
                         images: Vec::new(),
+                        meta: EntryMeta::None,
                     });
                 }
             }
@@ -3979,6 +4075,12 @@ impl AgentCoordinator {
     }
 
     fn append_assistant_entry(&mut self) {
+        // The previous segment of this message is complete once a new one starts.
+        if let Some(entry) = self.assistant_entry_index.and_then(|i| self.transcript.get_mut(i)) {
+            if entry.status == TranscriptStatus::Streaming {
+                entry.status = TranscriptStatus::Done;
+            }
+        }
         let title = self.assistant_title();
         self.push_entry(AgentTranscriptEntry {
             role: TranscriptRole::Assistant,
@@ -3988,10 +4090,12 @@ impl AgentCoordinator {
             status: TranscriptStatus::Streaming,
             tool: None,
             images: Vec::new(),
+            meta: EntryMeta::None,
         });
         self.assistant_entry_index = Some(self.transcript.len() - 1);
     }
     fn append_thinking_entry(&mut self) {
+        self.settle_thinking();
         self.push_entry(AgentTranscriptEntry {
             role: TranscriptRole::Thinking,
             title: "Thinking".into(),
@@ -4000,10 +4104,21 @@ impl AgentCoordinator {
             status: TranscriptStatus::Streaming,
             tool: None,
             images: Vec::new(),
+            meta: EntryMeta::Thought { seconds: None },
         });
         self.thinking_entry_index = Some(self.transcript.len() - 1);
+        self.thinking_started = Some(std::time::Instant::now());
+    }
+    /// Paseo: a thought is loading until the next event that is not reasoning; then it
+    /// closes as "Thought for Ns".
+    fn settle_thinking(&mut self) {
+        let Some(started) = self.thinking_started.take() else { return };
+        let Some(entry) = self.thinking_entry_index.and_then(|i| self.transcript.get_mut(i)) else { return };
+        entry.status = TranscriptStatus::Done;
+        entry.meta = EntryMeta::Thought { seconds: Some(started.elapsed().as_secs()) };
     }
     fn finalize_entries(&mut self) {
+        self.settle_thinking();
         if let Some(index) = self.assistant_entry_index {
             if index < self.transcript.len() {
                 self.transcript[index].status = TranscriptStatus::Done;
@@ -4019,11 +4134,81 @@ impl AgentCoordinator {
         self.text_content_index = None;
         self.thinking_content_index = None;
     }
+    /// The model that answered when the backend says (Claude's "Default" alias hides it),
+    /// else the picked one.
     fn assistant_title(&self) -> String {
-        self.current_model
-            .as_ref()
-            .map(|m| format!("Pitex Agent · {}", m.name))
+        self.live_model_name
+            .clone()
+            .or_else(|| self.current_model.as_ref().map(|m| m.name.clone()))
+            .map(|name| format!("Pitex Agent · {name}"))
             .unwrap_or_else(|| "Pitex Agent".into())
+    }
+
+    /// `agent_end`: a failed turn gets an error row (friendly line, raw detail, Retry);
+    /// a stopped one a plain notice. pi sends no `outcome`; its errors read as `other`.
+    fn note_turn_end(&mut self, event: &PiRPCEvent) {
+        let outcome = event.string("outcome");
+        let failure = event.string("error").or_else(|| self.last_assistant_error(event));
+        match (outcome.as_deref(), failure) {
+            (Some("canceled"), Some(text)) => self.push_entry(AgentTranscriptEntry {
+                role: TranscriptRole::Notice,
+                title: "Assistant".into(),
+                text,
+                detail: String::new(),
+                status: TranscriptStatus::Done,
+                tool: None,
+                images: Vec::new(),
+                meta: EntryMeta::None,
+            }),
+            // Mac (`AgentTurnError.failure`) agrees: a completed turn shows no error row.
+            (Some("completed"), _) | (Some("canceled"), None) | (None, None) => {}
+            (_, failure) => {
+                let code = crate::turn_state::ErrorCode::decode(event.string("code").as_deref());
+                self.push_turn_error(code, failure.unwrap_or_else(|| "The agent run failed.".into()));
+            }
+        }
+    }
+
+    fn push_turn_error(&mut self, code: crate::turn_state::ErrorCode, raw: String) {
+        self.clear_retry_offers();
+        let can_compact = self.commands.iter().any(|c| c.name == "compact");
+        self.push_entry(AgentTranscriptEntry {
+            role: TranscriptRole::Notice,
+            title: "Assistant".into(),
+            text: raw,
+            detail: String::new(),
+            status: TranscriptStatus::Failed,
+            tool: None,
+            images: Vec::new(),
+            meta: EntryMeta::TurnError { code, backend: self.agent_provider.clone(), can_compact, retry: self.last_sent.is_some() },
+        });
+    }
+
+    /// Only the newest failure offers Retry, and none once another message went out.
+    fn clear_retry_offers(&mut self) {
+        for entry in &mut self.transcript {
+            if let EntryMeta::TurnError { retry, .. } = &mut entry.meta {
+                *retry = false;
+            }
+        }
+    }
+
+    /// Resends the last message (with its images) through the normal send path. After a
+    /// crash the process starts again first and the message follows once it is up.
+    pub fn retry(&mut self) {
+        let Some((text, images)) = self.last_sent.clone() else { return };
+        if self.is_running {
+            return;
+        }
+        if !matches!(self.connection, Connection::Failed(_)) {
+            self.dispatch(&text, images, false, None);
+            return;
+        }
+        // shortcut: the restarted process opens a new session, so the retried message
+        // goes without the earlier context; resuming the crashed session would keep it.
+        self.clear_retry_offers();
+        self.pending_retry = true;
+        self.restart();
     }
 
     /// History-limit trimming — verbatim didSet semantics (indices reset).
@@ -6128,6 +6313,134 @@ mod session_history_tests {
         crate::composer::AgentImage::new("red.png", "image/png", &[137, 80, 78, 71], 0).unwrap()
     }
 
+    fn delta(kind: &str, index: i64, text: &str) -> PiRPCEvent {
+        event(json!({"type": "message_update", "assistantMessageEvent": {"type": kind, "contentIndex": index, "delta": text}}))
+    }
+
+    #[test]
+    fn text_then_a_tool_then_more_text_is_two_rows_without_a_repeat() {
+        let mut agent = queue_agent(false);
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.handle(&event(json!({"type": "message_start", "message": {"role": "assistant", "modelName": "Claude Sonnet 4.5"}})));
+        agent.handle(&delta("text_start", 0, ""));
+        agent.handle(&delta("text_delta", 0, "First."));
+        agent.handle(&event(json!({"type": "tool_execution_start", "toolCallId": "t1", "toolName": "read", "args": {"path": "main.tex"}})));
+        agent.handle(&event(json!({"type": "tool_execution_end", "toolCallId": "t1", "isError": false, "result": {"content": []}})));
+        agent.handle(&delta("text_start", 1, ""));
+        agent.handle(&delta("text_delta", 1, "Second."));
+        // An older bridge put the whole turn's text in message_end.
+        agent.handle(&event(json!({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "First.Second."}]}})));
+        agent.handle(&event(json!({"type": "agent_end", "outcome": "completed"})));
+        let rows: Vec<(TranscriptRole, &str)> = agent.transcript.iter().map(|e| (e.role, e.text.as_str())).collect();
+        assert_eq!(rows, vec![(TranscriptRole::Assistant, "First."), (TranscriptRole::Tool, ""), (TranscriptRole::Assistant, "Second.")]);
+        assert!(agent.transcript.iter().all(|e| e.status != TranscriptStatus::Streaming), "no row is left streaming");
+        assert_eq!(agent.transcript[0].title, "Pitex Agent · Claude Sonnet 4.5", "the answering model, not the picker alias");
+        // A message_end for a row that never streamed still fills it.
+        agent.handle(&event(json!({"type": "message_start", "message": {"role": "assistant"}})));
+        agent.handle(&event(json!({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Only end"}]}})));
+        assert_eq!(agent.transcript.last().unwrap().text, "Only end");
+    }
+
+    #[test]
+    fn thinking_closes_with_its_duration_when_the_answer_starts() {
+        let mut agent = queue_agent(false);
+        agent.handle(&event(json!({"type": "message_start", "message": {"role": "assistant"}})));
+        agent.handle(&delta("thinking_start", 0, ""));
+        agent.handle(&delta("thinking_delta", 0, "plan"));
+        assert_eq!(agent.transcript[0].status, TranscriptStatus::Streaming);
+        assert_eq!(agent.transcript[0].meta, EntryMeta::Thought { seconds: None });
+        agent.handle(&delta("text_delta", 1, "Answer"));
+        assert_eq!(agent.transcript[0].status, TranscriptStatus::Done);
+        assert_eq!(agent.transcript[0].meta, EntryMeta::Thought { seconds: Some(0) });
+        // A tool call after a thought also closes it.
+        agent.handle(&delta("thinking_start", 2, ""));
+        agent.handle(&event(json!({"type": "tool_execution_start", "toolCallId": "t", "toolName": "bash", "args": {}})));
+        assert_eq!(agent.transcript[2].status, TranscriptStatus::Done);
+    }
+
+    #[test]
+    fn usage_update_feeds_the_meter_and_stats_are_the_fallback() {
+        let mut agent = queue_agent(false);
+        assert!(agent.context_meter().is_none());
+        agent.session_stats = Some(PiSessionStats { context_tokens: Some(50), context_window: Some(100), ..Default::default() });
+        assert_eq!(agent.context_meter().unwrap().percent, 50.0, "pi: pulled stats");
+        agent.handle(&event(json!({"type": "usage_update", "contextUsed": 150_000, "contextMax": 200_000, "costUsd": 0.5})));
+        let meter = agent.context_meter().unwrap();
+        assert_eq!((meter.label().as_str(), meter.band()), ("75% · 150k/200k", crate::turn_state::MeterBand::Warning));
+        agent.handle(&event(json!({"type": "usage_update", "contextUsed": 190_000})));
+        assert_eq!(agent.context_meter().unwrap().band(), crate::turn_state::MeterBand::Danger);
+        assert_eq!(agent.usage.cost_usd, Some(0.5));
+    }
+
+    #[test]
+    fn a_failed_turn_offers_retry_with_the_same_message_and_images() {
+        let mut agent = queue_agent(false);
+        agent.submit("fix the bib", vec![png()], false);
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.handle(&event(json!({"type": "agent_end", "outcome": "failed", "code": "rate_limited", "error": "API Error: 429"})));
+        let error = agent.transcript.last().unwrap();
+        assert_eq!(error.text, "API Error: 429");
+        assert!(matches!(&error.meta, EntryMeta::TurnError { code: crate::turn_state::ErrorCode::RateLimited, retry: true, .. }));
+        agent.retry();
+        assert_eq!(agent.prompt_wire.len(), 2);
+        assert_eq!(agent.prompt_wire[0]["images"], agent.prompt_wire[1]["images"]);
+        assert!(agent.prompt_wire[1]["message"].as_str().unwrap().contains("fix the bib"));
+        let user = agent.transcript.last().unwrap();
+        assert_eq!((user.role, user.text.as_str(), user.images.len()), (TranscriptRole::User, "fix the bib", 1));
+        assert!(
+            agent.transcript.iter().all(|e| !matches!(e.meta, EntryMeta::TurnError { retry: true, .. })),
+            "Retry goes away once the message went out again"
+        );
+        // Stop is not a failure: a plain notice, no Retry.
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.handle(&event(json!({"type": "agent_end", "outcome": "canceled", "messages": [{"role": "assistant", "stopReason": "error", "errorMessage": "[Request interrupted by user]"}]})));
+        let stopped = agent.transcript.last().unwrap();
+        assert_eq!((stopped.role, stopped.status, &stopped.meta), (TranscriptRole::Notice, TranscriptStatus::Done, &EntryMeta::None));
+        // pi sends no outcome: its error still gets the row, as `other`.
+        agent.handle(&event(json!({"type": "agent_end", "messages": [{"role": "assistant", "stopReason": "error", "errorMessage": "boom"}]})));
+        assert!(matches!(agent.transcript.last().unwrap().meta, EntryMeta::TurnError { code: crate::turn_state::ErrorCode::Other, .. }));
+        // Like Mac: a completed turn gets no error row, whatever its last message says.
+        let rows = agent.transcript.len();
+        agent.handle(&event(json!({"type": "agent_end", "outcome": "completed", "messages": [{"role": "assistant", "stopReason": "error", "errorMessage": "late"}]})));
+        assert_eq!(agent.transcript.len(), rows);
+    }
+
+    #[test]
+    fn a_crash_mid_chat_leaves_an_error_row_with_retry() {
+        let mut agent = queue_agent(false);
+        agent.submit("hello", Vec::new(), false);
+        agent.process_did_exit();
+        assert!(matches!(
+            agent.transcript.last().unwrap().meta,
+            EntryMeta::TurnError { code: crate::turn_state::ErrorCode::Crashed, retry: true, .. }
+        ));
+        // A new message before the relaunch replaces the pending Retry (no double send).
+        agent.retry();
+        assert!(agent.pending_retry);
+        agent.submit("another", Vec::new(), false);
+        assert!(!agent.pending_retry);
+    }
+
+    #[test]
+    fn a_crash_after_the_answer_offers_no_retry_and_a_restart_drops_the_live_model() {
+        let mut agent = queue_agent(false);
+        agent.submit("hello", Vec::new(), false);
+        agent.handle(&event(json!({"type": "agent_start"})));
+        agent.handle(&event(json!({"type": "message_start", "message": {"role": "assistant", "modelName": "Claude Opus 4.1"}})));
+        agent.handle(&delta("text_delta", 0, "Hi"));
+        agent.handle(&event(json!({"type": "agent_end", "outcome": "completed"})));
+        agent.process_did_exit();
+        assert!(matches!(
+            agent.transcript.last().unwrap().meta,
+            EntryMeta::TurnError { code: crate::turn_state::ErrorCode::Crashed, retry: false, .. }
+        ));
+        assert_eq!(agent.live_model_name.as_deref(), Some("Claude Opus 4.1"));
+        agent.restart();
+        assert_eq!(agent.live_model_name, None, "another backend names no model");
+        agent.clear_transcript();
+        assert!(agent.last_sent.is_none(), "Retry belongs to the chat it was sent in");
+    }
+
     #[test]
     fn return_during_a_turn_queues_and_agent_end_sends_one_at_a_time() {
         let mut agent = queue_agent(true);
@@ -6477,6 +6790,7 @@ now please"), "the envelope wraps the text");
             status: TranscriptStatus::Done,
             tool: None,
             images: Vec::new(),
+            meta: EntryMeta::None,
         }];
         let stale = json!({
             "type": "response",
@@ -6728,6 +7042,7 @@ now please"), "the envelope wraps the text");
             status: TranscriptStatus::Done,
             tool: None,
             images: Vec::new(),
+            meta: EntryMeta::None,
         });
         let start = json!({"type": "agent_start"});
         agent.handle(&response(start));
@@ -6811,6 +7126,7 @@ now please"), "the envelope wraps the text");
             status: TranscriptStatus::Done,
             tool: None,
             images: Vec::new(),
+            meta: EntryMeta::None,
         });
         let start = json!({"type": "agent_start"});
         agent.handle(&response(start));

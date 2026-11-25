@@ -36,6 +36,7 @@ pub mod settings;
 pub mod synctex;
 #[cfg(not(feature = "vte"))]
 pub mod terminal;
+pub mod turn_state;
 pub mod update;
 mod window_ipc;
 

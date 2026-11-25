@@ -603,3 +603,27 @@
 /* SSH manual save */
 "remote.autosave.unsupported" = "Auto Save is unavailable for SSH projects. Use Save to upload and build on the remote device.";
 "remote.preview.unsupported" = "Local embedded preview is unavailable in this build. Use Save to build on the remote device.";
+
+/* Assistant usage, thinking and turn errors */
+"assistant.context.title" = "Context window";
+"assistant.context.a11y" = "Context %@ percent used";
+"assistant.context.used" = "Context: %1$@ of %2$@ tokens (%3$@%%)";
+"assistant.context.input" = "Input: %@";
+"assistant.context.cached" = "Cached: %@";
+"assistant.context.output" = "Output: %@";
+"assistant.context.thinking" = "Thinking: %@";
+"assistant.context.total" = "Tokens: %@";
+"assistant.context.cost" = "Session cost: %@";
+"assistant.thinking.title" = "Thinking";
+"assistant.thinking.done" = "Thought for %@s";
+"assistant.thinking.finished" = "Thought";
+"assistant.jump_latest" = "Jump to latest";
+"assistant.error.signed_out" = "Sign in to %@ in a terminal, then retry.";
+"assistant.error.rate_limited" = "%@ hit a rate or usage limit. Wait a moment, then retry.";
+"assistant.error.network" = "Could not reach %@. Check your connection, then retry.";
+"assistant.error.context_full" = "The conversation no longer fits in the model's context. Start a new chat.";
+"assistant.error.context_full_compact" = "The conversation no longer fits in the model's context. Start a new chat or run /compact.";
+"assistant.error.other" = "%@ stopped with an error.";
+"assistant.error.crashed" = "%@ stopped unexpectedly.";
+"assistant.error.details" = "Details";
+"assistant.error.retry" = "Retry";

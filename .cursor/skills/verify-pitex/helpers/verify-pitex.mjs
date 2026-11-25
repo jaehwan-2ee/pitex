@@ -12,7 +12,7 @@ const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
 const PROVIDERS = ["codex", "claude", "grok", "agy"];
-const GTK_PROVIDERS = ["claude", "claude-toolcards", "claude-markdown", "claude-approvals", "claude-todos", "claude-composer", "agy", "stale-codex", "stale-grok"];
+const GTK_PROVIDERS = ["claude", "claude-toolcards", "claude-markdown", "claude-approvals", "claude-todos", "claude-composer", "claude-usage", "pi-fit", "agy", "agy-signin", "stale-codex", "stale-grok"];
 const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH", agy: "AGY_PATH" };
 const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", agy: "agy.mjs" };
 
@@ -573,7 +573,11 @@ function driveGtk(provider) {
   }
   // claude-toolcards drives the Claude fake with the TOOLCARDS prompt.
   // claude-markdown drives it with MARKDOWN: a streamed Markdown answer.
-  const run = provider.startsWith("claude-") ? prepareRun("claude", `gtk-${provider.slice(7)}`) : prepareRun(provider, "gtk");
+  const run = provider.startsWith("claude-")
+    ? prepareRun("claude", `gtk-${provider.slice(7)}`)
+    : provider === "agy-signin"
+      ? prepareRun("agy", "gtk-signin")
+      : prepareRun(provider, "gtk");
   const env = {
     ...bridgeEnv(run, "ok"),
     HOME: run.home,
@@ -588,9 +592,16 @@ function driveGtk(provider) {
     PITEX_GTK_PROVIDER: provider,
     // PITEX_GTK_THEME=dark seeds appearance.theme before launch.
     PITEX_GTK_THEME: process.env.PITEX_GTK_THEME || "",
+    // PITEX_*_X / PITEX_*_Y override a measured click point (gtk-drive.py).
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => /^PITEX_[A-Z]+_[XY]$/.test(key))),
     DISPLAY: process.env.DISPLAY || "",
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
   };
+  if (provider === "agy-signin") {
+    // agy-signin starts signed out; gtk-drive.py writes "ok" here before Retry.
+    env.FAKE_AUTH_FILE = join(run.home, "agy-auth");
+    writeFileSync(env.FAKE_AUTH_FILE, "signed-out");
+  }
   mkdirSync(env.XDG_RUNTIME_DIR, { recursive: true, mode: 0o700 });
   const child = spawn("xvfb-run", ["-a", "-s", "-screen 0 1280x800x24", "dbus-run-session", "--", "python3", join(HERE, "gtk-drive.py")], {
     env,

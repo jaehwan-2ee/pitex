@@ -11,7 +11,7 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248, "claude-todos": 248, "claude-composer": 248}
+MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248, "claude-todos": 248, "claude-composer": 248, "claude-usage": 248}
 # The fake Claude answers TOOLCARDS with a Read, an Edit and a failing Bash call.
 TOOLCARDS = "claude-toolcards"
 # MARKDOWN streams a Markdown answer (heading, list, code, math, table, links).
@@ -24,6 +24,15 @@ TODOS = "claude-todos"
 # COMPOSER queues two messages behind a slow turn, edits one, steers the other,
 # opens the @ and / lists, and pastes a PNG from the clipboard.
 COMPOSER = "claude-composer"
+# USAGE streams thinking, text, a Read and a long answer with usage crossing 70 % and
+# 90 %, then fails on a rate limit; Retry answers normally.
+USAGE = "claude-usage"
+# Measured in 1280x800 with the divider dragged up and the sidebar shown.
+METER = (int(os.environ.get("PITEX_METER_X", "950")), 767)
+JUMP = (int(os.environ.get("PITEX_JUMP_X", "770")), int(os.environ.get("PITEX_JUMP_Y", "706")))
+# The error row's Details expander and Retry button once the failure is the last row.
+DETAILS = (int(os.environ.get("PITEX_DETAILS_X", "470")), int(os.environ.get("PITEX_DETAILS_Y", "684")))
+RETRY = (int(os.environ.get("PITEX_RETRY_X", "474")), int(os.environ.get("PITEX_RETRY_Y", "714")))
 # Measured in 1280x800 with the divider dragged up and the sidebar hidden. Running, a
 # Claude row has Edit and Delete (no steer); idle (after Stop) it has Edit, Send now, Delete.
 # Send now is on the first of three rows (the box grows upward).
@@ -39,8 +48,8 @@ NEW_CHAT = (1161, 227)
 # The history button beside it, and the newest conversation in its list (below the search field).
 HISTORY = (1203, 227)
 HISTORY_FIRST_ROW = (1200, 335)
-# The mode picker sits on the composer row, right of the message entry.
-MODE_PICKER = (1188, 767)
+# The mode picker sits on the composer row, right of the message entry (the pane fits 1280 px since M8).
+MODE_PICKER = (995, 767)
 # Approval card in the 1280x800 window once the divider is dragged up. Its buttons sit
 # just above the composer: Submit / Approve plan, then Approve and accept edits, then Keep planning.
 CARD_BUTTONS = [(476, 717), (664, 717), (837, 717)]
@@ -62,7 +71,14 @@ STALE_STORED = {
 }
 # Selectable providers whose switch row has no measured coordinate yet. The
 # preference is written before launch, and the run then clicks Approve like claude.
-SEEDED = {"agy": "agy"}
+SEEDED = {"agy": "agy", "agy-signin": "agy"}
+# AGY_SIGNIN starts the agy fake signed out, sends a prompt (the sign-in error row with
+# Retry), signs in through FAKE_AUTH_FILE and clicks Retry.
+AGY_SIGNIN = "agy-signin"
+SIGNIN_RETRY = (int(os.environ.get("PITEX_SIGNIN_X", "474")), int(os.environ.get("PITEX_SIGNIN_Y", "478")))
+# PI_FIT opens the assistant on pi, whose long "backend · model (id) · provider" title
+# used to widen the pane past a 1280 px window.
+PI_FIT = "pi-fit"
 
 
 def main():
@@ -106,6 +122,8 @@ def main():
             result["steps"].append("no-settings-window")
             write(evidence, result)
             return 1
+        # A Settings window that is not drawn yet drops the AI-tab click (it then opens on TeX Compile).
+        time.sleep(0.8)
         click_window(settings, 448, 518)
         time.sleep(0.3)
         click_window(settings, 620, 128)
@@ -119,6 +137,12 @@ def main():
         elif seeded:
             run(["xdotool", "key", "--window", settings, "Escape"])
             time.sleep(0.3)
+        elif provider == PI_FIT:
+            # pi on; Claude Code and Antigravity off: pi's long model titles fill the picker.
+            for y in (142, 197, 252):
+                click_window(settings, 600, y)
+                time.sleep(0.3)
+            shot(evidence / "02-provider.png")
         else:
             click_window(settings, 520, MENU_Y[provider])
             time.sleep(0.4)
@@ -128,9 +152,16 @@ def main():
         click(1048, 36)
         time.sleep(0.4)
         shot(evidence / "03-assistant.png")
+        if provider == PI_FIT:
+            time.sleep(4.0)
+            shot(evidence / "04-pi-fit.png")
+            result["steps"].append("pi-fit")
+            result["pass"] = True
+            write(evidence, result)
+            return 0
         click(560, 752)
         time.sleep(0.15)
-        if provider in (TOOLCARDS, MARKDOWN, APPROVALS, TODOS, COMPOSER):
+        if provider in (TOOLCARDS, MARKDOWN, APPROVALS, TODOS, COMPOSER, USAGE, AGY_SIGNIN):
             # Give the transcript room: drag the editor/console divider up.
             run(["xdotool", "mousemove", "840", "538", "mousedown", "1", "mousemove", "840", "400", "mousemove", "840", "160", "mouseup", "1"])
             time.sleep(0.4)
@@ -142,6 +173,8 @@ def main():
             return todo_list(evidence, result)
         if provider == COMPOSER:
             return composer(evidence, result)
+        if provider == USAGE:
+            return usage(evidence, result)
         prompt = {TOOLCARDS: "TOOLCARDS", MARKDOWN: "MARKDOWN"}.get(provider, "Fix the title")
         run(["xdotool", "type", "--delay", "12", prompt])
         time.sleep(0.15)
@@ -150,6 +183,8 @@ def main():
             return markdown(evidence, result)
         time.sleep(2.5)
         shot(evidence / "04-sent.png")
+        if provider == AGY_SIGNIN:
+            return signin(evidence, result)
         if provider == TOOLCARDS:
             return tool_cards(evidence, result)
         if not stored:
@@ -195,6 +230,22 @@ def main():
         except subprocess.TimeoutExpired:
             child.kill()
         log.close()
+
+
+def signin(evidence, result):
+    Path(os.environ["FAKE_AUTH_FILE"]).write_text("ok")
+    click(*SIGNIN_RETRY)
+    time.sleep(2.5)
+    shot(evidence / "05-retried.png")
+    click(470, 716)
+    time.sleep(1.2)
+    shot(evidence / "06-approved.png")
+    record = Path(os.environ["FAKE_RECORD"]).read_text()
+    result["promptReachedCli"] = "Fix the title" in record
+    result["pass"] = result["promptReachedCli"]
+    result["steps"].append("signin")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
 
 
 def tool_cards(evidence, result):
@@ -333,8 +384,7 @@ def clear_composer():
 
 
 def composer(evidence, result):
-    # The assistant pane is wider than a 1280 px window (pre-existing); hiding the
-    # sidebar brings the queue buttons and Stop on screen.
+    # The queue, Stop and send points were measured with the sidebar hidden.
     click(*SIDEBAR_TOGGLE)
     time.sleep(0.6)
     send_prompt("SLOW")
@@ -432,6 +482,77 @@ def composer(evidence, result):
     result["imageOk"] = len(images) == 2 and images[0]["user"] == "what color is this square?"
     result["pass"] = result["orderOk"] and result["clearStayedLocal"] and result["imageOk"]
     result["steps"].append("composer")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
+
+
+def find_button(evidence, name, label):
+    """Center of a visible button with this text, read with tesseract (None without it)."""
+    if not shutil.which("tesseract"):
+        return None
+    path = evidence / f"ocr-{name}.png"
+    shot(path)
+    found = subprocess.run(["tesseract", str(path), "-", "tsv"], capture_output=True, text=True).stdout
+    for row in found.splitlines()[1:]:
+        cols = row.split("\t")
+        if len(cols) == 12 and cols[11].strip() == label:
+            left, top, width, height = map(int, cols[6:10])
+            return (left + width // 2, top + height // 2)
+    return None
+
+
+def usage(evidence, result):
+    # Sidebar shown: the pane must fit a 1280 px window with Send on screen.
+    time.sleep(0.6)
+    # The bridge shows no meter before Claude reports the window (at the first turn's end).
+    send_prompt("PLAIN warm up")
+    time.sleep(0.4)
+    shot(evidence / "03-first-turn-no-meter.png")
+    time.sleep(1.6)
+    shot(evidence / "04-1280-send-visible.png")
+    send_prompt("USAGE")
+    time.sleep(1.6)
+    shot(evidence / "05-thinking-streaming.png")
+    time.sleep(3.2)
+    shot(evidence / "06-thinking-done-meter-amber.png")
+    time.sleep(3.0)
+    shot(evidence / "07-meter-red.png")
+    click(*METER)
+    time.sleep(0.6)
+    shot(evidence / "08-meter-popover.png")
+    run(["xdotool", "key", "Escape"])
+    # The streamed list outgrows the transcript a few seconds later.
+    time.sleep(3.0)
+    # Scroll up while the answer still streams: no auto-scroll, "Jump to latest" appears.
+    run(["xdotool", "mousemove", str(TRANSCRIPT[0]), str(TRANSCRIPT[1])])
+    for _ in range(8):
+        run(["xdotool", "click", "4"])
+        time.sleep(0.05)
+    time.sleep(1.8)
+    shot(evidence / "09-scrolled-up-jump.png")
+    jump = find_button(evidence, "jump", "latest") or JUMP
+    result["jumpAt"] = jump
+    click(*jump)
+    time.sleep(1.0)
+    shot(evidence / "10-jumped.png")
+    time.sleep(6.0)
+    shot(evidence / "11-error-retry.png")
+    click(*(find_button(evidence, "details", "Details") or DETAILS))
+    time.sleep(0.6)
+    shot(evidence / "12-error-details.png")
+    retry = find_button(evidence, "retry", "Retry") or RETRY
+    result["retryAt"] = retry
+    click(*retry)
+    time.sleep(2.5)
+    shot(evidence / "13-retried.png")
+    notes = []
+    for line in Path(os.environ["FAKE_RECORD"]).read_text().splitlines():
+        row = json.loads(line)
+        if row.get("kind") == "note" and "user" in row:
+            notes.append(row["user"])
+    result["userMessages"] = notes
+    result["pass"] = notes.count("USAGE") == 2
+    result["steps"].append("usage")
     write(evidence, result)
     return 0 if result["pass"] else 1
 

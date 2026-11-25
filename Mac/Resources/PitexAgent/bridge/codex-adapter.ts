@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { AdapterHost, AdapterStartOptions, CliAdapter, PiCommand } from "./adapter.ts";
+import { mergeUsage, statsFromUsage, usageEvent, type AdapterHost, type AdapterStartOptions, type CliAdapter, type PiCommand, type Usage } from "./adapter.ts";
 import {
   approvalFromServerRequest,
   approvalRpcReply,
@@ -349,6 +349,7 @@ export class CodexAdapter implements CliAdapter {
           this.denyOutstandingApprovals();
           this.threadId = null;
           this.turnId = null;
+          this.usage = {};
           this.sessionPath = null;
           this.todos = null;
           this.running = false;
@@ -390,7 +391,7 @@ export class CodexAdapter implements CliAdapter {
           host.respond("set_thinking_level", true, {}, undefined, command.id);
           return;
         case "get_session_stats":
-          host.respond("get_session_stats", true, this.stats, undefined, command.id);
+          host.respond("get_session_stats", true, statsFromUsage(this.usage), undefined, command.id);
           return;
         case "get_commands":
           host.respond("get_commands", true, { commands: [] }, undefined, command.id);
@@ -427,7 +428,8 @@ export class CodexAdapter implements CliAdapter {
     }
   }
 
-  private stats: Json = { tokens: { total: 0 }, cost: 0, contextUsage: {} };
+  /** Latest `thread/tokenUsage/updated`; `get_session_stats` reads it too. */
+  private usage: Usage = {};
 
   private async prompt(command: PiCommand, host: AdapterHost): Promise<void> {
     const message = command.message ?? "";
@@ -510,6 +512,7 @@ export class CodexAdapter implements CliAdapter {
       );
       return;
     }
+    this.usage = {};
     await this.openThread(threadId);
     this.sessionPath = sessionPath;
     this.todos = sessionTodosFor(this.sessionDir, sessionPath);
@@ -638,16 +641,17 @@ export class CodexAdapter implements CliAdapter {
   private onNotification(method: string, params: Json): void {
     if (method === "thread/tokenUsage/updated") {
       const usage = asObject(params.tokenUsage);
-      const total = asObject(usage?.total);
-      const tokens = typeof total?.totalTokens === "number" ? total.totalTokens : 0;
-      const window = typeof usage?.modelContextWindow === "number" ? usage.modelContextWindow : null;
-      this.stats = {
-        tokens: { total: tokens },
-        cost: 0,
-        contextUsage: window
-          ? { tokens, contextWindow: window, percent: window ? (tokens / window) * 100 : null }
-          : {},
-      };
+      // `last` is the latest model call: what the context holds now. `total` sums the thread.
+      const last = asObject(usage?.last) ?? asObject(usage?.total);
+      const changed = mergeUsage(this.usage, {
+        inputTokens: last?.inputTokens as number,
+        cachedInputTokens: last?.cachedInputTokens as number,
+        outputTokens: last?.outputTokens as number,
+        thinkingTokens: last?.reasoningOutputTokens as number,
+        contextUsed: last?.totalTokens as number,
+        contextMax: usage?.modelContextWindow as number,
+      });
+      if (changed) this.host?.emit(usageEvent(this.usage, this.stream.turnId));
     }
     const item = asObject(params.item);
     if (item?.type === "fileChange") {

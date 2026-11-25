@@ -603,3 +603,27 @@
 /* SSH manual save */
 "remote.autosave.unsupported" = "Dự án SSH không hỗ trợ tự động lưu. Chọn Lưu để tải các thay đổi lên và biên dịch trên thiết bị từ xa.";
 "remote.preview.unsupported" = "Bản dựng này không có xem trước tích hợp cục bộ. Chọn Lưu để biên dịch trên thiết bị từ xa.";
+
+/* Assistant usage, thinking and turn errors */
+"assistant.context.title" = "Cửa sổ ngữ cảnh";
+"assistant.context.a11y" = "Đã dùng %@ phần trăm ngữ cảnh";
+"assistant.context.used" = "Ngữ cảnh: %1$@ trên %2$@ token (%3$@%%)";
+"assistant.context.input" = "Đầu vào: %@";
+"assistant.context.cached" = "Bộ nhớ đệm: %@";
+"assistant.context.output" = "Đầu ra: %@";
+"assistant.context.thinking" = "Suy nghĩ: %@";
+"assistant.context.total" = "Token: %@";
+"assistant.context.cost" = "Chi phí phiên: %@";
+"assistant.thinking.title" = "Đang suy nghĩ";
+"assistant.thinking.done" = "Đã suy nghĩ %@ giây";
+"assistant.thinking.finished" = "Đã suy nghĩ";
+"assistant.jump_latest" = "Đến mới nhất";
+"assistant.error.signed_out" = "Hãy đăng nhập %@ trong terminal rồi thử lại.";
+"assistant.error.rate_limited" = "%@ đã chạm giới hạn tốc độ hoặc mức sử dụng. Hãy đợi một lát rồi thử lại.";
+"assistant.error.network" = "Không kết nối được %@. Hãy kiểm tra kết nối rồi thử lại.";
+"assistant.error.context_full" = "Cuộc trò chuyện không còn vừa ngữ cảnh của mô hình. Hãy bắt đầu cuộc trò chuyện mới.";
+"assistant.error.context_full_compact" = "Cuộc trò chuyện không còn vừa ngữ cảnh của mô hình. Hãy bắt đầu cuộc trò chuyện mới hoặc chạy /compact.";
+"assistant.error.other" = "%@ đã dừng do lỗi.";
+"assistant.error.crashed" = "%@ đã dừng đột ngột.";
+"assistant.error.details" = "Chi tiết";
+"assistant.error.retry" = "Thử lại";

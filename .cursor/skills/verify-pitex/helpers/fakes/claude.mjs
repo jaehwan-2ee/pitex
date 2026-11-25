@@ -268,6 +268,71 @@ function approvalAnswer(requestId, response) {
   return false;
 }
 
+// USAGE: thinking, text, a Read, more text and a long streamed answer, with usage that
+// crosses 70 % and then 90 % of a 200k window, ending in a rate-limit error. The
+// second USAGE (Retry) answers normally. Timings leave room for screenshots.
+let usageRuns = 0;
+const at = (ms, fn) => setTimeout(fn, ms);
+const streamEvent = (event) => send({ type: "stream_event", session_id: session, event });
+const apiMessage = (contextTokens) =>
+  streamEvent({
+    type: "message_start",
+    message: { model: "claude-test", usage: { input_tokens: 400, cache_creation_input_tokens: 600, cache_read_input_tokens: contextTokens - 1000, output_tokens: 1 } },
+  });
+const delta = (index, delta) => streamEvent({ type: "content_block_delta", index, delta });
+
+function usage() {
+  usageRuns += 1;
+  if (usageRuns > 1) {
+    apiMessage(60_000);
+    delta(0, { type: "text_delta", text: "Retried fine: the citation key is now defined." });
+    finishUsage("success", "Retried fine: the citation key is now defined.");
+    return;
+  }
+  apiMessage(60_000);
+  delta(0, { type: "thinking_delta", thinking: "The user wants the bibliography fixed. " });
+  at(1200, () => delta(0, { type: "thinking_delta", thinking: "Read the log first, then the .bib file." }));
+  at(3500, () => {
+    delta(1, { type: "text_delta", text: "I will read the build log first." });
+    streamEvent({ type: "message_delta", usage: { output_tokens: 300 } });
+    send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_log", name: "Read", input: { file_path: "main.log" } }] } });
+    send({ type: "user", session_id: session, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_log", content: "Citation `knuth84' undefined." }] } });
+    apiMessage(145_000);
+    delta(0, { type: "text_delta", text: "The log says the citation `knuth84` is undefined." });
+  });
+  at(7000, () => {
+    apiMessage(185_000);
+    delta(0, { type: "text_delta", text: "\n\nHere is what I checked, step by step:\n\n" });
+  });
+  for (let line = 1; line <= 24; line += 1) {
+    at(7000 + line * 450, () => delta(0, { type: "text_delta", text: `${line}. Checked entry ${line} of refs.bib against the log.\n` }));
+  }
+  at(19_500, () => {
+    send({
+      type: "assistant",
+      session_id: session,
+      error: "rate_limit",
+      message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of requests has exceeded your rate limit."}}' }] },
+    });
+    finishUsage("error_during_execution", 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}');
+  });
+}
+
+function finishUsage(subtype, result) {
+  send({
+    type: "result",
+    subtype,
+    is_error: subtype !== "success",
+    session_id: session,
+    result,
+    // The SDK reads `errors` on every error result, as the real CLI sends it.
+    ...(subtype === "success" ? {} : { errors: [result] }),
+    total_cost_usd: 0.0731,
+    usage: { input_tokens: 1200, output_tokens: 900 },
+    modelUsage: { "claude-test": { outputTokens: 900, contextWindow: 200_000 } },
+  });
+}
+
 function finish(subtype, result) {
   send({
     type: "result",
@@ -278,6 +343,8 @@ function finish(subtype, result) {
     ...(subtype === "success" ? {} : { errors: [result] }),
     usage: { input_tokens: 3, output_tokens: 2 },
     total_cost_usd: 0,
+    // Like the real CLI, the model's window arrives only with the result.
+    modelUsage: { "claude-test": { outputTokens: 2, contextWindow: 200_000 } },
   });
 }
 
@@ -378,6 +445,10 @@ rl.on("line", (line) => {
         message: { role: "assistant", content: [{ type: "text", text: "pitex-ok" }] },
       });
       finish("success", "pitex-ok");
+      return;
+    }
+    if (text.includes("USAGE")) {
+      usage();
       return;
     }
     if (text.includes("MARKDOWN")) {

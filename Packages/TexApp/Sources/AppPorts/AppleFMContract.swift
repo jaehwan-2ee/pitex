@@ -361,6 +361,9 @@ public struct AppleFMStreamCursor: Equatable, Sendable {
         return events
     }
 
+    /// The error text a cancelled turn closes with.
+    public static let cancelledMessage = "The turn was cancelled."
+
     public mutating func close(stopReason: String, errorMessage: String?) -> [AppleFMJSON] {
         var events = openIfNeeded()
         var message: [String: AppleFMJSON] = [
@@ -375,6 +378,9 @@ public struct AppleFMStreamCursor: Equatable, Sendable {
         if stopReason == "error" {
             end["messages"] = .array([.object(message)])
         }
+        // Stop reads as a stopped turn (a notice), not a failure with Retry.
+        let outcome = stopReason != "error" ? "completed" : errorMessage == Self.cancelledMessage ? "canceled" : "failed"
+        end["outcome"] = .string(outcome)
         events.append(.object(end))
         opened = false
         text = ""

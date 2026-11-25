@@ -65,7 +65,7 @@ struct BottomConsoleView: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
-            // The VSplitView console height is user-adjustable: when the
+            // The console height is user-adjustable: when the
             // pane below wants more room than the console has, the VStack
             // compresses this row — fixedSize keeps the tabs at intrinsic
             // height and lets the pane scroll instead.
@@ -86,7 +86,10 @@ struct BottomConsoleView: View {
                 logPane
             }
         }
-        .frame(minHeight: 300, idealHeight: 360)
+        // Every size fixed: this VSplitView pane's hosting view must not take its size
+        // from the chat, which changes with every streamed token (constraint-loop crash).
+        .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity,
+               minHeight: 300, idealHeight: 360, maxHeight: .infinity)
         .accessibilityIdentifier("pitex.console")
     }
 

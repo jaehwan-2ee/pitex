@@ -22,7 +22,7 @@ use windows_platform::{
     WindowsWorkspaceOpener as PlatformWorkspaceOpener,
 };
 
-use crate::app_ui::{a11y, AppState, UiHandles, STATE};
+use crate::app_ui::{a11y, AppState, UiHandles, STATE, UI};
 use crate::compat;
 use crate::l10n::tr;
 use crate::model::{ConsoleSection, WorkspaceBuildState};
@@ -1036,6 +1036,24 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     controls.set_margin_bottom(2);
     let model_picker = gtk4::DropDown::from_strings(&[tr(lang, "assistant.model_placeholder").as_str()]);
     model_picker.set_size_request(180, -1);
+    // Ellipsized rows: a long "backend · model (id) · provider" title shrinks to fit the
+    // pane instead of widening it; the open list still shows whole names.
+    let factory = gtk4::SignalListItemFactory::new();
+    factory.connect_setup(|_, object| {
+        let Some(item) = object.downcast_ref::<gtk4::ListItem>() else { return };
+        let label = gtk4::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        item.set_child(Some(&label));
+    });
+    factory.connect_bind(|_, object| {
+        let Some(item) = object.downcast_ref::<gtk4::ListItem>() else { return };
+        let text = item.item().and_downcast::<gtk4::StringObject>().map(|row| row.string());
+        if let (Some(label), Some(text)) = (item.child().and_downcast::<gtk4::Label>(), text) {
+            label.set_text(&text);
+        }
+    });
+    model_picker.set_factory(Some(&factory));
     a11y(&model_picker, "pitex.assistantModel", "assistant.model");
     {
         let state = state.clone();
@@ -1101,9 +1119,14 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     ui.agent_mode_picker.replace(Some(mode_picker.clone()));
 
     let attach_label = gtk4::Label::new(Some(&tr(lang, "assistant.attach_document")));
+    // Shrinks before the pane outgrows a narrow window.
+    attach_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    // The full text when the label is cut short.
+    attach_label.set_tooltip_text(Some(&tr(lang, "assistant.attach_document")));
     controls.append(&attach_label);
     let attach_toggle = gtk4::Switch::new();
     attach_toggle.set_valign(gtk4::Align::Center);
+    attach_toggle.set_tooltip_text(Some(&tr(lang, "assistant.attach_document")));
     a11y(&attach_toggle, "pitex.assistantContext", "assistant.attach_document");
     {
         let state = state.clone();
@@ -1151,14 +1174,6 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     }
     ui.agent_history_button.replace(Some(history.clone()));
     controls.append(&history);
-    let usage = gtk4::Label::new(None);
-    usage.set_hexpand(true);
-    usage.set_halign(gtk4::Align::End);
-    usage.add_css_class("dim-label");
-    usage.set_widget_name("pitex.assistant.usage");
-    usage.set_visible(false);
-    ui.agent_usage_label.replace(Some(usage.clone()));
-    controls.append(&usage);
     root.append(&controls);
 
     // Why an enabled backend lists no models; selectable to copy a command.
@@ -1187,11 +1202,67 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
     scroll.set_child(Some(&transcript));
     ui.transcript_box.replace(Some(transcript.clone()));
     ui.transcript_scroll.replace(Some(scroll.clone()));
-    root.append(&scroll);
+    // Follow new content only while the view is at the bottom (`ScrollPin`).
+    let adj = scroll.vadjustment();
+    adj.connect_value_changed(|adj| {
+        UI.with(|ui| {
+            let mut pin = ui.transcript_pin.get();
+            pin.scrolled(adj.value(), adj.page_size(), adj.upper());
+            ui.transcript_pin.set(pin);
+            if let Some(button) = ui.agent_jump_button.borrow().as_ref() {
+                button.set_visible(pin.unseen);
+            }
+        });
+    });
+    adj.connect_changed(|adj| {
+        UI.with(|ui| {
+            let grew = adj.upper() > ui.transcript_upper.replace(adj.upper()) && ui.transcript_fresh.take();
+            let mut pin = ui.transcript_pin.get();
+            let follow = if grew { pin.content_added() } else { pin.pinned };
+            ui.transcript_pin.set(pin);
+            if follow {
+                // `changed` fires inside the viewport's allocation, where a new value is not
+                // drawn until the next layout; move it after this frame's layout instead.
+                let adj = adj.clone();
+                gtk4::glib::idle_add_local_once(move || adj.set_value(adj.upper() - adj.page_size()));
+            }
+            if let Some(button) = ui.agent_jump_button.borrow().as_ref() {
+                button.set_visible(pin.unseen);
+            }
+        });
+    });
+    let jump = gtk4::Button::with_label(&tr(lang, "assistant.jump_latest"));
+    jump.set_halign(gtk4::Align::Center);
+    jump.set_valign(gtk4::Align::End);
+    jump.set_margin_bottom(8);
+    jump.add_css_class("pill");
+    jump.add_css_class("osd");
+    jump.set_visible(false);
+    a11y(&jump, "pitex.assistant.jumpLatest", "assistant.jump_latest");
+    jump.connect_clicked(|button| {
+        button.set_visible(false);
+        UI.with(|ui| {
+            let mut pin = ui.transcript_pin.get();
+            pin.jump();
+            ui.transcript_pin.set(pin);
+            if let Some(scroll) = ui.transcript_scroll.borrow().as_ref() {
+                let adj = scroll.vadjustment();
+                adj.set_value(adj.upper() - adj.page_size());
+            }
+        });
+    });
+    ui.agent_jump_button.replace(Some(jump.clone()));
+    let transcript_overlay = gtk4::Overlay::new();
+    transcript_overlay.set_vexpand(true);
+    transcript_overlay.set_child(Some(&scroll));
+    transcript_overlay.add_overlay(&jump);
+    root.append(&transcript_overlay);
 
     let status = gtk4::Label::new(None);
     status.set_xalign(0.0);
+    status.set_wrap(true);
     status.set_margin_start(10);
+    status.set_margin_end(10);
     status.add_css_class("dim-label");
     a11y(&status, "pitex.assistant.status", "assistant.title");
     ui.agent_status_label.replace(Some(status.clone()));
@@ -1569,6 +1640,50 @@ fn build_assistant_pane(state: &Rc<RefCell<AppState>>, ui: &UiHandles) -> gtk4::
         });
         composer.add_controller(drop);
     }
+
+    // Context meter: bar and "38% · 76k/200k"; the popover lists tokens and cost.
+    // A plain button and popover: MenuButton::set_child needs GTK 4.6 bindings.
+    let meter = gtk4::Button::new();
+    meter.set_valign(gtk4::Align::End);
+    meter.set_has_frame(false);
+    meter.set_visible(false);
+    let meter_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    let bar = gtk4::LevelBar::for_interval(0.0, 100.0);
+    // The band classes color it; the default low/high offsets would fight them.
+    for offset in ["low", "high", "full"] {
+        bar.remove_offset_value(Some(offset));
+    }
+    bar.set_size_request(36, 6);
+    bar.set_valign(gtk4::Align::Center);
+    bar.add_css_class("pitex-meter");
+    let usage = gtk4::Label::new(None);
+    usage.add_css_class("dim-label");
+    usage.add_css_class("caption");
+    usage.add_css_class("numeric");
+    usage.set_widget_name("pitex.assistant.usage");
+    // Fixed width so the composer does not jump as the numbers change.
+    usage.set_width_chars(14);
+    usage.set_xalign(0.0);
+    meter_row.append(&bar);
+    meter_row.append(&usage);
+    meter.set_child(Some(&meter_row));
+    let details = gtk4::Label::new(None);
+    details.set_xalign(0.0);
+    details.add_css_class("numeric");
+    details.set_margin_start(6);
+    details.set_margin_end(6);
+    details.set_margin_top(4);
+    details.set_margin_bottom(4);
+    let meter_popover = gtk4::Popover::new();
+    meter_popover.set_child(Some(&details));
+    meter_popover.set_parent(&meter);
+    meter.connect_clicked(move |_| meter_popover.popup());
+    a11y(&meter, "pitex.assistant.contextMeter", "assistant.context.title");
+    ui.agent_meter.replace(Some(meter.clone()));
+    ui.agent_meter_bar.replace(Some(bar));
+    ui.agent_usage_label.replace(Some(usage));
+    ui.agent_meter_details.replace(Some(details));
+    composer.append(&meter);
 
     let send = gtk4::Button::from_icon_name("go-up-symbolic");
     send.set_valign(gtk4::Align::End);

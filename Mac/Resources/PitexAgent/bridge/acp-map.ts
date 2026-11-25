@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { AcpProfile } from "./acp-profiles.ts";
-import type { ApprovalAction, ModeState } from "./adapter.ts";
+import { markOutcome, type ApprovalAction, type ErrorCode, type ModeState } from "./adapter.ts";
 import { cleanDetail, newTurnId, stampTurn, unifiedDiff, type ToolDetail, type ToolKind } from "./tool-detail.ts";
 import { todosFromAcpPlan, type TodoItem } from "./todos.ts";
 
@@ -483,7 +483,7 @@ function mapUpdate(update: Json, state: StreamState): Json[] {
 }
 
 /** Close the open pi turn. `stopReason` is the ACP prompt result. */
-export function closeTurn(state: StreamState, stopReason: string | null, errorMessage?: string): Json[] {
+export function closeTurn(state: StreamState, stopReason: string | null, errorMessage?: string, code?: ErrorCode): Json[] {
   const out: Json[] = [];
   ensureTurn(state, out);
   // A call still open when the turn closes was cut off: abort, cancel, or an early end.
@@ -514,6 +514,7 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
   out.push({ type: "turn_end" });
   const agentEnd: Json = { type: "agent_end" };
   if (failed) agentEnd.messages = [assistant];
+  markOutcome(agentEnd, stopReason === "cancelled" ? "canceled" : failed ? "failed" : "completed", message, code);
   out.push(agentEnd);
   state.turnOpen = false;
   state.assistantText = "";
