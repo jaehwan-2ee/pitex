@@ -99,6 +99,12 @@ struct AgentPanel: View {
                     .padding(.bottom, 2)
             }
 
+            if showingContextDetails, let meter = coordinator.contextMeter {
+                contextDetails(meter)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
+
             composerRow
                 .padding(10)
         }
@@ -794,19 +800,25 @@ struct AgentPanel: View {
         .help(spoken)
         .accessibilityLabel(Text(verbatim: spoken))
         .accessibilityIdentifier("pitex.assistant.contextMeter")
-        .popover(isPresented: $showingContextDetails, arrowEdge: .top) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("assistant.context.title").font(.caption.weight(.semibold))
-                ForEach(contextDetailLines(meter), id: \.self) { line in
-                    Text(verbatim: line).font(.caption.monospacedDigit())
-                }
-            }
-            .padding(10)
-            .textSelection(.enabled)
-        }
+        .accessibilityAddTraits(showingContextDetails ? .isSelected : [])
     }
 
-    /// The popover: context, the token counts the backend reported, and the cost.
+    /// Inline, not a popover: a popover open while the turn streams crashed AppKit's layout.
+    private func contextDetails(_ meter: AgentContextMeter) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("assistant.context.title").font(.caption.weight(.semibold))
+            ForEach(contextDetailLines(meter), id: \.self) { line in
+                Text(verbatim: line).font(.caption.monospacedDigit())
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+        .textSelection(.enabled)
+        .accessibilityIdentifier("pitex.assistant.contextDetails")
+    }
+
+    /// The details: context, the token counts the backend reported, and the cost.
     private func contextDetailLines(_ meter: AgentContextMeter) -> [String] {
         let usage = coordinator.usage
         let compact = AgentContextMeter.compactTokens
