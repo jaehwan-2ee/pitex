@@ -86,7 +86,10 @@ struct BottomConsoleView: View {
                 logPane
             }
         }
-        .frame(minHeight: 300, idealHeight: 360)
+        // Every size fixed: this VSplitView pane's hosting view must not take its size
+        // from the chat, which changes with every streamed token (constraint-loop crash).
+        .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity,
+               minHeight: 300, idealHeight: 360, maxHeight: .infinity)
         .accessibilityIdentifier("pitex.console")
     }
 
