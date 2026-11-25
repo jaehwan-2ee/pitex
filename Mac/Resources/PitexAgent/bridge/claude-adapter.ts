@@ -7,8 +7,9 @@
 // the environment passed to `claude` and to query(). Everything else is kept.
 // https://code.claude.com/docs/en/env-vars
 //
-// SDK 0.3.312: permissionMode "default" keeps manual approvals on
-// canUseTool (an omitted mode can start in "auto"). settingSources [] is
+// SDK 0.3.312: permissionMode is always passed (an omitted mode can start
+// in "auto"). It is "default" unless the user picked acceptEdits or plan for
+// this conversation (CLAUDE_MODES); bypassPermissions is never offered. settingSources [] is
 // the SDK's isolation mode so filesystem settings cannot pre-approve tools.
 // interrupt() and the session AbortController require streaming input.
 // Resume passes the session id to options.resume.
@@ -31,19 +32,22 @@ import { accessSync, constants as fsConstants, readFileSync, writeFileSync } fro
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
-import type { AdapterHost, AdapterStartOptions, CliAdapter, PiCommand } from "./adapter.ts";
+import type { AdapterHost, AdapterStartOptions, CliAdapter, ModeState, PiCommand } from "./adapter.ts";
 import {
   allowKey,
-  approvalPresentation,
   cancelOpenTools,
+  CLAUDE_MODES,
+  claudeAnswers,
+  claudeApprovalEvent,
   createClaudeStreamState,
   mapClaudeMessage,
   messagesFromState,
   modelIdOfInit,
   modelsFromSdk,
+  isClaudeMode,
   parseClaudeAuthStatus,
   permissionForDecision,
-  permissionModeOfInit,
+  reportedPermissionMode,
   sessionIdOf,
   statsFromResult,
   visibleClaudeModels,
@@ -57,6 +61,7 @@ import {
   foreignSessionMessage,
   rememberSession,
   sessionBackend,
+  sessionModeFor,
   threadIdFor,
   writeSessionPrelude,
 } from "./session-index.ts";
@@ -71,7 +76,7 @@ const SDK_URL = new URL("./vendor/claude-agent-sdk/sdk.mjs", import.meta.url);
 export interface ClaudeQueryOptions {
   cwd: string;
   pathToClaudeCodeExecutable: string;
-  permissionMode: "default";
+  permissionMode: string;
   includePartialMessages: boolean;
   settingSources: [];
   canUseTool: (
@@ -89,6 +94,7 @@ export interface ClaudeQueryOptions {
   mcpServers: Record<string, never>;
   persistSession: boolean;
   env: Record<string, string>;
+  hooks: { PreToolUse: { matcher: string; hooks: (() => Promise<Json>)[] }[] };
 }
 
 export interface CanUseToolOptions {
@@ -127,7 +133,8 @@ export interface ClaudeAdapterDeps {
 }
 
 interface PendingApproval {
-  finish: (decision: string) => void;
+  /** The host's approval_response, or null when the bridge settles it (abort, new chat, switch). */
+  finish: (command: PiCommand | null) => void;
 }
 
 /**
@@ -326,6 +333,8 @@ export class ClaudeAdapter implements CliAdapter {
   private modelId: string | null = null;
   private modelPinned = false;
   private effort: string | null = null;
+  /** Permission mode of this conversation (CLAUDE_MODES). A new conversation starts in default. */
+  private mode = "default";
   private models: ListedClaudeModel[] = [];
   private allowKeys = new Set<string>();
   private pending = new Map<string, PendingApproval>();
@@ -412,6 +421,9 @@ export class ClaudeAdapter implements CliAdapter {
         case "set_thinking_level":
           await this.setEffort(command, host);
           return;
+        case "set_mode":
+          await this.setMode(command, host);
+          return;
         case "get_session_stats":
           host.respond("get_session_stats", true, this.stats, undefined, command.id);
           return;
@@ -460,7 +472,7 @@ export class ClaudeAdapter implements CliAdapter {
 
   private closeActiveQuery(): void {
     this.generation += 1;
-    this.denyOutstanding(true);
+    this.denyOutstanding();
     const query = this.query;
     const pump = this.pump;
     const controller = this.abortController;
@@ -484,7 +496,7 @@ export class ClaudeAdapter implements CliAdapter {
     const options: ClaudeQueryOptions = {
       cwd: this.cwd,
       pathToClaudeCodeExecutable: binary,
-      permissionMode: "default",
+      permissionMode: this.mode,
       includePartialMessages: true,
       settingSources: [],
       canUseTool: (toolName, input, toolOptions) => this.onCanUseTool(toolName, input, toolOptions),
@@ -501,6 +513,8 @@ export class ClaudeAdapter implements CliAdapter {
       mcpServers: {},
       persistSession: !this.catalogProbe,
       env: this.childEnv,
+      // Every shell tool the CLI has (PowerShell is an opt-in preview on Windows).
+      hooks: { PreToolUse: [{ matcher: "Bash|PowerShell|Monitor", hooks: [async () => this.shellHook()] }] },
     };
     if (this.modelId) options.model = this.modelId;
     if (this.effort) options.effort = this.effort;
@@ -550,8 +564,7 @@ export class ClaudeAdapter implements CliAdapter {
     }
     const initModel = modelIdOfInit(message);
     if (initModel && !this.modelPinned) this.modelId = initModel;
-    const mode = permissionModeOfInit(message);
-    if (mode && mode !== "default") void this.query?.setPermissionMode?.("default");
+    this.observeMode(message);
     const before = this.stream.transcript.length;
     const events = mapClaudeMessage(message, this.stream);
     this.persistFrom(before);
@@ -581,7 +594,7 @@ export class ClaudeAdapter implements CliAdapter {
     const before = this.stream.transcript.length;
     for (const event of cancelOpenTools(this.stream)) host.emit(event);
     this.persistFrom(before);
-    this.denyOutstanding(true);
+    this.denyOutstanding();
     try {
       await this.query?.interrupt();
     } catch {
@@ -598,7 +611,9 @@ export class ClaudeAdapter implements CliAdapter {
     this.stream = createClaudeStreamState();
     this.allowKeys.clear();
     this.running = false;
+    this.mode = "default";
     await this.openQuery(null);
+    this.emitMode();
     host.respond("new_session", true, {}, undefined, id);
   }
 
@@ -627,7 +642,11 @@ export class ClaudeAdapter implements CliAdapter {
     this.stream.transcript = readPiMessages(sessionPath);
     this.persistedTranscript = this.stream.transcript.length;
     this.running = false;
+    // The mode picked for that conversation comes back with it; anything else starts in default.
+    const saved = sessionModeFor(this.sessionDir, sessionPath);
+    this.mode = isClaudeMode(saved) ? saved : "default";
     await this.openQuery(threadId);
+    this.emitMode();
     host.respond("switch_session", true, { cancelled: false }, undefined, command.id);
   }
 
@@ -658,6 +677,71 @@ export class ClaudeAdapter implements CliAdapter {
     host.respond("set_thinking_level", true, {}, undefined, command.id);
   }
 
+  private async setMode(command: PiCommand, host: AdapterHost): Promise<void> {
+    if (!isClaudeMode(command.modeId)) {
+      host.respond("set_mode", false, undefined, "Claude Code cannot use that permission mode.", command.id);
+      return;
+    }
+    await this.applyMode(command.modeId, true);
+    host.respond("set_mode", true, { mode: this.modeState() }, undefined, command.id);
+  }
+
+  /** Records the mode for this conversation, tells the CLI when `push`, and tells the host. */
+  private async applyMode(mode: string, push: boolean): Promise<void> {
+    this.mode = mode;
+    this.remember();
+    if (push && this.query?.setPermissionMode) {
+      try {
+        await this.query.setPermissionMode(mode);
+      } catch {
+        // options.permissionMode carries it the next time the CLI starts.
+      }
+    }
+    this.emitMode();
+  }
+
+  /**
+   * The CLI reports its mode at launch (init) and when it switches by itself
+   * (status: EnterPlanMode, or leaving plan). At launch Pitex's choice wins.
+   * Claude may move between default and plan on its own; any other mode it
+   * reports (acceptEdits, bypassPermissions, auto) is set back, because
+   * accept-edits is the user's explicit choice and bypass is never offered.
+   */
+  private observeMode(message: unknown): void {
+    const reported = reportedPermissionMode(message);
+    if (!reported || reported.mode === this.mode) return;
+    if (!reported.init && (reported.mode === "default" || reported.mode === "plan")) {
+      void this.applyMode(reported.mode, false);
+      return;
+    }
+    void this.query?.setPermissionMode?.(this.mode);
+  }
+
+  /**
+   * acceptEdits also auto-approves filesystem commands (touch, mkdir, ...) without
+   * calling canUseTool (measured on Claude Code 2.1.331). Shell commands must still
+   * ask in every mode, so the hook turns them into an ask there. Other modes keep
+   * Claude's own rules (only its read-only commands skip the card).
+   */
+  private shellHook(): Json {
+    if (this.mode !== "acceptEdits") return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+        permissionDecisionReason: "Pitex asks before every shell command.",
+      },
+    };
+  }
+
+  private modeState(): ModeState {
+    return { id: this.mode, options: CLAUDE_MODES };
+  }
+
+  private emitMode(): void {
+    this.host?.emit({ type: "mode_changed", mode: this.modeState() });
+  }
+
   private noteUserMessage(text: string): void {
     const userMessage: Json = { role: "user", content: [{ type: "text", text }] };
     if (!this.sessionPath) {
@@ -675,7 +759,7 @@ export class ClaudeAdapter implements CliAdapter {
 
   private remember(): void {
     if (!this.sessionPath || !this.sessionId) return;
-    rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined);
+    rememberSession(this.sessionDir, this.sessionPath, this.sessionId, this.modelId ?? undefined, this.mode);
   }
 
   private persistFrom(before: number): void {
@@ -694,6 +778,7 @@ export class ClaudeAdapter implements CliAdapter {
         ? { id: this.modelId, provider: "claude", name: current?.name ?? this.modelId }
         : null,
       thinkingLevel: this.thinkingLevel(),
+      mode: this.modeState(),
     };
   }
 
@@ -719,7 +804,8 @@ export class ClaudeAdapter implements CliAdapter {
   ): Promise<Json> {
     const safeInput = input && typeof input === "object" && !Array.isArray(input) ? input : {};
     const key = allowKey(toolName, safeInput);
-    if (this.allowKeys.has(key)) {
+    const asks = toolName === "AskUserQuestion" || toolName === "ExitPlanMode";
+    if (!asks && this.allowKeys.has(key)) {
       return Promise.resolve({
         behavior: "allow",
         updatedInput: safeInput,
@@ -728,48 +814,99 @@ export class ClaudeAdapter implements CliAdapter {
       });
     }
     const id = options.toolUseID || options.requestId || randomUUID();
-    const view = approvalPresentation(toolName, safeInput, options);
+    const event = claudeApprovalEvent(id, toolName, safeInput, options);
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (result: Json) => {
+      const decide = (command: PiCommand | null) => {
         if (settled) return;
         settled = true;
         this.pending.delete(id);
-        resolve(result);
-      };
-      const decide = (decision: string) => {
-        const aborted = decision === "abort";
-        const choice = permissionForDecision(
-          aborted ? "deny" : decision,
-          toolName,
-          safeInput,
-          options.suggestions,
-          options.suppressAlwaysAllowRule === true,
-          options.toolUseID
+        if (!command) {
+          // Settled by the bridge, not by the user: the host drops the card.
+          this.host?.emit({ type: "approval_resolved", id, outcome: "cancelled" });
+          const denied = permissionForDecision("deny", toolName, safeInput, undefined, true, options.toolUseID);
+          resolve({ ...denied.result, interrupt: true });
+          return;
+        }
+        // A failed index write must not leave Claude waiting forever.
+        void this.answer(event.kind, toolName, safeInput, options, command).then(resolve, () =>
+          resolve({ behavior: "deny", message: "Pitex could not deliver the answer." })
         );
-        if (choice.remember) this.allowKeys.add(choice.rememberKey);
-        finish(aborted ? { ...choice.result, interrupt: true } : choice.result);
       };
       if (options.signal.aborted) {
-        decide("abort");
+        decide(null);
         return;
       }
-      options.signal.addEventListener("abort", () => decide("abort"), { once: true });
+      options.signal.addEventListener("abort", () => decide(null), { once: true });
       this.pending.set(id, { finish: decide });
-      this.host?.emit({
-        type: "approval_request",
-        id,
-        kind: view.kind,
-        title: view.title,
-        detail: view.detail,
-      });
+      this.host?.emit(event);
     });
   }
 
+  /** The SDK PermissionResult for the host's answer to one card. */
+  private async answer(
+    kind: unknown,
+    toolName: string,
+    input: Record<string, unknown>,
+    options: CanUseToolOptions,
+    command: PiCommand
+  ): Promise<Json> {
+    const toolUseID = options.toolUseID ? { toolUseID: options.toolUseID } : {};
+    const feedback = command.message?.trim() ?? "";
+    const allow = command.decision === "approve" || command.decision === "always_allow";
+    if (kind === "question") {
+      const answers = allow ? claudeAnswers(input, command.answers) : null;
+      if (!answers) {
+        return {
+          behavior: "deny",
+          message: feedback || "The user dismissed the question without answering.",
+          ...toolUseID,
+          decisionClassification: "user_reject",
+        };
+      }
+      return { behavior: "allow", updatedInput: { ...input, answers }, ...toolUseID, decisionClassification: "user_temporary" };
+    }
+    if (kind === "plan") {
+      const approved = command.actionId ? command.actionId.startsWith("approve_plan") : allow;
+      if (!approved) {
+        return {
+          behavior: "deny",
+          message: feedback
+            ? `The user wants to keep planning. Their feedback: ${feedback}`
+            : "The user wants to keep planning. Revise the plan before asking again.",
+          ...toolUseID,
+          decisionClassification: "user_reject",
+        };
+      }
+      // Leaving plan mode: ask before edits, or accept edits when the user picked that button.
+      const target = command.actionId === "approve_plan_accept_edits" ? "acceptEdits" : "default";
+      await this.applyMode(target, true);
+      return {
+        behavior: "allow",
+        updatedInput: input,
+        updatedPermissions: [{ type: "setMode", mode: target, destination: "session" }],
+        ...toolUseID,
+        decisionClassification: "user_temporary",
+      };
+    }
+    const decision = ["approve", "deny", "always_allow"].includes(command.actionId ?? "")
+      ? command.actionId
+      : command.decision;
+    const choice = permissionForDecision(
+      decision,
+      toolName,
+      input,
+      options.suggestions,
+      options.suppressAlwaysAllowRule === true,
+      options.toolUseID
+    );
+    if (choice.remember) this.allowKeys.add(choice.rememberKey);
+    if (choice.result.behavior === "deny" && feedback) return { ...choice.result, message: feedback };
+    return choice.result;
+  }
+
   private resolveApproval(command: PiCommand): void {
-    const pending = this.pending.get(command.id ?? "");
-    if (!pending) return;
-    pending.finish(command.decision ?? "deny");
+    this.pending.get(command.id ?? "")?.finish(command);
   }
 
   private noteSignedOut(): void {
@@ -783,10 +920,10 @@ export class ClaudeAdapter implements CliAdapter {
     this.host.emit({ type: "extension_error", error: CLAUDE_SIGNED_OUT });
   }
 
-  private denyOutstanding(interrupt: boolean): void {
+  private denyOutstanding(): void {
     const outstanding = [...this.pending.values()];
     this.pending.clear();
-    for (const pending of outstanding) pending.finish(interrupt ? "abort" : "deny");
+    for (const pending of outstanding) pending.finish(null);
   }
 }
 

@@ -12,7 +12,7 @@ const FAKES = join(HERE, "fakes");
 const INSTRUCTIONS = "Pitex verification instructions.";
 
 const PROVIDERS = ["codex", "claude", "grok", "agy"];
-const GTK_PROVIDERS = ["claude", "claude-toolcards", "claude-markdown", "agy", "stale-codex", "stale-grok"];
+const GTK_PROVIDERS = ["claude", "claude-toolcards", "claude-markdown", "claude-approvals", "agy", "stale-codex", "stale-grok"];
 const PATH_ENV = { codex: "CODEX_PATH", claude: "CLAUDE_PATH", grok: "GROK_PATH", agy: "AGY_PATH" };
 const FAKE_BIN = { codex: "codex.mjs", claude: "claude.mjs", grok: "grok.mjs", agy: "agy.mjs" };
 

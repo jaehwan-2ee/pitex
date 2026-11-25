@@ -11,11 +11,23 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248}
+MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248}
 # The fake Claude answers TOOLCARDS with a Read, an Edit and a failing Bash call.
 TOOLCARDS = "claude-toolcards"
 # MARKDOWN streams a Markdown answer (heading, list, code, math, table, links).
 MARKDOWN = "claude-markdown"
+# APPROVALS switches the mode picker to Plan, answers a question card, keeps
+# planning once with feedback, then approves the revised plan with accept edits.
+APPROVALS = "claude-approvals"
+# The mode picker sits on the composer row, right of the message entry.
+MODE_PICKER = (1188, 767)
+# Approval card in the 1280x800 window once the divider is dragged up. Its buttons sit
+# just above the composer: Submit / Approve plan, then Approve and accept edits, then Keep planning.
+CARD_BUTTONS = [(476, 717), (664, 717), (837, 717)]
+QUESTION_OTHER_ENTRY = (700, 569)
+QUESTION_INTRO = (450, 660)
+QUESTION_METHOD = (450, 688)
+PLAN_FEEDBACK = (700, 677)
 # Expander rows of those three cards in the 1280x800 window, top to bottom.
 # The Read card's "Open file" button once all three cards are open.
 OPEN_FILE_CLICK = (497, 397)
@@ -95,12 +107,14 @@ def main():
         shot(evidence / "03-assistant.png")
         click(560, 752)
         time.sleep(0.15)
-        if provider in (TOOLCARDS, MARKDOWN):
+        if provider in (TOOLCARDS, MARKDOWN, APPROVALS):
             # Give the transcript room: drag the editor/console divider up.
             run(["xdotool", "mousemove", "840", "538", "mousedown", "1", "mousemove", "840", "400", "mousemove", "840", "160", "mouseup", "1"])
             time.sleep(0.4)
             click(560, 752)
             time.sleep(0.15)
+        if provider == APPROVALS:
+            return approvals(evidence, result)
         prompt = {TOOLCARDS: "TOOLCARDS", MARKDOWN: "MARKDOWN"}.get(provider, "Fix the title")
         run(["xdotool", "type", "--delay", "12", prompt])
         time.sleep(0.15)
@@ -220,6 +234,82 @@ def markdown(evidence, result):
     result["steps"].append("markdown")
     write(evidence, result)
     return 0 if result["pass"] else 1
+
+
+def approvals(evidence, result):
+    time.sleep(1.0)
+    shot(evidence / "04-mode-picker.png")
+    click(*MODE_PICKER)
+    time.sleep(0.8)
+    shot(evidence / "05-mode-open.png")
+    # Ask before edits -> Accept edits -> Plan.
+    run(["xdotool", "key", "Down", "Down", "Return"])
+    time.sleep(1.0)
+    shot(evidence / "06-mode-plan.png")
+    send_prompt("QUESTION")
+    time.sleep(2.5)
+    shot(evidence / "07-question.png")
+    # Typing in the first question's Other field picks Other; both parts in the multi-select.
+    click(*QUESTION_OTHER_ENTRY)
+    run(["xdotool", "type", "--delay", "12", "XeLaTeX"])
+    click(*QUESTION_INTRO)
+    click(*QUESTION_METHOD)
+    time.sleep(0.4)
+    shot(evidence / "08-question-filled.png")
+    # Enter in the Other field submits once every question has an answer.
+    click(*QUESTION_OTHER_ENTRY)
+    run(["xdotool", "key", "Return"])
+    time.sleep(1.5)
+    shot(evidence / "09-question-answered.png")
+    send_prompt("PLAN")
+    time.sleep(2.5)
+    shot(evidence / "10-plan.png")
+    click(*PLAN_FEEDBACK)
+    run(["xdotool", "type", "--delay", "12", "Also add an abstract."])
+    time.sleep(0.3)
+    shot(evidence / "11-plan-feedback.png")
+    # Enter in the feedback field is Keep planning.
+    run(["xdotool", "key", "Return"])
+    time.sleep(2.0)
+    shot(evidence / "12-plan-revised.png")
+    click(*CARD_BUTTONS[1])
+    time.sleep(2.0)
+    shot(evidence / "13-plan-approved.png")
+    record_path = Path(os.environ["FAKE_RECORD"])
+    notes = []
+    for line in record_path.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("kind") == "note":
+            notes.append(row)
+    result["notes"] = notes
+    find = lambda key: next((row for row in notes if key in row), {})
+    modes = [row["setPermissionMode"] for row in notes if "setPermissionMode" in row]
+    result["checks"] = {
+        "modePlan": "plan" in modes,
+        "questionAnswered": find("question").get("question") == "allow"
+        and find("question").get("answers") == {
+            "Which TeX engine should the build use?": "XeLaTeX",
+            "Which parts need work?": "Intro, Method",
+        },
+        "keptPlanning": find("plan1").get("plan1") == "deny" and "Also add an abstract." in str(find("plan1").get("message")),
+        "planApproved": find("plan2").get("plan2") == "allow"
+        and find("plan2").get("updatedPermissions") == [{"type": "setMode", "mode": "acceptEdits", "destination": "session"}],
+        "acceptEditsAfterPlan": modes[-1:] == ["acceptEdits"],
+    }
+    result["pass"] = all(result["checks"].values())
+    result["steps"].append("approvals")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
+
+
+def send_prompt(text):
+    click(560, 752)
+    time.sleep(0.15)
+    run(["xdotool", "type", "--delay", "12", text])
+    run(["xdotool", "key", "Return"])
 
 
 def seed_stale_provider(stored):

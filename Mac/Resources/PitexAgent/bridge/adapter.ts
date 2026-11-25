@@ -14,6 +14,28 @@ export interface PiCommand {
   modelId?: string;
   level?: string;
   decision?: string;
+  /** approval_response: the `actions[].id` the user picked. */
+  actionId?: string;
+  /** approval_response: question id → the chosen label(s) or the "Other" text. */
+  answers?: Record<string, unknown>;
+  /** approval_response: feedback for a deny or "Keep planning". */
+  message?: string;
+  /** set_mode */
+  modeId?: string;
+}
+
+/** One button on an approval card (`approval_request.actions`). Hosts localize known ids. */
+export interface ApprovalAction {
+  id: string;
+  label: string;
+  behavior: "allow" | "deny";
+  variant?: "primary" | "secondary" | "danger";
+}
+
+/** `get_state.mode` and `mode_changed.mode`: the permission mode and the ones the user may pick. */
+export interface ModeState {
+  id: string;
+  options: { id: string; label: string }[];
 }
 
 export interface AdapterHost {

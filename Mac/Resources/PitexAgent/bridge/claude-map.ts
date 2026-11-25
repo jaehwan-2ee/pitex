@@ -10,6 +10,7 @@
 //
 // This file is original Pitex code written against that SDK reference.
 
+import type { ApprovalAction, ModeState } from "./adapter.ts";
 import { cleanDetail, newTurnId, patchDiff, stampTurn, unifiedDiff, type ToolDetail } from "./tool-detail.ts";
 
 export type Json = Record<string, unknown>;
@@ -134,6 +135,10 @@ function filePathOf(input: Record<string, unknown>): string {
 
 /** One line for the approval card and the tool row. JSON is only the last resort. */
 function compactToolSummary(toolName: string, input: Record<string, unknown>): string {
+  if (toolName === "AskUserQuestion") {
+    const asked = claudeQuestions(input).map((question) => question.question).join(" · ");
+    if (asked) return `${toolName}: ${asked}`;
+  }
   for (const key of SUMMARY_KEYS) {
     const value = textField(input, key);
     if (value) return `${toolName}: ${value}`;
@@ -182,6 +187,126 @@ export function approvalPresentation(
         ? filePath || described || toolName
         : compactToolSummary(toolName, input) || (described ? `${toolName}: ${described}` : toolName);
   return { kind, title, detail: detail.slice(0, 4000) };
+}
+
+/**
+ * The permission modes Pitex offers for Claude Code. bypassPermissions, auto
+ * and dontAsk are never offered, and a session always starts in default.
+ */
+export const CLAUDE_MODES: ModeState["options"] = [
+  { id: "default", label: "Ask before edits" },
+  { id: "acceptEdits", label: "Accept edits" },
+  { id: "plan", label: "Plan" },
+];
+
+export function isClaudeMode(id: unknown): id is string {
+  return CLAUDE_MODES.some((mode) => mode.id === id);
+}
+
+/** ExitPlanMode buttons. Approving switches the session to default or, when picked, to acceptEdits. */
+export const PLAN_ACTIONS: ApprovalAction[] = [
+  { id: "approve_plan", label: "Approve plan", behavior: "allow", variant: "primary" },
+  { id: "approve_plan_accept_edits", label: "Approve and accept edits", behavior: "allow", variant: "secondary" },
+  { id: "keep_planning", label: "Keep planning", behavior: "deny" },
+];
+
+/** Same cap as the host Markdown renderer. */
+const PLAN_CAP = 32_000;
+
+export interface ApprovalQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: { label: string; description?: string }[];
+  multiSelect: boolean;
+  allowOther: boolean;
+}
+
+/** AskUserQuestion input → card questions. "Other" is the host's to offer, so every question allows it (as Paseo does). */
+export function claudeQuestions(input: Json): ApprovalQuestion[] {
+  const raw = Array.isArray(input.questions) ? input.questions : [];
+  return raw.flatMap((item, index) => {
+    const row = asObject(item);
+    const question = asString(row?.question)?.trim();
+    if (!row || !question) return [];
+    const options = (Array.isArray(row.options) ? row.options : []).flatMap((option) => {
+      const entry = asObject(option);
+      const label = (typeof option === "string" ? option : asString(entry?.label))?.trim();
+      if (!label) return [];
+      const description = asString(entry?.description)?.trim();
+      return [description ? { label, description } : { label }];
+    });
+    return [
+      {
+        id: String(index),
+        header: asString(row.header)?.trim() ?? "",
+        question,
+        options,
+        multiSelect: row.multiSelect === true,
+        allowOther: true,
+      },
+    ];
+  });
+}
+
+/**
+ * Host answers (question id → label, labels, or "Other" text) → AskUserQuestion
+ * `answers`, keyed by the full question text and multi-select labels joined
+ * with ", " (Paseo's shape). Null when nothing was answered.
+ */
+export function claudeAnswers(input: Json, answers: unknown): Record<string, string> | null {
+  const given = asObject(answers);
+  if (!given) return null;
+  const out: Record<string, string> = {};
+  for (const question of claudeQuestions(input)) {
+    const value = given[question.id];
+    const parts = (Array.isArray(value) ? value : [value])
+      .filter((part): part is string => typeof part === "string")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length > 0) out[question.question] = parts.join(", ");
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** The approval_request event for one canUseTool call: question, plan, or a tool with its typed detail. */
+export function claudeApprovalEvent(
+  id: string,
+  toolName: string,
+  input: Json,
+  options: { title?: string; displayName?: string; description?: string; decisionReason?: string }
+): Json {
+  if (toolName === "AskUserQuestion") {
+    const questions = claudeQuestions(input);
+    if (questions.length > 0) {
+      const first = questions[0];
+      const choices = first.options.map((option) => option.label).join(" / ");
+      return {
+        type: "approval_request",
+        id,
+        kind: "question",
+        title: "Claude has a question",
+        detail: [first.question, choices].filter(Boolean).join("\n").slice(0, 4000),
+        questions,
+      };
+    }
+  }
+  if (toolName === "ExitPlanMode") {
+    const plan = typeof input.plan === "string" ? input.plan : "";
+    return {
+      type: "approval_request",
+      id,
+      kind: "plan",
+      title: "Review the plan",
+      detail: plan.slice(0, 4000),
+      plan: plan.slice(0, PLAN_CAP),
+      actions: PLAN_ACTIONS,
+    };
+  }
+  const event: Json = { type: "approval_request", id, ...approvalPresentation(toolName, input, options) };
+  const detail = claudeToolDetail(toolName, input);
+  if (detail.kind !== "other") event.toolDetail = detail;
+  return event;
 }
 
 /** Tool-row fields the Mac and Linux transcripts already render without dumping JSON. */
@@ -726,10 +851,12 @@ export function modelIdOfInit(message: unknown): string | null {
   return asString(row.model);
 }
 
-export function permissionModeOfInit(message: unknown): string | null {
+/** The permission mode on a system init (launch) or status (Claude switched by itself) message. */
+export function reportedPermissionMode(message: unknown): { mode: string; init: boolean } | null {
   const row = asObject(message);
-  if (row?.type !== "system" || row.subtype !== "init") return null;
-  return asString(row.permissionMode);
+  if (row?.type !== "system" || (row.subtype !== "init" && row.subtype !== "status")) return null;
+  const mode = asString(row.permissionMode);
+  return mode ? { mode, init: row.subtype === "init" } : null;
 }
 
 export function statsFromResult(message: unknown): Json | null {

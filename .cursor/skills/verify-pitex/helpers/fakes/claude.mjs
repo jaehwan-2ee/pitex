@@ -153,6 +153,54 @@ function markdown() {
   }, 4000);
 }
 
+// APPROVALS: AskUserQuestion (one single-choice and one multi-select question)
+// and ExitPlanMode twice: the first is meant for Keep planning with feedback,
+// the revised one for Approve plan. Each answer is noted in FAKE_RECORD.
+const QUESTIONS = [
+  {
+    header: "Engine",
+    question: "Which TeX engine should the build use?",
+    options: [{ label: "pdfLaTeX", description: "Fast and classic" }, { label: "LuaLaTeX", description: "Unicode fonts" }],
+    multiSelect: false,
+  },
+  { header: "Parts", question: "Which parts need work?", options: [{ label: "Intro" }, { label: "Method" }], multiSelect: true },
+];
+const PLANS = [
+  "## Plan\n\n1. Rename the title in `main.tex`\n2. Add a `\\maketitle` line\n3. Build with **latexmk**",
+  "## Revised plan\n\n1. Rename the title in `main.tex`\n2. Add an abstract after `\\maketitle`\n3. Build with **latexmk**",
+];
+
+function askTool(requestId, toolUseId, name, input) {
+  send({ type: "assistant", session_id: session, message: { role: "assistant", content: [{ type: "tool_use", id: toolUseId, name, input }] } });
+  send({
+    type: "control_request",
+    request_id: requestId,
+    request: { subtype: "can_use_tool", tool_name: name, input, tool_use_id: toolUseId, display_name: name },
+  });
+}
+
+function approvalAnswer(requestId, response) {
+  const answer = response ?? {};
+  if (requestId === "perm-question") {
+    recordNote({ question: answer.behavior, answers: answer.updatedInput?.answers ?? null });
+    streamText("Thanks");
+    finish("success", "Thanks");
+    return true;
+  }
+  if (requestId === "perm-plan-1") {
+    recordNote({ plan1: answer.behavior, message: answer.message ?? null });
+    askTool("perm-plan-2", "toolu_plan_2", "ExitPlanMode", { plan: PLANS[1] });
+    return true;
+  }
+  if (requestId === "perm-plan-2") {
+    recordNote({ plan2: answer.behavior, updatedPermissions: answer.updatedPermissions ?? null });
+    streamText("Plan approved");
+    finish("success", "Plan approved");
+    return true;
+  }
+  return false;
+}
+
 function finish(subtype, result) {
   send({
     type: "result",
@@ -186,6 +234,13 @@ rl.on("line", (line) => {
     finish("error", "interrupted");
     return;
   }
+  if (msg.type === "control_request" && msg.request?.subtype !== "interrupt") {
+    // set_permission_mode, set_model, ...: acknowledge so the SDK call returns.
+    if (msg.request?.subtype === "set_permission_mode") recordNote({ setPermissionMode: msg.request.mode });
+    send({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: {} } });
+    return;
+  }
+  if (msg.type === "control_response" && approvalAnswer(msg.response?.request_id, msg.response?.response)) return;
   if (msg.type === "control_response") {
     const behavior = msg.response?.response?.behavior ?? msg.response?.behavior;
     recordNote({ permissionBehavior: behavior ?? "unknown" });
@@ -228,6 +283,15 @@ rl.on("line", (line) => {
     }
     if (text.includes("MARKDOWN")) {
       markdown();
+      return;
+    }
+    if (text.includes("QUESTION")) {
+      askTool("perm-question", "toolu_question", "AskUserQuestion", { questions: QUESTIONS });
+      return;
+    }
+    if (text.includes("PLAN")) {
+      streamText("Here is my plan.");
+      askTool("perm-plan-1", "toolu_plan_1", "ExitPlanMode", { plan: PLANS[0] });
       return;
     }
     if (text.includes("TOOLCARDS")) {

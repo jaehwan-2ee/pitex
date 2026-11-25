@@ -11,6 +11,8 @@ export const INDEX_NAME = "codex-session-index.json";
 export interface SessionRecord {
   threadId: string;
   model?: string;
+  /** Permission mode the user picked for this conversation; absent means default. */
+  mode?: string;
   updatedAt: string;
 }
 
@@ -55,12 +57,14 @@ export function rememberSession(
   sessionDir: string,
   sessionPath: string,
   threadId: string,
-  model?: string
+  model?: string,
+  mode?: string
 ): void {
   const index = loadIndex(sessionDir);
   index.sessions[sessionKey(sessionPath)] = {
     threadId,
     ...(model ? { model } : {}),
+    ...(mode && mode !== "default" ? { mode } : {}),
     updatedAt: new Date().toISOString(),
   };
   saveIndex(sessionDir, index);
@@ -69,6 +73,10 @@ export function rememberSession(
 export function threadIdFor(sessionDir: string, sessionPath: string): string | null {
   const record = loadIndex(sessionDir).sessions[sessionKey(sessionPath)];
   return record?.threadId || null;
+}
+
+export function sessionModeFor(sessionDir: string, sessionPath: string): string | null {
+  return loadIndex(sessionDir).sessions[sessionKey(sessionPath)]?.mode || null;
 }
 
 /** A pi-shaped session head so the existing history list can title the chat. */

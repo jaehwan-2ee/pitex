@@ -13,7 +13,15 @@ import test from "node:test";
 
 import type { AdapterHost } from "./adapter.ts";
 import { AcpAdapter, cliLaunchSpec, findCli, importListedSessions } from "./acp-adapter.ts";
-import { approvalFromPermission, approvalKey, catalogFromAcp, createStreamState, mapSessionUpdate } from "./acp-map.ts";
+import {
+  approvalFromPermission,
+  approvalKey,
+  catalogFromAcp,
+  createStreamState,
+  mapSessionUpdate,
+  permissionActions,
+  permissionResultForAction,
+} from "./acp-map.ts";
 import { AGY } from "./acp-profiles.ts";
 import { loadIndex, rememberSession, writeSessionPrelude } from "./session-index.ts";
 
@@ -424,6 +432,14 @@ test("agy starts without authenticate, forces mode default, and reads models fro
     assert.deepEqual(response(responses, "state").data, {
       model: { id: "gemini-x", provider: "agy", name: "Gemini X" },
       thinkingLevel: "high",
+      mode: {
+        id: "default",
+        options: [
+          { id: "default", label: "default" },
+          { id: "accept-edits", label: "accept-edits" },
+          { id: "plan", label: "plan" },
+        ],
+      },
     });
     await adapter.handleCommand({ type: "get_available_thinking_levels", id: "levels" }, host);
     assert.deepEqual((response(responses, "levels").data as { levels: string[] }).levels, ["low", "high"]);
@@ -508,6 +524,98 @@ test("agy approvals: deny, allow once, and a session-only always allow without a
     await adapter.handleCommand({ type: "abort", id: "stop" }, host);
     assert.equal(count(events, "extension_error"), 1, "every command here went through an approval");
     assert.equal(count(events, "agent_start"), count(events, "agent_end"));
+  } finally {
+    await shutdown(booted);
+  }
+});
+
+test("ACP permission options become card actions and map back to the offered option", () => {
+  const all = [
+    { optionId: "o1", kind: "allow_once", name: "Yes" },
+    { optionId: "o2", kind: "allow_always", name: "Always" },
+    { optionId: "o3", kind: "reject_once" },
+    { optionId: "o4", kind: "reject_always" },
+  ];
+  assert.deepEqual(permissionActions(all, true), [
+    { id: "allow_once", label: "Yes", behavior: "allow", variant: "primary" },
+    { id: "allow_always", label: "Always", behavior: "allow", variant: "secondary" },
+    { id: "reject_once", label: "Deny", behavior: "deny", variant: "danger" },
+    { id: "reject_always", label: "Always deny", behavior: "deny", variant: "danger" },
+  ]);
+  const agy = [
+    { optionId: "allow", kind: "allow_once", name: "Allow" },
+    { optionId: "deny", kind: "reject_once", name: "Deny" },
+  ];
+  assert.deepEqual(permissionActions(agy, true).map((action) => action.id), ["allow_once", "always_allow", "reject_once"]);
+  assert.deepEqual(permissionActions(agy, false).map((action) => action.id), ["allow_once", "reject_once"], "no key, no session rule");
+  assert.deepEqual(permissionResultForAction("reject_always", undefined, all), { outcome: { outcome: "selected", optionId: "o4" } });
+  assert.deepEqual(permissionResultForAction("always_allow", undefined, agy), { outcome: { outcome: "selected", optionId: "allow" } });
+  assert.deepEqual(permissionResultForAction(undefined, "deny", agy), { outcome: { outcome: "selected", optionId: "deny" } });
+});
+
+test("agy cards carry actions and the tool detail; abort settles an open card with approval_resolved", { timeout: 20_000 }, async () => {
+  const booted = await boot();
+  const { adapter, host, events, record } = booted;
+  const answers = () => traffic(record).filter((line) => !line.method && line.result?.outcome);
+  try {
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "touch it" }, host);
+    await waitUntil("approval", () => count(events, "approval_request") === 1);
+    const approval = events.find((event) => event.type === "approval_request");
+    assert.deepEqual((approval?.actions as { id: string }[]).map((action) => action.id), ["allow_once", "always_allow", "reject_once"]);
+    assert.deepEqual(approval?.toolDetail, { kind: "shell", label: "touch ran.txt", command: "touch ran.txt" });
+    await adapter.handleCommand({ type: "approval_response", id: String(approval?.id), decision: "deny", actionId: "reject_once" }, host);
+    await waitUntil("turn 1", () => count(events, "agent_end") === 1);
+    assert.equal(answers()[0]?.result.outcome.optionId, "deny");
+    assert.equal(count(events, "approval_resolved"), 0, "the host's own answer needs no resolved event");
+
+    await adapter.handleCommand({ type: "prompt", id: "p2", message: "touch it" }, host);
+    await waitUntil("approval 2", () => count(events, "approval_request") === 2);
+    const second = events.filter((event) => event.type === "approval_request")[1];
+    await adapter.handleCommand({ type: "abort", id: "stop" }, host);
+    assert.deepEqual(events.find((event) => event.type === "approval_resolved"), {
+      type: "approval_resolved",
+      id: String(second.id),
+      outcome: "cancelled",
+    });
+  } finally {
+    await shutdown(booted);
+  }
+});
+
+test("agy set_mode forces the picked mode before each prompt, a new chat goes back to default, and bypass is refused", { timeout: 20_000 }, async () => {
+  const booted = await boot();
+  const { adapter, host, events, responses, record } = booted;
+  const modeSets = () =>
+    traffic(record)
+      .filter((line) => line.method === "session/set_config_option" && line.params.configId === "mode")
+      .map((line) => line.params.value);
+  try {
+    await adapter.handleCommand({ type: "set_mode", id: "bad", modeId: "bypassPermissions" }, host);
+    assert.equal(response(responses, "bad").success, false);
+    await adapter.handleCommand({ type: "set_mode", id: "edits", modeId: "accept-edits" }, host);
+    assert.equal(response(responses, "edits").success, true);
+    assert.equal(modeSets().at(-1), "accept-edits");
+    assert.deepEqual((events.find((event) => event.type === "mode_changed")?.mode as { id: string }).id, "accept-edits");
+    await adapter.handleCommand({ type: "get_state", id: "state" }, host);
+    assert.equal((response(responses, "state").data as { mode: { id: string } }).mode.id, "accept-edits");
+
+    const before = modeSets().length;
+    await adapter.handleCommand({ type: "prompt", id: "p1", message: "touch it" }, host);
+    await waitUntil("approval", () => count(events, "approval_request") === 1);
+    assert.deepEqual(modeSets().slice(before), ["accept-edits"], "the picked mode, not default, before the prompt");
+    const approval = events.find((event) => event.type === "approval_request");
+    await adapter.handleCommand({ type: "approval_response", id: String(approval?.id), decision: "approve", actionId: "allow_once" }, host);
+    await waitUntil("turn", () => count(events, "agent_end") === 1);
+
+    await adapter.handleCommand({ type: "set_mode", id: "back", modeId: "default" }, host);
+    assert.equal(modeSets().at(-1), "default");
+    await adapter.handleCommand({ type: "set_mode", id: "edits2", modeId: "accept-edits" }, host);
+    await adapter.handleCommand({ type: "new_session", id: "fresh" }, host);
+    const changes = events.filter((event) => event.type === "mode_changed").map((event) => (event.mode as { id: string }).id);
+    assert.deepEqual(changes, ["accept-edits", "default", "accept-edits", "default"]);
+    await adapter.handleCommand({ type: "prompt", id: "p2", message: "touch it" }, host);
+    await waitUntil("approval 2", () => count(events, "approval_request") === 2);
+    assert.equal(modeSets().at(-1), "default", "the new session starts in default");
   } finally {
     await shutdown(booted);
   }
@@ -641,7 +749,8 @@ test("agy session/list import pages, survives a restart, and a picked session re
       host
     );
     assert.equal(response(responses, "sw").success, true);
-    assert.equal(events.length, before, "replayed history stays out of the live stream");
+    // Replayed history stays out of the live stream; only the restored mode is announced.
+    assert.deepEqual(events.slice(before).map((event) => event.type), ["mode_changed"]);
     const loaded = traffic(record).find((line) => line.method === "session/load");
     assert.equal(loaded?.params.sessionId, "old-2");
     assert.deepEqual(loaded?.params._meta, { antigravity: { systemPrompt: { append: "Be terse." } } });
