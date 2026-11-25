@@ -52,6 +52,10 @@ export interface ClaudeStreamState {
   /** An API error the CLI reported as an assistant message (`error`, its text). */
   apiError: string | null;
   apiErrorText: string | null;
+  /** A subagent's tool call → the Task/Agent call that started it (`parent_tool_use_id`). */
+  parentById: Record<string, string>;
+  /** Task/Agent call → how many tool calls its subagent started. */
+  childCountById: Record<string, number>;
 }
 
 export function createClaudeStreamState(): ClaudeStreamState {
@@ -83,6 +87,8 @@ export function createClaudeStreamState(): ClaudeStreamState {
     canceled: false,
     apiError: null,
     apiErrorText: null,
+    parentById: {},
+    childCountById: {},
   };
 }
 
@@ -543,10 +549,9 @@ export function claudeToolDetail(name: string, input: Json): ToolDetail {
   }
   if (name === "WebFetch") return cleanDetail({ kind: "fetch", url: textField(input, "url") });
   if (name === "Task" || name === "Agent") {
-    return cleanDetail({
-      kind: "sub_agent",
-      label: textField(input, "description") || textField(input, "subagent_type"),
-    });
+    const description = textField(input, "description");
+    const subAgentType = textField(input, "subagent_type");
+    return cleanDetail({ kind: "sub_agent", label: description || subAgentType, description, subAgentType });
   }
   return { kind: "other", label: name };
 }
@@ -682,10 +687,27 @@ function upsertToolDraft(state: ClaudeStreamState, id: string): void {
     existing.arguments = args;
     return;
   }
-  state.draft.push({ type: "toolCall", id, name, arguments: args });
+  const parent = state.parentById[id];
+  state.draft.push({ type: "toolCall", id, name, arguments: args, ...(parent ? { parentToolCallId: parent } : {}) });
 }
 
-function startTool(state: ClaudeStreamState, id: string, name: string, args: Json, out: Json[]): void {
+/** `parentToolCallId` for a subagent's call, so hosts nest it under the Task/Agent card. */
+function parentField(state: ClaudeStreamState, id: string): Json {
+  const parent = state.parentById[id];
+  return parent ? { parentToolCallId: parent } : {};
+}
+
+/** A subagent started another call: the Task/Agent card's live count goes up. */
+function noteChild(state: ClaudeStreamState, parent: string, out: Json[]): void {
+  const toolUses = (state.childCountById[parent] ?? 0) + 1;
+  state.childCountById[parent] = toolUses;
+  if (!state.toolStarted[parent] || state.toolFinished[parent]) return;
+  const detail = claudeToolDetail(state.toolRawNameById[parent] ?? "Agent", state.toolInputById[parent] ?? {});
+  out.push({ type: "tool_execution_update", toolCallId: parent, detail: { ...detail, toolUses }, status: "running" });
+}
+
+function startTool(state: ClaudeStreamState, id: string, name: string, args: Json, out: Json[], parent: string | null = null): void {
+  if (parent) state.parentById[id] = parent;
   const row = toolExecutionFields(name, args);
   state.toolNameById[id] = row.toolName;
   state.toolArgsById[id] = row.args;
@@ -707,7 +729,9 @@ function startTool(state: ClaudeStreamState, id: string, name: string, args: Jso
     args: row.args,
     detail: claudeToolDetail(name, args),
     status: "running",
+    ...parentField(state, id),
   });
+  if (parent) noteChild(state, parent, out);
 }
 
 function finishTool(
@@ -731,9 +755,11 @@ function finishTool(
   if (todo && !isError) setTodos(state, foldClaudeTodo(state.todos, name, input, result, text), out);
   const showCard = !todo || (isError && !canceled);
   if (todo && showCard) {
-    out.push({ type: "tool_execution_start", toolCallId: id, toolName: name, args: {}, detail: claudeToolDetail(name, input), status: "running" });
+    out.push({ type: "tool_execution_start", toolCallId: id, toolName: name, args: {}, detail: claudeToolDetail(name, input), status: "running", ...parentField(state, id) });
   }
   const detail = claudeResultDetail(name, input, text, isError, result);
+  const toolUses = state.childCountById[id];
+  if (detail.kind === "sub_agent" && toolUses) detail.toolUses = toolUses;
   const status = canceled ? "canceled" : isError ? "failed" : "completed";
   if (showCard) {
     out.push({
@@ -743,6 +769,7 @@ function finishTool(
       result: toolContent(text),
       detail,
       status,
+      ...parentField(state, id),
     });
   }
   recordResult(state, id, text, isError, detail, status);
@@ -765,6 +792,7 @@ function recordResult(state: ClaudeStreamState, id: string, text: string, isErro
     content: [{ type: "text", text }],
     detail,
     status,
+    ...parentField(state, id),
   });
 }
 
@@ -802,6 +830,8 @@ function resetTurnBuffers(state: ClaudeStreamState): void {
   state.toolIndexToId = {};
   state.toolRawNameById = {};
   state.toolInputById = {};
+  state.parentById = {};
+  state.childCountById = {};
 }
 
 function closeTurn(state: ClaudeStreamState, message: Json, out: Json[]): void {
@@ -933,7 +963,8 @@ function applyAssistant(state: ClaudeStreamState, message: Json, out: Json[]): v
   const inner = asObject(message.message);
   const model = asString(inner?.model);
   // A subagent's call (Task/Agent) runs its own context and often a smaller model.
-  const subagent = typeof message.parent_tool_use_id === "string";
+  const parent = asString(message.parent_tool_use_id);
+  const subagent = parent !== null;
   if (model && model !== "<synthetic>" && !subagent) state.model = model;
   // An API failure (rate limit, sign-in) comes as an assistant message: an error row, not an answer.
   const apiError = asString(message.error);
@@ -944,6 +975,8 @@ function applyAssistant(state: ClaudeStreamState, message: Json, out: Json[]): v
   }
   if (!subagent) noteApiUsage(state, asObject(inner?.usage), out);
   for (const block of contentBlocks(message)) {
+    // A subagent's text is its own working; its report comes back as the Task/Agent result.
+    if (subagent && block.type !== "tool_use") continue;
     if (block.type === "text") {
       emitFullText(state, typeof block.text === "string" ? block.text : "", out);
       continue;
@@ -956,7 +989,7 @@ function applyAssistant(state: ClaudeStreamState, message: Json, out: Json[]): v
       const id = asString(block.id);
       const name = asString(block.name) ?? "tool";
       if (!id) continue;
-      startTool(state, id, name, asObject(block.input) ?? {}, out);
+      startTool(state, id, name, asObject(block.input) ?? {}, out, parent);
     }
   }
 }
@@ -985,7 +1018,8 @@ export function mapClaudeMessage(message: unknown, state: ClaudeStreamState): Js
   switch (row.type) {
     case "stream_event": {
       const event = asObject(row.event);
-      if (event) applyStreamEvent(state, event, out);
+      // A subagent's partial stream belongs to its card, not to the answer.
+      if (event && !asString(row.parent_tool_use_id)) applyStreamEvent(state, event, out);
       break;
     }
     case "assistant":
@@ -1003,6 +1037,60 @@ export function mapClaudeMessage(message: unknown, state: ClaudeStreamState): Js
 
 /** CLI bookkeeping that Claude Code stores as user text but never shows as a prompt. */
 const HIDDEN_USER_TEXT = /^(\[Request interrupted|<command-|<local-command-)/;
+/** A slash command the user sent, as Claude Code saves it. */
+const COMMAND_NAME = /<command-name>([^<]*)<\/command-name>/;
+const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
+
+/** The text of a saved row that is a real prompt (what the transcript shows as a user message), else null. */
+function promptText(row: Json): string | null {
+  if (row.type !== "user" || row.is_meta === true || asString(row.parent_tool_use_id)) return null;
+  if (contentBlocks(row).some((block) => block.type === "tool_result")) return null;
+  const text = blockText(asObject(row.message)?.content).trim();
+  // A slash command is a prompt too: the live chat shows the "/name args" the user typed.
+  const command = COMMAND_NAME.exec(text)?.[1]?.trim();
+  if (command) return `${command.startsWith("/") ? command : `/${command}`} ${COMMAND_ARGS.exec(text)?.[1]?.trim() ?? ""}`.trim();
+  return text && !HIDDEN_USER_TEXT.test(text) ? text : null;
+}
+
+/** Prompts in a saved Claude conversation (what `claudeTurnCut` counts as turns). */
+export function claudePromptCount(rows: unknown[]): number {
+  return rows.filter((raw) => {
+    const row = asObject(raw);
+    return row !== null && promptText(row) !== null;
+  }).length;
+}
+
+/**
+ * Where the first `keepTurns` turns end in a saved Claude conversation (getSessionMessages rows):
+ * `keepUuid` is the last message they hold (null when nothing is kept), `dropPromptUuid` the
+ * prompt that starts the first dropped turn (null when nothing comes after them).
+ */
+export function claudeTurnCut(rows: unknown[], keepTurns: number): { keepUuid: string | null; dropPromptUuid: string | null } {
+  let prompts = 0;
+  let last: string | null = null;
+  for (const raw of rows) {
+    const row = asObject(raw);
+    if (!row) continue;
+    const uuid = asString(row.uuid);
+    if (promptText(row) !== null) {
+      if (prompts === keepTurns) return { keepUuid: last, dropPromptUuid: uuid };
+      prompts += 1;
+    }
+    if (uuid) last = uuid;
+  }
+  return { keepUuid: last, dropPromptUuid: null };
+}
+
+/** The first `keepTurns` turns of a pi transcript (rows before the next user message). */
+export function keepTurnsOf(messages: Json[], keepTurns: number): Json[] {
+  let seen = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    if (messages[index].role !== "user") continue;
+    if (seen === keepTurns) return messages.slice(0, index);
+    seen += 1;
+  }
+  return messages.slice();
+}
 
 /**
  * A saved conversation (the SDK's getSessionMessages: `{type, message, is_meta?}` rows) as the
@@ -1031,8 +1119,8 @@ export function replayClaudeMessages(messages: unknown[]): ClaudeStreamState {
       applyUser(state, row, none);
       continue;
     }
-    const text = blockText(asObject(row.message)?.content).trim();
-    if (!text || HIDDEN_USER_TEXT.test(text)) continue;
+    const text = promptText(row);
+    if (!text) continue;
     cancelOpen(state, none);
     flushDraft(state);
     state.transcript.push({ role: "user", content: [{ type: "text", text }] });

@@ -722,6 +722,21 @@ pub enum PiRPCCommand {
     SwitchSession {
         path: String,
     },
+    /// Bridge backends with `capabilities.fork`: a new chat holding the first `keep_turns` turns.
+    /// `turns` is how many prompts the chat on screen has; the bridge refuses a cut when its count differs.
+    ForkSession {
+        keep_turns: usize,
+        turns: usize,
+    },
+    /// Bridge backends with `capabilities.rewind`: drop the turns after the first `keep_turns`,
+    /// restoring the conversation and/or the files the agent changed; `dry_run` only lists the files.
+    Rewind {
+        keep_turns: usize,
+        turns: usize,
+        conversation: bool,
+        files: bool,
+        dry_run: bool,
+    },
     GetMessages,
     /// Bridge backends: mirror the CLI's own sessions before the history list opens.
     RefreshSessions,
@@ -753,6 +768,14 @@ impl PiRPCCommand {
             Self::Abort => json!({"type": "abort"}),
             Self::NewSession => json!({"type": "new_session"}),
             Self::SwitchSession { path } => json!({"type": "switch_session", "sessionPath": path}),
+            Self::ForkSession { keep_turns, turns } => json!({"type": "fork_session", "keepTurns": keep_turns, "turns": turns}),
+            Self::Rewind { keep_turns, turns, conversation, files, dry_run } => {
+                let mut o = json!({"type": "rewind", "keepTurns": keep_turns, "turns": turns, "conversation": conversation, "files": files});
+                if *dry_run {
+                    o["dryRun"] = json!(true);
+                }
+                o
+            }
             Self::GetMessages => json!({"type": "get_messages"}),
             Self::RefreshSessions => json!({"type": "refresh_sessions"}),
             Self::GetState => json!({"type": "get_state"}),
@@ -795,6 +818,11 @@ impl PiRPCCommand {
 pub struct AgentCapabilities {
     pub steer: bool,
     pub images: bool,
+    /// `fork_session` works; otherwise Fork quotes the earlier chat into a new one.
+    pub fork: bool,
+    /// What `rewind` can restore.
+    pub rewind_conversation: bool,
+    pub rewind_files: bool,
 }
 
 impl AgentCapabilities {
@@ -802,16 +830,43 @@ impl AgentCapabilities {
     /// images when the model's `input` lists them.
     pub fn from_state(data: &serde_json::Map<String, Value>) -> Self {
         if let Some(caps) = data.get("capabilities") {
+            let flag = |value: Option<&Value>| value.and_then(Value::as_bool).unwrap_or(false);
+            let rewind = caps.get("rewind");
             return Self {
-                steer: caps.get("steer").and_then(Value::as_bool).unwrap_or(false),
-                images: caps.get("images").and_then(Value::as_bool).unwrap_or(false),
+                steer: flag(caps.get("steer")),
+                images: flag(caps.get("images")),
+                fork: flag(caps.get("fork")),
+                rewind_conversation: flag(rewind.and_then(|r| r.get("conversation"))),
+                rewind_files: flag(rewind.and_then(|r| r.get("files"))),
             };
         }
         let images = match data.get("model").and_then(|m| m.get("input")).and_then(Value::as_array) {
             Some(input) => input.iter().any(|kind| kind.as_str() == Some("image")),
             None => true,
         };
-        Self { steer: true, images }
+        Self { steer: true, images, ..Default::default() }
+    }
+}
+
+/// The rewind confirmation the panel shows for one message.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct RewindOffer {
+    /// Whole turns kept (the `rewind.keepTurns`).
+    pub keep_turns: usize,
+    /// A rewound prompt goes back into the composer.
+    pub draft: Option<String>,
+    /// Files a file rewind would restore; None while the dry run is out.
+    pub files: Option<Vec<String>>,
+    /// Why files cannot be restored (no checkpoint, outside the project, unsupported).
+    pub files_note: Option<String>,
+    /// The dry run, then the confirmed rewind, in flight.
+    pub request_id: Option<String>,
+}
+
+impl RewindOffer {
+    /// The confirmed rewind is out (the dry run, if any, has answered).
+    pub fn is_rewinding(&self) -> bool {
+        self.files.is_some() && self.request_id.is_some()
     }
 }
 
@@ -1512,6 +1567,8 @@ pub enum EntryMeta {
     None,
     /// Seconds from the first reasoning delta to the next non-reasoning event.
     Thought { seconds: Option<u64> },
+    /// On a prompt: how long its turn ran (the folded turn's "Worked for").
+    Worked { seconds: u64 },
     /// `text` is the raw error. `backend` is the provider id for the wording;
     /// `retry` is true on the newest failure while its message can be resent.
     TurnError { code: crate::turn_state::ErrorCode, backend: String, can_compact: bool, retry: bool },
@@ -1538,6 +1595,11 @@ pub struct ToolDetail {
     pub label: Option<String>,
     pub start_line: Option<i64>,
     pub end_line: Option<i64>,
+    /// The Task/Agent call this one ran inside (`parentToolCallId`).
+    pub parent_call_id: Option<String>,
+    /// sub_agent: the agent type and how many calls it started.
+    pub sub_agent_type: Option<String>,
+    pub tool_uses: Option<i64>,
 }
 
 impl ToolDetail {
@@ -1564,6 +1626,9 @@ impl ToolDetail {
             label: text("label"),
             start_line: int("startLine"),
             end_line: int("endLine"),
+            parent_call_id: None,
+            sub_agent_type: text("subAgentType"),
+            tool_uses: int("toolUses"),
         })
     }
 
@@ -1578,6 +1643,7 @@ impl ToolDetail {
             ($($field:ident),*) => { $(if incoming.$field.is_some() { self.$field = incoming.$field; })* };
         }
         take!(path, command, cwd, exit_code, diff, query, url, num_matches, label, start_line, end_line);
+        take!(parent_call_id, sub_agent_type, tool_uses);
     }
 
     /// No typed fields for the card body (pi's provider, MCP tools, sub-agents).
@@ -1670,6 +1736,9 @@ impl ToolDetail {
 
     /// The header badge: `exit 1` for a failing command, `+3 -1` for a diff.
     pub fn badge(&self, lang: &str) -> Option<String> {
+        if self.kind == "sub_agent" {
+            return self.sub_agent_type.clone();
+        }
         if self.kind == "shell" {
             return self
                 .exit_code
@@ -1961,6 +2030,18 @@ pub struct AgentCoordinator {
     pub ui_revision: u64,
     /// `get_state.capabilities`; pi omits it (see `AgentCapabilities::from_state`).
     pub capabilities: AgentCapabilities,
+    /// The rewind confirmation on screen (Rewind to here).
+    pub rewind_offer: Option<RewindOffer>,
+    /// The `fork_session` in flight, with the prompt a fork from a user message puts back.
+    fork_request: Option<(String, Option<String>)>,
+    /// Replaces the composer text once (a forked or rewound prompt, a quoted chat).
+    pub composer_replacement: Option<String>,
+    /// When the running turn started (`agent_start`); its prompt row gets `Worked`.
+    turn_started: Option<std::time::Instant>,
+    /// Prompt rows trimmed off the top by `history_limit`, so turn counts stay right.
+    dropped_prompts: usize,
+    /// A fork or rewind notice, shown under the chat once it is reloaded.
+    notice_after_reload: Option<String>,
     /// Messages typed while a turn runs, sent one per agent_end.
     pub queue: crate::composer::MessageQueue,
     /// The `prompt` id of the queued message in flight, and that message's queue id.
@@ -2107,6 +2188,12 @@ impl AgentCoordinator {
             messages_request_id: None,
             ui_revision: 0,
             capabilities: AgentCapabilities::default(),
+            rewind_offer: None,
+            fork_request: None,
+            composer_replacement: None,
+            turn_started: None,
+            dropped_prompts: 0,
+            notice_after_reload: None,
             queue: Default::default(),
             drain_request: None,
             draft_images: Vec::new(),
@@ -2376,6 +2463,9 @@ impl AgentCoordinator {
         self.mode = None;
         // The list belonged to that process's session; the next one starts empty.
         self.todos.clear();
+        // A fork or rewind the process took with it never answers.
+        self.fork_request = None;
+        self.rewind_offer = None;
         // A message cut off by the exit gets its final (non-streaming) render.
         self.finalize_entries();
         if !self.intentional_stop {
@@ -2406,6 +2496,8 @@ impl AgentCoordinator {
         self.clear_approvals();
         self.mode = None;
         self.todos.clear();
+        self.fork_request = None;
+        self.rewind_offer = None;
         self.finalize_entries();
         self.ui_revision += 1;
     }
@@ -2862,7 +2954,7 @@ impl AgentCoordinator {
     /// running turn, or queue (`composer::submit_route`).
     pub fn submit(&mut self, prompt: &str, images: Vec<crate::composer::AgentImage>, now: bool) {
         let trimmed = prompt.trim();
-        if trimmed.is_empty() && images.is_empty() {
+        if (trimmed.is_empty() && images.is_empty()) || self.is_branching() {
             return;
         }
         // pi's own /resume is an interactive TUI picker; here it opens the
@@ -2953,6 +3045,10 @@ impl AgentCoordinator {
             self.status_message = Some(
                 "Pitex Agent is not installed yet — it installs automatically on launch; see Settings → AI.".into(),
             );
+            return false;
+        }
+        // The fork or rewind would close the query this message went to.
+        if self.is_branching() {
             return false;
         }
         // A drained message gets its bubble once the backend accepts it (`handle_response`),
@@ -3067,6 +3163,9 @@ impl AgentCoordinator {
         self.ui_revision += 1;
     }
     pub fn new_session(&mut self) {
+        if self.is_branching() {
+            return;
+        }
         self.deny_queued_approvals();
         if !self.process.as_ref().is_some_and(|p| p.is_running()) {
             return;
@@ -3211,6 +3310,9 @@ impl AgentCoordinator {
         // The meter belongs to that chat; the next usage_update or stats reply refills it.
         self.usage = Default::default();
         self.session_stats = None;
+        self.rewind_offer = None;
+        self.turn_started = None;
+        self.dropped_prompts = 0;
     }
 
     pub fn load_past_sessions(&mut self) {
@@ -3262,6 +3364,9 @@ impl AgentCoordinator {
         store: &mut crate::settings::SettingsStore,
         lang: &str,
     ) {
+        if self.is_branching() {
+            return;
+        }
         if session.source == self.agent_provider {
             self.resume(&session.path);
         } else if !self.is_running && self.catalog_slots.iter().any(|slot| slot.backend == session.source) {
@@ -3287,7 +3392,7 @@ impl AgentCoordinator {
     /// Loads a saved session into pi, then redraws the transcript from its
     /// messages (`switch_session` → `get_messages`).
     pub fn resume(&mut self, path: &Path) {
-        if self.is_running {
+        if self.is_running || self.is_branching() {
             return;
         }
         let Some(process) = &self.process else { return };
@@ -3363,7 +3468,8 @@ impl AgentCoordinator {
                         entries[index].status = status;
                     }
                     let typed = message.get("detail").and_then(|d| d.as_object()).and_then(|d| ToolDetail::decode(id, d));
-                    if let Some(tool) = typed {
+                    if let Some(mut tool) = typed {
+                        tool.parent_call_id = message.get("parentToolCallId").and_then(|p| p.as_str()).map(String::from);
                         if !tool.is_untyped() {
                             entries[index].detail.clear();
                         }
@@ -3379,6 +3485,17 @@ impl AgentCoordinator {
         let keep = entries.len().saturating_sub(self.history_limit);
         entries.drain(..keep);
         entries
+    }
+
+    /// Prompt rows `transcript_from_messages` leaves out above `history_limit`.
+    fn prompts_above_limit(&self, messages: &[Value]) -> usize {
+        let prompts = messages
+            .iter()
+            .filter_map(|m| m.as_object())
+            .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user") && !user_prompt_text(m).is_empty())
+            .count();
+        let shown = self.transcript.iter().filter(|e| e.role == TranscriptRole::User).count();
+        prompts.saturating_sub(shown)
     }
     pub fn select_model(&mut self, model: &PiModelDescriptor) {
         if self.is_updating_model_settings || self.current_model.as_ref() == Some(model) {
@@ -3456,8 +3573,12 @@ impl AgentCoordinator {
         self.ui_revision += 1;
         match event.event_type.as_str() {
             "response" => self.handle_response(event),
-            "agent_start" => self.is_running = true,
+            "agent_start" => {
+                self.is_running = true;
+                self.turn_started.get_or_insert_with(std::time::Instant::now);
+            }
             "agent_end" => {
+                self.note_turn_duration();
                 if let Some(process) = &self.process {
                     self.send_to(process, &PiRPCCommand::GetSessionStats);
                 }
@@ -3588,6 +3709,11 @@ impl AgentCoordinator {
             if event.string("id").as_deref() != Some(id.as_str()) {
                 return;
             }
+        }
+        match event.response_command().as_deref() {
+            Some("fork_session") => return self.handle_fork_response(event),
+            Some("rewind") => return self.handle_rewind_response(event),
+            _ => {}
         }
         if event.response_command().as_deref() == Some("refresh_sessions") {
             // Success or not (a signed-out backend refuses), the list shows what is on disk now;
@@ -3757,12 +3883,11 @@ impl AgentCoordinator {
                     .and_then(|d| d.get("cancelled"))
                     .and_then(|c| c.as_bool())
                     == Some(true);
-                if let (false, Some(process)) = (cancelled, &self.process) {
-                    let request_id = uuid_v4();
-                    self.messages_request_id = Some(request_id.clone());
-                    let _ = process.send(&PiRPCCommand::GetMessages, Some(&request_id));
+                if !cancelled {
+                    self.reload_messages();
+                } else {
+                    self.send_model_settings(PiRPCCommand::GetState, None);
                 }
-                self.send_model_settings(PiRPCCommand::GetState, None);
             }
             Some("get_messages") => {
                 let Some(latest) = self.messages_request_id.as_deref() else {
@@ -3778,6 +3903,10 @@ impl AgentCoordinator {
                     .cloned()
                     .unwrap_or_default();
                 self.transcript = self.transcript_from_messages(&messages);
+                self.dropped_prompts = self.prompts_above_limit(&messages);
+                if let Some(notice) = self.notice_after_reload.take() {
+                    self.push_notice(notice, TranscriptStatus::Done);
+                }
                 // The last list of a resumed chat; no activity rows for it.
                 self.todos = TodoItem::decode_list(event.response_data().and_then(|d| d.get("todos")));
                 if let Some(process) = &self.process {
@@ -3950,6 +4079,7 @@ impl AgentCoordinator {
             .nested("detail")
             .and_then(|detail| ToolDetail::decode(&call_id, detail))
             .unwrap_or_else(|| ToolDetail { call_id: call_id.clone(), kind: "other".into(), ..Default::default() });
+        let tool = ToolDetail { parent_call_id: event.string("parentToolCallId"), ..tool };
         // A typed card shows its fields in the body; untyped (pi, MCP) and
         // sub-agent cards have no such fields, so they keep the args summary.
         let detail = if tool.is_untyped() { summary } else { String::new() };
@@ -4211,11 +4341,213 @@ impl AgentCoordinator {
         self.restart();
     }
 
+    /// `agent_end`: the turn's prompt row learns how long the turn ran.
+    fn note_turn_duration(&mut self) {
+        let Some(started) = self.turn_started.take() else { return };
+        if let Some(prompt) = self.transcript.iter_mut().rev().find(|e| e.role == TranscriptRole::User) {
+            prompt.meta = EntryMeta::Worked { seconds: started.elapsed().as_secs() };
+        }
+    }
+
+    /// A fork or a confirmed rewind is out: sending, switching chats and branching again wait.
+    pub fn is_branching(&self) -> bool {
+        self.fork_request.is_some() || self.rewind_offer.as_ref().is_some_and(RewindOffer::is_rewinding)
+    }
+
+    /// Prompts in this chat, counting rows trimmed off the top.
+    pub fn prompt_count(&self) -> usize {
+        self.dropped_prompts + self.transcript.iter().filter(|e| e.role == TranscriptRole::User).count()
+    }
+
+    /// Whole turns a Fork or Rewind on row `index` keeps: those before a prompt (whose
+    /// text goes back into the composer), or those through an answer's turn.
+    pub fn turn_cut(&self, index: usize) -> Option<(usize, Option<String>)> {
+        let entry = self.transcript.get(index)?;
+        let before = self.dropped_prompts + self.transcript[..index].iter().filter(|e| e.role == TranscriptRole::User).count();
+        match entry.role {
+            TranscriptRole::User => Some((before, Some(entry.text.clone()))),
+            TranscriptRole::Assistant if before > 0 => Some((before, None)),
+            _ => None,
+        }
+    }
+
+    /// "Fork from here": the bridge copies the first turns into a new chat when it can;
+    /// otherwise a new chat starts with those turns quoted into the draft.
+    pub fn fork_from(&mut self, index: usize, lang: &str) {
+        if self.is_running || self.is_branching() {
+            return;
+        }
+        let Some((keep, draft)) = self.turn_cut(index) else { return };
+        let Some(process) = self.process.as_ref().filter(|p| p.is_running()) else { return };
+        if keep > 0 && self.capabilities.fork {
+            let id = uuid_v4();
+            if process.send(&PiRPCCommand::ForkSession { keep_turns: keep, turns: self.prompt_count() }, Some(&id)).is_ok() {
+                self.fork_request = Some((id, draft));
+            }
+            self.ui_revision += 1;
+            return;
+        }
+        let quoted = quote_turns(&self.transcript, keep.saturating_sub(self.dropped_prompts), lang);
+        self.new_session();
+        let text = [quoted, draft.unwrap_or_default()].into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n\n");
+        self.composer_replacement = Some(text);
+        if keep > 0 {
+            let name = crate::turn_state::cli_name(&self.agent_provider);
+            self.push_notice(crate::l10n::tr1(lang, "assistant.fork.quoted", name), TranscriptStatus::Done);
+        }
+        self.ui_revision += 1;
+    }
+
+    /// "Rewind to here": opens the confirmation, after a dry run lists the files a file
+    /// rewind would restore.
+    pub fn request_rewind(&mut self, index: usize, lang: &str) {
+        if self.is_running || self.is_branching() || !self.capabilities.rewind_conversation {
+            return;
+        }
+        let Some((keep, draft)) = self.turn_cut(index) else { return };
+        if keep >= self.prompt_count() {
+            return;
+        }
+        let mut offer = RewindOffer { keep_turns: keep, draft, ..Default::default() };
+        if self.capabilities.rewind_files {
+            let id = uuid_v4();
+            let command = PiRPCCommand::Rewind { keep_turns: keep, turns: self.prompt_count(), conversation: false, files: true, dry_run: true };
+            if self.process.as_ref().is_some_and(|p| p.send(&command, Some(&id)).is_ok()) {
+                offer.request_id = Some(id);
+            }
+        }
+        if offer.request_id.is_none() {
+            offer.files = Some(Vec::new());
+            offer.files_note = Some(crate::l10n::tr(lang, "assistant.rewind.files_unsupported"));
+        }
+        self.rewind_offer = Some(offer);
+        self.ui_revision += 1;
+    }
+
+    /// The confirmation's button: the conversation, and the files when `files`.
+    pub fn confirm_rewind(&mut self, files: bool) {
+        if self.is_running {
+            return;
+        }
+        // One request at a time: a reply to the dry run must not be read as the rewind's.
+        let turns = self.prompt_count();
+        let Some(offer) = self.rewind_offer.as_mut().filter(|o| o.request_id.is_none()) else { return };
+        let id = uuid_v4();
+        let command = PiRPCCommand::Rewind { keep_turns: offer.keep_turns, turns, conversation: true, files, dry_run: false };
+        if self.process.as_ref().is_some_and(|p| p.send(&command, Some(&id)).is_ok()) {
+            offer.request_id = Some(id);
+        }
+        self.ui_revision += 1;
+    }
+
+    /// The confirmed rewind cannot be called back: its reply reloads the chat and the files.
+    pub fn cancel_rewind(&mut self) {
+        if self.rewind_offer.as_ref().is_some_and(RewindOffer::is_rewinding) {
+            return;
+        }
+        self.rewind_offer = None;
+        self.ui_revision += 1;
+    }
+
+    fn handle_fork_response(&mut self, event: &PiRPCEvent) {
+        let Some((id, draft)) = self.fork_request.clone() else { return };
+        if event.string("id").as_deref() != Some(id.as_str()) {
+            return;
+        }
+        self.fork_request = None;
+        let lang = crate::app_ui::language();
+        if !event.response_succeeded() {
+            let error = event.response_error().unwrap_or_default();
+            self.push_notice(crate::l10n::tr1(lang, "assistant.fork.failed", &error), TranscriptStatus::Failed);
+            return;
+        }
+        self.clear_transcript();
+        self.reload_messages();
+        self.notice_after_reload = Some(crate::l10n::tr(lang, "assistant.fork.done"));
+        self.composer_replacement = draft;
+    }
+
+    fn handle_rewind_response(&mut self, event: &PiRPCEvent) {
+        let Some(offer) = self.rewind_offer.as_mut() else { return };
+        if offer.request_id.is_none() || event.string("id") != offer.request_id {
+            return;
+        }
+        offer.request_id = None;
+        let lang = crate::app_ui::language();
+        let data = event.response_data();
+        let files: Vec<String> = data
+            .and_then(|d| d.get("filesChanged"))
+            .and_then(|f| f.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        if offer.files.is_none() {
+            // The dry run: the list, or why files cannot be restored.
+            if event.response_succeeded() {
+                offer.files = Some(files);
+            } else {
+                offer.files = Some(Vec::new());
+                offer.files_note = Some(crate::l10n::tr1(lang, "assistant.rewind.files_note", &event.response_error().unwrap_or_default()));
+            }
+            self.ui_revision += 1;
+            return;
+        }
+        if !event.response_succeeded() {
+            let error = event.response_error().unwrap_or_default();
+            self.rewind_offer = None;
+            self.push_notice(crate::l10n::tr1(lang, "assistant.rewind.failed", &error), TranscriptStatus::Failed);
+            return;
+        }
+        let draft = offer.draft.clone();
+        self.clear_transcript();
+        self.reload_messages();
+        let root = self.context_provider.as_ref().and_then(|p| (p)().project_root);
+        let shown: Vec<String> = files
+            .iter()
+            .map(|f| root.as_deref().and_then(|r| Path::new(f).strip_prefix(r).ok()).map(|p| p.display().to_string()).unwrap_or_else(|| f.clone()))
+            .collect();
+        self.notice_after_reload = Some(if shown.is_empty() {
+            crate::l10n::tr(lang, "assistant.rewind.done")
+        } else {
+            crate::l10n::tr1(lang, "assistant.rewind.done_files", &shown.join(", "))
+        });
+        self.composer_replacement = draft;
+        if let Some(cb) = &mut self.on_agent_activity_finished {
+            // Restored files: the workspace reloads them like an agent edit.
+            cb();
+        }
+    }
+
+    /// Redraws the chat from the backend (after a switch, fork or rewind).
+    fn reload_messages(&mut self) {
+        if let Some(process) = &self.process {
+            let request_id = uuid_v4();
+            self.messages_request_id = Some(request_id.clone());
+            let _ = process.send(&PiRPCCommand::GetMessages, Some(&request_id));
+        }
+        self.send_model_settings(PiRPCCommand::GetState, None);
+        self.ui_revision += 1;
+    }
+
+    fn push_notice(&mut self, text: String, status: TranscriptStatus) {
+        self.push_entry(AgentTranscriptEntry {
+            role: TranscriptRole::Notice,
+            title: "Assistant".into(),
+            text,
+            detail: String::new(),
+            status,
+            tool: None,
+            images: Vec::new(),
+            meta: EntryMeta::None,
+        });
+        self.ui_revision += 1;
+    }
+
     /// History-limit trimming — verbatim didSet semantics (indices reset).
     fn push_entry(&mut self, entry: AgentTranscriptEntry) {
         self.transcript.push(entry);
         if self.transcript.len() > self.history_limit {
             let drop = self.transcript.len() - self.history_limit;
+            self.dropped_prompts += self.transcript[..drop].iter().filter(|e| e.role == TranscriptRole::User).count();
             self.transcript.drain(..drop);
             self.assistant_entry_index = None;
             self.thinking_entry_index = None;
@@ -4390,6 +4722,34 @@ fn tool_summary(name: &str, args: Option<&Map<String, Value>>) -> String {
                 .unwrap_or_default()
         }
     }
+}
+
+/// The first `keep` turns of `entries` (relative to the rows on screen) as a quote for a new chat.
+pub fn quote_turns(entries: &[AgentTranscriptEntry], keep: usize, lang: &str) -> String {
+    let mut prompts = 0;
+    let mut lines = Vec::new();
+    for entry in entries {
+        if entry.role == TranscriptRole::User {
+            if prompts == keep {
+                break;
+            }
+            prompts += 1;
+        }
+        let who = match entry.role {
+            TranscriptRole::User => crate::l10n::tr(lang, "assistant.fork.quote_you"),
+            TranscriptRole::Assistant => crate::l10n::tr(lang, "assistant.fork.quote_assistant"),
+            _ => continue,
+        };
+        if entry.text.trim().is_empty() {
+            continue;
+        }
+        let body = entry.text.trim().lines().map(|line| format!("> {line}")).collect::<Vec<_>>().join("\n");
+        lines.push(format!("> **{who}:**\n{body}"));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("{}\n\n{}", crate::l10n::tr(lang, "assistant.fork.quote_header"), lines.join("\n>\n"))
 }
 
 fn tool_result_text(result: Option<&Map<String, Value>>) -> Option<String> {
@@ -6305,7 +6665,7 @@ mod session_history_tests {
 
     fn queue_agent(steer: bool) -> AgentCoordinator {
         let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
-        agent.capabilities = AgentCapabilities { steer, images: true };
+        agent.capabilities = AgentCapabilities { steer, images: true, ..Default::default() };
         agent
     }
 
@@ -6564,10 +6924,10 @@ now please"), "the envelope wraps the text");
     #[test]
     fn capabilities_come_from_get_state_or_the_pi_model() {
         let state = |v: Value| AgentCapabilities::from_state(v.as_object().unwrap());
-        assert_eq!(state(json!({"capabilities": {"steer": false, "images": true}})), AgentCapabilities { steer: false, images: true });
-        assert_eq!(state(json!({"model": {"input": ["text"]}})), AgentCapabilities { steer: true, images: false });
-        assert_eq!(state(json!({"model": {"input": ["text", "image"]}})), AgentCapabilities { steer: true, images: true });
-        assert_eq!(state(json!({})), AgentCapabilities { steer: true, images: true });
+        assert_eq!(state(json!({"capabilities": {"steer": false, "images": true}})), AgentCapabilities { steer: false, images: true, ..Default::default() });
+        assert_eq!(state(json!({"model": {"input": ["text"]}})), AgentCapabilities { steer: true, images: false, ..Default::default() });
+        assert_eq!(state(json!({"model": {"input": ["text", "image"]}})), AgentCapabilities { steer: true, images: true, ..Default::default() });
+        assert_eq!(state(json!({})), AgentCapabilities { steer: true, images: true, ..Default::default() });
         assert_eq!(
             PiRPCCommand::Steer { message: "x".into(), images: Vec::new() }.object(),
             json!({"type": "steer", "message": "x"})
@@ -7623,5 +7983,135 @@ now please"), "the envelope wraps the text");
         assert!(third_party.contains(&format!(
             "https://github.com/earendil-works/pi/tree/v{version}"
         )));
+    }
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+
+    fn event(value: Value) -> PiRPCEvent {
+        PiRPCEvent::new(value.as_object().unwrap().clone()).unwrap()
+    }
+
+    fn coordinator() -> AgentCoordinator {
+        AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()))
+    }
+
+    #[test]
+    fn fork_and_rewind_commands_and_capabilities_go_over_the_wire() {
+        assert_eq!(
+            PiRPCCommand::ForkSession { keep_turns: 2, turns: 3 }.object(),
+            json!({"type": "fork_session", "keepTurns": 2, "turns": 3})
+        );
+        assert_eq!(
+            PiRPCCommand::Rewind { keep_turns: 1, turns: 2, conversation: false, files: true, dry_run: true }.object(),
+            json!({"type": "rewind", "keepTurns": 1, "turns": 2, "conversation": false, "files": true, "dryRun": true})
+        );
+        assert_eq!(
+            PiRPCCommand::Rewind { keep_turns: 0, turns: 1, conversation: true, files: false, dry_run: false }.object(),
+            json!({"type": "rewind", "keepTurns": 0, "turns": 1, "conversation": true, "files": false})
+        );
+        let claude = json!({"capabilities": {"steer": false, "images": true, "fork": true, "rewind": {"conversation": true, "files": true}}});
+        let caps = AgentCapabilities::from_state(claude.as_object().unwrap());
+        assert!(caps.fork && caps.rewind_conversation && caps.rewind_files);
+        let acp = json!({"capabilities": {"steer": false, "images": true}});
+        let caps = AgentCapabilities::from_state(acp.as_object().unwrap());
+        assert!(!caps.fork && !caps.rewind_conversation && !caps.rewind_files);
+        let pi = json!({"model": {"input": ["text"]}});
+        assert!(!AgentCapabilities::from_state(pi.as_object().unwrap()).fork, "pi forks by quoting");
+    }
+
+    #[test]
+    fn subagent_calls_keep_their_parent_live_and_after_a_reload() {
+        let mut agent = coordinator();
+        agent.handle(&event(json!({"type": "tool_execution_start", "toolCallId": "a", "toolName": "Agent", "args": {},
+            "detail": {"kind": "sub_agent", "label": "Find", "description": "Find", "subAgentType": "Explore"}})));
+        agent.handle(&event(json!({"type": "tool_execution_start", "toolCallId": "r", "toolName": "Read", "args": {},
+            "detail": {"kind": "read", "path": "/p/x"}, "parentToolCallId": "a"})));
+        agent.handle(&event(json!({"type": "tool_execution_update", "toolCallId": "a", "detail": {"kind": "sub_agent", "toolUses": 1}})));
+        let card = agent.transcript[0].tool.clone().unwrap();
+        assert_eq!((card.sub_agent_type.as_deref(), card.tool_uses, card.badge("en").as_deref()), (Some("Explore"), Some(1), Some("Explore")));
+        assert_eq!(agent.transcript[1].tool.as_ref().unwrap().parent_call_id.as_deref(), Some("a"));
+        let rows = agent.transcript_from_messages(&[
+            json!({"role": "assistant", "content": [{"type": "toolCall", "id": "r", "name": "Read", "arguments": {}, "parentToolCallId": "a"}]}),
+            json!({"role": "toolResult", "toolCallId": "r", "detail": {"kind": "read"}, "status": "completed", "parentToolCallId": "a", "content": []}),
+        ]);
+        assert_eq!(rows[0].tool.as_ref().unwrap().parent_call_id.as_deref(), Some("a"));
+    }
+
+    fn two_turns(agent: &mut AgentCoordinator) {
+        for (prompt, answer) in [("First", "One"), ("Second", "Two")] {
+            agent.push_user_entry(prompt, Vec::new());
+            agent.handle(&event(json!({"type": "agent_start"})));
+            agent.handle(&event(json!({"type": "message_start", "message": {"role": "assistant"}})));
+            agent.handle(&event(json!({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": answer}})));
+            agent.handle(&event(json!({"type": "agent_end", "outcome": "completed"})));
+        }
+    }
+
+    #[test]
+    fn turn_cuts_count_prompts_and_prompts_learn_how_long_their_turn_ran() {
+        let mut agent = coordinator();
+        two_turns(&mut agent);
+        assert!(matches!(agent.transcript[0].meta, EntryMeta::Worked { .. }));
+        assert_eq!(agent.turn_cut(0), Some((0, Some("First".into()))));
+        assert_eq!(agent.turn_cut(1), Some((1, None)), "an answer keeps its own turn");
+        assert_eq!(agent.turn_cut(2), Some((1, Some("Second".into()))));
+        assert_eq!(agent.turn_cut(3), Some((2, None)));
+        assert_eq!(agent.prompt_count(), 2);
+        // Rows trimmed off the top still count.
+        agent.dropped_prompts = 3;
+        assert_eq!(agent.turn_cut(2), Some((4, Some("Second".into()))));
+        assert_eq!(quote_turns(&agent.transcript, 1, "en"), "Continue from this earlier conversation:\n\n> **You:**\n> First\n>\n> **Assistant:**\n> One");
+    }
+
+    #[test]
+    fn a_rewind_lists_files_then_reloads_the_chat_and_puts_the_prompt_back() {
+        let mut agent = coordinator();
+        two_turns(&mut agent);
+        agent.rewind_offer = Some(RewindOffer { keep_turns: 1, draft: Some("Second".into()), request_id: Some("dry".into()), ..Default::default() });
+        agent.handle(&event(json!({"type": "response", "command": "rewind", "id": "other", "success": true, "data": {"filesChanged": ["x"]}})));
+        assert_eq!(agent.rewind_offer.as_ref().unwrap().files, None, "another request's reply is ignored");
+        agent.handle(&event(json!({"type": "response", "command": "rewind", "id": "dry", "success": true, "data": {"filesChanged": ["/p/a.tex"], "dryRun": true}})));
+        assert_eq!(agent.rewind_offer.as_ref().unwrap().files, Some(vec!["/p/a.tex".to_string()]));
+        agent.rewind_offer.as_mut().unwrap().request_id = Some("go".into());
+        // The confirmed rewind is out: it cannot be cancelled, and nothing else goes to the backend.
+        assert!(agent.is_branching());
+        agent.cancel_rewind();
+        agent.new_session();
+        agent.submit("meanwhile", Vec::new(), false);
+        assert!(agent.rewind_offer.is_some(), "its reply must still reload the chat");
+        assert_eq!(agent.transcript.len(), 4, "no new chat and no message while it runs");
+        agent.handle(&event(json!({"type": "response", "command": "rewind", "id": "go", "success": true, "data": {"filesChanged": ["/p/a.tex"], "conversation": true}})));
+        assert!(agent.rewind_offer.is_none());
+        assert_eq!(agent.composer_replacement.as_deref(), Some("Second"));
+        assert!(agent.transcript.is_empty(), "the chat reloads from the backend");
+        agent.messages_request_id = Some("m".into());
+        agent.handle(&event(json!({"type": "response", "command": "get_messages", "id": "m", "success": true,
+            "data": {"messages": [{"role": "user", "content": [{"type": "text", "text": "First"}]}]}})));
+        assert_eq!(agent.transcript.last().unwrap().text, "Rewound the conversation and restored /p/a.tex.", "the notice follows the reloaded chat");
+
+        // A refused dry run leaves only the conversation choice, with the reason.
+        agent.rewind_offer = Some(RewindOffer { keep_turns: 0, request_id: Some("dry2".into()), ..Default::default() });
+        agent.handle(&event(json!({"type": "response", "command": "rewind", "id": "dry2", "success": false, "error": "outside the project"})));
+        let offer = agent.rewind_offer.clone().unwrap();
+        assert_eq!(offer.files, Some(Vec::new()));
+        assert_eq!(offer.files_note.as_deref(), Some("Files cannot be restored: outside the project"));
+    }
+
+    #[test]
+    fn a_fork_reply_clears_the_chat_and_says_so() {
+        let mut agent = coordinator();
+        two_turns(&mut agent);
+        agent.fork_request = Some(("f".into(), Some("Second".into())));
+        agent.handle(&event(json!({"type": "response", "command": "fork_session", "id": "f", "success": true, "data": {"sessionPath": "/s/claude-x.jsonl"}})));
+        assert!(agent.transcript.is_empty());
+        assert!(agent.notice_after_reload.as_deref().is_some_and(|n| n.starts_with("Forked into a new chat.")));
+        assert_eq!(agent.composer_replacement.as_deref(), Some("Second"));
+        agent.fork_request = Some(("g".into(), None));
+        agent.handle(&event(json!({"type": "response", "command": "fork_session", "id": "g", "success": false, "error": "boom"})));
+        assert_eq!(agent.transcript.last().unwrap().text, "Could not fork the chat: boom");
+        assert_eq!(agent.transcript.last().unwrap().status, TranscriptStatus::Failed);
     }
 }

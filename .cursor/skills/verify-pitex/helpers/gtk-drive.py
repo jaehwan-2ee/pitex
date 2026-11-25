@@ -11,7 +11,7 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248, "claude-todos": 248, "claude-composer": 248, "claude-usage": 248}
+MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248, "claude-approvals": 248, "claude-todos": 248, "claude-composer": 248, "claude-usage": 248, "claude-branch": 248}
 # The fake Claude answers TOOLCARDS with a Read, an Edit and a failing Bash call.
 TOOLCARDS = "claude-toolcards"
 # MARKDOWN streams a Markdown answer (heading, list, code, math, table, links).
@@ -27,6 +27,8 @@ COMPOSER = "claude-composer"
 # USAGE streams thinking, text, a Read and a long answer with usage crossing 70 % and
 # 90 %, then fails on a rate limit; Retry answers normally.
 USAGE = "claude-usage"
+# BRANCH runs a subagent turn and an edit turn, then folds, rewinds (files too) and forks.
+BRANCH = "claude-branch"
 # Measured in 1280x800 with the divider dragged up and the sidebar shown.
 METER = (int(os.environ.get("PITEX_METER_X", "950")), 767)
 JUMP = (int(os.environ.get("PITEX_JUMP_X", "770")), int(os.environ.get("PITEX_JUMP_Y", "706")))
@@ -59,9 +61,9 @@ QUESTION_METHOD = (450, 688)
 PLAN_FEEDBACK = (700, 677)
 # Expander rows of those three cards in the 1280x800 window, top to bottom.
 # The Read card's "Open file" button once all three cards are open.
-OPEN_FILE_CLICK = (497, 397)
+OPEN_FILE_CLICK = (517, 420)
 # Bottom card first, so expanding one never moves the next target.
-CARD_CLICKS = [(435, 383), (435, 352), (435, 321)]
+CARD_CLICKS = [(456, 413), (456, 386), (456, 359)]
 # The ```latex block's Copy button and the intro.tex:1 link once the answer is in.
 MARKDOWN_COPY_CLICK = (507, 540)
 MARKDOWN_FILE_LINK_CLICK = (503, 732)
@@ -71,11 +73,30 @@ STALE_STORED = {
 }
 # Selectable providers whose switch row has no measured coordinate yet. The
 # preference is written before launch, and the run then clicks Approve like claude.
-SEEDED = {"agy": "agy", "agy-signin": "agy"}
+SEEDED = {"agy": "agy", "agy-signin": "agy", "agy-branch": "agy"}
+# AGY_BRANCH: Antigravity has no native fork or rewind. The answer's ⋯ shows Rewind off
+# with its reason, and Fork starts a new chat with the earlier turn quoted in the draft.
+AGY_BRANCH = "agy-branch"
+AGY_REPLY_MENU = (684, 433)
+AGY_MENU_FORK = (684, 489)
+AGY_MENU_REWIND = (684, 525)
 # AGY_SIGNIN starts the agy fake signed out, sends a prompt (the sign-in error row with
 # Retry), signs in through FAKE_AUTH_FILE and clicks Retry.
 AGY_SIGNIN = "agy-signin"
 SIGNIN_RETRY = (int(os.environ.get("PITEX_SIGNIN_X", "474")), int(os.environ.get("PITEX_SIGNIN_Y", "478")))
+# claude-branch, 1280x800, divider dragged up, sidebar shown: the running subagent card,
+# the first turn's summary row and the ⋯ of its final reply, the popover's two rows,
+# the rewind card's "conversation and files" button and the history button.
+SUBAGENT_CARD = (436, 407)
+FIRST_SUMMARY = (436, 334)
+FIRST_REPLY_MENU = (678, 371)
+MENU_REWIND = (678, 463)
+# After the rewind, with the first turn's summary open: the final reply's ⋯ and the popover's Fork.
+FIRST_REPLY_MENU_OPEN = (678, 539)
+MENU_FORK_OPEN = (678, 595)
+REWIND_BOTH = (1000, 717)
+REWIND_CANCEL = (643, 711)
+HISTORY_SIDEBAR = (1095, 227)
 # PI_FIT opens the assistant on pi, whose long "backend · model (id) · provider" title
 # used to widen the pane past a 1280 px window.
 PI_FIT = "pi-fit"
@@ -161,7 +182,7 @@ def main():
             return 0
         click(560, 752)
         time.sleep(0.15)
-        if provider in (TOOLCARDS, MARKDOWN, APPROVALS, TODOS, COMPOSER, USAGE, AGY_SIGNIN):
+        if provider in (TOOLCARDS, MARKDOWN, APPROVALS, TODOS, COMPOSER, USAGE, AGY_SIGNIN, BRANCH, AGY_BRANCH):
             # Give the transcript room: drag the editor/console divider up.
             run(["xdotool", "mousemove", "840", "538", "mousedown", "1", "mousemove", "840", "400", "mousemove", "840", "160", "mouseup", "1"])
             time.sleep(0.4)
@@ -175,6 +196,8 @@ def main():
             return composer(evidence, result)
         if provider == USAGE:
             return usage(evidence, result)
+        if provider == BRANCH:
+            return branch(evidence, result, project)
         prompt = {TOOLCARDS: "TOOLCARDS", MARKDOWN: "MARKDOWN"}.get(provider, "Fix the title")
         run(["xdotool", "type", "--delay", "12", prompt])
         time.sleep(0.15)
@@ -191,6 +214,8 @@ def main():
             click(470, 716)
             time.sleep(1.2)
             shot(evidence / "05-approved.png")
+        if provider == AGY_BRANCH:
+            return agy_branch(evidence, result)
         prefs = preferences_path()
         saved = ""
         if prefs.exists():
@@ -249,7 +274,11 @@ def signin(evidence, result):
 
 
 def tool_cards(evidence, result):
-    collapsed = screen_text(evidence / "04-sent.png")
+    # The finished turn folds its cards under "Worked for …" (M9): open the fold first.
+    click(*FIRST_SUMMARY)
+    time.sleep(0.8)
+    shot(evidence / "04-fold-open.png")
+    collapsed = screen_text(evidence / "04-fold-open.png")
     for x, y in CARD_CLICKS:
         click(x, y)
         time.sleep(0.4)
@@ -555,6 +584,92 @@ def usage(evidence, result):
     result["steps"].append("usage")
     write(evidence, result)
     return 0 if result["pass"] else 1
+
+
+def branch(evidence, result, project):
+    """SUBAGENT (a subagent with two calls), then EDITFILE; fold, rewind with files, fork."""
+    time.sleep(0.6)
+    send_prompt("SUBAGENT")
+    time.sleep(2.2)
+    shot(evidence / "04-subagent-collapsed.png")
+    click(*SUBAGENT_CARD)
+    time.sleep(1.6)
+    shot(evidence / "05-subagent-expanded.png")
+    time.sleep(4.0)
+    shot(evidence / "06-turn1-folded.png")
+    send_prompt("EDITFILE")
+    time.sleep(2.5)
+    shot(evidence / "07-turn2-done.png")
+    result["mainAfterEdit"] = (project / "main.tex").read_text()
+    click(*FIRST_REPLY_MENU)
+    time.sleep(0.8)
+    # Hover the Rewind row: the ⋯ tooltip would cover the popover.
+    run(["xdotool", "mousemove", str(MENU_REWIND[0]), str(MENU_REWIND[1])])
+    time.sleep(0.5)
+    shot(evidence / "08-message-menu.png")
+    click(*MENU_REWIND)
+    time.sleep(2.0)
+    shot(evidence / "09-rewind-card.png")
+    click(*REWIND_BOTH)
+    # The fake holds the restore 3 s: Cancel, Esc and Send must not call it back meanwhile.
+    time.sleep(0.8)
+    run(["xdotool", "key", "Escape"])
+    click(*REWIND_CANCEL)
+    send_prompt("MEANWHILE")
+    time.sleep(0.4)
+    shot(evidence / "09b-rewinding.png")
+    time.sleep(4.0)
+    shot(evidence / "10-rewound.png")
+    # The held draft is still in the composer; clear it for the fork.
+    click(560, 752)
+    run(["xdotool", "key", "ctrl+a", "BackSpace"])
+    result["mainAfterRewind"] = (project / "main.tex").read_text()
+    click(*FIRST_SUMMARY)
+    time.sleep(0.8)
+    shot(evidence / "11-turn1-expanded.png")
+    click(*FIRST_REPLY_MENU_OPEN)
+    time.sleep(0.8)
+    run(["xdotool", "mousemove", str(MENU_FORK_OPEN[0]), str(MENU_FORK_OPEN[1])])
+    time.sleep(0.5)
+    shot(evidence / "12-menu-fork.png")
+    click(*MENU_FORK_OPEN)
+    time.sleep(3.0)
+    shot(evidence / "13-forked.png")
+    click(*HISTORY_SIDEBAR)
+    time.sleep(2.0)
+    shot(evidence / "14-history.png")
+    run(["xdotool", "key", "Escape"])
+    notes = [json.loads(line) for line in Path(os.environ["FAKE_RECORD"]).read_text().splitlines()]
+    result["rewindNotes"] = [row["rewindFiles"] for row in notes if "rewindFiles" in row]
+    result["resumeAtSpawn"] = [row for row in notes if row.get("kind") == "spawn" and "--resume-session-at" in json.dumps(row)][:1]
+    original = "\\documentclass{article}\\begin{document}Title\\end{document}\n"
+    result["sentDuringRewind"] = [row for row in notes if row.get("user") == "MEANWHILE"]
+    result["pass"] = (
+        "Added by Claude" in result["mainAfterEdit"]
+        and result["mainAfterRewind"] == original
+        and len(result["rewindNotes"]) == 1
+        and not result["sentDuringRewind"]
+    )
+    result["steps"].append("branch")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
+
+
+def agy_branch(evidence, result):
+    time.sleep(1.0)
+    shot(evidence / "06-agy-done.png")
+    click(*AGY_REPLY_MENU)
+    time.sleep(0.8)
+    run(["xdotool", "mousemove", str(AGY_MENU_REWIND[0]), str(AGY_MENU_REWIND[1])])
+    time.sleep(1.6)
+    shot(evidence / "07-rewind-disabled.png")
+    click(*AGY_MENU_FORK)
+    time.sleep(2.5)
+    shot(evidence / "08-quoted-fork.png")
+    result["pass"] = True
+    result["steps"].append("agy-branch")
+    write(evidence, result)
+    return 0
 
 
 def approvals(evidence, result):

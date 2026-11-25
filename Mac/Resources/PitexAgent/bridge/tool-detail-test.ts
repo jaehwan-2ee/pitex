@@ -102,7 +102,7 @@ test("Claude Read, Grep, WebFetch and Task map to their kinds; TodoWrite becomes
   assert.deepEqual(byId.r, { kind: "read", path: "/p/main.tex", startLine: 10, endLine: 40 });
   assert.deepEqual(byId.g, { kind: "search", query: "\\cite", label: "Grep" });
   assert.deepEqual(byId.f, { kind: "fetch", url: "https://ctan.org/pkg/x" });
-  assert.deepEqual(byId.t, { kind: "sub_agent", label: "Check refs" });
+  assert.deepEqual(byId.t, { kind: "sub_agent", label: "Check refs", description: "Check refs" });
   assert.equal(byId.w, undefined);
   assert.deepEqual(events.find((event) => event.type === "todo_update")?.items, []);
   // files_with_matches mode reports only numFiles: that is not a match count.

@@ -1591,7 +1591,7 @@ test("claude reports no steer, a stray steer is pushed at once, images ride as b
   try {
     await adapter.start({ cwd: dir, sessionDir: dir, env: { PATH: "", HOME: dir, CLAUDE_PATH: binary } });
     await adapter.handleCommand({ type: "get_state", id: "state" }, collected.host);
-    assert.deepEqual((response(collected.responses, "get_state").data as Json).capabilities, { steer: false, images: true });
+    assert.deepEqual((response(collected.responses, "get_state").data as Json).capabilities, { steer: false, images: true, fork: true, rewind: { conversation: true, files: true } });
 
     const query = opened[0].query;
     const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
