@@ -956,6 +956,8 @@ private final class EditorConsoleNativeSplitView: NSSplitView {
     private static func makeHost() -> NSHostingView<AnyView> {
         let host = NSHostingView(rootView: AnyView(EmptyView()))
         host.sizingOptions = []
+        // The window's toolbar and title come from the root view, not from these panes.
+        host.sceneBridgingOptions = []
         host.autoresizingMask = []
         return host
     }
@@ -1007,33 +1009,40 @@ private final class EditorConsoleNativeSplitView: NSSplitView {
         if consoleHost.frame != consoleFrame { consoleHost.frame = consoleFrame }
     }
 
-    /// The console keeps its height while both panes fit their minimums;
-    /// below that, both shrink in proportion to their minimums.
+    /// The console keeps its height while both panes fit their minimums.
+    /// Below that the console keeps its minimum (its content needs it) and
+    /// the editor takes what is left.
     static func consoleHeight(_ wanted: CGFloat, available: CGFloat) -> CGFloat {
-        let minimumTotal = editorMinimum + consoleMinimum
-        guard available >= minimumTotal else { return available * consoleMinimum / minimumTotal }
+        guard available >= editorMinimum + consoleMinimum else { return min(consoleMinimum, available) }
         return min(max(wanted, consoleMinimum), available - editorMinimum)
     }
 
     override func mouseDown(with event: NSEvent) {
+        let before = consoleHost?.frame.height
         trackingDivider = true
         super.mouseDown(with: event)
         trackingDivider = false
-        recordConsoleHeight()
+        recordConsoleHeight(from: before)
     }
 
     override func setPosition(_ position: CGFloat, ofDividerAt dividerIndex: Int) {
+        guard consoleHost != nil, dividerIndex == 0 else { return }
+        let before = consoleHost?.frame.height
         let wasTracking = trackingDivider
         trackingDivider = true
+        // The console's minimum wins in a split too short for both minimums.
         super.setPosition(
-            max(minimumDividerPosition(), min(maximumDividerPosition(), position)), ofDividerAt: dividerIndex
+            min(maximumDividerPosition(), max(minimumDividerPosition(), position)), ofDividerAt: dividerIndex
         )
         trackingDivider = wasTracking
-        recordConsoleHeight()
+        recordConsoleHeight(from: before)
     }
 
-    private func recordConsoleHeight() {
-        guard let consoleHost, consoleHost.frame.height > 0 else { return }
+    /// Only a real move is a new preference: a click on the divider of a
+    /// clamped console must not forget the taller height the user chose.
+    private func recordConsoleHeight(from before: CGFloat?) {
+        guard let consoleHost, let before, abs(consoleHost.frame.height - before) > 0.01,
+              consoleHost.frame.height > 0 else { return }
         consoleHeight = consoleHost.frame.height
     }
 
