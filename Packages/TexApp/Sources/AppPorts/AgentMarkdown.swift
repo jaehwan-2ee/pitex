@@ -494,6 +494,14 @@ public enum AgentMarkdown {
         return inlines(Array(text.utf8), &budget)
     }
 
+    /// Budgeted scan steps `parseInlines` spends on `text`; tests bound it
+    /// by `scanFuel` instead of timing the parse.
+    static func inlineScanSteps(_ text: String) -> Int {
+        var budget = Budget()
+        _ = inlines(Array(text.utf8), &budget)
+        return scanFuel - budget.fuel
+    }
+
     /// Inline content of a link label or emphasis; past `maxDepth` it stays text.
     private static func nested(_ b: Bytes, _ budget: inout Budget) -> [Inline] {
         guard budget.depth < maxDepth else { return [.text(string(b))] }
