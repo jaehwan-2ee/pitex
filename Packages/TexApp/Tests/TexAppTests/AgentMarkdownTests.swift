@@ -1,4 +1,4 @@
-import AppPorts
+@testable import AppPorts
 import Foundation
 import XCTest
 
@@ -162,12 +162,19 @@ final class AgentMarkdownTests: XCTestCase {
         let links = String(repeating: "[", count: 5_000) + "a" + String(repeating: "](b)", count: 5_000)
         guard case .paragraph(let inlines)? = blocks(links).first else { return XCTFail("no paragraph") }
         XCTAssertLessThanOrEqual(inlineDepth(inlines), 17)
-        // Unclosed openers rescan the paragraph each; the budget keeps this fast.
+        // Unclosed openers rescan the paragraph each. Without the budget these
+        // inputs cost hundreds of millions of steps; with it, at most one scan
+        // runs past `scanFuel`. Counted, not timed: a busy CI runner cannot flake it.
         for text in [String(repeating: "[", count: 31_000), String(repeating: "*a ", count: 10_000),
                      String(repeating: "\\(", count: 15_000), String(repeating: "[a](", count: 7_000)] {
+            let steps = M.inlineScanSteps(text)
+            XCTAssertGreaterThan(steps, 0, String(text.prefix(8)))
+            XCTAssertLessThanOrEqual(steps, M.scanFuel + text.utf8.count, String(text.prefix(8)))
+            // The block parser on top adds only linear work; a generous wall-clock
+            // guard still catches an exponential blow-up there.
             let started = Date()
             _ = M.parse(text, streaming: true)
-            XCTAssertLessThan(Date().timeIntervalSince(started), 2, String(text.prefix(8)))
+            XCTAssertLessThan(Date().timeIntervalSince(started), 30, String(text.prefix(8)))
         }
     }
 
