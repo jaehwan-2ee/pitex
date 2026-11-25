@@ -42,6 +42,8 @@ struct AgentTranscriptEntry: Identifiable {
         case running
         case done
         case failed
+        /// A tool call cut off by stop/interrupt (`status: "canceled"`).
+        case canceled
     }
 
     let id = UUID()
@@ -50,6 +52,9 @@ struct AgentTranscriptEntry: Identifiable {
     var text: String
     var detail: String = ""
     var status: Status = .done
+    /// Typed tool-call detail from a bridge backend; nil for pi's own
+    /// provider, which keeps the plain name + detail rendering.
+    var tool: AgentToolDetail?
 }
 
 /// A saved conversation for the current project — one pi session file.
@@ -1536,9 +1541,14 @@ final class AgentCoordinator: ObservableObject {
     private func handleToolStart(_ event: PiRPCEvent) {
         guard let callID = event.string("toolCallId") else { return }
         let name = event.string("toolName") ?? "tool"
-        let summary = toolSummary(name: name, args: event.nested("args"))
+        let tool = AgentToolDetail(event.nested("detail"))
+        // A typed card shows its fields in the body; untyped (pi, MCP) and
+        // sub-agent cards have no such fields, so they keep the args summary.
+        let untyped = tool.map { $0.kind == .other || $0.kind == .subAgent } ?? true
+        let summary = untyped ? toolSummary(name: name, args: event.nested("args")) : ""
         transcript.append(AgentTranscriptEntry(
-            role: .tool, title: name, text: "", detail: summary, status: .running
+            role: .tool, title: name, text: "", detail: summary,
+            status: toolStatus(event) ?? .running, tool: tool
         ))
         toolIndexByCallID[callID] = transcript.count - 1
     }
@@ -1547,6 +1557,7 @@ final class AgentCoordinator: ObservableObject {
         guard let callID = event.string("toolCallId"),
               let index = toolIndexByCallID[callID],
               transcript.indices.contains(index) else { return }
+        mergeToolDetail(event, at: index)
         if let text = toolResultText(event.nested("partialResult")) {
             transcript[index].detail = bounded(text, limit: 4_000)
         }
@@ -1556,10 +1567,43 @@ final class AgentCoordinator: ObservableObject {
         guard let callID = event.string("toolCallId"),
               let index = toolIndexByCallID[callID],
               transcript.indices.contains(index) else { return }
-        transcript[index].status = event.bool("isError") ? .failed : .done
+        transcript[index].status = toolStatus(event) ?? (event.bool("isError") ? .failed : .done)
+        mergeToolDetail(event, at: index)
         if let text = toolResultText(event.nested("result")) {
             transcript[index].detail = bounded(text, limit: 4_000)
         }
+    }
+
+    /// A later event's `detail` merges into the card (an untyped one never
+    /// replaces a typed kind).
+    private func mergeToolDetail(_ event: PiRPCEvent, at index: Int) {
+        guard let incoming = AgentToolDetail(event.nested("detail")) else { return }
+        if transcript[index].tool == nil {
+            transcript[index].tool = incoming
+        } else {
+            transcript[index].tool?.merge(incoming)
+        }
+    }
+
+    private func toolStatus(_ event: PiRPCEvent) -> AgentTranscriptEntry.Status? {
+        switch AgentToolDetail.status(event.string("status")) {
+        case .running: return .running
+        case .completed: return .done
+        case .failed: return .failed
+        case .canceled: return .canceled
+        case nil: return nil
+        }
+    }
+
+    /// The editor's open-document path for a tool card's "Open file"
+    /// button. Set by the workspace; only called for files inside the project.
+    var openFile: (URL) -> Void = { _ in }
+    /// The project folder, without building a whole context snapshot.
+    var projectRoot: () -> URL? = { nil }
+
+    func openToolFile(_ tool: AgentToolDetail) {
+        guard let url = tool.openableURL(root: projectRoot()) else { return }
+        openFile(url)
     }
 
     private func handleExtensionUI(_ event: PiRPCEvent) {

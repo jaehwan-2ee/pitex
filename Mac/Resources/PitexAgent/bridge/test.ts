@@ -12,6 +12,7 @@ import test from "node:test";
 
 import "./grok-test.ts";
 import "./agy-test.ts";
+import "./tool-detail-test.ts";
 
 import { createAdapter, type AdapterHost, type PiCommand } from "./adapter.ts";
 import { CodexAdapter, codexForceKillPlan, codexLaunchSpec, findCodex, stopCodexChild } from "./codex-adapter.ts";

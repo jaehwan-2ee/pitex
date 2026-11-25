@@ -12,6 +12,8 @@
 // https://github.com/pingdotgg/t3code — CodexAdapterV2 event projection.
 // This file is original Pitex code written against that protocol, not a copy.
 
+import { cleanDetail, newTurnId, stampTurn, unifiedDiff, type ToolDetail } from "./tool-detail.ts";
+
 export type Json = Record<string, unknown>;
 
 export interface StreamState {
@@ -21,6 +23,8 @@ export interface StreamState {
   /** Item ids that already emitted summary thinking, so raw text is not doubled. */
   thinkingSummarySeen: Record<string, true>;
   toolStarted: Record<string, true>;
+  toolEnded: Record<string, true>;
+  turnId: string | null;
   textByItem: Record<string, string>;
   thinkingParts: string[];
   assistantText: string;
@@ -34,6 +38,8 @@ export function createStreamState(): StreamState {
     thinkingIndexByItem: {},
     thinkingSummarySeen: {},
     toolStarted: {},
+    toolEnded: {},
+    turnId: null,
     textByItem: {},
     thinkingParts: [],
     assistantText: "",
@@ -77,6 +83,7 @@ function toolContent(text: string): Json {
 function ensureTurn(state: StreamState, out: Json[]): void {
   if (state.turnOpen) return;
   state.turnOpen = true;
+  state.turnId = newTurnId();
   out.push({ type: "agent_start" });
   out.push({ type: "message_start", message: { role: "assistant" } });
 }
@@ -106,6 +113,53 @@ export function fileChangeDetail(item: Json): string {
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** One file change as unified diff hunks. Codex sends the whole content for add and delete. */
+function changeDiff(change: Json): { kind: string; diff: string } {
+  const kind = asString(asObject(change.kind)?.type) ?? "update";
+  const diff = asString(change.diff) ?? "";
+  if (kind === "add") return { kind, diff: unifiedDiff("", diff) };
+  if (kind === "delete") return { kind, diff: unifiedDiff(diff, "") };
+  // Drop any ---/+++ header so a later file's header is never counted as a changed line.
+  const hunk = diff.indexOf("@@");
+  return { kind, diff: hunk > 0 ? diff.slice(hunk) : diff };
+}
+
+/** Typed detail for one Codex thread item. */
+export function codexToolDetail(item: Json): ToolDetail {
+  switch (item.type) {
+    case "commandExecution":
+      return cleanDetail({
+        kind: "shell",
+        command: asString(item.command) ?? "",
+        cwd: asString(item.cwd) ?? undefined,
+        exitCode: typeof item.exitCode === "number" ? item.exitCode : undefined,
+      });
+    case "fileChange": {
+      const changes = (Array.isArray(item.changes) ? item.changes : [])
+        .map((change) => asObject(change))
+        .filter((change): change is Json => change !== null);
+      const first = changes[0];
+      const parts = changes.map(changeDiff);
+      return cleanDetail({
+        kind: changes.length === 1 && parts[0]?.kind === "add" ? "write" : "edit",
+        path: asString(first?.path) ?? undefined,
+        // Several files: a `diff --git` line before each restarts the host parsers' line numbers.
+        diff: parts
+          .map((part, i) => {
+            const path = asString(changes[i].path) ?? "";
+            return part.diff && changes.length > 1 ? `diff --git a/${path} b/${path}\n${part.diff}` : part.diff;
+          })
+          .filter(Boolean)
+          .join("\n"),
+      });
+    }
+    case "webSearch":
+      return cleanDetail({ kind: "search", query: asString(item.query) ?? undefined, label: "web_search" });
+    default:
+      return { kind: "other", label: toolName(item) };
+  }
 }
 
 function toolName(item: Json): string {
@@ -166,6 +220,8 @@ function startTool(state: StreamState, item: Json, out: Json[]): void {
     toolCallId: id,
     toolName: toolName(item),
     args: toolArgs(item),
+    detail: codexToolDetail(item),
+    status: "running",
   });
 }
 
@@ -173,12 +229,16 @@ function finishTool(state: StreamState, item: Json, out: Json[]): void {
   const id = asString(item.id);
   if (!id) return;
   startTool(state, item, out);
+  state.toolEnded[id] = true;
   const text = toolOutput(item);
+  const failed = toolFailed(item);
   out.push({
     type: "tool_execution_end",
     toolCallId: id,
-    isError: toolFailed(item),
+    isError: failed,
     result: toolContent(text),
+    detail: codexToolDetail(item),
+    status: failed ? "failed" : "completed",
   });
 }
 
@@ -212,6 +272,13 @@ function appendThinking(state: StreamState, itemId: string, delta: string, out: 
 
 function closeTurn(state: StreamState, turn: Json | null, out: Json[]): void {
   ensureTurn(state, out);
+  // An item still open when the turn ends was cut off (interrupt).
+  for (const id of Object.keys(state.toolStarted)) {
+    if (state.toolEnded[id]) continue;
+    out.push({ type: "tool_execution_end", toolCallId: id, isError: true, result: toolContent(""), status: "canceled" });
+  }
+  state.toolStarted = {};
+  state.toolEnded = {};
   const error = asObject(turn?.error);
   const failed = asString(turn?.status) === "failed" || asString(turn?.status) === "interrupted";
   const message = asString(error?.message);
@@ -245,6 +312,10 @@ function closeTurn(state: StreamState, turn: Json | null, out: Json[]): void {
  * without breaking the transcript.
  */
 export function mapNotification(method: string, params: Json, state: StreamState): Json[] {
+  return stampTurn(mapCodexNotification(method, params, state), state.turnId);
+}
+
+function mapCodexNotification(method: string, params: Json, state: StreamState): Json[] {
   const out: Json[] = [];
   const item = asObject(params.item);
   switch (method) {

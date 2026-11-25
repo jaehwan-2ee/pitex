@@ -919,6 +919,16 @@ final class WorkspaceModel: ObservableObject {
 
             let coordinator = AgentCoordinator(environment: appEnvironment)
             coordinator.contextProvider = { [weak self] in self?.agentContext() ?? AgentContextSnapshot() }
+            coordinator.projectRoot = { [weak self] in self?.projectURL }
+            // Only a file of this project activates; opening anything else
+            // would reload the workspace and stop the agent.
+            coordinator.openFile = { [weak self] url in
+                guard let self else { return }
+                // The agent may report /private/tmp/... for a project opened as /tmp/...
+                let target = url.resolvingSymlinksInPath()
+                guard let file = self.projectFiles.first(where: { $0.resolvingSymlinksInPath() == target }) else { return }
+                Task { await self.activateDocument(file) }
+            }
             coordinator.persistDirtySessions = { [weak self] in
                 guard let self else { return "The workspace is not available." }
                 return await self.persistDirtySessions()

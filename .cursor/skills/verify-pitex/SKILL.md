@@ -48,6 +48,8 @@ node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider agy
 
 `gtk` opens `main.tex` under Xvfb, presses Ctrl+comma, opens the AI page, and opens the backend dropdown. `02-menu.png` is the open picker. The command then chooses Claude Code, opens the assistant, and sends `Fix the title`. It clicks Approve. Pass means `preferences.json` stores `claude` and the CLI record contains the prompt. Approve is `allow` with `user_temporary`. For `agy`, pass means `preferences.json` still stores `agy`, the record contains the prompt, and the fake noted `"permission":"allow"`.
 
+Tool cards: `gtk --provider claude-toolcards` chooses Claude Code like `claude`, drags the editor/console divider up, and sends `TOOLCARDS`. The fake answers with a Read of `intro.tex` (lines 1-40), an Edit of `main.tex` with a structured patch, and a Bash call that exits 1. `04-sent.png` shows the three collapsed cards, `05-expanded.png` the expanded bodies (diff, command and output), and `06-open-file.png` the editor after the Read card's Open file. Pass means the prompt reached the fake; with `tesseract` installed the titles and the diff are also read from the shots. Without it, look at the shots.
+
 A stored `codex` or `grok` uses the same window and does not click a menu row.
 
 ```sh

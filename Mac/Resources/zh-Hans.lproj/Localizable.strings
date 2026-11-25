@@ -248,6 +248,22 @@
 "assistant.reasoning_help" = "推理强度";
 "assistant.send_help" = "发送（⌘Return）";
 "assistant.stop_help" = "停止代理";
+"assistant.tool.ran" = "运行了 %@";
+"assistant.tool.edited" = "编辑了 %@";
+"assistant.tool.wrote" = "写入了 %@";
+"assistant.tool.read" = "读取了 %@";
+"assistant.tool.lines" = "第 %@ 行";
+"assistant.tool.searched" = "搜索了 %@";
+"assistant.tool.matches" = "%@ 处匹配";
+"assistant.tool.fetched" = "获取了 %@";
+"assistant.tool.subagent" = "子代理：%@";
+"assistant.tool.thought" = "思考中";
+"assistant.tool.exit" = "退出码 %@";
+"assistant.tool.open_file" = "打开文件";
+"assistant.tool.status_running" = "运行中";
+"assistant.tool.status_completed" = "已完成";
+"assistant.tool.status_failed" = "失败";
+"assistant.tool.status_canceled" = "已取消";
 
 "preset.pdflatex" = "pdflatex";
 "preset.xelatex" = "xelatex";

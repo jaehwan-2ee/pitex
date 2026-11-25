@@ -247,6 +247,22 @@
 "assistant.reasoning_help" = "Mức suy luận";
 "assistant.send_help" = "Gửi (⌘Return)";
 "assistant.stop_help" = "Dừng agent";
+"assistant.tool.ran" = "Đã chạy %@";
+"assistant.tool.edited" = "Đã sửa %@";
+"assistant.tool.wrote" = "Đã ghi %@";
+"assistant.tool.read" = "Đã đọc %@";
+"assistant.tool.lines" = "dòng %@";
+"assistant.tool.searched" = "Đã tìm %@";
+"assistant.tool.matches" = "%@ kết quả khớp";
+"assistant.tool.fetched" = "Đã tải %@";
+"assistant.tool.subagent" = "Agent phụ: %@";
+"assistant.tool.thought" = "Đang suy nghĩ";
+"assistant.tool.exit" = "mã thoát %@";
+"assistant.tool.open_file" = "Mở tệp";
+"assistant.tool.status_running" = "Đang chạy";
+"assistant.tool.status_completed" = "Hoàn tất";
+"assistant.tool.status_failed" = "Thất bại";
+"assistant.tool.status_canceled" = "Đã hủy";
 "assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";

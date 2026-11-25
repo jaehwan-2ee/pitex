@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { AcpProfile } from "./acp-profiles.ts";
+import { cleanDetail, newTurnId, stampTurn, unifiedDiff, type ToolDetail, type ToolKind } from "./tool-detail.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -32,6 +33,7 @@ export interface StreamState {
   thinkingParts: string[];
   assistantText: string;
   turnOpen: boolean;
+  turnId: string | null;
 }
 
 export function createStreamState(): StreamState {
@@ -45,6 +47,7 @@ export function createStreamState(): StreamState {
     thinkingParts: [],
     assistantText: "",
     turnOpen: false,
+    turnId: null,
   };
 }
 
@@ -140,6 +143,7 @@ function toolContent(text: string): Json {
 function ensureTurn(state: StreamState, out: Json[]): void {
   if (state.turnOpen) return;
   state.turnOpen = true;
+  state.turnId = newTurnId();
   out.push({ type: "agent_start" });
   out.push({ type: "message_start", message: { role: "assistant" } });
 }
@@ -271,6 +275,87 @@ function toolArgs(update: Json): Json {
   return title ? { title } : {};
 }
 
+// agy tool names; other agents fall back to the ACP `kind`.
+const AGY_TOOL_KINDS: Record<string, ToolKind> = {
+  run_command: "shell",
+  write_file: "write",
+  create_file: "write",
+  write_to_file: "write",
+  edit_file: "edit",
+  replace_file_content: "edit",
+  multi_replace_file_content: "edit",
+  view_file: "read",
+  read_file: "read",
+  grep_search: "search",
+  find_by_name: "search",
+  codebase_search: "search",
+  search_web: "search",
+  read_url_content: "fetch",
+};
+
+const ACP_KINDS: Record<string, ToolKind> = {
+  execute: "shell",
+  read: "read",
+  edit: "edit",
+  delete: "edit",
+  move: "edit",
+  search: "search",
+  fetch: "fetch",
+  think: "think",
+};
+
+function firstString(raw: Json | null, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = asString(raw?.[key]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function firstNumber(raw: Json | null, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = raw?.[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+/** Typed detail for one ACP tool_call / tool_call_update (Paseo's ACP kind mapping plus agy names). */
+export function acpToolDetail(update: Json): ToolDetail {
+  const raw = asObject(update.rawInput) ?? asObject(update.args);
+  const name = asString(update.name) ?? "";
+  let kind: ToolKind = AGY_TOOL_KINDS[name] ?? ACP_KINDS[asString(update.kind) ?? ""] ?? "other";
+  const diffBlock = Array.isArray(update.content)
+    ? update.content.map((block) => asObject(block)).find((block) => block?.type === "diff") ?? null
+    : null;
+  const location = asObject(Array.isArray(update.locations) ? update.locations[0] : null);
+  const detail: ToolDetail = {
+    kind,
+    path:
+      firstString(raw, ["Path", "AbsolutePath", "TargetFile", "File", "path", "file_path", "filePath"]) ??
+      asString(location?.path) ??
+      asString(diffBlock?.path) ??
+      undefined,
+    cwd: firstString(raw, ["Cwd", "cwd"]),
+    query: firstString(raw, ["Query", "query", "Pattern", "pattern", "SearchPattern"]),
+    url: firstString(raw, ["Url", "url"]),
+    startLine: firstNumber(raw, ["StartLine", "startLine", "line"]),
+    endLine: firstNumber(raw, ["EndLine", "endLine"]),
+    exitCode: firstNumber(asObject(update.rawOutput), ["exitCode", "exit_code", "ExitCode"]),
+    label: asString(update.title) ?? (name || undefined),
+  };
+  if (kind === "shell") detail.command = commandText(update);
+  if (diffBlock && typeof diffBlock.newText === "string") {
+    const oldText = typeof diffBlock.oldText === "string" ? diffBlock.oldText : null;
+    kind = oldText === null ? "write" : "edit";
+    detail.kind = kind;
+    detail.newText = diffBlock.newText;
+    if (oldText !== null) detail.oldText = oldText;
+    detail.diff = unifiedDiff(oldText ?? "", diffBlock.newText);
+  }
+  return cleanDetail(detail);
+}
+
 function approvalShape(tool: Json): { kind: ApprovalView["kind"]; title: string } {
   const kind = asString(tool.kind);
   if (kind === "execute" || commandText(tool)) return { kind: "command", title: "Run command" };
@@ -328,6 +413,8 @@ function startTool(state: StreamState, id: string, update: Json, out: Json[]): v
     toolCallId: id,
     toolName: toolName(update),
     args: toolArgs(update),
+    detail: acpToolDetail(update),
+    status: "running",
   });
 }
 
@@ -339,6 +426,8 @@ function updateTool(state: StreamState, id: string, update: Json, out: Json[]): 
     type: "tool_execution_update",
     toolCallId: id,
     partialResult: toolContent(text),
+    detail: acpToolDetail(update),
+    status: "running",
   });
 }
 
@@ -351,6 +440,8 @@ function endTool(state: StreamState, id: string, update: Json, failed: boolean, 
     toolCallId: id,
     isError: failed,
     result: toolContent(toolOutputText(update)),
+    detail: acpToolDetail(update),
+    status: failed ? "failed" : "completed",
   });
 }
 
@@ -362,6 +453,10 @@ const PLAN_ID = "acp-plan";
  * notifications without breaking the transcript.
  */
 export function mapSessionUpdate(update: Json, state: StreamState): Json[] {
+  return stampTurn(mapUpdate(update, state), state.turnId);
+}
+
+function mapUpdate(update: Json, state: StreamState): Json[] {
   const out: Json[] = [];
   const sessionUpdate = asString(update.sessionUpdate) ?? "";
   switch (sessionUpdate) {
@@ -423,6 +518,7 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
       result: toolContent(""),
     });
   }
+  // A call still open when the turn closes was cut off: abort, cancel, or an early end.
   for (const id of Object.keys(state.toolStarted)) {
     if (state.toolEnded[id]) continue;
     state.toolEnded[id] = true;
@@ -431,6 +527,7 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
       toolCallId: id,
       isError: true,
       result: toolContent(""),
+      status: "canceled",
     });
   }
   const failed = stopReason === "cancelled" || stopReason === "refusal";
@@ -458,7 +555,7 @@ export function closeTurn(state: StreamState, stopReason: string | null, errorMe
   state.toolStarted = {};
   state.toolEnded = {};
   state.planStarted = false;
-  return out;
+  return stampTurn(out, state.turnId);
 }
 
 export function approvalFromPermission(id: string | number, params: Json, agentName = "The agent"): ApprovalView {

@@ -1,5 +1,6 @@
 import AppKit
 import AppPorts
+import GitCore
 import SwiftUI
 
 /// Native chat surface for the embedded pi agent, laid out like the host
@@ -508,9 +509,13 @@ struct AgentPanel: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    let root = coordinator.projectRoot()
                     ForEach(coordinator.transcript) { entry in
-                        AgentEntryRow(entry: entry, fontSize: settings.aiFontSize)
-                            .id(entry.id)
+                        AgentEntryRow(
+                            entry: entry, fontSize: settings.aiFontSize, projectRoot: root,
+                            openFile: { coordinator.openToolFile($0) }
+                        )
+                        .id(entry.id)
                     }
                 }
                 .padding(.horizontal, 10)
@@ -537,6 +542,8 @@ struct AgentPanel: View {
 private struct AgentEntryRow: View {
     let entry: AgentTranscriptEntry
     let fontSize: Double
+    var projectRoot: URL?
+    var openFile: (AgentToolDetail) -> Void = { _ in }
     private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
 
     var body: some View {
@@ -584,39 +591,7 @@ private struct AgentEntryRow: View {
                 }
             }
         case .tool:
-            DisclosureGroup {
-                if !entry.detail.isEmpty {
-                    Text(verbatim: entry.detail)
-                        .font(.system(size: max(fontSize - 2, 9), design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    switch entry.status {
-                    case .running:
-                        ProgressView().controlSize(.mini)
-                    case .done:
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    case .failed:
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.red)
-                    case .streaming:
-                        EmptyView()
-                    }
-                    Text(verbatim: entry.title)
-                        .font(captionFont.weight(.semibold))
-                    if !entry.detail.isEmpty, entry.status == .running {
-                        Text(verbatim: firstLine(entry.detail))
-                            .font(captionFont)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-            }
+            AgentToolCard(entry: entry, fontSize: fontSize, projectRoot: projectRoot, openFile: openFile)
         case .notice:
             Text(verbatim: entry.text)
                 .font(captionFont)
@@ -624,9 +599,186 @@ private struct AgentEntryRow: View {
                 .frame(maxWidth: .infinity, alignment: .center)
         }
     }
+}
 
-    private func firstLine(_ text: String) -> String {
-        text.components(separatedBy: .newlines).first ?? text
+/// One tool call, collapsed by default: kind icon, status, a one-line title
+/// and a badge (exit code or +/- counts). Expanded: the command and output,
+/// a colored diff with "Open file", or the call's fields. Rows without a
+/// typed `tool` (pi's own provider) show the name and plain detail.
+private struct AgentToolCard: View {
+    let entry: AgentTranscriptEntry
+    let fontSize: Double
+    let projectRoot: URL?
+    let openFile: (AgentToolDetail) -> Void
+    private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
+    private var monoFont: Font { .system(size: max(fontSize - 2, 9), design: .monospaced) }
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 4) {
+                if let tool = entry.tool {
+                    fields(tool)
+                }
+                if !entry.detail.isEmpty, !showsDiff {
+                    Text(verbatim: entry.detail)
+                        .font(monoFont)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let tool = entry.tool, tool.openableURL(root: projectRoot) != nil {
+                    Button("assistant.tool.open_file") { openFile(tool) }
+                        .buttonStyle(.link)
+                        .font(captionFont)
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: kindSymbol)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                statusIcon
+                Text(verbatim: title)
+                    .font(captionFont.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if (entry.tool?.kind ?? .other) == .other, !entry.detail.isEmpty, entry.status == .running {
+                    Text(verbatim: entry.detail.components(separatedBy: .newlines).first ?? entry.detail)
+                        .font(captionFont)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                if let badge = entry.tool?.badge(phrase: Self.phrase) {
+                    Text(verbatim: badge)
+                        .font(monoFont)
+                        .foregroundStyle(entry.tool?.kind == .shell ? Color.red : Color.secondary)
+                        .padding(.horizontal, 5)
+                        .background(Color.secondary.opacity(0.15), in: Capsule())
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        entry.tool?.title(fallback: entry.title, root: projectRoot, phrase: Self.phrase) ?? entry.title
+    }
+
+    /// The diff stands in for an edit's output, except a failure's error text.
+    private var showsDiff: Bool {
+        guard let tool = entry.tool, entry.status != .failed else { return false }
+        return (tool.kind == .edit || tool.kind == .write) && tool.diff != nil
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch entry.status {
+        case .running, .streaming:
+            ProgressView().controlSize(.mini)
+                .accessibilityLabel(Text("assistant.tool.status_running"))
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .accessibilityLabel(Text("assistant.tool.status_completed"))
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+                .accessibilityLabel(Text("assistant.tool.status_failed"))
+        case .canceled:
+            Image(systemName: "stop.circle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityLabel(Text("assistant.tool.status_canceled"))
+        }
+    }
+
+    private var kindSymbol: String {
+        switch entry.tool?.kind {
+        case .shell: return "terminal"
+        case .read: return "doc.text"
+        case .edit: return "pencil"
+        case .write: return "doc.badge.plus"
+        case .search: return "magnifyingglass"
+        case .fetch: return "globe"
+        case .subAgent: return "person.2"
+        case .think: return "brain"
+        case .other, nil: return "wrench.and.screwdriver"
+        }
+    }
+
+    @ViewBuilder
+    private func fields(_ tool: AgentToolDetail) -> some View {
+        switch tool.kind {
+        case .shell:
+            if let command = tool.command {
+                Text(verbatim: "$ " + command)
+                    .font(monoFont)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case .edit, .write:
+            if let diff = tool.diff {
+                diffView(diff)
+            }
+        default:
+            let path = tool.path.map { _ in tool.displayPath(root: projectRoot) }
+            ForEach([path, tool.query, tool.url, tool.cwd].compactMap { $0 }, id: \.self) { value in
+                Text(verbatim: value)
+                    .font(monoFont)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    /// The diff as one column of tinted lines, parsed like the Git diff
+    /// viewer (`GitSupport.parseFileDiff`, `CommitDiffView` colors).
+    private func diffView(_ diff: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(Self.diffLines(diff).enumerated()), id: \.offset) { _, line in
+                Text(verbatim: line.text)
+                    .font(monoFont)
+                    .foregroundStyle(line.color == nil ? Color.secondary : Color.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(line.color ?? .clear)
+            }
+        }
+    }
+
+    private static func diffLines(_ diff: String) -> [(text: String, color: Color?)] {
+        var lines: [(text: String, color: Color?)] = []
+        for row in GitSupport.parseFileDiff(diff) {
+            switch row {
+            case let .hunk(header):
+                lines.append((header, nil))
+            case let .meta(text):
+                if !text.hasPrefix("---"), !text.hasPrefix("+++") { lines.append((text, nil)) }
+            case let .pair(left, right):
+                if let left, left.kind == .context {
+                    lines.append((" " + left.text, Color.clear))
+                    continue
+                }
+                if let left { lines.append(("-" + left.text, Color.red.opacity(0.16))) }
+                if let right { lines.append(("+" + right.text, Color.green.opacity(0.16))) }
+            }
+        }
+        return lines
+    }
+
+    private static func phrase(_ phrase: AgentToolDetail.Phrase) -> String {
+        switch phrase {
+        case .ran: return String(localized: "assistant.tool.ran")
+        case .edited: return String(localized: "assistant.tool.edited")
+        case .wrote: return String(localized: "assistant.tool.wrote")
+        case .read: return String(localized: "assistant.tool.read")
+        case .lines: return String(localized: "assistant.tool.lines")
+        case .searched: return String(localized: "assistant.tool.searched")
+        case .matches: return String(localized: "assistant.tool.matches")
+        case .fetched: return String(localized: "assistant.tool.fetched")
+        case .subagent: return String(localized: "assistant.tool.subagent")
+        case .thought: return String(localized: "assistant.tool.thought")
+        case .exit: return String(localized: "assistant.tool.exit")
+        }
     }
 }
 

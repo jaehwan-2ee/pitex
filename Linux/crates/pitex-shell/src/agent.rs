@@ -1144,6 +1144,8 @@ pub enum TranscriptStatus {
     Running,
     Done,
     Failed,
+    /// A tool call cut off by stop/interrupt (`status: "canceled"`).
+    Canceled,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentTranscriptEntry {
@@ -1152,6 +1154,196 @@ pub struct AgentTranscriptEntry {
     pub text: String,
     pub detail: String,
     pub status: TranscriptStatus,
+    /// Tool-call detail; `kind: "other"` with only the call id for pi's own
+    /// provider. `None` on non-tool rows and history-rebuilt tool rows.
+    pub tool: Option<ToolDetail>,
+}
+
+/// Cap for the diff text a tool card keeps (the bridge caps at the same size).
+pub const TOOL_DIFF_CAP: usize = 12_000;
+
+/// The optional `detail` object on `tool_execution_*` events. `oldText` and
+/// `newText` are not kept: the diff carries the change.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ToolDetail {
+    pub call_id: String,
+    /// shell, read, edit, write, search, fetch, sub_agent, think or other.
+    pub kind: String,
+    pub path: Option<String>,
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i64>,
+    pub diff: Option<String>,
+    pub query: Option<String>,
+    pub url: Option<String>,
+    pub num_matches: Option<i64>,
+    pub label: Option<String>,
+    pub start_line: Option<i64>,
+    pub end_line: Option<i64>,
+}
+
+impl ToolDetail {
+    pub fn decode(call_id: &str, object: &Map<String, Value>) -> Option<Self> {
+        let text = |key: &str| {
+            object
+                .get(key)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        };
+        let int = |key: &str| object.get(key).and_then(|v| v.as_i64());
+        Some(Self {
+            call_id: call_id.to_string(),
+            kind: text("kind")?,
+            path: text("path"),
+            command: text("command").map(|c| bounded(&c, 2_000)),
+            cwd: text("cwd"),
+            exit_code: int("exitCode"),
+            diff: text("diff").map(|d| bounded_diff(&d)),
+            query: text("query"),
+            url: text("url"),
+            num_matches: int("numMatches"),
+            label: text("label"),
+            start_line: int("startLine"),
+            end_line: int("endLine"),
+        })
+    }
+
+    /// Paseo's merge rule: a later event fills in fields; an untyped
+    /// (`other`) detail never replaces a typed one.
+    pub fn merge(&mut self, incoming: ToolDetail) {
+        if incoming.kind == "other" && self.kind != "other" {
+            return;
+        }
+        self.kind = incoming.kind;
+        macro_rules! take {
+            ($($field:ident),*) => { $(if incoming.$field.is_some() { self.$field = incoming.$field; })* };
+        }
+        take!(path, command, cwd, exit_code, diff, query, url, num_matches, label, start_line, end_line);
+    }
+
+    /// No typed fields for the card body (pi's provider, MCP tools, sub-agents).
+    pub fn is_untyped(&self) -> bool {
+        matches!(self.kind.as_str(), "other" | "sub_agent")
+    }
+
+    /// Added and removed line counts of the diff.
+    pub fn diff_counts(&self) -> (usize, usize) {
+        let Some(diff) = &self.diff else { return (0, 0) };
+        let mut counts = (0, 0);
+        let mut in_hunk = false;
+        for line in diff.lines() {
+            if line.starts_with("@@") {
+                in_hunk = true;
+            } else if in_hunk && line.starts_with('+') {
+                counts.0 += 1;
+            } else if in_hunk && line.starts_with('-') {
+                counts.1 += 1;
+            }
+        }
+        counts
+    }
+
+    /// The file path relative to `root` when inside it, else as given.
+    pub fn display_path(&self, root: Option<&Path>) -> String {
+        let Some(path) = &self.path else { return String::new() };
+        root.and_then(|root| Path::new(path).strip_prefix(root).ok())
+            .filter(|rel| !rel.as_os_str().is_empty())
+            .map(|rel| rel.display().to_string())
+            .unwrap_or_else(|| path.clone())
+    }
+
+    /// The absolute file this card can open in the editor: inside `root` only.
+    pub fn openable_path(&self, root: Option<&Path>) -> Option<PathBuf> {
+        if !matches!(self.kind.as_str(), "edit" | "write" | "read") {
+            return None;
+        }
+        let root = root?;
+        let path = Path::new(self.path.as_ref()?);
+        let path = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        canonical(&path).starts_with(canonical(root)).then_some(path)
+    }
+
+    /// One-line card title, e.g. `Ran latexmk -pdf main.tex`,
+    /// `Read main.tex (lines 10-40)`, `Searched "\cite" · 12 matches`.
+    pub fn title(&self, fallback: &str, root: Option<&Path>, lang: &str) -> String {
+        use crate::l10n::{tr, tr1};
+        let path = self.display_path(root);
+        let first_line = |s: &str| s.lines().next().unwrap_or_default().to_string();
+        match self.kind.as_str() {
+            "shell" => tr1(lang, "assistant.tool.ran", &first_line(self.command.as_deref().unwrap_or(fallback))),
+            "edit" if !path.is_empty() => tr1(lang, "assistant.tool.edited", &path),
+            "write" if !path.is_empty() => tr1(lang, "assistant.tool.wrote", &path),
+            "read" if !path.is_empty() => {
+                let target = match (self.start_line, self.end_line) {
+                    (Some(start), Some(end)) => {
+                        format!("{path} ({})", tr1(lang, "assistant.tool.lines", &format!("{start}-{end}")))
+                    }
+                    (Some(start), None) => format!("{path} ({})", tr1(lang, "assistant.tool.lines", &format!("{start}-"))),
+                    _ => path,
+                };
+                tr1(lang, "assistant.tool.read", &target)
+            }
+            "search" => {
+                let query = self.query.as_deref().or(self.label.as_deref()).unwrap_or(fallback);
+                let mut title = tr1(lang, "assistant.tool.searched", &format!("\"{query}\""));
+                if let Some(count) = self.num_matches {
+                    title.push_str(" · ");
+                    title.push_str(&tr1(lang, "assistant.tool.matches", &count.to_string()));
+                }
+                title
+            }
+            "fetch" => {
+                let url = self.url.as_deref().unwrap_or(fallback);
+                let host = url
+                    .split("://")
+                    .nth(1)
+                    .and_then(|rest| rest.split('/').next())
+                    .filter(|host| !host.is_empty())
+                    .unwrap_or(url);
+                tr1(lang, "assistant.tool.fetched", host)
+            }
+            "sub_agent" => tr1(lang, "assistant.tool.subagent", self.label.as_deref().unwrap_or(fallback)),
+            "think" => self.label.clone().unwrap_or_else(|| tr(lang, "assistant.tool.thought")),
+            _ => self.label.clone().unwrap_or_else(|| fallback.to_string()),
+        }
+    }
+
+    /// The header badge: `exit 1` for a failing command, `+3 -1` for a diff.
+    pub fn badge(&self, lang: &str) -> Option<String> {
+        if self.kind == "shell" {
+            return self
+                .exit_code
+                .filter(|code| *code != 0)
+                .map(|code| crate::l10n::tr1(lang, "assistant.tool.exit", &code.to_string()));
+        }
+        let (added, removed) = self.diff_counts();
+        (added + removed > 0).then(|| format!("+{added} -{removed}"))
+    }
+}
+
+fn bounded_diff(diff: &str) -> String {
+    if diff.len() <= TOOL_DIFF_CAP {
+        return diff.to_string();
+    }
+    let mut end = TOOL_DIFF_CAP;
+    while !diff.is_char_boundary(end) {
+        end -= 1;
+    }
+    let end = diff[..end].rfind('\n').unwrap_or(end);
+    // A leading backslash is a meta line for the diff parser.
+    format!("{}\n\\ diff truncated", &diff[..end])
+}
+
+fn tool_status(event: &PiRPCEvent) -> Option<TranscriptStatus> {
+    match event.string("status")?.as_str() {
+        "running" => Some(TranscriptStatus::Running),
+        "completed" => Some(TranscriptStatus::Done),
+        "failed" => Some(TranscriptStatus::Failed),
+        "canceled" => Some(TranscriptStatus::Canceled),
+        _ => None,
+    }
 }
 
 /// A saved conversation for the current project — one pi session file.
@@ -1834,6 +2026,7 @@ impl AgentCoordinator {
                 text: notice.to_string(),
                 detail: String::new(),
                 status: TranscriptStatus::Done,
+                tool: None,
             });
         }
         self.restart();
@@ -2182,6 +2375,7 @@ impl AgentCoordinator {
             text: trimmed.to_string(),
             detail: String::new(),
             status: TranscriptStatus::Done,
+            tool: None,
         });
         self.status_message = None;
         if let Some(persist) = &mut self.persist_dirty_sessions {
@@ -2192,6 +2386,7 @@ impl AgentCoordinator {
                     text: problem,
                     detail: String::new(),
                     status: TranscriptStatus::Failed,
+                    tool: None,
                 });
                 return;
             }
@@ -2362,6 +2557,7 @@ impl AgentCoordinator {
             text,
             detail,
             status: TranscriptStatus::Done,
+            tool: None,
         };
         let title = self.assistant_title();
         let mut entries: Vec<AgentTranscriptEntry> = Vec::new();
@@ -2502,6 +2698,7 @@ impl AgentCoordinator {
                         text: failure,
                         detail: String::new(),
                         status: TranscriptStatus::Failed,
+                        tool: None,
                     });
                 }
                 if let Some(cb) = &mut self.on_agent_activity_finished {
@@ -2525,6 +2722,7 @@ impl AgentCoordinator {
                     text: format!("Retrying ({attempt}/{max_attempts}): {reason}"),
                     detail: String::new(),
                     status: TranscriptStatus::Done,
+                    tool: None,
                 });
             }
             "auto_retry_end" => {
@@ -2536,6 +2734,7 @@ impl AgentCoordinator {
                             text: format!("The request failed after retrying: {final_error}"),
                             detail: String::new(),
                             status: TranscriptStatus::Failed,
+                            tool: None,
                         });
                     }
                 }
@@ -2546,6 +2745,7 @@ impl AgentCoordinator {
                 text: "Compacting the conversation…".into(),
                 detail: String::new(),
                 status: TranscriptStatus::Done,
+                tool: None,
             }),
             "compaction_end" => {
                 if event.bool("aborted") {
@@ -2555,6 +2755,7 @@ impl AgentCoordinator {
                         text: "Compaction cancelled.".into(),
                         detail: String::new(),
                         status: TranscriptStatus::Done,
+                        tool: None,
                     });
                 } else if let Some(message) = event.string("errorMessage") {
                     self.push_entry(AgentTranscriptEntry {
@@ -2563,6 +2764,7 @@ impl AgentCoordinator {
                         text: format!("Compaction failed: {message}"),
                         detail: String::new(),
                         status: TranscriptStatus::Failed,
+                        tool: None,
                     });
                 }
             }
@@ -2588,6 +2790,7 @@ impl AgentCoordinator {
                     text: message,
                     detail: String::new(),
                     status: TranscriptStatus::Failed,
+                    tool: None,
                 });
             }
             _ => {}
@@ -2638,6 +2841,7 @@ impl AgentCoordinator {
                     text: message,
                     detail: String::new(),
                     status: TranscriptStatus::Failed,
+                    tool: None,
                 });
             }
             return;
@@ -2846,6 +3050,7 @@ impl AgentCoordinator {
                         text: reason,
                         detail: String::new(),
                         status: TranscriptStatus::Failed,
+                        tool: None,
                     });
                 }
             }
@@ -2895,6 +3100,7 @@ impl AgentCoordinator {
                     } else {
                         TranscriptStatus::Done
                     },
+                    tool: None,
                 };
                 if entry.text.is_empty() {
                     if let Some(e) = message.get("errorMessage").and_then(|m| m.as_str()) {
@@ -2911,15 +3117,39 @@ impl AgentCoordinator {
         let Some(call_id) = event.string("toolCallId") else { return };
         let name = event.string("toolName").unwrap_or_else(|| "tool".into());
         let summary = tool_summary(&name, event.nested("args"));
+        // pi's own provider sends no detail: an untyped card that still
+        // carries the call id, so its open state survives row rebuilds.
+        let tool = event
+            .nested("detail")
+            .and_then(|detail| ToolDetail::decode(&call_id, detail))
+            .unwrap_or_else(|| ToolDetail { call_id: call_id.clone(), kind: "other".into(), ..Default::default() });
+        // A typed card shows its fields in the body; untyped (pi, MCP) and
+        // sub-agent cards have no such fields, so they keep the args summary.
+        let detail = if tool.is_untyped() { summary } else { String::new() };
         self.push_entry(AgentTranscriptEntry {
             role: TranscriptRole::Tool,
             title: name,
             text: String::new(),
-            detail: summary,
-            status: TranscriptStatus::Running,
+            detail,
+            status: tool_status(event).unwrap_or(TranscriptStatus::Running),
+            tool: Some(tool),
         });
         self.tool_index_by_call_id
             .insert(call_id, self.transcript.len() - 1);
+    }
+
+    /// Merges a later event's `detail` into the card for its call.
+    fn merge_tool_detail(&mut self, index: usize, call_id: &str, event: &PiRPCEvent) {
+        let Some(incoming) = event
+            .nested("detail")
+            .and_then(|detail| ToolDetail::decode(call_id, detail))
+        else {
+            return;
+        };
+        match &mut self.transcript[index].tool {
+            Some(tool) => tool.merge(incoming),
+            slot @ None => *slot = Some(incoming),
+        }
     }
 
     fn handle_tool_update(&mut self, event: &PiRPCEvent) {
@@ -2928,6 +3158,7 @@ impl AgentCoordinator {
         if index >= self.transcript.len() {
             return;
         }
+        self.merge_tool_detail(index, &call_id, event);
         if let Some(text) = tool_result_text(event.nested("partialResult")) {
             self.transcript[index].detail = bounded(&text, 4_000);
         }
@@ -2939,11 +3170,12 @@ impl AgentCoordinator {
         if index >= self.transcript.len() {
             return;
         }
-        self.transcript[index].status = if event.bool("isError") {
+        self.transcript[index].status = tool_status(event).unwrap_or(if event.bool("isError") {
             TranscriptStatus::Failed
         } else {
             TranscriptStatus::Done
-        };
+        });
+        self.merge_tool_detail(index, &call_id, event);
         if let Some(text) = tool_result_text(event.nested("result")) {
             self.transcript[index].detail = bounded(&text, 4_000);
         }
@@ -2967,6 +3199,7 @@ impl AgentCoordinator {
                     ),
                     detail: String::new(),
                     status: TranscriptStatus::Done,
+                    tool: None,
                 });
             }
             "notify" => {
@@ -2977,6 +3210,7 @@ impl AgentCoordinator {
                         text: message,
                         detail: String::new(),
                         status: TranscriptStatus::Done,
+                        tool: None,
                     });
                 }
             }
@@ -3015,6 +3249,7 @@ impl AgentCoordinator {
             text: String::new(),
             detail: String::new(),
             status: TranscriptStatus::Streaming,
+            tool: None,
         });
         self.assistant_entry_index = Some(self.transcript.len() - 1);
     }
@@ -3025,6 +3260,7 @@ impl AgentCoordinator {
             text: String::new(),
             detail: String::new(),
             status: TranscriptStatus::Streaming,
+            tool: None,
         });
         self.thinking_entry_index = Some(self.transcript.len() - 1);
     }
@@ -4698,6 +4934,108 @@ mod session_history_tests {
         assert!(tool_summary("custom", extra.as_object()).contains("description"));
     }
 
+    fn feed(agent: &mut AgentCoordinator, event: Value) {
+        agent.handle(&PiRPCEvent::new(event.as_object().unwrap().clone()).unwrap());
+    }
+
+    #[test]
+    fn typed_tool_events_merge_into_one_card() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        feed(&mut agent, json!({"type": "agent_start", "turnId": "t1"}));
+        feed(&mut agent, json!({
+            "type": "tool_execution_start", "toolCallId": "e1", "toolName": "edit", "turnId": "t1",
+            "args": {"path": "/p/chapters/intro.tex"}, "status": "running",
+            "detail": {"kind": "edit", "path": "/p/chapters/intro.tex", "oldText": "a", "newText": "b",
+                       "diff": "@@ -1,2 +1,3 @@\n a\n-b\n+B\n+C"}
+        }));
+        let card = agent.transcript.last().unwrap();
+        assert_eq!(card.status, TranscriptStatus::Running);
+        assert!(card.detail.is_empty(), "a typed card does not repeat the args summary");
+        // A later untyped update never replaces the typed kind.
+        feed(&mut agent, json!({
+            "type": "tool_execution_update", "toolCallId": "e1",
+            "partialResult": {"content": [{"type": "text", "text": "working"}]},
+            "detail": {"kind": "other", "label": "edit"}
+        }));
+        feed(&mut agent, json!({
+            "type": "tool_execution_end", "toolCallId": "e1", "isError": false, "status": "completed",
+            "result": {"content": [{"type": "text", "text": "ok"}]},
+            "detail": {"kind": "edit", "diff": "@@ -10,1 +10,2 @@\n-b\n+B\n+C"}
+        }));
+        let card = agent.transcript.last().unwrap();
+        let tool = card.tool.as_ref().unwrap();
+        assert_eq!(card.status, TranscriptStatus::Done);
+        assert_eq!(tool.kind, "edit");
+        assert_eq!(tool.path.as_deref(), Some("/p/chapters/intro.tex"));
+        assert_eq!(tool.diff.as_deref(), Some("@@ -10,1 +10,2 @@\n-b\n+B\n+C"));
+        assert_eq!(tool.diff_counts(), (2, 1));
+        let root = Path::new("/p");
+        assert_eq!(tool.title("edit", Some(root), "en"), "Edited chapters/intro.tex");
+        assert_eq!(tool.badge("en").as_deref(), Some("+2 -1"));
+    }
+
+    #[test]
+    fn tool_titles_and_badges_per_kind() {
+        let detail = |value: Value| ToolDetail::decode("id", value.as_object().unwrap()).unwrap();
+        let root = Some(Path::new("/p"));
+        let shell = detail(json!({"kind": "shell", "command": "latexmk -pdf main.tex", "exitCode": 1}));
+        assert_eq!(shell.title("bash", root, "en"), "Ran latexmk -pdf main.tex");
+        assert_eq!(shell.badge("en").as_deref(), Some("exit 1"));
+        let ok = detail(json!({"kind": "shell", "command": "ls", "exitCode": 0}));
+        assert_eq!(ok.badge("en"), None);
+        let write = detail(json!({"kind": "write", "path": "/p/refs.bib", "diff": "@@ -0,0 +1,1 @@\n+@a{b}"}));
+        assert_eq!(write.title("write", root, "en"), "Wrote refs.bib");
+        assert_eq!(write.badge("en").as_deref(), Some("+1 -0"));
+        let read = detail(json!({"kind": "read", "path": "/p/main.tex", "startLine": 10, "endLine": 40}));
+        assert_eq!(read.title("read", root, "en"), "Read main.tex (lines 10-40)");
+        let search = detail(json!({"kind": "search", "query": "\\cite", "numMatches": 12}));
+        assert_eq!(search.title("Grep", root, "en"), "Searched \"\\cite\" · 12 matches");
+        let fetch = detail(json!({"kind": "fetch", "url": "https://ctan.org/pkg/biblatex"}));
+        assert_eq!(fetch.title("WebFetch", root, "en"), "Fetched ctan.org");
+        let other = detail(json!({"kind": "other", "label": "TodoWrite"}));
+        assert_eq!(other.title("TodoWrite", root, "en"), "TodoWrite");
+        // Outside the project: the full path, and no Open file target.
+        let outside = detail(json!({"kind": "edit", "path": "/etc/hosts"}));
+        assert_eq!(outside.title("edit", root, "en"), "Edited /etc/hosts");
+        assert_eq!(outside.openable_path(root), None);
+        assert_eq!(write.openable_path(root), Some(PathBuf::from("/p/refs.bib")));
+        assert_eq!(shell.openable_path(root), None);
+        // A huge diff is capped with a meta line the diff parser keeps.
+        let huge = format!("@@ -1,1 +1,9000 @@\n{}", "+line\n".repeat(9_000));
+        let capped = detail(json!({"kind": "write", "diff": huge})).diff.unwrap();
+        assert!(capped.len() <= TOOL_DIFF_CAP + 20);
+        assert!(capped.ends_with("\\ diff truncated"));
+    }
+
+    #[test]
+    fn canceled_tool_end_marks_the_card_canceled_and_pi_events_still_work() {
+        let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
+        feed(&mut agent, json!({
+            "type": "tool_execution_start", "toolCallId": "b1", "toolName": "bash",
+            "args": {"command": "sleep 9"}, "detail": {"kind": "shell", "command": "sleep 9"}, "status": "running"
+        }));
+        feed(&mut agent, json!({
+            "type": "tool_execution_end", "toolCallId": "b1", "isError": true, "status": "canceled",
+            "result": {"content": [{"type": "text", "text": ""}]}
+        }));
+        assert_eq!(agent.transcript.last().unwrap().status, TranscriptStatus::Canceled);
+        // pi's own provider: no detail, no status — today's name + summary row.
+        feed(&mut agent, json!({"type": "tool_execution_start", "toolCallId": "p1", "toolName": "bash", "args": {"command": "ls"}}));
+        feed(&mut agent, json!({"type": "tool_execution_end", "toolCallId": "p1", "isError": true}));
+        let pi = agent.transcript.last().unwrap();
+        // An untyped card that keeps the call id, so its open state survives updates.
+        let tool = pi.tool.as_ref().unwrap();
+        assert_eq!((tool.kind.as_str(), tool.call_id.as_str()), ("other", "p1"));
+        assert_eq!(pi.detail, "ls");
+        assert_eq!(pi.status, TranscriptStatus::Failed);
+        // An untyped bridge card (MCP tool) keeps its arguments too.
+        feed(&mut agent, json!({
+            "type": "tool_execution_start", "toolCallId": "m1", "toolName": "mcp__x__search",
+            "args": {"query": "biblatex"}, "detail": {"kind": "other", "label": "mcp__x__search"}
+        }));
+        assert!(agent.transcript.last().unwrap().detail.contains("biblatex"));
+    }
+
     #[test]
     fn approval_request_waits_until_the_user_answers() {
         let mut agent = AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
@@ -4990,6 +5328,7 @@ mod session_history_tests {
             text: "kept".into(),
             detail: String::new(),
             status: TranscriptStatus::Done,
+            tool: None,
         }];
         let stale = json!({
             "type": "response",
@@ -5100,6 +5439,7 @@ mod session_history_tests {
             text: "draft the abstract".into(),
             detail: String::new(),
             status: TranscriptStatus::Done,
+            tool: None,
         });
         let start = json!({"type": "agent_start"});
         agent.handle(&response(start));
@@ -5181,6 +5521,7 @@ mod session_history_tests {
             text: "draft the abstract".into(),
             detail: String::new(),
             status: TranscriptStatus::Done,
+            tool: None,
         });
         let start = json!({"type": "agent_start"});
         agent.handle(&response(start));

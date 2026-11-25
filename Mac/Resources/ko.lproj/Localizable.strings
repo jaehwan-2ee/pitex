@@ -247,6 +247,22 @@
 "assistant.reasoning_help" = "추론 강도";
 "assistant.send_help" = "전송 (⌘Return)";
 "assistant.stop_help" = "에이전트 중지";
+"assistant.tool.ran" = "%@ 실행";
+"assistant.tool.edited" = "%@ 편집";
+"assistant.tool.wrote" = "%@ 작성";
+"assistant.tool.read" = "%@ 읽음";
+"assistant.tool.lines" = "%@행";
+"assistant.tool.searched" = "%@ 검색";
+"assistant.tool.matches" = "일치 %@개";
+"assistant.tool.fetched" = "%@에서 가져옴";
+"assistant.tool.subagent" = "하위 에이전트: %@";
+"assistant.tool.thought" = "생각 중";
+"assistant.tool.exit" = "종료 코드 %@";
+"assistant.tool.open_file" = "파일 열기";
+"assistant.tool.status_running" = "실행 중";
+"assistant.tool.status_completed" = "완료";
+"assistant.tool.status_failed" = "실패";
+"assistant.tool.status_canceled" = "취소됨";
 "assistant.usage" = "%@";
 
 "preset.pdflatex" = "pdflatex";

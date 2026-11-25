@@ -1660,6 +1660,17 @@ impl AppState {
         true
     }
 
+    /// An agent tool card's "Open file": activates `path` when it is one of
+    /// this project's files. Anything else is left alone — opening it would
+    /// reload the workspace and stop the agent.
+    pub fn activate_project_file(&mut self, path: &Path) {
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let file = canonical(path);
+        if let Some(url) = self.model.project_files.iter().find(|f| canonical(f) == file).cloned() {
+            self.activate_document(url);
+        }
+    }
+
     /// File → Open Recent — `open(url)` for a recents entry (menu target is
     /// the index into `recent_documents`).
     pub fn open_recent_action(&mut self, index: i32) {
@@ -4378,6 +4389,7 @@ impl AppState {
         }
         self.sync_assistant_visibility();
         let lang = self.language;
+        let root = self.model.project_url.clone();
         let agent = self.agent.as_mut().unwrap();
         UI.with(|ui| {
             // Rebuild the transcript + pickers only when agent state or the
@@ -4450,7 +4462,7 @@ impl AppState {
                     for (i, entry) in agent.transcript.iter().enumerate() {
                         let next = child.as_ref().and_then(|row| row.next_sibling());
                         if previous.get(i) != keys.get(i) {
-                            let row = transcript_row(entry, font_size);
+                            let row = transcript_row(entry, font_size, root.as_deref());
                             if let Some(old) = child.as_ref() {
                                 box_.insert_child_after(&row, old.prev_sibling().as_ref());
                                 box_.remove(old);
@@ -5896,7 +5908,212 @@ fn format_session_stats(stats: &crate::agent::PiSessionStats) -> String {
     parts.join(" · ")
 }
 
-fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64) -> gtk4::Widget {
+thread_local! {
+    /// Tool cards the user expanded, by call id — a row rebuilt for a
+    /// status or output change keeps its open/closed state.
+    static EXPANDED_TOOL_CARDS: RefCell<std::collections::HashSet<String>> = RefCell::new(Default::default());
+}
+
+fn tool_kind_icon(kind: &str) -> &'static str {
+    match kind {
+        "shell" => "utilities-terminal-symbolic",
+        "read" => "x-office-document-symbolic",
+        "edit" => "document-edit-symbolic",
+        "write" => "document-new-symbolic",
+        "search" => "edit-find-symbolic",
+        "fetch" => "network-workgroup-symbolic",
+        "sub_agent" => "applications-engineering-symbolic",
+        "think" => "weather-fog-symbolic",
+        _ => "emblem-system-symbolic",
+    }
+}
+
+fn tool_status_widget(status: crate::agent::TranscriptStatus) -> gtk4::Widget {
+    use crate::agent::TranscriptStatus;
+    let (icon, class, key) = match status {
+        TranscriptStatus::Streaming | TranscriptStatus::Running => ("", "", "assistant.tool.status_running"),
+        TranscriptStatus::Done => ("emblem-ok-symbolic", "success", "assistant.tool.status_completed"),
+        TranscriptStatus::Failed => ("window-close-symbolic", "error", "assistant.tool.status_failed"),
+        TranscriptStatus::Canceled => ("process-stop-symbolic", "warning", "assistant.tool.status_canceled"),
+    };
+    let widget: gtk4::Widget = if icon.is_empty() {
+        let spinner = gtk4::Spinner::new();
+        spinner.start();
+        spinner.upcast()
+    } else {
+        let image = gtk4::Image::from_icon_name(icon);
+        image.add_css_class(class);
+        image.upcast()
+    };
+    a11y(&widget, "pitex.assistant.tool.status", key);
+    widget
+}
+
+fn mono_label(text: &str, size: f64) -> gtk4::Label {
+    let label = gtk4::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+    label.set_selectable(true);
+    label.add_css_class("monospace");
+    label.set_attributes(Some(&font_attrs(size)));
+    label
+}
+
+/// Unified diff lines tinted like the Git diff viewer (`git_core::parse_file_diff`
+/// rows, `pitex-diff-*` classes), one column for the narrow assistant panel.
+fn tool_diff_view(diff: &str, size: f64) -> gtk4::Widget {
+    let column = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    let line = |prefix: &str, text: &str, class: &str| {
+        let label = mono_label(&format!("{prefix}{text}"), size);
+        label.add_css_class(class);
+        label.set_hexpand(true);
+        column.append(&label);
+    };
+    for row in git_core::parse_file_diff(diff) {
+        match row {
+            git_core::GitDiffRow::Hunk(header) => {
+                let label = mono_label(&header, size);
+                label.add_css_class("dim-label");
+                column.append(&label);
+            }
+            git_core::GitDiffRow::Meta(text) => {
+                if !text.starts_with("---") && !text.starts_with("+++") {
+                    let label = mono_label(&text, size);
+                    label.add_css_class("dim-label");
+                    column.append(&label);
+                }
+            }
+            git_core::GitDiffRow::Pair { left, right } => {
+                let context = matches!(&left, Some(l) if l.kind == git_core::GitDiffLineKind::Context);
+                if context {
+                    line(" ", &left.map(|l| l.text).unwrap_or_default(), "pitex-diff-context");
+                    continue;
+                }
+                if let Some(l) = left {
+                    line("-", &l.text, "pitex-diff-removed");
+                }
+                if let Some(r) = right {
+                    line("+", &r.text, "pitex-diff-added");
+                }
+            }
+        }
+    }
+    column.upcast()
+}
+
+/// A typed tool call: collapsed header (kind icon, status, one-line title,
+/// badge) over a body with the command/output, the diff, or the fields.
+fn tool_card(
+    entry: &crate::agent::AgentTranscriptEntry,
+    tool: &crate::agent::ToolDetail,
+    font_size: f64,
+    root: Option<&Path>,
+) -> gtk4::Widget {
+    let lang = LANG.with(|l| l.get());
+    let caption_size = (font_size - 2.0).max(9.0);
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    header.append(&gtk4::Image::from_icon_name(tool_kind_icon(&tool.kind)));
+    header.append(&tool_status_widget(entry.status));
+    let title = gtk4::Label::new(Some(&tool.title(&entry.title, root, lang)));
+    title.set_xalign(0.0);
+    title.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    title.set_attributes(Some(&font_attrs(caption_size)));
+    header.append(&title);
+    // Untyped cards (pi, MCP) show what they run while running, as on Mac.
+    if tool.kind == "other" && entry.status == crate::agent::TranscriptStatus::Running && !entry.detail.is_empty() {
+        let summary = gtk4::Label::new(entry.detail.lines().next());
+        summary.add_css_class("dim-label");
+        summary.set_xalign(0.0);
+        summary.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        summary.set_attributes(Some(&font_attrs(caption_size)));
+        header.append(&summary);
+    }
+    if let Some(badge) = tool.badge(lang) {
+        let chip = gtk4::Label::new(Some(&badge));
+        chip.add_css_class("pitex-diff-chip");
+        chip.add_css_class("monospace");
+        if tool.kind == "shell" {
+            chip.add_css_class("error");
+        }
+        chip.set_attributes(Some(&font_attrs(caption_size)));
+        header.append(&chip);
+    }
+
+    let body = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    body.set_margin_start(22);
+    body.set_margin_top(4);
+    match tool.kind.as_str() {
+        "shell" => {
+            if let Some(command) = &tool.command {
+                body.append(&mono_label(&format!("$ {command}"), caption_size));
+            }
+        }
+        "edit" | "write" => {
+            if let Some(diff) = &tool.diff {
+                body.append(&tool_diff_view(diff, caption_size));
+            }
+        }
+        _ => {
+            let path = tool.path.as_ref().map(|_| tool.display_path(root));
+            for value in [&path, &tool.query, &tool.url, &tool.cwd].into_iter().flatten() {
+                let label = mono_label(value, caption_size);
+                label.add_css_class("dim-label");
+                body.append(&label);
+            }
+        }
+    }
+    // The diff already shows an edit; output is for everything else, and for a failure's error.
+    let shows_diff = matches!(tool.kind.as_str(), "edit" | "write")
+        && tool.diff.is_some()
+        && entry.status != crate::agent::TranscriptStatus::Failed;
+    if !entry.detail.is_empty() && !shows_diff {
+        let output = mono_label(&entry.detail, caption_size);
+        output.add_css_class("dim-label");
+        body.append(&output);
+    }
+    if let Some(path) = tool.openable_path(root) {
+        let open = gtk4::Button::with_label(&tr(lang, "assistant.tool.open_file"));
+        open.add_css_class("flat");
+        open.set_halign(gtk4::Align::Start);
+        open.connect_clicked(move |_| {
+            let path = path.clone();
+            glib::idle_add_local_once(move || {
+                let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+                state.borrow_mut().activate_project_file(&path);
+            });
+        });
+        body.append(&open);
+    }
+
+    let expander = gtk4::Expander::new(None);
+    expander.set_label_widget(Some(&header));
+    expander.set_child(Some(&body));
+    expander.set_widget_name("pitex.assistant.tool");
+    let id = tool.call_id.clone();
+    if id.is_empty() {
+        return expander.upcast();
+    }
+    expander.set_expanded(EXPANDED_TOOL_CARDS.with(|set| set.borrow().contains(&id)));
+    expander.connect_expanded_notify(move |expander| {
+        EXPANDED_TOOL_CARDS.with(|set| {
+            let mut set = set.borrow_mut();
+            if expander.is_expanded() {
+                set.insert(id.clone());
+            } else {
+                set.remove(&id);
+            }
+        });
+    });
+    expander.upcast()
+}
+
+fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64, root: Option<&Path>) -> gtk4::Widget {
+    if entry.role == crate::agent::TranscriptRole::Tool {
+        // A history-rebuilt row has no detail: a generic card titled by the tool name.
+        let generic = crate::agent::ToolDetail { kind: "other".into(), ..Default::default() };
+        return tool_card(entry, entry.tool.as_ref().unwrap_or(&generic), font_size, root);
+    }
     let caption_size = (font_size - 2.0).max(9.0);
     let row = gtk4::Box::new(gtk4::Orientation::Vertical, 3);
     let (role, icon) = match entry.role {
@@ -8424,5 +8641,42 @@ mod remote_save_lifecycle_tests {
         );
         std::fs::remove_dir_all(root).unwrap();
         finished.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tool_card_tests {
+    use super::*;
+    use crate::agent::{AgentTranscriptEntry, ToolDetail, TranscriptRole, TranscriptStatus};
+
+    /// pi's own provider: an untyped card shows its command while running
+    /// and stays open when an output update rebuilds the row.
+    #[test]
+    #[ignore = "requires a GTK display (use xvfb-run)"]
+    fn untyped_card_shows_its_command_and_stays_open_across_updates() {
+        gtk4::init().unwrap();
+        let mut entry = AgentTranscriptEntry {
+            role: TranscriptRole::Tool,
+            title: "bash".into(),
+            text: String::new(),
+            detail: "latexmk main.tex".into(),
+            status: TranscriptStatus::Running,
+            tool: Some(ToolDetail { call_id: "p1".into(), kind: "other".into(), ..Default::default() }),
+        };
+        let card = transcript_row(&entry, 13.0, None).downcast::<gtk4::Expander>().unwrap();
+        let header = card.label_widget().unwrap();
+        let mut texts = Vec::new();
+        let mut child = header.first_child();
+        while let Some(widget) = child {
+            if let Some(label) = widget.downcast_ref::<gtk4::Label>() {
+                texts.push(label.text().to_string());
+            }
+            child = widget.next_sibling();
+        }
+        assert_eq!(texts, ["bash", "latexmk main.tex"]);
+        card.set_expanded(true);
+        entry.detail = "Latexmk: done".into();
+        let rebuilt = transcript_row(&entry, 13.0, None).downcast::<gtk4::Expander>().unwrap();
+        assert!(rebuilt.is_expanded());
     }
 }
