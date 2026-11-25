@@ -58,6 +58,26 @@ where
     widget.update_property(&[gtk4::accessible::Property::Label(&tr(lang, label_key))]);
 }
 
+/// The UI language of this window.
+pub(crate) fn language() -> &'static str {
+    LANG.with(|l| l.get())
+}
+
+/// A link clicked in an assistant message: http(s) in the browser, a
+/// project file (optionally at a line) in the editor, anything else nowhere.
+pub(crate) fn open_chat_link(url: &str, root: Option<&Path>) {
+    let target = crate::chat_markdown::classify_link(url, root);
+    glib::idle_add_local_once(move || {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
+        let mut state = state.borrow_mut();
+        match target {
+            crate::chat_markdown::LinkTarget::Web(uri) => state.open_external_uri(&uri),
+            crate::chat_markdown::LinkTarget::File { path, line } => state.activate_project_file(&path, line),
+            crate::chat_markdown::LinkTarget::Unsupported => {}
+        }
+    });
+}
+
 /// The workspace window — dialogs and sheets attach to it.
 pub(crate) fn main_window() -> Option<gtk4::Window> {
     UI.with(|ui| ui.window.borrow().as_ref().map(|w| w.clone().upcast()))
@@ -293,6 +313,8 @@ pub struct AppState {
     /// Last AI font size applied to the transcript CSS — changes force a
     /// rebuild even when `ui_revision` is unchanged.
     pub rendered_ai_font_size: Cell<f64>,
+    /// Palette the transcript rows were drawn with; a change rebuilds them.
+    rendered_chat_theme: RefCell<crate::chat_view::ChatTheme>,
     rendered_transcript_keys: RefCell<Vec<u64>>,
     rendered_picker_key: Cell<u64>,
     rendered_sidebar_keys: Cell<[u64; 4]>,
@@ -434,6 +456,7 @@ impl AppState {
             transcript_rendered_at: Cell::new(std::time::Instant::now()),
             transcript_render_pending: Cell::new(false),
             rendered_ai_font_size: Cell::new(0.0),
+            rendered_chat_theme: RefCell::default(),
             rendered_transcript_keys: RefCell::new(Vec::new()),
             rendered_picker_key: Cell::new(0),
             rendered_sidebar_keys: Cell::new([0; 4]),
@@ -796,6 +819,10 @@ impl AppState {
         // scheme must be in place before `stored_hex` reads below.
         self.appearance.resolved_dark.set(manager.is_dark());
         self.sync_equation_preview();
+        if self.agent.is_some() {
+            // Assistant rows draw math ink and code colors from the palette.
+            schedule_transcript_render(Duration::ZERO);
+        }
         // Generate a GtkSourceView style scheme from the palette — the
         // native mechanism for editor/gutter/line-number colors.
         let prefs = self.store.prefs();
@@ -837,7 +864,11 @@ impl AppState {
                  .pitex-diff-empty {{ background-color: alpha(currentColor, 0.05); }}
                  .pitex-diff-fold {{ background-color: alpha(currentColor, 0.10); padding: 4px 0; }}
                  .pitex-diff-filehdr {{ background-color: alpha(currentColor, 0.08); border-radius: 0; }}
-                 .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}"
+                 .pitex-diff-chip {{ background-color: alpha(currentColor, 0.15); border-radius: 999px; padding: 1px 6px; }}
+                 .pitex-md-code {{ background-color: alpha(currentColor, 0.06); border-radius: 6px; padding: 2px 8px 6px 8px; }}
+                 .pitex-md-quote {{ border-left: 3px solid alpha(currentColor, 0.25); padding-left: 8px; }}
+                 .pitex-md-cell {{ padding: 2px 0; border-bottom: 1px solid alpha(currentColor, 0.10); }}
+                 textview.pitex-md-text, textview.pitex-md-text text {{ background-color: transparent; }}"
             ));
             if fresh {
                 gtk4::style_context_add_provider_for_display(
@@ -1663,11 +1694,16 @@ impl AppState {
     /// An agent tool card's "Open file": activates `path` when it is one of
     /// this project's files. Anything else is left alone — opening it would
     /// reload the workspace and stop the agent.
-    pub fn activate_project_file(&mut self, path: &Path) {
+    pub fn activate_project_file(&mut self, path: &Path, line: Option<usize>) {
         let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let file = canonical(path);
-        if let Some(url) = self.model.project_files.iter().find(|f| canonical(f) == file).cloned() {
-            self.activate_document(url);
+        let Some(url) = self.model.project_files.iter().find(|f| canonical(f) == file).cloned() else { return };
+        match (line, self.tx.clone()) {
+            (Some(line), Some(tx)) => {
+                self.model.activate_document_at_line(url, line, tx);
+                self.refresh_git_diff();
+            }
+            _ => self.activate_document(url),
         }
     }
 
@@ -4380,6 +4416,20 @@ impl AppState {
         false
     }
 
+    /// Palette bits assistant messages draw with (code highlighting, math ink).
+    fn chat_theme(&self) -> crate::chat_view::ChatTheme {
+        let prefs = self.store.prefs();
+        let hex = |role| self.appearance.stored_hex(prefs, role);
+        crate::chat_view::ChatTheme {
+            dark: self.appearance.effective_dark(),
+            commands: hex(AppearanceColorRole::Commands),
+            comments: hex(AppearanceColorRole::Comments),
+            braces: hex(AppearanceColorRole::Braces),
+            environments: hex(AppearanceColorRole::Environments),
+            math: hex(AppearanceColorRole::Math),
+        }
+    }
+
     pub fn refresh_assistant(&mut self) {
         self.ensure_agent();
         // A remote close shuts the agent down and refuses to create another
@@ -4390,13 +4440,15 @@ impl AppState {
         self.sync_assistant_visibility();
         let lang = self.language;
         let root = self.model.project_url.clone();
+        let chat_theme = self.chat_theme();
         let agent = self.agent.as_mut().unwrap();
         UI.with(|ui| {
             // Rebuild the transcript + pickers only when agent state or the
             // font size changed — the 40ms poll used to rebuild the whole
             // widget tree every tick.
             let font_size = self.store.ai_font_size();
-            let font_changed = font_size != self.rendered_ai_font_size.get();
+            let font_changed = font_size != self.rendered_ai_font_size.get()
+                || *self.rendered_chat_theme.borrow() != chat_theme;
             // A deferred pass (scheduled below) picks up whatever a
             // throttled streaming update left unrendered.
             let dirty = (agent.ui_revision != self.rendered_agent_revision.get() || font_changed)
@@ -4412,6 +4464,7 @@ impl AppState {
             if dirty {
                 self.rendered_agent_revision.set(agent.ui_revision);
                 self.rendered_ai_font_size.set(font_size);
+                *self.rendered_chat_theme.borrow_mut() = chat_theme.clone();
             }
             if dirty {
             if let Some(box_) = ui.transcript_box.borrow().as_ref() {
@@ -4452,7 +4505,7 @@ impl AppState {
                     box_.append(&empty);
                 } else {
                     let keys: Vec<u64> = agent.transcript.iter()
-                        .map(|entry| view_key(&(entry, font_size.to_bits())))
+                        .map(|entry| view_key(&(entry, font_size.to_bits(), &chat_theme)))
                         .collect();
                     let mut previous = self.rendered_transcript_keys.borrow_mut();
                     if previous.is_empty() {
@@ -4462,7 +4515,7 @@ impl AppState {
                     for (i, entry) in agent.transcript.iter().enumerate() {
                         let next = child.as_ref().and_then(|row| row.next_sibling());
                         if previous.get(i) != keys.get(i) {
-                            let row = transcript_row(entry, font_size, root.as_deref());
+                            let row = transcript_row(entry, font_size, root.as_deref(), &chat_theme);
                             if let Some(old) = child.as_ref() {
                                 box_.insert_child_after(&row, old.prev_sibling().as_ref());
                                 box_.remove(old);
@@ -6080,7 +6133,7 @@ fn tool_card(
             let path = path.clone();
             glib::idle_add_local_once(move || {
                 let Some(state) = STATE.with(|s| s.borrow().clone()) else { return };
-                state.borrow_mut().activate_project_file(&path);
+                state.borrow_mut().activate_project_file(&path, None);
             });
         });
         body.append(&open);
@@ -6108,7 +6161,12 @@ fn tool_card(
     expander.upcast()
 }
 
-fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64, root: Option<&Path>) -> gtk4::Widget {
+fn transcript_row(
+    entry: &crate::agent::AgentTranscriptEntry,
+    font_size: f64,
+    root: Option<&Path>,
+    theme: &crate::chat_view::ChatTheme,
+) -> gtk4::Widget {
     if entry.role == crate::agent::TranscriptRole::Tool {
         // A history-rebuilt row has no detail: a generic card titled by the tool name.
         let generic = crate::agent::ToolDetail { kind: "other".into(), ..Default::default() };
@@ -6140,8 +6198,23 @@ fn transcript_row(entry: &crate::agent::AgentTranscriptEntry, font_size: f64, ro
     role_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
     role_label.set_attributes(Some(&font_attrs(caption_size)));
     header.append(&role_label);
+    let assistant = entry.role == crate::agent::TranscriptRole::Assistant;
+    if assistant && !entry.text.is_empty() {
+        // Copies the raw Markdown of the whole message.
+        let copy = gtk4::Button::from_icon_name("edit-copy-symbolic");
+        copy.add_css_class("flat");
+        let lang = language();
+        copy.set_tooltip_text(Some(&tr(lang, "assistant.markdown.copy_message")));
+        a11y(&copy, "pitex.assistant.markdown.copyMessage", "assistant.markdown.copy_message");
+        let text = entry.text.clone();
+        copy.connect_clicked(move |button| button.clipboard().set_text(&text));
+        header.append(&copy);
+    }
     row.append(&header);
-    if !entry.text.is_empty() {
+    if assistant && !entry.text.is_empty() && entry.status != crate::agent::TranscriptStatus::Failed {
+        let streaming = entry.status == crate::agent::TranscriptStatus::Streaming;
+        row.append(&crate::chat_view::markdown_view(&entry.text, streaming, font_size, root, theme));
+    } else if !entry.text.is_empty() {
         let body = gtk4::Label::new(Some(&entry.text));
         body.set_xalign(0.0);
         body.set_wrap(true);
@@ -8663,7 +8736,7 @@ mod tool_card_tests {
             status: TranscriptStatus::Running,
             tool: Some(ToolDetail { call_id: "p1".into(), kind: "other".into(), ..Default::default() }),
         };
-        let card = transcript_row(&entry, 13.0, None).downcast::<gtk4::Expander>().unwrap();
+        let card = transcript_row(&entry, 13.0, None, &Default::default()).downcast::<gtk4::Expander>().unwrap();
         let header = card.label_widget().unwrap();
         let mut texts = Vec::new();
         let mut child = header.first_child();
@@ -8676,7 +8749,7 @@ mod tool_card_tests {
         assert_eq!(texts, ["bash", "latexmk main.tex"]);
         card.set_expanded(true);
         entry.detail = "Latexmk: done".into();
-        let rebuilt = transcript_row(&entry, 13.0, None).downcast::<gtk4::Expander>().unwrap();
+        let rebuilt = transcript_row(&entry, 13.0, None, &Default::default()).downcast::<gtk4::Expander>().unwrap();
         assert!(rebuilt.is_expanded());
     }
 }

@@ -11,14 +11,19 @@ if runtime:
     os.makedirs(runtime, mode=0o700, exist_ok=True)
     os.chmod(runtime, 0o700)
 
-MENU_Y = {"claude": 248, "claude-toolcards": 248}
+MENU_Y = {"claude": 248, "claude-toolcards": 248, "claude-markdown": 248}
 # The fake Claude answers TOOLCARDS with a Read, an Edit and a failing Bash call.
 TOOLCARDS = "claude-toolcards"
+# MARKDOWN streams a Markdown answer (heading, list, code, math, table, links).
+MARKDOWN = "claude-markdown"
 # Expander rows of those three cards in the 1280x800 window, top to bottom.
 # The Read card's "Open file" button once all three cards are open.
 OPEN_FILE_CLICK = (497, 397)
 # Bottom card first, so expanding one never moves the next target.
 CARD_CLICKS = [(435, 383), (435, 352), (435, 321)]
+# The ```latex block's Copy button and the intro.tex:1 link once the answer is in.
+MARKDOWN_COPY_CLICK = (507, 540)
+MARKDOWN_FILE_LINK_CLICK = (503, 732)
 STALE_STORED = {
     "stale-codex": "codex",
     "stale-grok": "grok",
@@ -38,9 +43,15 @@ def main():
     seeded = SEEDED.get(provider)
     if stored or seeded:
         seed_stale_provider(stored or seeded)
+    if os.environ.get("PITEX_GTK_THEME"):
+        prefs = preferences_path()
+        prefs.parent.mkdir(parents=True, exist_ok=True)
+        data = json.loads(prefs.read_text()) if prefs.exists() else {}
+        data["appearance.theme"] = os.environ["PITEX_GTK_THEME"]
+        prefs.write_text(json.dumps(data, separators=(",", ":")))
     tex = project / "main.tex"
     tex.write_text("\\documentclass{article}\\begin{document}Title\\end{document}\n")
-    if provider == TOOLCARDS:
+    if provider in (TOOLCARDS, MARKDOWN):
         (project / "intro.tex").write_text("\\section{Introduction}\n")
     log = open(evidence / "pitex.log", "w")
     child = subprocess.Popen([binary, str(tex)], stdout=log, stderr=subprocess.STDOUT)
@@ -84,16 +95,18 @@ def main():
         shot(evidence / "03-assistant.png")
         click(560, 752)
         time.sleep(0.15)
-        if provider == TOOLCARDS:
+        if provider in (TOOLCARDS, MARKDOWN):
             # Give the transcript room: drag the editor/console divider up.
             run(["xdotool", "mousemove", "840", "538", "mousedown", "1", "mousemove", "840", "400", "mousemove", "840", "160", "mouseup", "1"])
             time.sleep(0.4)
             click(560, 752)
             time.sleep(0.15)
-        prompt = "TOOLCARDS" if provider == TOOLCARDS else "Fix the title"
+        prompt = {TOOLCARDS: "TOOLCARDS", MARKDOWN: "MARKDOWN"}.get(provider, "Fix the title")
         run(["xdotool", "type", "--delay", "12", prompt])
         time.sleep(0.15)
         run(["xdotool", "key", "Return"])
+        if provider == MARKDOWN:
+            return markdown(evidence, result)
         time.sleep(2.5)
         shot(evidence / "04-sent.png")
         if provider == TOOLCARDS:
@@ -170,6 +183,41 @@ def tool_cards(evidence, result):
     checks = all(result["titles"].values()) and result["diffShown"] if result["ocr"] else True
     result["pass"] = result["promptReachedCli"] and checks
     result["steps"].append("cards")
+    write(evidence, result)
+    return 0 if result["pass"] else 1
+
+
+def markdown(evidence, result):
+    # The fake holds 4 s inside an open ```latex fence: it shows as an open code box.
+    time.sleep(2.0)
+    shot(evidence / "04-streaming.png")
+    # Then the rest arrives; give pdflatex time to typeset the math.
+    time.sleep(7.0)
+    # The transcript may sit a row lower; wheel it to the top so the clicks below land.
+    run(["xdotool", "mousemove", "840", "450"] + ["click", "4"] * 5)
+    time.sleep(0.8)
+    shot(evidence / "05-rendered.png")
+    click(*MARKDOWN_COPY_CLICK)
+    time.sleep(0.5)
+    shot(evidence / "06-copied.png")
+    # "Copied" goes back to "Copy" after 1.5 s.
+    time.sleep(1.5)
+    shot(evidence / "06-copy-reset.png")
+    clip = subprocess.run(["xclip", "-o", "-selection", "clipboard"], capture_output=True, text=True, timeout=5)
+    result["clipboard"] = clip.stdout
+    result["copiedCode"] = clip.stdout.startswith("\\section{Intro}") and clip.stdout.rstrip().endswith("\\end{equation}")
+    # The transcript keeps the message top in view; wheel down to the rest.
+    for step in range(3):
+        run(["xdotool", "mousemove", "840", "450"] + ["click", "5"] * 3)
+        time.sleep(1.0)
+        shot(evidence / f"07-scrolled-{step}.png")
+    click(*MARKDOWN_FILE_LINK_CLICK)
+    time.sleep(1.2)
+    shot(evidence / "08-file-link.png")
+    record_path = Path(os.environ["FAKE_RECORD"])
+    result["promptReachedCli"] = "MARKDOWN" in record_path.read_text()
+    result["pass"] = result["promptReachedCli"] and result["copiedCode"]
+    result["steps"].append("markdown")
     write(evidence, result)
     return 0 if result["pass"] else 1
 

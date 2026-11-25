@@ -50,6 +50,8 @@ node .cursor/skills/verify-pitex/helpers/verify-pitex.mjs gtk --provider agy
 
 Tool cards: `gtk --provider claude-toolcards` chooses Claude Code like `claude`, drags the editor/console divider up, and sends `TOOLCARDS`. The fake answers with a Read of `intro.tex` (lines 1-40), an Edit of `main.tex` with a structured patch, and a Bash call that exits 1. `04-sent.png` shows the three collapsed cards, `05-expanded.png` the expanded bodies (diff, command and output), and `06-open-file.png` the editor after the Read card's Open file. Pass means the prompt reached the fake; with `tesseract` installed the titles and the diff are also read from the shots. Without it, look at the shots.
 
+Markdown: `gtk --provider claude-markdown` chooses Claude Code the same way and sends `MARKDOWN`. The fake streams a Markdown answer (heading, list, inline code, inline and display math, a ```latex block, a table, a quote, a project-file link and a web link) and holds for 4 s inside the open ```latex fence. `04-streaming.png` must show that fence as a code box running to the end of the text; `05-rendered.png` is the finished message with typeset math (pdflatex) and the highlighted code block. The run clicks the block's Copy (`06-copied.png`, back to Copy 1.5 s later in `06-copy-reset.png`) and reads the clipboard with `xclip`; `07-scrolled-*.png` wheel down to the table, quote and links; `08-file-link.png` is the editor after clicking the `intro.tex:1` link. Pass means the prompt reached the fake and the clipboard holds the code block. `PITEX_GTK_THEME=dark` seeds the dark theme before launch.
+
 A stored `codex` or `grok` uses the same window and does not click a menu row.
 
 ```sh

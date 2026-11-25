@@ -1,6 +1,8 @@
 import AppKit
 import AppPorts
+import BuildCore
 import GitCore
+import LanguageCore
 import SwiftUI
 
 /// Native chat surface for the embedded pi agent, laid out like the host
@@ -513,7 +515,8 @@ struct AgentPanel: View {
                     ForEach(coordinator.transcript) { entry in
                         AgentEntryRow(
                             entry: entry, fontSize: settings.aiFontSize, projectRoot: root,
-                            openFile: { coordinator.openToolFile($0) }
+                            openFile: { coordinator.openToolFile($0) },
+                            openLink: { coordinator.openFile($0, $1) }
                         )
                         .id(entry.id)
                     }
@@ -544,6 +547,7 @@ private struct AgentEntryRow: View {
     let fontSize: Double
     var projectRoot: URL?
     var openFile: (AgentToolDetail) -> Void = { _ in }
+    var openLink: (URL, Int?) -> Void = { _, _ in }
     private var captionFont: Font { .system(size: max(fontSize - 2, 9)) }
 
     var body: some View {
@@ -566,11 +570,29 @@ private struct AgentEntryRow: View {
                     if entry.status == .streaming {
                         ProgressView().controlSize(.mini)
                     }
+                    if !entry.text.isEmpty {
+                        // Copies the raw Markdown of the whole message.
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(entry.text, forType: .string)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .buttonStyle(.borderless)
+                        .font(captionFont)
+                        .help("assistant.markdown.copy_message")
+                        .accessibilityLabel(Text("assistant.markdown.copy_message"))
+                    }
                 }
                 if !entry.text.isEmpty {
-                    Text(verbatim: entry.text)
-                        .font(.system(size: fontSize))
-                        .textSelection(.enabled)
+                    if entry.status == .failed {
+                        Text(verbatim: entry.text)
+                            .font(.system(size: fontSize))
+                            .textSelection(.enabled)
+                    } else {
+                        AgentMarkdownView(text: entry.text, streaming: entry.status == .streaming,
+                                          fontSize: fontSize, projectRoot: projectRoot, openLink: openLink)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -813,4 +835,331 @@ private struct AgentSessionHistory: View {
             }
         }
     }
+}
+
+// MARK: - Assistant Markdown
+
+/// An assistant message drawn from `AgentMarkdown` blocks: text runs with
+/// bold, italic, code and links; code boxes with Copy; tables; and TeX math
+/// typeset by the exact equation renderer (the TeX source shows until the
+/// picture lands, and for good when TeX is missing).
+private struct AgentMarkdownView: View {
+    let text: String
+    let streaming: Bool
+    let fontSize: Double
+    let projectRoot: URL?
+    let openLink: (URL, Int?) -> Void
+    @ObservedObject private var math = AgentMathRenderer.shared
+
+    private enum Piece {
+        case text(AttributedString)
+        case math(String)
+    }
+
+    var body: some View {
+        let document = AgentMarkdown.parse(text, streaming: streaming)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(document.blocks.enumerated()), id: \.offset) { item in
+                blockView(item.element)
+            }
+            if document.truncated {
+                Text("assistant.markdown.truncated")
+                    .font(.system(size: max(fontSize - 2, 9)))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .textSelection(.enabled)
+        // Web links go to the browser; project files open in the editor.
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.isFileURL else { return .systemAction }
+            openLink(URL(fileURLWithPath: url.path), url.fragment.flatMap { Int($0.dropFirst()) })
+            return .handled
+        })
+    }
+
+    private func blockView(_ block: AgentMarkdown.Block) -> AnyView {
+        switch block {
+        case .paragraph(let inlines):
+            return AnyView(inlineText(inlines, size: fontSize))
+        case .heading(let level, let inlines):
+            let scale = level == 1 ? 1.4 : level == 2 ? 1.25 : level == 3 ? 1.1 : 1
+            return AnyView(inlineText(inlines, size: fontSize * scale).fontWeight(.semibold))
+        case .list(let ordered, let start, let items):
+            return AnyView(VStack(alignment: .leading, spacing: 3) {
+                ForEach(items.indices, id: \.self) { index in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(verbatim: ordered ? "\(start + index)." : "•")
+                            .font(.system(size: fontSize))
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(items[index].indices, id: \.self) { inner in
+                                blockView(items[index][inner])
+                            }
+                        }
+                    }
+                }
+            })
+        case .quote(let blocks):
+            return AnyView(HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(.tertiary)
+                    .frame(width: 3)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(blocks.indices, id: \.self) { index in
+                        blockView(blocks[index])
+                    }
+                }
+                .foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true))
+        case .code(let language, let text):
+            return AnyView(AgentCodeBlock(language: language, code: text, fontSize: fontSize))
+        case .math(let tex):
+            return AnyView(mathText(tex, display: true, size: fontSize)
+                .frame(maxWidth: .infinity, alignment: .center))
+        case .table(let rows):
+            return AnyView(ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
+                    ForEach(rows.indices, id: \.self) { row in
+                        GridRow {
+                            ForEach(rows[row].indices, id: \.self) { column in
+                                inlineText(rows[row][column], size: fontSize)
+                                    .fontWeight(row == 0 ? .semibold : nil)
+                            }
+                        }
+                        if row == 0 { Divider() }
+                    }
+                }
+            })
+        case .rule:
+            return AnyView(Divider())
+        }
+    }
+
+    /// One wrapping `Text`: styled runs, with inline math pictures joined in
+    /// by interpolation so they flow with the words.
+    private func inlineText(_ inlines: [AgentMarkdown.Inline], size: Double) -> Text {
+        var pieces: [Piece] = []
+        collect(inlines, intent: [], link: nil, into: &pieces)
+        let parts = pieces.map { piece -> Text in
+            switch piece {
+            case .text(let run): return Text(run)
+            case .math(let tex): return mathText(tex, display: false, size: size)
+            }
+        }
+        let joined = parts.dropFirst().reduce(parts.first ?? Text(verbatim: "")) { Text("\($0)\($1)") }
+        return joined.font(.system(size: size))
+    }
+
+    private func collect(_ inlines: [AgentMarkdown.Inline], intent: InlinePresentationIntent, link: URL?,
+                         into pieces: inout [Piece]) {
+        for inline in inlines {
+            switch inline {
+            case .text(let text):
+                append(styled(text, intent, link), to: &pieces)
+            case .strong(let children):
+                collect(children, intent: intent.union(.stronglyEmphasized), link: link, into: &pieces)
+            case .emphasis(let children):
+                collect(children, intent: intent.union(.emphasized), link: link, into: &pieces)
+            case .code(let code):
+                var run = styled(code, intent.union(.code), link)
+                run[AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] = Color.secondary.opacity(0.15)
+                append(run, to: &pieces)
+            case .link(let url, let children):
+                collect(children, intent: intent, link: linkURL(url) ?? link, into: &pieces)
+            case .math(let tex):
+                pieces.append(.math(tex))
+            }
+        }
+    }
+
+    private func styled(_ text: String, _ intent: InlinePresentationIntent, _ link: URL?) -> AttributedString {
+        var run = AttributedString(text)
+        if !intent.isEmpty { run.inlinePresentationIntent = intent }
+        if let link { run.link = link }
+        return run
+    }
+
+    private func append(_ run: AttributedString, to pieces: inout [Piece]) {
+        if case .text(let previous)? = pieces.last {
+            pieces[pieces.count - 1] = .text(previous + run)
+        } else {
+            pieces.append(.text(run))
+        }
+    }
+
+    /// The URL a link run carries: the web address, or the project file
+    /// with its line as `#Lnn`. Nil leaves the words unlinked.
+    private func linkURL(_ raw: String) -> URL? {
+        switch AgentMarkdown.classifyLink(raw, root: projectRoot) {
+        case .web(let url):
+            return url
+        case .file(let url, let line):
+            guard let line, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+            components.fragment = "L\(line)"
+            return components.url ?? url
+        case .unsupported:
+            return nil
+        }
+    }
+
+    /// The typeset picture in the text color, or the TeX source in monospace.
+    private func mathText(_ tex: String, display: Bool, size: Double) -> Text {
+        if let rendered = math.image(tex, display: display, fontSize: size) {
+            // The crop keeps 1pt under the ink: drop it onto the baseline.
+            // Labelled with its TeX source, so VoiceOver reads the formula.
+            return Text(Image(rendered.cgImage, scale: rendered.scale, label: Text(verbatim: tex)).renderingMode(.template))
+                .baselineOffset(display ? 0 : -1)
+        }
+        return Text(verbatim: display ? tex : "$\(tex)$")
+            .font(.system(size: max(size - 1, 9), design: .monospaced))
+    }
+}
+
+/// A fenced code block: language label, Copy, and sideways-scrolling
+/// monospace text; latex/tex/bibtex take the editor's token colors.
+private struct AgentCodeBlock: View {
+    let language: String
+    let code: String
+    let fontSize: Double
+    @State private var copied = false
+    @ObservedObject private var appearance = AppearanceSettings.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(verbatim: language)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button(copied ? LocalizedStringKey("assistant.markdown.copied") : LocalizedStringKey("assistant.markdown.copy")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                    copied = true
+                    // Back to "Copy" after 1.5 s (Paseo's COPIED_RESET_MS).
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(1500))
+                        copied = false
+                    }
+                }
+                .buttonStyle(.borderless)
+            }
+            .font(.system(size: max(fontSize - 2, 9)))
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(highlighted)
+                    .font(.system(size: max(fontSize - 1, 9), design: .monospaced))
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// The editor's LaTeX lexer and palette on the block's text.
+    private var highlighted: AttributedString {
+        var result = AttributedString(code)
+        let dialect: TeXDialect
+        switch language.lowercased() {
+        case "latex", "tex": dialect = .latex
+        case "bibtex", "bib": dialect = .bibtex
+        default: return result
+        }
+        let utf8 = code.utf8
+        for token in DeterministicTeXLexer.tokenize(code, dialect: dialect) {
+            let role: AppearanceColorRole
+            switch token.kind {
+            case .controlSequence, .bibEntryMarker: role = .commands
+            case .comment: role = .comments
+            case .leftBrace, .rightBrace, .punctuation: role = .braces
+            case .environmentName: role = .environments
+            case .math: role = .math
+            case .whitespace, .text: continue
+            }
+            guard let lower = utf8.index(utf8.startIndex, offsetBy: token.range.utf8Offset, limitedBy: utf8.endIndex),
+                  let upper = utf8.index(lower, offsetBy: token.range.utf8Length, limitedBy: utf8.endIndex),
+                  let range = Range(lower..<upper, in: result) else { continue }
+            result[range][AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute.self] = Color(nsColor: appearance.color(for: role))
+        }
+        return result
+    }
+}
+
+/// Typesets message math with the exact equation renderer (pdflatex, no
+/// shell escape) once per formula and size. Nil until it lands, and for
+/// good when TeX is missing or rejects the formula, so the view keeps the source.
+@MainActor
+final class AgentMathRenderer: ObservableObject {
+    struct Rendered {
+        let cgImage: CGImage
+        let scale: CGFloat
+    }
+
+    private struct Key: Hashable {
+        let tex: String
+        let display: Bool
+        let points: Double
+    }
+
+    static let shared = AgentMathRenderer()
+    // shortcut: one cached picture and one pdflatex job per distinct formula,
+    // unbounded and all at once; add an LRU cap and a queue if math-heavy chats spike.
+    @Published private var images: [Key: Rendered] = [:]
+    private var started: Set<Key> = []
+
+    func image(_ tex: String, display: Bool, fontSize: Double) -> Rendered? {
+        let key = Key(tex: tex, display: display, points: fontSize)
+        if let rendered = images[key] { return rendered }
+        if started.insert(key).inserted {
+            Task { await render(key) }
+        }
+        return nil
+    }
+
+    private func render(_ key: Key) async {
+        var environment: [String: String] = [:]
+        if case let .inherit(overrides) = await StreamingBuildExecutor.buildEnvironment(.inherit(overrides: [:])) {
+            environment = overrides
+        }
+        let token = "assistant"
+        let renderer = ExactEquationRenderer(
+            profile: ExactEquationProfile(engine: .pdfLaTeX, shellEscape: .disabled),
+            // Private per-user directory: nothing in a shared /tmp joins TEXINPUTS.
+            mainDirectory: ExactEquationRenderer.workspaceRoot(token: token),
+            environment: environment,
+            workspaceToken: token
+        )
+        let region = key.display ? "\\[\(key.tex)\\]" : "$\(key.tex)$"
+        let document = ExactEquationDocument.make(preamble: nil, preambleDefinitions: [], bodyDefinitions: [], region: region)
+        guard let pdf = try? await renderer.render(document: document) else { return }
+        let backing = NSScreen.main?.backingScaleFactor ?? 2
+        // TeX sets 10pt text: magnify to the transcript's point size.
+        let scale = backing * key.points / 10
+        let padding: CGFloat = key.display ? 3 : 1
+        let cropped = await Task.detached(priority: .userInitiated) {
+            ExactEquationImage.cropped(pdf: pdf, scale: scale, padding: padding).flatMap(inkMask).map(CroppedImage.init)
+        }.value
+        if let cropped { images[key] = Rendered(cgImage: cropped.image, scale: backing) }
+    }
+}
+
+/// Black ink on white paper → black ink on transparency, for a template
+/// image that takes the text color in light and dark.
+private func inkMask(_ image: CGImage) -> CGImage? {
+    let width = image.width, height = image.height
+    guard let gray = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
+          let mask = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    gray.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    guard let source = gray.data?.assumingMemoryBound(to: UInt8.self),
+          let target = mask.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+    for y in 0..<height {
+        for x in 0..<width {
+            let pixel = y * mask.bytesPerRow + x * 4
+            target[pixel] = 0
+            target[pixel + 1] = 0
+            target[pixel + 2] = 0
+            target[pixel + 3] = 255 - source[y * gray.bytesPerRow + x]
+        }
+    }
+    return mask.makeImage()
 }

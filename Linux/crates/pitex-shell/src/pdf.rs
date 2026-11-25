@@ -247,6 +247,40 @@ pub fn extract_text(data: &[u8]) -> Option<String> {
     PdfDocument::from_data(data).map(|d| d.text())
 }
 
+/// Page 1 on white paper at `scale`, cropped to the ink plus `pad_points`
+/// (the equation preview and assistant math share it).
+/// Returns premultiplied BGRA (pixels, width, height, stride).
+pub fn cropped_first_page(pdf: &[u8], scale: f64, pad_points: f64) -> Option<(Vec<u8>, i32, i32, i32)> {
+    let document = PdfDocument::from_data(pdf)?;
+    let (pixels, width, height, stride) = document.render_page(0, scale)?;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (width, height, -1, -1);
+    for y in 0..height {
+        let row = &pixels[(y * stride) as usize..];
+        for x in 0..width {
+            let p = &row[(x * 4) as usize..(x * 4 + 3) as usize];
+            if p.iter().any(|&c| c < 245) {
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+                min_y = min_y.min(y);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    if max_x < min_x || max_y < min_y {
+        return None;
+    }
+    let pad = (pad_points * scale) as i32;
+    let (left, top) = ((min_x - pad).max(0), (min_y - pad).max(0));
+    let (right, bottom) = ((max_x + pad).min(width - 1), (max_y + pad).min(height - 1));
+    let (w, h) = (right - left + 1, bottom - top + 1);
+    let mut cropped = Vec::with_capacity((w * h * 4) as usize);
+    for y in top..=bottom {
+        let start = (y * stride + left * 4) as usize;
+        cropped.extend_from_slice(&pixels[start..start + (w * 4) as usize]);
+    }
+    Some((cropped, w, h, w * 4))
+}
+
 /// Wrap rendered pixels in a `gdk::Texture` (CAIRO_FORMAT_ARGB32 on
 /// little-endian = B8g8r8a8 premultiplied).
 pub fn texture_from_pixels(

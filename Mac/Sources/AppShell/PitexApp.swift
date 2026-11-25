@@ -922,12 +922,16 @@ final class WorkspaceModel: ObservableObject {
             coordinator.projectRoot = { [weak self] in self?.projectURL }
             // Only a file of this project activates; opening anything else
             // would reload the workspace and stop the agent.
-            coordinator.openFile = { [weak self] url in
+            coordinator.openFile = { [weak self] url, line in
                 guard let self else { return }
                 // The agent may report /private/tmp/... for a project opened as /tmp/...
                 let target = url.resolvingSymlinksInPath()
                 guard let file = self.projectFiles.first(where: { $0.resolvingSymlinksInPath() == target }) else { return }
-                Task { await self.activateDocument(file) }
+                Task {
+                    await self.activateDocument(file)
+                    // A newer load can overtake this one: jump only in the file asked for.
+                    if let line, self.activeDocumentURL == file { self.jumpTo(line: line) }
+                }
             }
             coordinator.persistDirtySessions = { [weak self] in
                 guard let self else { return "The workspace is not available." }

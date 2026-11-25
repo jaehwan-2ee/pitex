@@ -673,6 +673,8 @@ final class AgentCoordinator: ObservableObject {
         isUpdatingModelSettings = false
         approvalQueue.clear()
         pendingApproval = nil
+        // A message cut off by the exit gets its final (non-streaming) render.
+        finalizeEntries()
         guard !intentionalStop else { return }
         connection = .failed("The agent process exited unexpectedly.")
     }
@@ -1596,14 +1598,15 @@ final class AgentCoordinator: ObservableObject {
     }
 
     /// The editor's open-document path for a tool card's "Open file"
-    /// button. Set by the workspace; only called for files inside the project.
-    var openFile: (URL) -> Void = { _ in }
+    /// button and a project-file link in a message, with an optional
+    /// 1-based line. Set by the workspace; only called for files inside the project.
+    var openFile: (URL, Int?) -> Void = { _, _ in }
     /// The project folder, without building a whole context snapshot.
     var projectRoot: () -> URL? = { nil }
 
     func openToolFile(_ tool: AgentToolDetail) {
         guard let url = tool.openableURL(root: projectRoot()) else { return }
-        openFile(url)
+        openFile(url, nil)
     }
 
     private func handleExtensionUI(_ event: PiRPCEvent) {

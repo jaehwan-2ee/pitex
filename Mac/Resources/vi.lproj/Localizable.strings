@@ -259,6 +259,10 @@
 "assistant.tool.thought" = "Đang suy nghĩ";
 "assistant.tool.exit" = "mã thoát %@";
 "assistant.tool.open_file" = "Mở tệp";
+"assistant.markdown.copy" = "Sao chép";
+"assistant.markdown.copied" = "Đã sao chép";
+"assistant.markdown.copy_message" = "Sao chép tin nhắn";
+"assistant.markdown.truncated" = "Tin nhắn bị cắt bớt: chỉ hiển thị 32.000 ký tự đầu tiên.";
 "assistant.tool.status_running" = "Đang chạy";
 "assistant.tool.status_completed" = "Hoàn tất";
 "assistant.tool.status_failed" = "Thất bại";

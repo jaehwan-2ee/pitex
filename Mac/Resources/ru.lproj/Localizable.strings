@@ -260,6 +260,10 @@
 "assistant.tool.thought" = "Размышление";
 "assistant.tool.exit" = "код выхода %@";
 "assistant.tool.open_file" = "Открыть файл";
+"assistant.markdown.copy" = "Копировать";
+"assistant.markdown.copied" = "Скопировано";
+"assistant.markdown.copy_message" = "Копировать сообщение";
+"assistant.markdown.truncated" = "Сообщение обрезано: показаны первые 32 000 символов.";
 "assistant.tool.status_running" = "Выполняется";
 "assistant.tool.status_completed" = "Завершено";
 "assistant.tool.status_failed" = "Ошибка";

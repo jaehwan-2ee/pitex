@@ -259,6 +259,10 @@
 "assistant.tool.thought" = "Thinking";
 "assistant.tool.exit" = "exit %@";
 "assistant.tool.open_file" = "Open file";
+"assistant.markdown.copy" = "Copy";
+"assistant.markdown.copied" = "Copied";
+"assistant.markdown.copy_message" = "Copy message";
+"assistant.markdown.truncated" = "Message truncated: showing the first 32,000 characters.";
 "assistant.tool.status_running" = "Running";
 "assistant.tool.status_completed" = "Completed";
 "assistant.tool.status_failed" = "Failed";

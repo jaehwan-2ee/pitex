@@ -9,6 +9,8 @@
 pub mod agent;
 mod catalog;
 pub mod app_ui;
+pub mod chat_markdown;
+mod chat_view;
 pub mod compat;
 pub mod completion;
 pub use app_ports::identity;

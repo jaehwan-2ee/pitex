@@ -259,6 +259,10 @@
 "assistant.tool.thought" = "思考中";
 "assistant.tool.exit" = "終了コード %@";
 "assistant.tool.open_file" = "ファイルを開く";
+"assistant.markdown.copy" = "コピー";
+"assistant.markdown.copied" = "コピーしました";
+"assistant.markdown.copy_message" = "メッセージをコピー";
+"assistant.markdown.truncated" = "メッセージが長すぎるため、最初の 32,000 文字のみ表示しています。";
 "assistant.tool.status_running" = "実行中";
 "assistant.tool.status_completed" = "完了";
 "assistant.tool.status_failed" = "失敗";

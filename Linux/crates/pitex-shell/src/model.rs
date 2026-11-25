@@ -3005,18 +3005,24 @@ impl WorkspaceModel {
     /// SyncTeX mechanism) so `apply_activate` replays it once the owning
     /// document is live.
     pub fn open_todo(&mut self, item: &DocumentTodoItem, sink: Sender<WorkspaceMessage>) {
+        self.activate_document_at_line(item.url.clone(), item.line, sink);
+    }
+
+    /// Shows `url` with the caret on `line` (1-based), deferring the jump
+    /// until a cross-file activation is live.
+    pub fn activate_document_at_line(&mut self, url: PathBuf, line: usize, sink: Sender<WorkspaceMessage>) {
         let already_active = self
             .active_document_url
             .as_ref()
-            .map(|a| standardize(a.clone()) == standardize(item.url.clone()))
+            .map(|a| standardize(a.clone()) == standardize(url.clone()))
             .unwrap_or(false);
         if already_active {
             if let Some(cb) = &mut self.on_jump_to {
-                cb(item.line.max(1), 0);
+                cb(line.max(1), 0);
             }
         } else {
-            self.pending_jump = Some((item.line.max(1), 0));
-            self.activate_document(item.url.clone(), sink);
+            self.pending_jump = Some((line.max(1), 0));
+            self.activate_document(url, sink);
         }
     }
 
