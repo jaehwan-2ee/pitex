@@ -673,3 +673,6 @@
 "assistant.rewind.done" = "Rewound the conversation.";
 "assistant.rewind.done_files" = "Rewound the conversation and restored %@.";
 "assistant.rewind.failed" = "Could not rewind: %@";
+"save.failed_title" = "Your changes were not saved";
+"save.read_only_detail" = "%@ is read-only, so it was not changed. Your changes are still in the editor; choose Save As… to keep them in a new file.";
+"save.failed_dismiss" = "OK";

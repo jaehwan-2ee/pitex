@@ -221,6 +221,8 @@ struct EditorContainerView: NSViewRepresentable {
             adapter?.scrollToLine(line)
         }
         context.coordinator.foldEngine?.isEnabled = foldingEnabled
+        // SwiftUI's .disabled never reaches an AppKit text view; a closing workspace must stop taking keystrokes.
+        adapter.textView.isEditable = context.environment.isEnabled
         context.coordinator.minimap?.isHidden = !minimapVisible
         // `completion` is a value input — if it arrived after makeNSView
         // ran (e.g. a body re-eval mid-open), bind it on the update pass

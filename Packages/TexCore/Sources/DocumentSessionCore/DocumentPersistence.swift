@@ -93,6 +93,10 @@ public struct FoundationAtomicDocumentStore: DocumentPersistenceStore, Sendable 
             ".\(url.lastPathComponent).texspark-\(UUID().uuidString).tmp",
             isDirectory: false
         )
+        // The rename below needs only the folder's write permission; never replace a file the user cannot write.
+        if FileManager.default.fileExists(atPath: url.path), !FileManager.default.isWritableFile(atPath: url.path) {
+            return .permissionFailure(path: url.path)
+        }
         var ownsTemporaryFile = false
 
         defer {
@@ -104,6 +108,11 @@ public struct FoundationAtomicDocumentStore: DocumentPersistenceStore, Sendable 
         do {
             try Data().write(to: temporaryURL, options: .withoutOverwriting)
             ownsTemporaryFile = true
+            // Give the still-empty file the destination's mode so the rename
+            // does not widen a private file's access or drop executable bits.
+            if let mode = try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] {
+                try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: temporaryURL.path)
+            }
 
             let handle = try FileHandle(forWritingTo: temporaryURL)
             do {

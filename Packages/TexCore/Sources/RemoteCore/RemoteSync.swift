@@ -559,7 +559,9 @@ public actor RemoteSync {
             for path in plan.download {
                 guard let file = staged[path] else { continue }
                 // Re-check under the gate: an edit saved while the download
-                // ran makes this a conflict instead of a loss.
+                // ran makes this a conflict instead of a loss. The bytes are
+                // rehashed: an edit can keep the cached size and mtime.
+                localCache[path] = nil
                 guard localHash(path) == local[path] else {
                     conflicts.insert(path)
                     continue
@@ -571,8 +573,16 @@ public actor RemoteSync {
             }
             for path in gone {
                 if let url = containedURL(path, create: false), itemExists(url) {
+                    localCache[path] = nil
                     guard localHash(path) == manifest[path] else { conflicts.insert(path); continue }
-                    do { try FileManager.default.removeItem(at: url) } catch { failed.append(path); continue }
+                    // A case-only rename on the device: on a case-insensitive
+                    // mirror the new spelling is this same file, so rename it.
+                    if let kept = remote.keys.first(where: { $0 != path && $0.lowercased() == path.lowercased() }),
+                       let keptURL = containedURL(kept, create: false), isSameFile(url, keptURL) {
+                        guard rename(url.path, keptURL.path) == 0 else { failed.append(path); continue }
+                    } else {
+                        do { try FileManager.default.removeItem(at: url) } catch { failed.append(path); continue }
+                    }
                 }
                 manifest[path] = nil
                 localCache[path] = nil
@@ -938,6 +948,11 @@ public actor RemoteSync {
 
     private func itemExists(_ url: URL) -> Bool {
         (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil
+    }
+
+    private func isSameFile(_ first: URL, _ second: URL) -> Bool {
+        var a = stat(), b = stat()
+        return lstat(first.path, &a) == 0 && lstat(second.path, &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino
     }
 
     /// A regular file itself, not a symlink to one.

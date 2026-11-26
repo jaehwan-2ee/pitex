@@ -144,6 +144,26 @@ final class DocumentSessionPersistenceTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fileURL), Data("saved π content".utf8))
     }
 
+    func testSaveKeepsTheOriginalFileMode() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for mode in [0o600, 0o755] {
+            let fileURL = root.appendingPathComponent("main-\(String(mode, radix: 8)).tex")
+            try "baseline".write(to: fileURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: fileURL.path)
+
+            let save = FoundationAtomicDocumentStore().save(
+                text: "edit",
+                to: fileURL,
+                expectedBaselineHash: .hashing("baseline")
+            )
+
+            XCTAssertEqual(save, .saved(PersistedDocument(text: "edit")))
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, mode)
+        }
+    }
+
     func testInterruptedWriteRemovesOnlyItsTemporaryFile() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -462,6 +482,107 @@ final class DocumentSessionPersistenceTests: XCTestCase {
         XCTAssertEqual(committed, reconflicted)
         XCTAssertEqual(committed.saveState, .conflicted)
         XCTAssertEqual(committed.diskBaselineHash, .hashing("external"))
+    }
+
+    /// R05: Keep Mine after the file was deleted externally recreates it
+    /// with the editor's text instead of failing on every retry.
+    func testKeepMineRecreatesAnExternallyDeletedFile() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("main.tex")
+        try Data("base".utf8).write(to: fileURL)
+        let session = try makeSession(initialText: "base")
+        _ = try await session.apply(.replaceText("mine"), expectedRevision: 0)
+        try FileManager.default.removeItem(at: fileURL)
+        _ = try await session.applyTextNeutral(.recordExternalChange(observedDiskHash: nil))
+
+        let snapshot = await session.snapshot()
+        let conflict = try XCTUnwrap(snapshot.conflict)
+        let outcome = FoundationAtomicDocumentStore().save(
+            text: snapshot.text,
+            to: fileURL,
+            expectedBaselineHash: conflict.observedDisk
+        )
+
+        XCTAssertEqual(outcome, .saved(PersistedDocument(text: "mine")))
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "mine")
+    }
+
+    /// An empty file that is present stays distinct from a deleted one:
+    /// Keep Mine replaces it, and a later deletion is still caught.
+    func testKeepMineOverAnEmptyFileRequiresItToStillExist() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("main.tex")
+        try Data().write(to: fileURL)
+        let session = try makeSession(initialText: "base")
+        _ = try await session.apply(.replaceText("mine"), expectedRevision: 0)
+        _ = try await session.applyTextNeutral(.recordExternalChange(observedDiskHash: .hashing("")))
+        let conflictSnapshot = await session.snapshot()
+        let conflict = try XCTUnwrap(conflictSnapshot.conflict)
+        let store = FoundationAtomicDocumentStore()
+
+        try FileManager.default.removeItem(at: fileURL)
+        guard case .staleBaseline = store.save(text: "mine", to: fileURL, expectedBaselineHash: conflict.observedDisk) else {
+            return XCTFail("a deletion after the empty file was observed must collide")
+        }
+        try Data().write(to: fileURL)
+        XCTAssertEqual(
+            store.save(text: "mine", to: fileURL, expectedBaselineHash: conflict.observedDisk),
+            .saved(PersistedDocument(text: "mine"))
+        )
+    }
+
+    /// R05: the disk moved from B to C while the conflict was showing. The
+    /// failed Keep Mine records C, so the next Keep Mine replaces C.
+    func testKeepMineRetryTargetsTheLatestObservedDisk() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("main.tex")
+        try Data("B".utf8).write(to: fileURL)
+        let session = try makeSession(initialText: "base")
+        _ = try await session.apply(.replaceText("mine"), expectedRevision: 0)
+        _ = try await session.applyTextNeutral(.recordExternalChange(observedDiskHash: .hashing("B")))
+        try Data("C".utf8).write(to: fileURL)
+        let store = FoundationAtomicDocumentStore()
+
+        let firstSnapshot = await session.snapshot()
+        let first = try XCTUnwrap(firstSnapshot.conflict)
+        guard case let .staleBaseline(collision) = store.save(text: "mine", to: fileURL, expectedBaselineHash: first.observedDisk) else {
+            return XCTFail("Keep Mine against B must collide with C")
+        }
+        _ = try await session.applyTextNeutral(
+            .recordSaveConflict(observedDiskHash: try XCTUnwrap(collision.observedDisk).hash)
+        )
+
+        let retrySnapshot = await session.snapshot()
+        let retry = try XCTUnwrap(retrySnapshot.conflict)
+        XCTAssertEqual(
+            store.save(text: "mine", to: fileURL, expectedBaselineHash: retry.observedDisk),
+            .saved(PersistedDocument(text: "mine"))
+        )
+    }
+
+    /// R09: rename needs only the folder's write permission, so a save
+    /// could replace a file the user cannot write. It must refuse instead.
+    func testSaveRefusesToReplaceAReadOnlyFile() throws {
+        let root = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: root.appendingPathComponent("main.tex").path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let fileURL = root.appendingPathComponent("main.tex")
+        try Data("original".utf8).write(to: fileURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: fileURL.path)
+
+        let outcome = FoundationAtomicDocumentStore().save(
+            text: "draft",
+            to: fileURL,
+            expectedBaselineHash: .hashing("original")
+        )
+
+        XCTAssertEqual(outcome, .permissionFailure(path: fileURL.path))
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "original")
     }
 
     private func makeTemporaryDirectory() throws -> URL {

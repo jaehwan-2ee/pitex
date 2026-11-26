@@ -1091,7 +1091,7 @@ final class WorkspaceModel: ObservableObject {
         url: URL,
         session: DocumentSessionCore.DocumentSession,
         shouldWrite: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> Bool,
-        baseline: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash,
+        baseline: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash?,
         resolvesConflict: Bool = false
     ) -> Task<SessionWriteResult, Never> {
         let url = url.standardizedFileURL
@@ -1107,6 +1107,10 @@ final class WorkspaceModel: ObservableObject {
             var snapshot = await session.snapshot()
             guard shouldWrite(snapshot) else {
                 return SessionWriteResult(kind: .skipped, snapshot: snapshot)
+            }
+            // Every write funnels through here (Save All, build, close, Keep Mine), so read-only access is enforced once.
+            guard self?.capabilityLease?.access == .readWrite else {
+                return SessionWriteResult(kind: .permissionFailure(path: url.path), snapshot: snapshot)
             }
             let text = snapshot.text
             let expectedBaseline = baseline(snapshot)
@@ -1135,9 +1139,8 @@ final class WorkspaceModel: ObservableObject {
                 return SessionWriteResult(kind: .saved, snapshot: snapshot)
             case let .staleBaseline(conflict):
                 self?.lastOwnWrite[url] = previousOwnWrite
-                let observedHash = conflict.observedDisk?.hash ?? .hashing("")
                 if let conflicted = try? await session.applyTextNeutral(
-                    .recordSaveConflict(observedDiskHash: observedHash)
+                    .recordSaveConflict(observedDiskHash: conflict.observedDisk?.hash)
                 ) {
                     snapshot = conflicted
                 } else {
@@ -1180,8 +1183,30 @@ final class WorkspaceModel: ObservableObject {
                 showRemoteSaveFailure(problem)
             }
         } else if let problem = await persistDirtySessions() {
-            phase = .failed(problem)
+            showSaveFailure(problem)
         }
+    }
+
+    /// A failed save keeps the workspace and its unsaved text on screen; the error page is only for opening.
+    func showSaveFailure(_ problem: String) {
+        let readOnly = activeDocumentURL.map {
+            FileManager.default.fileExists(atPath: $0.path) && !FileManager.default.isWritableFile(atPath: $0.path)
+        } ?? false
+        let alert = SaveFailureAlert.make(
+            title: String(localized: "save.failed_title"),
+            detail: problem,
+            saveAsTitle: readOnly ? String(localized: "command.save_as") : nil,
+            dismissTitle: String(localized: "save.failed_dismiss")
+        )
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard SaveFailureAlert.wantsSaveAs(alert, response: response) else { return }
+            Task { await self?.saveAs() }
+        }
+        if let window { alert.beginSheetModal(for: window, completionHandler: finish) } else { finish(alert.runModal()) }
+    }
+
+    private static func readOnlyProblem(_ path: String) -> String {
+        String(format: String(localized: "save.read_only_detail"), (path as NSString).lastPathComponent)
     }
 
     private func saveLocalDocument() async {
@@ -1215,9 +1240,9 @@ final class WorkspaceModel: ObservableObject {
         case .skipped:
             break
         case let .permissionFailure(path):
-            phase = .failed(WorkspaceOpenError.savePermissionDenied(path).localizedDescription)
+            showSaveFailure(Self.readOnlyProblem(path))
         case let .interruptedWrite(path):
-            phase = .failed(WorkspaceOpenError.saveInterrupted(path).localizedDescription)
+            showSaveFailure(WorkspaceOpenError.saveInterrupted(path).localizedDescription)
         }
     }
 
@@ -1257,11 +1282,8 @@ final class WorkspaceModel: ObservableObject {
                     session: session,
                     shouldWrite: { $0.saveState == .conflicted },
                     baseline: { snapshot in
-                        snapshot.conflict.flatMap { conflict in
-                            if case let .externalModification(_, observed) = conflict { return observed }
-                            if case let .saveCollision(_, observed) = conflict { return observed }
-                            return nil
-                        } ?? snapshot.diskBaselineHash
+                        guard let conflict = snapshot.conflict else { return snapshot.diskBaselineHash }
+                        return conflict.observedDisk
                     },
                     resolvesConflict: true
                 ).value
@@ -1272,12 +1294,14 @@ final class WorkspaceModel: ObservableObject {
                        result.snapshot.revision >= documentSnapshot?.revision ?? 0 {
                         documentSnapshot = result.snapshot
                     }
-                case .saveConflict, .permissionFailure, .interruptedWrite:
-                    phase = .failed("The conflicted file could not be written to disk.")
+                case let .permissionFailure(path):
+                    showSaveFailure(Self.readOnlyProblem(path))
+                case .saveConflict, .interruptedWrite:
+                    showSaveFailure("The conflicted file could not be written to disk.")
                 }
             }
         } catch {
-            phase = .failed("The conflict could not be resolved: \(error.localizedDescription)")
+            showSaveFailure("The conflict could not be resolved: \(error.localizedDescription)")
         }
     }
 
@@ -1311,9 +1335,12 @@ final class WorkspaceModel: ObservableObject {
         for fileURL in conflicted {
             await resolveConflict(useDiskVersion: useDiskVersion, url: fileURL)
         }
-        // A file that stays conflicted keeps the window open; resolveConflict reported why.
+        // A file this close settled that stays conflicted keeps it open; resolveConflict reported why.
+        // Another tab's conflict waits for that tab's own close.
         for session in registeredSessions {
-            if await session.snapshot().saveState == .conflicted { return false }
+            let snapshot = await session.snapshot()
+            if let url, (try? Self.relativePath(for: url, root: root)) != snapshot.path { continue }
+            if snapshot.saveState == .conflicted { return false }
         }
         return projectURL == root && documentLoadGeneration == generation
     }
@@ -1358,9 +1385,20 @@ final class WorkspaceModel: ObservableObject {
         case .closeWithoutSaving:
             return true
         case .saveThenClose:
-            if let problem = await persistDirtySessions(onlyPaths: Set(unsaved.map(\.path))) {
-                if projectURL == root { phase = .failed(problem) }
+            // Input stays frozen from here until the caller freezes it for teardown, with no
+            // suspension in between, so nothing typed after the save can be torn down unsaved.
+            isClosing = true
+            defer { isClosing = false }
+            await environment?.editor.flushPendingChanges()
+            let paths = Set(unsaved.map(\.path))
+            if let problem = await persistDirtySessions(onlyPaths: paths) {
+                if projectURL == root { showSaveFailure(problem) }
                 return false
+            }
+            // Text that reached the editor while the write ran is newer than the disk: keep it open.
+            await environment?.editor.flushPendingChanges()
+            for session in registeredSessions where paths.contains(session.path.rawValue) {
+                if await session.snapshot().saveState != .clean { return false }
             }
             return projectURL == root && documentLoadGeneration == generation
         }
@@ -1394,8 +1432,8 @@ final class WorkspaceModel: ObservableObject {
         }
         let context = projectGeneration
         let savingRemote = remote != nil
-        if savingRemote { isClosing = true }
-        defer { if savingRemote { isClosing = false } }
+        isClosing = true
+        defer { isClosing = false }
         if savingRemote {
             if let problem = await agent?.stopForRemoteClose() {
                 showRemoteSaveFailure(problem)
@@ -1444,7 +1482,11 @@ final class WorkspaceModel: ObservableObject {
         guard await resolveConflictsBeforeClose(matching: nil), !isClosing else { return false }
         guard remote != nil, projectURL != nil else {
             guard await confirmLocalClose(matching: nil) else { return false }
+            // Text typed while another window prepares would never be saved.
+            isClosing = true
             await waitForPendingWrites()
+            terminationFrozen = keepFrozen
+            if !keepFrozen { isClosing = false }
             return true
         }
         isClosing = true
@@ -2071,11 +2113,13 @@ final class WorkspaceModel: ObservableObject {
         }.value
         guard let (diskText, observedHash) = disk else {
             // Deleted or unreadable: never replace content with nothing. Flag
-            // a conflict only when unsaved in-memory edits are at stake.
+            // a conflict only when unsaved in-memory edits are at stake. A
+            // deletion is recorded as absent so Keep Mine can recreate the file.
             let snapshot = await session.snapshot()
+            let observed: DiskContentHash? = FileManager.default.fileExists(atPath: url.path) ? .hashing("") : nil
             if snapshot.saveState != .clean, snapshot.conflict == nil,
                let updated = try? await session.applyTextNeutral(
-                   .recordExternalChange(observedDiskHash: .hashing(""))
+                   .recordExternalChange(observedDiskHash: observed)
                ), snapshot.path == documentSnapshot?.path {
                 documentSnapshot = updated
             }
@@ -2146,7 +2190,9 @@ final class WorkspaceModel: ObservableObject {
                 }
             case .saveConflict:
                 return "The file \(result.snapshot.path.rawValue) changed on disk while saving. Resolve the conflict first."
-            case .permissionFailure, .interruptedWrite:
+            case let .permissionFailure(path):
+                return Self.readOnlyProblem(path)
+            case .interruptedWrite:
                 return "The file \(result.snapshot.path.rawValue) could not be saved to disk."
             }
         }
@@ -2866,9 +2912,7 @@ final class WorkspaceModel: ObservableObject {
     func cleanBuildArtifacts() {
         guard let root = projectURL, let relative = buildSourceRelativePath() else { return }
         let stem = (relative as NSString).deletingPathExtension
-        for ext in Self.generatedOutputExtensions {
-            try? FileManager.default.removeItem(at: root.appendingPathComponent("\(stem).\(ext)"))
-        }
+        BuildOutputCleaner.clean(stem: stem, extensions: Self.generatedOutputExtensions, in: root)
         latestBuiltPDFName = nil
         terminalSession.feed("\u{001B}[90mcleaned generated files for \(stem)\u{001B}[0m\r\n")
         consoleSection = .terminal
@@ -3098,7 +3142,6 @@ private enum WorkspaceOpenError: LocalizedError {
     case invalidUTF8
     case outsideProject
     case changedWhileOpening
-    case savePermissionDenied(String)
     case saveInterrupted(String)
 
     var errorDescription: String? {
@@ -3109,7 +3152,6 @@ private enum WorkspaceOpenError: LocalizedError {
         case .invalidUTF8: "The selected source is not valid UTF-8."
         case .outsideProject: "The selected source is outside the project root."
         case .changedWhileOpening: "The source changed while it was opening. Open it again to avoid losing changes."
-        case let .savePermissionDenied(path): "The source could not be saved because access was denied: \(path)"
         case let .saveInterrupted(path): "The atomic save did not complete: \(path)"
         }
     }

@@ -674,3 +674,6 @@
 "assistant.rewind.done" = "会話を巻き戻しました。";
 "assistant.rewind.done_files" = "会話を巻き戻し、%@ を復元しました。";
 "assistant.rewind.failed" = "巻き戻せませんでした: %@";
+"save.failed_title" = "変更は保存されませんでした";
+"save.read_only_detail" = "%@ は読み取り専用のため変更していません。変更内容はエディタに残っています。「別名で保存…」で新しいファイルに保存してください。";
+"save.failed_dismiss" = "OK";
