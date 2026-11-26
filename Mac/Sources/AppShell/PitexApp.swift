@@ -1224,10 +1224,11 @@ final class WorkspaceModel: ObservableObject {
     /// Resolves an external-change conflict by adopting either the disk content
     /// or the in-memory content. Both versions are preserved through the
     /// session's revision history; nothing is silently dropped.
-    func resolveConflict(useDiskVersion: Bool) async {
-        guard let snapshot = documentSnapshot, snapshot.saveState == .conflicted,
-              let url = activeDocumentURL,
-              let session = registeredSessions.first(where: { $0.path == snapshot.path }) else { return }
+    func resolveConflict(useDiskVersion: Bool, url: URL? = nil) async {
+        guard let root = projectURL, let url = url ?? activeDocumentURL,
+              let path = try? Self.relativePath(for: url, root: root),
+              let session = registeredSessions.first(where: { $0.path == path }),
+              await session.snapshot().saveState == .conflicted else { return }
         let generation = documentLoadGeneration
         do {
             if useDiskVersion {
@@ -1237,8 +1238,7 @@ final class WorkspaceModel: ObservableObject {
                 let diskText = try Self.readExactUTF8(url)
                 let current = await session.snapshot()
                 guard documentLoadGeneration == generation,
-                      current.saveState == .conflicted,
-                      current.path == documentSnapshot?.path else { return }
+                      current.saveState == .conflicted else { return }
                 let updated = try await session.apply(
                     .resolveConflict(text: diskText, diskBaselineHash: .hashing(diskText)),
                     expectedRevision: current.revision
@@ -1265,11 +1265,11 @@ final class WorkspaceModel: ObservableObject {
                     },
                     resolvesConflict: true
                 ).value
-                guard documentLoadGeneration == generation,
-                      result.snapshot.path == documentSnapshot?.path else { return }
+                guard documentLoadGeneration == generation else { return }
                 switch result.kind {
                 case .saved, .skipped:
-                    if result.snapshot.revision >= documentSnapshot?.revision ?? 0 {
+                    if result.snapshot.path == documentSnapshot?.path,
+                       result.snapshot.revision >= documentSnapshot?.revision ?? 0 {
                         documentSnapshot = result.snapshot
                     }
                 case .saveConflict, .permissionFailure, .interruptedWrite:
@@ -1279,6 +1279,58 @@ final class WorkspaceModel: ObservableObject {
         } catch {
             phase = .failed("The conflict could not be resolved: \(error.localizedDescription)")
         }
+    }
+
+    /// Every save refuses a conflicted file, so close and quit ask which version wins first.
+    /// Returns true when no conflict remains and the close may continue.
+    private func resolveConflictsBeforeClose(matching url: URL?) async -> Bool {
+        guard let root = projectURL else { return true }
+        let generation = documentLoadGeneration
+        await environment?.editor.flushPendingChanges()
+        var states: [DocumentSaveState] = []
+        var conflicted: [URL] = []
+        for session in registeredSessions {
+            let snapshot = await session.snapshot()
+            if let url {
+                guard (try? Self.relativePath(for: url, root: root)) == snapshot.path else { continue }
+            }
+            states.append(snapshot.saveState)
+            if snapshot.saveState == .conflicted {
+                conflicted.append(root.appendingPathComponent(snapshot.path.rawValue))
+            }
+        }
+        let choice = conflicted.isEmpty ? nil : promptConflictChoice(names: conflicted.map(\.lastPathComponent))
+        guard projectURL == root, documentLoadGeneration == generation else { return false }
+        let useDiskVersion: Bool
+        switch conflictCloseAction(saveStates: states, choice: choice) {
+        case .proceed: return true
+        case .stayOpen: return false
+        case .keepMine: useDiskVersion = false
+        case .useExternal: useDiskVersion = true
+        }
+        for fileURL in conflicted {
+            await resolveConflict(useDiskVersion: useDiskVersion, url: fileURL)
+        }
+        // A file that stays conflicted keeps the window open; resolveConflict reported why.
+        for session in registeredSessions {
+            if await session.snapshot().saveState == .conflicted { return false }
+        }
+        return projectURL == root && documentLoadGeneration == generation
+    }
+
+    private func promptConflictChoice(names: [String]) -> LocalCloseChoice {
+        let message = names.count == 1
+            ? String(format: String(localized: "close.conflict_one"), names[0])
+            : String(format: String(localized: "close.conflict_many"), names.count)
+        let detail = (names.count == 1 ? "" : names.joined(separator: "\n") + "\n\n")
+            + String(localized: "close.conflict_detail")
+        return SaveChangesAlert.choose(
+            message: message,
+            detail: detail,
+            saveTitle: String(localized: "conflict.keep_mine"),
+            dontSaveTitle: String(localized: "conflict.use_external"),
+            cancelTitle: String(localized: "close.cancel")
+        )
     }
 
     /// Save, Don't Save, or Cancel for unsaved local text.
@@ -1335,6 +1387,7 @@ final class WorkspaceModel: ObservableObject {
 
     func closeDocument(_ url: URL) async {
         guard let root = projectURL, !isClosing else { return }
+        guard await resolveConflictsBeforeClose(matching: url), projectURL == root, !isClosing else { return }
         if remote == nil {
             guard await confirmLocalClose(matching: url) else { return }
             guard projectURL == root, !isClosing else { return }
@@ -1388,6 +1441,7 @@ final class WorkspaceModel: ObservableObject {
     func prepareForTermination(keepFrozen: Bool = false) async -> Bool {
         if let closeTask { return await closeTask.value != nil }
         guard !isClosing else { return false }
+        guard await resolveConflictsBeforeClose(matching: nil), !isClosing else { return false }
         guard remote != nil, projectURL != nil else {
             guard await confirmLocalClose(matching: nil) else { return false }
             await waitForPendingWrites()
@@ -1419,6 +1473,7 @@ final class WorkspaceModel: ObservableObject {
     func close() async -> UUID? {
         if let closeTask { return await closeTask.value }
         guard !isClosing else { return nil }
+        guard await resolveConflictsBeforeClose(matching: nil), !isClosing else { return nil }
         if remote == nil {
             guard await confirmLocalClose(matching: nil) else { return nil }
             guard !isClosing else { return nil }

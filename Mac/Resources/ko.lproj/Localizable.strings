@@ -90,6 +90,9 @@
 "close.unsaved_one" = "“%@”의 변경 내용을 저장할까요?";
 "close.unsaved_many" = "문서 %d개의 변경 내용을 저장할까요?";
 "close.unsaved_detail" = "저장하지 않으면 변경 내용이 사라집니다.";
+"close.conflict_one" = "“%@”에 해결되지 않은 외부 변경 사항이 있습니다.";
+"close.conflict_many" = "문서 %d개에 해결되지 않은 외부 변경 사항이 있습니다.";
+"close.conflict_detail" = "편집하는 동안 앱 밖에서 파일이 변경되었습니다. 내 변경 사항 유지를 선택하면 내 버전으로 외부 버전을 덮어쓰고, 외부 변경 사항 사용을 선택하면 내 편집 내용이 외부 버전으로 바뀝니다.";
 "command.build" = "빌드";
 "command.cancel_build" = "빌드 취소";
 "command.settings" = "설정…";

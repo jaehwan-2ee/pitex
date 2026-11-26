@@ -90,6 +90,9 @@
 "close.unsaved_one" = "“%@”への変更を保存しますか？";
 "close.unsaved_many" = "%d個の書類への変更を保存しますか？";
 "close.unsaved_detail" = "保存しないと、変更は失われます。";
+"close.conflict_one" = "“%@”に未解決の外部変更があります。";
+"close.conflict_many" = "%d 件の書類に未解決の外部変更があります。";
+"close.conflict_detail" = "編集中にアプリの外でファイルが変更されました。「自分の変更を保持」は自分の版で外部の版を上書きし、「外部の変更を使用」は編集内容を外部の版に置き換えます。";
 "command.build" = "ビルド";
 "command.cancel_build" = "ビルドをキャンセル";
 "command.settings" = "設定…";

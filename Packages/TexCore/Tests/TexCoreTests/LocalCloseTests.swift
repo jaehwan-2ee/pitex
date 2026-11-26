@@ -37,3 +37,18 @@ final class LocalCloseTests: XCTestCase {
         )
     }
 }
+
+final class ConflictCloseTests: XCTestCase {
+    func testNoConflictLeavesTheUsualCloseFlow() {
+        XCTAssertEqual(conflictCloseAction(saveStates: [.clean, .dirty], choice: nil), .proceed)
+    }
+
+    // Local and SSH projects share this decision: a conflicted file refuses every save,
+    // so quit and close must ask which side wins instead of attempting the save.
+    func testConflictedSessionAsksWhichVersionWins() {
+        XCTAssertEqual(conflictCloseAction(saveStates: [.dirty, .conflicted], choice: nil), .stayOpen)
+        XCTAssertEqual(conflictCloseAction(saveStates: [.conflicted], choice: .cancel), .stayOpen)
+        XCTAssertEqual(conflictCloseAction(saveStates: [.conflicted], choice: .save), .keepMine)
+        XCTAssertEqual(conflictCloseAction(saveStates: [.conflicted], choice: .discard), .useExternal)
+    }
+}

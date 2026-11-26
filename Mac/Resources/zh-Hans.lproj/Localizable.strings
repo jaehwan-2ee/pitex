@@ -109,6 +109,9 @@
 "close.unsaved_one" = "是否要保存对“%@”所做的更改？";
 "close.unsaved_many" = "是否要保存对 %d 个文稿所做的更改？";
 "close.unsaved_detail" = "如果不保存，您的更改将丢失。";
+"close.conflict_one" = "“%@”有未解决的外部更改。";
+"close.conflict_many" = "%d 个文稿有未解决的外部更改。";
+"close.conflict_detail" = "编辑期间该文件在应用外被更改。“保留我的更改”会用你的版本覆盖外部版本；“使用外部更改”会用外部版本替换你的编辑。";
 "command.build" = "构建";
 "command.cancel_build" = "取消构建";
 "command.settings" = "设置…";

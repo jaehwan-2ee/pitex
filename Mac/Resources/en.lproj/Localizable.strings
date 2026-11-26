@@ -90,6 +90,9 @@
 "close.unsaved_one" = "Do you want to save the changes made to “%@”?";
 "close.unsaved_many" = "Do you want to save the changes to %d documents?";
 "close.unsaved_detail" = "Your changes will be lost if you do not save them.";
+"close.conflict_one" = "“%@” has unresolved external changes.";
+"close.conflict_many" = "%d documents have unresolved external changes.";
+"close.conflict_detail" = "The file changed outside the app while you were editing it. Keep My Changes saves your version over the external one. Use External Changes replaces your edits with the external version.";
 "command.build" = "Build";
 "command.cancel_build" = "Cancel Build";
 "command.settings" = "Settings…";

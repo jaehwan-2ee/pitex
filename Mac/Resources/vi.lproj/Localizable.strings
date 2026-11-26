@@ -90,6 +90,9 @@
 "close.unsaved_one" = "Bạn có muốn lưu các thay đổi trong “%@”?";
 "close.unsaved_many" = "Bạn có muốn lưu các thay đổi của %d tài liệu?";
 "close.unsaved_detail" = "Các thay đổi sẽ mất nếu bạn không lưu.";
+"close.conflict_one" = "“%@” có thay đổi bên ngoài chưa được xử lý.";
+"close.conflict_many" = "%d tài liệu có thay đổi bên ngoài chưa được xử lý.";
+"close.conflict_detail" = "Tệp đã thay đổi bên ngoài ứng dụng trong khi bạn chỉnh sửa. Giữ thay đổi của tôi sẽ lưu phiên bản của bạn đè lên phiên bản bên ngoài. Dùng thay đổi bên ngoài sẽ thay các chỉnh sửa của bạn bằng phiên bản bên ngoài.";
 "command.build" = "Biên dịch";
 "command.cancel_build" = "Hủy biên dịch";
 "command.settings" = "Cài đặt…";
