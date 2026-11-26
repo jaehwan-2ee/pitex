@@ -293,6 +293,8 @@ enum LocalCloseTarget {
     Window,
     Project,
     Document(PathBuf),
+    /// Replaces this workspace with the project that owns the path.
+    Open(PathBuf),
     Exit,
 }
 
@@ -1685,7 +1687,7 @@ impl AppState {
             self.begin_remote_save(RemoteSaveAction::Open(path));
             return;
         }
-        self.open_selected_after_save(path);
+        self.confirm_local_close(LocalCloseTarget::Open(path));
     }
 
     fn open_selected_after_save(&mut self, path: PathBuf) {
@@ -1980,6 +1982,7 @@ impl AppState {
             }
             LocalCloseTarget::Project => self.close_after_save(),
             LocalCloseTarget::Document(url) => self.close_document_after_save(url),
+            LocalCloseTarget::Open(path) => self.open_selected_after_save(path),
             LocalCloseTarget::Exit => std::process::exit(0),
         }
     }
@@ -5122,29 +5125,30 @@ impl AppState {
                     self.refresh_phase();
                 }
             },
-            WorkspaceMessage::ActivateFinished(result) => match result {
-                Ok(activated) => {
-                    let session = activated.session.clone();
-                    self.model.apply_activate(activated);
-                    self.attach_session(session);
-                    self.refresh_after_document_change();
-                    self.arm_embedded_timer();
-                    // A clean open changed the all-open-source identity.
-                    self.model.request_embedded_refresh(&self.store);
-                    self.model.request_embedded_restart(&self.store);
-                    self.arm_embedded_timer();
-                }
-                // `activateDocument`'s catch publishes `.failed` — the
-                // workspace never went through a loading phase first.
-                Err(e) => {
-                    if self.model.project_url.is_some() {
-                        self.toast(&e);
-                    } else {
-                        self.model.phase = crate::model::WorkspacePhase::Failed(e);
-                        self.refresh_phase();
+            WorkspaceMessage::ActivateFinished { generation, root, result } => {
+                match self.model.finish_activate(generation, root, result) {
+                    None => {}
+                    Some(Ok(session)) => {
+                        self.attach_session(session);
+                        self.refresh_after_document_change();
+                        self.arm_embedded_timer();
+                        // A clean open changed the all-open-source identity.
+                        self.model.request_embedded_refresh(&self.store);
+                        self.model.request_embedded_restart(&self.store);
+                        self.arm_embedded_timer();
+                    }
+                    // `activateDocument`'s catch publishes `.failed` — the
+                    // workspace never went through a loading phase first.
+                    Some(Err(e)) => {
+                        if self.model.project_url.is_some() {
+                            self.toast(&e);
+                        } else {
+                            self.model.phase = crate::model::WorkspacePhase::Failed(e);
+                            self.refresh_phase();
+                        }
                     }
                 }
-            },
+            }
             WorkspaceMessage::PdfLoaded { hash, info } => {
                 if self.pdf_hash == hash {
                     // Clamp the preserved page when the new document is
@@ -9508,6 +9512,56 @@ mod ubuntu_preview_tests;
 #[cfg(test)]
 #[path = "../tests/support/parity_shots.rs"]
 mod parity_shots;
+
+#[cfg(test)]
+mod routed_open_tests {
+    use super::*;
+
+    /// R01: File → Open on a source created inside the project after the
+    /// last scan replaces the workspace, so a dirty tab must get the
+    /// Save/Don't Save/Cancel decision first.
+    #[test]
+    #[ignore = "requires a GTK display (use xvfb-run)"]
+    fn routed_open_of_an_unlisted_project_file_keeps_unsaved_edits() {
+        adw::init().unwrap();
+        let root = std::env::temp_dir().join(format!("pitex-routed-open-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        let a = root.join("a.tex");
+        std::fs::write(&a, "a on disk\n").unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut state = AppState::new(
+            crate::settings::SettingsStore::new(crate::settings::Preferences::standard()),
+            tx,
+            "test".into(),
+        );
+        state.model.project_url = Some(root.clone());
+        state.model.project_files = vec![a.clone()];
+        let file = project_core::ProjectFile {
+            document_id: tex_domain::StableDocumentID::new("a").unwrap(),
+            path: tex_domain::NormalizedRelativePath::new("a.tex").unwrap(),
+        };
+        let session = state.model.registry.open(&root, &file, "a on disk\n".into(), None).unwrap();
+        session.apply(DocumentMutation::ReplaceText("a edited\n".into()), 0).unwrap();
+        state.model.registered_sessions.push(session.clone());
+        state.model.active_document_url = Some(a.clone());
+        // Another program created B after the project scan.
+        let b = root.join("b.tex");
+        std::fs::write(&b, "b\n").unwrap();
+
+        state.open_routed(b.clone());
+        assert_eq!(state.model.project_url.as_ref(), Some(&root), "the project closed without asking");
+        assert!(!matches!(state.model.phase, WorkspacePhase::Loading(_)));
+        assert_eq!(session.snapshot().save_state, DocumentSaveState::Dirty);
+
+        // Choosing Save writes A before the workspace is replaced.
+        state.finish_local_close(LocalCloseTarget::Open(b.clone()), true);
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a edited\n");
+        assert!(matches!(&state.model.phase, WorkspacePhase::Loading(path) if *path == b));
+        state.shutdown_agent();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
 
 #[cfg(test)]
 mod find_highlight_tests {

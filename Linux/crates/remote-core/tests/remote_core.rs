@@ -639,6 +639,129 @@ fn git_command_waits_for_mirror_transfer() {
     assert!(git_started.exists());
 }
 
+/// A client whose "ssh" runs the command on this machine: the production
+/// remote scripts against a local folder.
+#[cfg(unix)]
+fn local_shell_client(directory: &TempDir) -> SshClient {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = directory.join("ssh-local");
+    write(&executable, "#!/bin/sh\nfor argument do command=$argument; done\nexec /bin/sh -c \"$command\"\n");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut client = SshClient::new(SshConnection::new("fixture", "fixture", None, None, None));
+    client.ssh_executable = executable;
+    client.control_directory = None;
+    client
+}
+
+/// R03: a mirror edit that keeps the file's size and modification time
+/// (a timestamp-preserving copy or restore) must still be compared by its
+/// bytes before a pull replaces or deletes it.
+#[cfg(unix)]
+#[test]
+fn pull_keeps_mirror_edit_that_preserves_size_and_mtime() {
+    let directory = TempDir::new("stale-cache");
+    let remote = directory.join("remote");
+    write(&remote.join("edited.tex"), "base");
+    write(&remote.join("removed.tex"), "base");
+    let client = local_shell_client(&directory);
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.to_str().unwrap()),
+        &directory.join("store"),
+    )
+    .unwrap();
+    let sync = RemoteSync::new(mirror.clone(), client, None);
+    sync.pull().unwrap();
+    sync.pull().unwrap(); // caches size+mtime → hash of "base"
+    for name in ["edited.tex", "removed.tex"] {
+        let url = mirror.root().join(name);
+        let modified = std::fs::metadata(&url).unwrap().modified().unwrap();
+        write(&url, "mine");
+        std::fs::File::options().write(true).open(&url).unwrap().set_modified(modified).unwrap();
+    }
+    write(&remote.join("edited.tex"), "device");
+    std::fs::remove_file(remote.join("removed.tex")).unwrap();
+    let report = sync.pull().unwrap();
+    assert_eq!(read(&mirror.root().join("edited.tex")).as_deref(), Some("mine"));
+    assert_eq!(read(&mirror.root().join("removed.tex")).as_deref(), Some("mine"));
+    assert_eq!(report.conflicts, ["edited.tex", "removed.tex"]);
+}
+
+#[cfg(unix)]
+fn is_case_insensitive(directory: &Path) -> bool {
+    write(&directory.join("Probe"), "");
+    let folded = directory.join("probe").exists();
+    let _ = std::fs::remove_file(directory.join("Probe"));
+    folded
+}
+
+/// R12: a case-only rename on a case-sensitive device must not delete the
+/// only copy in a case-insensitive mirror (ext4 casefold, macOS APFS).
+/// PITEX_TEST_CASEFOLD_DIR names a casefold (`chattr +F`) directory to hold
+/// the mirror (CI mounts one); otherwise it runs only where the temporary
+/// folder is case-insensitive, with the device on a case-sensitive image.
+#[cfg(unix)]
+#[test]
+fn case_only_remote_rename_keeps_the_mirror_file() {
+    let directory = TempDir::new("case-rename");
+    let casefold = std::env::var_os("PITEX_TEST_CASEFOLD_DIR").map(PathBuf::from);
+    let store_owner = casefold.as_ref().map(|dir| TempDir(dir.join(uuid_like())));
+    let store = store_owner.as_ref().map_or_else(|| directory.join("store"), |dir| dir.0.clone());
+    std::fs::create_dir_all(&store).unwrap();
+    if !is_case_insensitive(&store) {
+        assert!(casefold.is_none(), "PITEX_TEST_CASEFOLD_DIR is not case-insensitive");
+        eprintln!("skipped: the temporary folder is case-sensitive; set PITEX_TEST_CASEFOLD_DIR");
+        return;
+    }
+    let remote = directory.join("remote");
+    std::fs::create_dir_all(&remote).unwrap();
+    struct Detach(PathBuf);
+    impl Drop for Detach {
+        fn drop(&mut self) {
+            let _ = Command::new("hdiutil").args(["detach", "-force"]).arg(&self.0).output();
+        }
+    }
+    let mut _mounted = None;
+    if is_case_insensitive(&remote) {
+        let image = directory.join("device.dmg");
+        let created = Command::new("hdiutil")
+            .args(["create", "-size", "8m", "-fs", "Case-sensitive APFS", "-volname", "PitexDevice"])
+            .arg(&image)
+            .output();
+        let attached = created.is_ok_and(|o| o.status.success())
+            && Command::new("hdiutil")
+                .args(["attach", "-nobrowse", "-mountpoint"])
+                .arg(&remote)
+                .arg(&image)
+                .output()
+                .is_ok_and(|o| o.status.success());
+        if !attached {
+            eprintln!("skipped: could not mount a case-sensitive device folder");
+            return;
+        }
+        _mounted = Some(Detach(remote.clone()));
+    }
+    write(&remote.join("Main.tex"), "\\documentclass{article}\n");
+    let client = local_shell_client(&directory);
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.to_str().unwrap()),
+        &store,
+    )
+    .unwrap();
+    let sync = RemoteSync::new(mirror.clone(), client, None);
+    sync.pull().unwrap();
+    std::fs::rename(remote.join("Main.tex"), remote.join("main.tex")).unwrap();
+    sync.pull().unwrap();
+    sync.pull().unwrap();
+    let names: Vec<String> = std::fs::read_dir(mirror.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tex"))
+        .collect();
+    assert_eq!(names, ["main.tex"]);
+    assert_eq!(read(&mirror.root().join("main.tex")).as_deref(), Some("\\documentclass{article}\n"));
+    assert!(sync.push().unwrap().uploaded.is_empty(), "the device and the mirror agree");
+}
+
 // ─── Live, against a real sshd (skipped unless configured) ──
 
 /// Configure with PITEX_TEST_SSH_DESTINATION (+ _PORT, _KEY, _KNOWN_HOSTS).
