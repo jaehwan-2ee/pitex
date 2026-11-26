@@ -2056,7 +2056,9 @@ impl RemoteSync {
             for path in &plan.download {
                 let Some(file) = staged.get(path) else { continue };
                 // Re-check under the gate: an edit saved while the download
-                // ran makes this a conflict instead of a loss.
+                // ran makes this a conflict instead of a loss. The bytes are
+                // rehashed: an edit can keep the cached size and mtime.
+                sync.drop_local_cache(path);
                 if sync.local_hash(path).as_deref() != local.get(path).map(String::as_str) {
                     inner.conflicts.insert(path.clone());
                     continue;
@@ -2073,9 +2075,23 @@ impl RemoteSync {
                 let mut can_delete = true;
                 if let Some(url) = sync.contained_url(path, false) {
                     if item_exists(&url) {
+                        sync.drop_local_cache(path);
                         if sync.local_hash(path).as_deref() != inner.manifest.get(path).map(String::as_str) {
                             inner.conflicts.insert(path.clone());
                             can_delete = false;
+                        } else if let Some(kept) = remote
+                            .keys()
+                            .filter(|other| *other != path && other.to_lowercase() == path.to_lowercase())
+                            .filter_map(|other| sync.contained_url(other, false))
+                            .find(|other| is_same_file(&url, other))
+                        {
+                            // A case-only rename on the device: on a
+                            // case-insensitive mirror (ext4 casefold) the new
+                            // spelling is this same file, so rename it.
+                            if rename_case(&url, &kept).is_err() {
+                                failed.push(path.clone());
+                                can_delete = false;
+                            }
                         } else if std::fs::remove_file(&url).is_err() {
                             failed.push(path.clone());
                             can_delete = false;
@@ -2838,6 +2854,35 @@ fn remote_io_json(error: serde_json::Error) -> SshError {
 
 fn item_exists(url: &Path) -> bool {
     std::fs::symlink_metadata(url).is_ok()
+}
+
+#[cfg(unix)]
+fn is_same_file(first: &Path, second: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::symlink_metadata(first), std::fs::symlink_metadata(second)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// Linux rename(2) between two names of one inode does nothing, so a
+/// case-only rename on a casefold directory goes through a temporary name.
+fn rename_case(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut name = std::ffi::OsString::from(".pitex-case-");
+    name.push(from.file_name().unwrap_or_default());
+    let temporary = from.with_file_name(name);
+    std::fs::rename(from, &temporary)?;
+    std::fs::rename(&temporary, to).map_err(|error| {
+        let _ = std::fs::rename(&temporary, from);
+        error
+    })
+}
+
+/// Windows never gets here: pull() fails case-clashing paths before
+/// planning deletes (`case_clashing_groups`).
+#[cfg(not(unix))]
+fn is_same_file(_first: &Path, _second: &Path) -> bool {
+    false
 }
 
 /// `base` + a `/`-separated mirror-relative path, component by component —
