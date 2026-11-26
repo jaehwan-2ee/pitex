@@ -1108,6 +1108,10 @@ final class WorkspaceModel: ObservableObject {
             guard shouldWrite(snapshot) else {
                 return SessionWriteResult(kind: .skipped, snapshot: snapshot)
             }
+            // Every write funnels through here (Save All, build, close, Keep Mine), so read-only access is enforced once.
+            guard self?.capabilityLease?.access == .readWrite else {
+                return SessionWriteResult(kind: .permissionFailure(path: url.path), snapshot: snapshot)
+            }
             let text = snapshot.text
             let expectedBaseline = baseline(snapshot)
             let previousOwnWrite = self?.lastOwnWrite[url]
@@ -1307,9 +1311,12 @@ final class WorkspaceModel: ObservableObject {
         for fileURL in conflicted {
             await resolveConflict(useDiskVersion: useDiskVersion, url: fileURL)
         }
-        // A file that stays conflicted keeps the window open; resolveConflict reported why.
+        // A file this close settled that stays conflicted keeps it open; resolveConflict reported why.
+        // Another tab's conflict waits for that tab's own close.
         for session in registeredSessions {
-            if await session.snapshot().saveState == .conflicted { return false }
+            let snapshot = await session.snapshot()
+            if let url, (try? Self.relativePath(for: url, root: root)) != snapshot.path { continue }
+            if snapshot.saveState == .conflicted { return false }
         }
         return projectURL == root && documentLoadGeneration == generation
     }
@@ -1354,9 +1361,20 @@ final class WorkspaceModel: ObservableObject {
         case .closeWithoutSaving:
             return true
         case .saveThenClose:
-            if let problem = await persistDirtySessions(onlyPaths: Set(unsaved.map(\.path))) {
+            // Input stays frozen from here until the caller freezes it for teardown, with no
+            // suspension in between, so nothing typed after the save can be torn down unsaved.
+            isClosing = true
+            defer { isClosing = false }
+            await environment?.editor.flushPendingChanges()
+            let paths = Set(unsaved.map(\.path))
+            if let problem = await persistDirtySessions(onlyPaths: paths) {
                 if projectURL == root { phase = .failed(problem) }
                 return false
+            }
+            // Text that reached the editor while the write ran is newer than the disk: keep it open.
+            await environment?.editor.flushPendingChanges()
+            for session in registeredSessions where paths.contains(session.path.rawValue) {
+                if await session.snapshot().saveState != .clean { return false }
             }
             return projectURL == root && documentLoadGeneration == generation
         }
@@ -1390,8 +1408,8 @@ final class WorkspaceModel: ObservableObject {
         }
         let context = projectGeneration
         let savingRemote = remote != nil
-        if savingRemote { isClosing = true }
-        defer { if savingRemote { isClosing = false } }
+        isClosing = true
+        defer { isClosing = false }
         if savingRemote {
             if let problem = await agent?.stopForRemoteClose() {
                 showRemoteSaveFailure(problem)
@@ -1440,7 +1458,11 @@ final class WorkspaceModel: ObservableObject {
         guard await resolveConflictsBeforeClose(matching: nil), !isClosing else { return false }
         guard remote != nil, projectURL != nil else {
             guard await confirmLocalClose(matching: nil) else { return false }
+            // Text typed while another window prepares would never be saved.
+            isClosing = true
             await waitForPendingWrites()
+            terminationFrozen = keepFrozen
+            if !keepFrozen { isClosing = false }
             return true
         }
         isClosing = true

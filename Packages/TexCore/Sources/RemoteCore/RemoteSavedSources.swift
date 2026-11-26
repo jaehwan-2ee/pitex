@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 extension RemoteSyncRules {
     /// The SHA-256 of each open source an SSH save must find on the device
