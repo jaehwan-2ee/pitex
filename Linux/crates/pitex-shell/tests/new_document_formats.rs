@@ -63,9 +63,9 @@ fn create(model: &mut WorkspaceModel, format: NewDocumentFormat) -> PathBuf {
         .recv_timeout(Duration::from_secs(10))
         .expect("activation reported back")
     {
-        WorkspaceMessage::ActivateFinished(Ok(activated)) => {
+        WorkspaceMessage::ActivateFinished { generation, root, result: Ok(activated) } => {
             let url = activated.url.clone();
-            model.apply_activate(activated);
+            assert!(model.finish_activate(generation, root, Ok(activated)).is_some());
             url
         }
         other => panic!("expected ActivateFinished(Ok), got {other:?}"),

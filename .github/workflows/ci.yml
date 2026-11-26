@@ -120,9 +120,11 @@ jobs:
           if-no-files-found: warn
       - name: Native editor regression checks
         run: swift test --package-path Packages/TexApp --build-system native
-      - name: Git and subprocess regression checks
+      # The whole package: the Ubuntu job cannot see Darwin-only Foundation
+      # behavior such as /private-prefixed enumeration of /var and /tmp.
+      - name: TexCore, Git and subprocess regression checks
         run: |
-          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|GitRepositoryReaderTests|ProcessRunnerTests|DiskContentHashTests|RemoteCoreTests'
+          swift test --package-path Packages/TexCore --build-system native
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-git-performance --
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-ime-completion --
       - name: Native highlighting checks
@@ -335,6 +337,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test --workspace
         working-directory: Linux
+      - name: SSH mirror on a case-insensitive (casefold ext4) folder
+        working-directory: Linux
+        run: |
+          image="$RUNNER_TEMP/casefold.img" mount="$RUNNER_TEMP/casefold"
+          truncate -s 64M "$image"
+          mkfs.ext4 -q -O casefold -E root_owner="$(id -u):$(id -g)" "$image"
+          mkdir "$mount"
+          sudo mount -o loop "$image" "$mount"
+          mkdir "$mount/mirror"
+          chattr +F "$mount/mirror"
+          PITEX_TEST_CASEFOLD_DIR="$mount/mirror" cargo test -p remote-core --test remote_core case_only -- --nocapture
       - name: Allow unprivileged user namespaces for the WebKit sandbox
         # WebKitGTK's bubblewrap sandbox needs unprivileged userns; the GitHub
         # ubuntu-24.04 runner restricts them (apparmor_restrict_unprivileged_
@@ -354,6 +367,9 @@ jobs:
         working-directory: Linux
       - name: Replaced editors release their buffer and state
         run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib editor_release_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
+      - name: Routed Open asks before replacing a dirty workspace
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib routed_open_tests -- --ignored --nocapture --test-threads=1
         working-directory: Linux
       - name: Native GTK editing and PDF worker checks
         run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored

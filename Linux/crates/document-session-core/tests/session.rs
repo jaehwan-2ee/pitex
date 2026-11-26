@@ -419,3 +419,27 @@ fn replace_bytes_renames_over_the_destination_and_leaves_a_symlink_target() {
         !entry.unwrap().file_name().to_string_lossy().contains(".tmp")
     }));
 }
+
+#[cfg(unix)]
+#[test]
+fn saving_keeps_the_original_file_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = temp_root();
+    for mode in [0o600, 0o755] {
+        let saved = root.join(format!("saved-{mode:o}.tex"));
+        let replaced = root.join(format!("replaced-{mode:o}.tex"));
+        for file in [&saved, &replaced] {
+            std::fs::write(file, b"baseline").unwrap();
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+
+        let outcome = AtomicDocumentStore::new().save("edit", &saved, Some(DiskContentHash::hashing("baseline")));
+        assert!(matches!(outcome, DocumentSaveOutcome::Saved(_)));
+        AtomicDocumentStore::replace_bytes(b"edit", &replaced).unwrap();
+
+        for file in [&saved, &replaced] {
+            assert_eq!(std::fs::read(file).unwrap(), b"edit");
+            assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o7777, mode, "{}", file.display());
+        }
+    }
+}
