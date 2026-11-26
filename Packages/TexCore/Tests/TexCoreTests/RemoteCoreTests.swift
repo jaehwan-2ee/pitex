@@ -419,9 +419,11 @@ final class RemoteCoreTests: XCTestCase {
         try await sync.pull() // caches size + date → hash of "base"
         for name in ["edited.tex", "removed.tex"] {
             let url = mirror.root.appendingPathComponent(name)
-            let modified = try manager.attributesOfItem(atPath: url.path)[.modificationDate]
+            var info = stat()
+            XCTAssertEqual(lstat(url.path, &info), 0)
             try "mine".write(to: url, atomically: false, encoding: .utf8)
-            try manager.setAttributes([.modificationDate: modified as Any], ofItemAtPath: url.path)
+            var times = [info.st_atimespec, info.st_mtimespec] // exact, to the nanosecond
+            XCTAssertEqual(utimensat(AT_FDCWD, url.path, &times, 0), 0)
         }
         try "device".write(to: remote.appendingPathComponent("edited.tex"), atomically: true, encoding: .utf8)
         try manager.removeItem(at: remote.appendingPathComponent("removed.tex"))
