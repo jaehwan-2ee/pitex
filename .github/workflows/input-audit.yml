@@ -33,7 +33,7 @@ jobs:
             features: ''
     steps:
       - uses: actions/checkout@v4
-      - timeout-minutes: 15
+      - timeout-minutes: 25
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates git libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev libwebkitgtk-6.0-dev xvfb gdb dbus-x11
@@ -75,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native input stack
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
