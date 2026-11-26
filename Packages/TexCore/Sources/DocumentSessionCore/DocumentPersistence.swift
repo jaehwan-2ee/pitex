@@ -93,6 +93,10 @@ public struct FoundationAtomicDocumentStore: DocumentPersistenceStore, Sendable 
             ".\(url.lastPathComponent).texspark-\(UUID().uuidString).tmp",
             isDirectory: false
         )
+        // The rename below needs only the folder's write permission; never replace a file the user cannot write.
+        if FileManager.default.fileExists(atPath: url.path), !FileManager.default.isWritableFile(atPath: url.path) {
+            return .permissionFailure(path: url.path)
+        }
         var ownsTemporaryFile = false
 
         defer {

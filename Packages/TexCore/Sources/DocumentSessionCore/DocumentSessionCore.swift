@@ -36,15 +36,25 @@ public struct DiskContentHash: RawRepresentable, Hashable, Codable, Sendable {
     }
 }
 
+/// `observedDisk` is nil when the file was absent.
 public enum DocumentConflict: Hashable, Codable, Sendable {
     case externalModification(
         baseline: DiskContentHash,
-        observedDisk: DiskContentHash
+        observedDisk: DiskContentHash?
     )
     case saveCollision(
         baseline: DiskContentHash,
-        observedDisk: DiskContentHash
+        observedDisk: DiskContentHash?
     )
+}
+
+extension DocumentConflict {
+    /// The disk content a Keep Mine write expects to replace; nil expects no file.
+    public var observedDisk: DiskContentHash? {
+        switch self {
+        case let .externalModification(_, observed), let .saveCollision(_, observed): observed
+        }
+    }
 }
 
 public enum DocumentSaveState: String, Codable, Sendable {
@@ -86,8 +96,9 @@ public struct DocumentSnapshot: Hashable, Codable, Sendable {
 
 public enum DocumentMutation: Hashable, Sendable {
     case replaceText(String)
-    case recordExternalChange(observedDiskHash: DiskContentHash)
-    case recordSaveConflict(observedDiskHash: DiskContentHash)
+    /// A nil hash records that the file was absent.
+    case recordExternalChange(observedDiskHash: DiskContentHash?)
+    case recordSaveConflict(observedDiskHash: DiskContentHash?)
     case commitSave(writtenDiskHash: DiskContentHash)
     case resolveConflict(text: String, diskBaselineHash: DiskContentHash)
 }
@@ -158,11 +169,17 @@ public actor DocumentSession {
             }
 
         case let .recordSaveConflict(observedDiskHash):
-            if conflict == nil {
+            switch conflict {
+            case nil:
                 conflict = .saveCollision(
                     baseline: diskBaselineHash,
                     observedDisk: observedDiskHash
                 )
+            // A Keep Mine write collided again: the disk moved on, so the next one targets what it holds now.
+            case let .externalModification(baseline, _):
+                conflict = .externalModification(baseline: baseline, observedDisk: observedDiskHash)
+            case let .saveCollision(baseline, _):
+                conflict = .saveCollision(baseline: baseline, observedDisk: observedDiskHash)
             }
 
         case let .commitSave(writtenDiskHash):

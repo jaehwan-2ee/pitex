@@ -673,3 +673,6 @@
 "assistant.rewind.done" = "Se rebobinó la conversación.";
 "assistant.rewind.done_files" = "Se rebobinó la conversación y se restauró %@.";
 "assistant.rewind.failed" = "No se pudo rebobinar: %@";
+"save.failed_title" = "Los cambios no se guardaron";
+"save.read_only_detail" = "%@ es de solo lectura, así que no se modificó. Tus cambios siguen en el editor; elige Guardar como… para conservarlos en un archivo nuevo.";
+"save.failed_dismiss" = "Aceptar";

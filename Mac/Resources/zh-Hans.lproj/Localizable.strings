@@ -673,3 +673,6 @@
 "assistant.rewind.done" = "已回退对话。";
 "assistant.rewind.done_files" = "已回退对话并恢复 %@。";
 "assistant.rewind.failed" = "无法回退：%@";
+"save.failed_title" = "更改未保存";
+"save.read_only_detail" = "%@ 是只读文件，因此未被修改。你的更改仍保留在编辑器中；选择“另存为…”将其保存到新文件。";
+"save.failed_dismiss" = "好";
