@@ -168,7 +168,6 @@ pub fn recent_title(language: &str, url: &Path) -> String {
 mod tests {
     use super::*;
     use remote_core::{RemoteProject, SshClient};
-    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
     struct TempDir(PathBuf);
@@ -204,15 +203,14 @@ mod tests {
         // probe the cached file before attempting an upload.
         let calls = temporary.0.join("ssh-calls");
         let executable = temporary.0.join("ssh");
-        std::fs::write(
+        crate::write_test_executable(
             &executable,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf 'call\\n' >> {}\n",
                 SshClient::quote(calls.to_str().unwrap())
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            0o700,
+        );
         let mut client = SshClient::new(connection);
         client.ssh_executable = executable;
         client.control_directory = None;

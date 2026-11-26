@@ -15,6 +15,7 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -23,6 +24,7 @@ jobs:
   gates:
     name: Repository gates
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,6 +63,7 @@ jobs:
   swift:
     name: Swift packages
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Import Swift signing keys
@@ -76,6 +79,7 @@ jobs:
   macos:
     name: macOS app and native editor checks
     runs-on: macos-latest
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
@@ -165,7 +169,7 @@ jobs:
           if-no-files-found: warn
       - name: Native SSH local preview and manual save boundary
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.tex.outcome == 'success' }}
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -233,6 +237,7 @@ jobs:
     # external-open regression was reported. Only the two window-focused
     # native harnesses run here; macos-latest keeps the full suite.
     runs-on: xcode-27
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -321,9 +326,11 @@ jobs:
   rust:
     name: Rust workspace
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: System dependencies
+        timeout-minutes: 25
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev \
@@ -392,6 +399,7 @@ jobs:
     # build (--no-default-features) must compile and link against exactly
     # these system libraries, so the job runs inside the real container.
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     container:
       image: ubuntu:22.04
       # WebKit keeps its own bubblewrap sandbox. The outer container must
@@ -400,6 +408,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: System dependencies
+        timeout-minutes: 25
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y build-essential pkg-config libssl-dev curl \
@@ -467,6 +476,7 @@ jobs:
     # The Windows app links the MSYS2 GTK stack, so the authoritative compile
     # gate is a real UCRT64 toolchain — no cross-compile from Linux.
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: msys2 {0}
@@ -605,12 +615,14 @@ jobs:
     # License boundary check: build the helpers standalone and audit their
     # linkage (TECkit must stay a shared dep; no xdvipdfmx/MuPDF/dpx).
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2026-10-04
       - name: System dependencies
+        timeout-minutes: 25
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config \
@@ -677,6 +689,7 @@ jobs:
   macos-preview-engine:
     name: macOS embedded preview helpers
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

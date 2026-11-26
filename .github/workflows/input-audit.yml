@@ -5,6 +5,7 @@ jobs:
   macos:
     name: Native macOS Caps Lock editing
     runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -18,6 +19,7 @@ jobs:
   git-render:
     name: Million-file Git responsiveness (${{ matrix.ubuntu }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     container:
       image: ubuntu:${{ matrix.ubuntu }}
       options: --cap-add SYS_ADMIN --cap-add NET_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
@@ -31,7 +33,8 @@ jobs:
             features: ''
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - timeout-minutes: 25
+        run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates git libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev libwebkitgtk-6.0-dev xvfb gdb dbus-x11
           if [ "${{ matrix.ubuntu }}" = "24.04" ]; then apt-get install -y libvte-2.91-gtk4-dev; fi
@@ -63,6 +66,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     name: IBus Caps Lock (${{ matrix.ubuntu }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     container: ubuntu:${{ matrix.ubuntu }}
     strategy:
       fail-fast: false
@@ -71,6 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native input stack
+        timeout-minutes: 25
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
@@ -104,6 +109,7 @@ jobs:
     # The Windows app links the MSYS2 GTK stack, so the authoritative compile
     # gate is a real UCRT64 toolchain — no cross-compile from Linux.
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         shell: msys2 {0}
@@ -132,6 +138,7 @@ jobs:
   swift:
     name: Swift packages
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Import Swift signing keys

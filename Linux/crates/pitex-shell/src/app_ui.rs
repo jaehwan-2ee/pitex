@@ -9236,7 +9236,7 @@ mod startup_tests {
         std::env::set_var("PI_CODING_AGENT_DIR", root.join("pi"));
         let launcher = crate::agent::pi_paths::runtime_executable();
         std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-        std::fs::write(&launcher, r#"#!/usr/bin/python3
+        crate::write_test_executable(&launcher, r#"#!/usr/bin/python3
 import json, sys, time
 time.sleep(2)
 model = {"id": "fixture", "provider": "fixture", "name": "Fixture model"}
@@ -9248,8 +9248,7 @@ for line in sys.stdin:
             "get_available_thinking_levels": {"levels": ["off"]},
             "get_commands": {"commands": []}}.get(command, {})
     print(json.dumps({"type": "response", "command": command, "id": request.get("id"), "success": True, "data": data}), flush=True)
-"#).unwrap();
-        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+"#, 0o700);
         std::fs::write(crate::agent::pi_paths::runtime_directory().join("package.json"),
             format!(r#"{{"name":"{}","version":"{}"}}"#,
                 crate::agent::pi_installer::PACKAGE_NAME, crate::agent::pi_installer::DESIRED_VERSION)).unwrap();
@@ -9677,7 +9676,6 @@ mod editor_release_tests {
 #[cfg(all(test, unix))]
 mod remote_save_lifecycle_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
 
     fn drive_until(label: &str, condition: impl Fn() -> bool) {
@@ -9770,8 +9768,7 @@ mod remote_save_lifecycle_tests {
         // Keep startup's runtime check inside the fixture, without installing.
         let launcher = crate::agent::pi_paths::runtime_executable();
         std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-        std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::write_test_executable(&launcher, "#!/bin/sh\nexit 0\n", 0o700);
         std::fs::write(
             crate::agent::pi_paths::runtime_directory().join("package.json"),
             format!(

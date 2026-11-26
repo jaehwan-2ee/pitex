@@ -28,6 +28,7 @@ jobs:
   gate:
     name: Gate and compute nightly version
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       version: ${{ steps.compute.outputs.version }}
       sha: ${{ steps.compute.outputs.sha }}
@@ -96,6 +97,7 @@ jobs:
     name: Publish nightly prerelease
     needs: [gate, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     if: ${{ needs.gate.outputs.publish != 'false' && needs.gate.outputs.version != '' }}
     permissions:
       contents: write

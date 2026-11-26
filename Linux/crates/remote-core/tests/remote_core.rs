@@ -587,10 +587,27 @@ fn mirror_is_found_again_from_any_path_inside() {
     );
 }
 
+/// Writes an executable test fixture from a child process. A write descriptor held in
+/// this multithreaded test process can leak into another thread's fork and make
+/// exec fail with ETXTBSY ("Text file busy").
+#[cfg(unix)]
+fn write_test_executable(path: &Path, body: &str, mode: u32) {
+    use std::io::Write;
+    let mut child = std::process::Command::new("/bin/sh")
+        .args(["-c", "cat > \"$1\" && chmod \"$2\" \"$1\"", "sh"])
+        .arg(path)
+        .arg(format!("{mode:o}"))
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(body.as_bytes()).unwrap();
+    assert!(child.wait().unwrap().success(), "could not write {}", path.display());
+}
+
 #[cfg(unix)]
 #[test]
 fn git_command_waits_for_mirror_transfer() {
-    use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
     let directory = TempDir::new("git-queue");
     let remote = directory.join("remote");
@@ -600,7 +617,7 @@ fn git_command_waits_for_mirror_transfer() {
     let git_started = directory.join("git-started");
     let executable = directory.join("ssh-fixture");
     let quote = |path: &Path| SshClient::quote(path.to_str().unwrap());
-    write(&executable, &format!(
+    write_test_executable(&executable, &format!(
         "#!/bin/sh\nfor argument do command=$argument; done\n\
          case \"$command\" in\n\
          *'find . '*) : > {}; count=0; while [ ! -f {} ]; do\n\
@@ -608,8 +625,7 @@ fn git_command_waits_for_mirror_transfer() {
          *GIT_TERMINAL_PROMPT=0*) : > {} ;;\n\
          esac\nexec /bin/sh -c \"$command\"\n",
         quote(&started), quote(&release), quote(&git_started),
-    ));
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    ), 0o700);
     let mut client = SshClient::new(SshConnection::new("fixture", "fixture", None, None, None));
     client.ssh_executable = executable;
     client.control_directory = None;
