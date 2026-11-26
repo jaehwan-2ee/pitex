@@ -25,6 +25,18 @@ export function redactSecrets(value: unknown): unknown {
   return copy;
 }
 
+/** One stdout line as a redacted JSON object, or null for anything a dispatcher cannot read. */
+export function parseRecord(line: string): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return redactSecrets(parsed) as Record<string, unknown>;
+}
+
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -124,14 +136,8 @@ export class LineJsonRpc {
       const line = this.buffer.slice(0, newline).replace(/\r$/, "");
       this.buffer = this.buffer.slice(newline + 1);
       if (!line.trim()) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const message = redactSecrets(parsed) as Record<string, unknown>;
-      this.dispatch(message);
+      const message = parseRecord(line);
+      if (message) this.dispatch(message);
     }
   }
 

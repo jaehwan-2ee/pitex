@@ -540,6 +540,25 @@ test("stdin EPIPE is reported as an unavailable error", async () => {
   await new Promise((resolve) => child.once("exit", resolve));
 });
 
+test("a non-object record does not stop the reader before the reply", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      'process.stdin.once("data", (line) => { const { id } = JSON.parse(line); process.stdout.write(`null\\n[]\\n7\\n${JSON.stringify({ jsonrpc: "2.0", id, result: "ok" })}\\n`); }); setInterval(() => {}, 1000);',
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] }
+  );
+  const rpc = new LineJsonRpc(child, () => {}, () => {});
+  try {
+    assert.equal(await rpc.request("ping", {}, 5_000), "ok");
+  } finally {
+    rpc.close();
+    child.kill("SIGKILL");
+    await new Promise((resolve) => child.once("exit", resolve));
+  }
+});
+
 test("stop force-kills a child that ignores the graceful signal", async () => {
   assert.deepEqual(codexForceKillPlan(4242, "win32"), {
     command: "taskkill",

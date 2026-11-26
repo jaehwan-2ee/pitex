@@ -57,7 +57,7 @@ import {
   type PermissionOption,
   type StreamState,
 } from "./acp-map.ts";
-import { redactSecrets } from "./jsonrpc.ts";
+import { parseRecord } from "./jsonrpc.ts";
 import {
   appendUserMessage,
   importListedSessions,
@@ -286,13 +286,8 @@ class AcpRpc {
       const line = this.buffer.slice(0, newline).replace(/\r$/, "");
       this.buffer = this.buffer.slice(newline + 1);
       if (!line.trim()) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      this.dispatch(redactSecrets(parsed) as Json);
+      const message = parseRecord(line);
+      if (message) this.dispatch(message);
     }
   }
 
