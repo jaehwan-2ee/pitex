@@ -7,6 +7,24 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Writes an executable test fixture from a child process. A write descriptor held in
+/// this multithreaded test process can leak into another thread's fork and make
+/// exec fail with ETXTBSY ("Text file busy").
+#[cfg(unix)]
+fn write_test_executable(path: &Path, body: &str, mode: u32) {
+    use std::io::Write;
+    let mut child = std::process::Command::new("/bin/sh")
+        .args(["-c", "cat > \"$1\" && chmod \"$2\" \"$1\"", "sh"])
+        .arg(path)
+        .arg(format!("{mode:o}"))
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(body.as_bytes()).unwrap();
+    assert!(child.wait().unwrap().success(), "could not write {}", path.display());
+}
+
 fn temp_dir() -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -47,9 +65,7 @@ fn executable_search_uses_child_path_and_working_directory() {
     let bin = directory.join("tools with spaces");
     std::fs::create_dir(&bin).unwrap();
     let tool = bin.join("pitex-test-tool");
-    std::fs::write(&tool, "#!/bin/sh\nprintf '%s' \"$PATH\"\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_test_executable(&tool, "#!/bin/sh\nprintf '%s' \"$PATH\"\n", 0o755);
     for path in [bin.to_string_lossy().into_owned(), "tools with spaces".to_string()] {
         for environment in [
             EnvironmentPolicy::Replace(

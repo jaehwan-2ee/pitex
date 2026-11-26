@@ -96,8 +96,7 @@ fn local_unsaved_edits_render_through_embedded_preview() {
     // must neither download it nor start an unrelated network operation.
     let launcher = crate::agent::pi_paths::runtime_executable();
     std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-    std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::write_test_executable(&launcher, "#!/bin/sh\nexit 0\n", 0o700);
     std::fs::write(
         crate::agent::pi_paths::runtime_directory().join("package.json"),
         format!(

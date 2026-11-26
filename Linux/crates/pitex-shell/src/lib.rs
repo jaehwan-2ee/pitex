@@ -45,6 +45,24 @@ mod window_ipc;
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(all(test, unix))]
+/// Writes an executable test fixture from a child process. A write descriptor held in
+/// this multithreaded test process can leak into another thread's fork and make
+/// exec fail with ETXTBSY ("Text file busy").
+pub(crate) fn write_test_executable(path: &std::path::Path, body: &str, mode: u32) {
+    use std::io::Write;
+    let mut child = std::process::Command::new("/bin/sh")
+        .args(["-c", "cat > \"$1\" && chmod \"$2\" \"$1\"", "sh"])
+        .arg(path)
+        .arg(format!("{mode:o}"))
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(body.as_bytes()).unwrap();
+    assert!(child.wait().unwrap().success(), "could not write {}", path.display());
+}
+
 /// Launch the native application (GTK4 main loop). `app_version` is the
 /// semantic version the updater compares against release tags.
 pub fn run(app_version: &str) -> i32 {
