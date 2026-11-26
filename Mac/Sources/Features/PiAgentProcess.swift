@@ -503,6 +503,7 @@ final class PiAgentProcess: AgentSession, @unchecked Sendable {
     private let continuation: AsyncStream<PiRPCEvent>.Continuation
     private var didFinish = false
     private var onExitHandler: (@Sendable () -> Void)?
+    private var stdinWriter: AgentStdinWriter?
 
     let events: AsyncStream<PiRPCEvent>
 
@@ -538,15 +539,16 @@ final class PiAgentProcess: AgentSession, @unchecked Sendable {
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             self?.consumeStderr(handle.availableData)
         }
+        // A child that closed stdin cannot take commands: end it so pending sends settle on exit.
+        stdinWriter = AgentStdinWriter(stdinPipe.fileHandleForWriting) { [weak self] _ in self?.terminate() }
         try process.run()
     }
 
     func send(_ command: PiRPCCommand, id: String? = nil) throws {
-        guard process.isRunning else { throw PiAgentProcessError.notRunning }
+        guard process.isRunning, let stdinWriter else { throw PiAgentProcessError.notRunning }
         var object = command.object
         if let id { object["id"] = id }
-        let data = try PiJSON.encode(object)
-        try stdinPipe.fileHandleForWriting.write(contentsOf: data)
+        stdinWriter.write(try PiJSON.encode(object))
     }
 
     var isRunning: Bool { process.isRunning }

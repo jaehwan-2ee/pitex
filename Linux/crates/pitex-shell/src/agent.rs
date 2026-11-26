@@ -1304,7 +1304,9 @@ impl PiSlashCommand {
 /// stream ends when the process exits.
 pub struct PiAgentProcess {
     child: Arc<Mutex<Child>>,
-    stdin: Arc<Mutex<std::process::ChildStdin>>,
+    /// Commands queue to a writer thread: a child that stops reading stdin
+    /// must not block the UI thread that sends.
+    stdin: std::sync::mpsc::Sender<Vec<u8>>,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
     /// Shared receivers — the UI drains them via `try_recv`.
     pub events: Arc<Mutex<Receiver<PiRPCEvent>>>,
@@ -1344,7 +1346,7 @@ impl PiAgentProcess {
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
         let mut child = command.spawn()?;
-        let stdin = child.stdin.take().expect("piped stdin");
+        let mut stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
 
@@ -1386,6 +1388,17 @@ impl PiAgentProcess {
         });
 
         let child_arc = Arc::new(Mutex::new(child));
+        let (stdin_tx, stdin_rx) = channel::<Vec<u8>>();
+        let writer_child = child_arc.clone();
+        std::thread::spawn(move || {
+            for data in stdin_rx {
+                if stdin.write_all(&data).and_then(|_| stdin.flush()).is_err() {
+                    // A child that closed stdin cannot take commands: end it so the exit path settles them.
+                    let _ = writer_child.lock().unwrap().kill();
+                    break;
+                }
+            }
+        });
         let exit_child = child_arc.clone();
         let exit_thread = std::thread::spawn(move || {
             // Wait in the OS without holding the Child mutex used by send/kill.
@@ -1414,7 +1427,7 @@ impl PiAgentProcess {
 
         Ok(Self {
             child: child_arc,
-            stdin: Arc::new(Mutex::new(stdin)),
+            stdin: stdin_tx,
             stderr_tail,
             events: Arc::new(Mutex::new(event_rx)),
             exited: Arc::new(Mutex::new(exit_rx)),
@@ -1436,11 +1449,9 @@ impl PiAgentProcess {
         }
         let mut data = serde_json::to_vec(&object).map_err(|e| e.to_string())?;
         data.push(b'\n');
-        let mut stdin = self.stdin.lock().unwrap();
-        stdin
-            .write_all(&data)
-            .and_then(|_| stdin.flush())
-            .map_err(|e| e.to_string())
+        self.stdin
+            .send(data)
+            .map_err(|_| "The pi agent process is not running.".into())
     }
 
     pub fn is_running(&self) -> bool {
@@ -1511,6 +1522,28 @@ mod process_group_tests {
         std::thread::sleep(Duration::from_millis(400));
         assert!(!late_write.exists(), "a tool descendant must not write after forced Save");
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_prompt_larger_than_the_pipe_does_not_block_while_the_agent_stops_reading() {
+        let process = Arc::new(PiAgentProcess::start(
+            Path::new("/bin/sh"),
+            &std::env::temp_dir(),
+            &["-c".into(), "sleep 30".into()],
+            &std::env::vars().collect(),
+        ).unwrap());
+        let command = PiRPCCommand::Prompt {
+            message: "x".repeat(4 * 1024 * 1024),
+            images: Vec::new(),
+            streaming_behavior: None,
+        };
+        let (done_tx, done_rx) = channel();
+        let sender = process.clone();
+        std::thread::spawn(move || { let _ = done_tx.send(sender.send(&command, None)); });
+        let returned = done_rx.recv_timeout(Duration::from_secs(5));
+        process.terminate();
+        assert_eq!(returned, Ok(Ok(())), "send must return while the agent withholds stdin reads");
+        process.exited.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
     }
 }
 
@@ -7791,6 +7824,14 @@ now please"), "the envelope wraps the text");
         );
     }
 
+    /// Runs a just-written script through /bin/sh: exec'ing the script itself can fail
+    /// with ETXTBSY while another test thread's fork still holds its write descriptor.
+    #[cfg(unix)]
+    fn start_script(script: &Path, dir: &Path) -> PiAgentProcess {
+        let args = [script.to_string_lossy().into_owned()];
+        PiAgentProcess::start(Path::new("/bin/sh"), dir, &args, &std::collections::HashMap::new()).unwrap()
+    }
+
     /// Runs `lines` (JSONL) as a "claude" probe and returns the catalog notes it leaves.
     #[cfg(unix)]
     fn notes_after_probe(agent: &mut AgentCoordinator, lines: &[&str]) -> Vec<String> {
@@ -7798,11 +7839,8 @@ now please"), "the envelope wraps the text");
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("probe.sh");
         let body: String = lines.iter().map(|line| format!("printf '%s\\n' '{line}'\n")).collect();
-        std::fs::write(&script, format!("#!/bin/sh\n{body}")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let process =
-            PiAgentProcess::start(&script, &dir, &[], &std::collections::HashMap::new()).unwrap();
+        std::fs::write(&script, body).unwrap();
+        let process = start_script(&script, &dir);
         agent.probes.push(CatalogProbe {
             backend: "claude".into(),
             generation: agent.probe_generation,
@@ -7908,19 +7946,16 @@ now please"), "the envelope wraps the text");
         let script = dir.join("reply.sh");
         std::fs::write(
             &script,
-            "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"id\":\"claude-sonnet\",\"provider\":\"claude\",\"name\":\"Claude Sonnet\"}]}}'\n",
+            "printf '%s\\n' '{\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"id\":\"claude-sonnet\",\"provider\":\"claude\",\"name\":\"Claude Sonnet\"}]}}'\n",
         )
         .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut agent =
             AgentCoordinator::new(&crate::settings::SettingsStore::new(Default::default()));
         agent.note_catalog_report(
             "pi",
             Ok(vec![catalog_model("sonnet", "anthropic", "Sonnet")]),
         );
-        let process =
-            PiAgentProcess::start(&script, &dir, &[], &std::collections::HashMap::new()).unwrap();
+        let process = start_script(&script, &dir);
         agent.probes.push(CatalogProbe {
             backend: "claude".into(),
             generation: agent.probe_generation,
