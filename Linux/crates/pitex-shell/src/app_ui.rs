@@ -275,6 +275,8 @@ pub struct UiHandles {
 #[derive(Clone)]
 enum RemoteSaveAction {
     Build,
+    /// An explicit Save that commits no TeX build input: upload only.
+    Save,
     CloseProject,
     CloseDocument(PathBuf),
     CloseWindow,
@@ -284,7 +286,12 @@ enum RemoteSaveAction {
 
 impl RemoteSaveAction {
     fn closes_workspace(&self) -> bool {
-        !matches!(self, Self::Build)
+        !matches!(self, Self::Build | Self::Save)
+    }
+
+    /// Queued behind an unfinished save, a Save keeps a Build that has not run yet.
+    fn queue_over(self, waiting_build: bool) -> Self {
+        if waiting_build && matches!(self, Self::Save) { Self::Build } else { self }
     }
 }
 
@@ -1849,7 +1856,7 @@ impl AppState {
     /// the document chrome and Git once it has landed.
     pub fn save_action(&mut self) {
         if self.model.remote.is_some() {
-            self.begin_remote_save(RemoteSaveAction::Build);
+            self.begin_remote_save(self.remote_save_action());
             return;
         }
         self.model.save();
@@ -1858,7 +1865,7 @@ impl AppState {
 
     pub fn save_all_action(&mut self) {
         if self.model.remote.is_some() {
-            self.begin_remote_save(RemoteSaveAction::Build);
+            self.begin_remote_save(self.remote_save_action());
             return;
         }
         if let Some(err) = self.model.persist_dirty_sessions() {
@@ -1866,6 +1873,11 @@ impl AppState {
         }
         self.refresh_after_document_change();
         self.refresh_git();
+    }
+
+    /// Save, Save All and Save As build only after committing a TeX input.
+    fn remote_save_action(&self) -> RemoteSaveAction {
+        if self.model.save_starts_build() { RemoteSaveAction::Build } else { RemoteSaveAction::Save }
     }
 
     pub fn save_as_action(&self) {
@@ -1886,7 +1898,8 @@ impl AppState {
                         if let Some(error) = st.model.save_as(path, tx) {
                             st.toast(&error);
                         } else if save_remote {
-                            st.begin_remote_save(RemoteSaveAction::Build);
+                            let action = st.remote_save_action();
+                            st.begin_remote_save(action);
                         }
                     }
                     st.refresh_after_document_change();
@@ -3813,7 +3826,9 @@ impl AppState {
         }
         let already_saving = self.pending_remote_save.is_some();
         if already_saving {
-            self.queued_remote_save = Some(action.clone());
+            let waiting_build = matches!(self.queued_remote_save, Some(RemoteSaveAction::Build))
+                || (matches!(self.pending_remote_save, Some(RemoteSaveAction::Build)) && !self.remote_save_building);
+            self.queued_remote_save = Some(action.clone().queue_over(waiting_build));
         } else {
             self.pending_remote_save = Some(action.clone());
         }
@@ -3877,6 +3892,7 @@ impl AppState {
                     self.restart_embedded_preview();
                     self.refresh_build_ui();
                 }
+                RemoteSaveAction::Save => {}
                 RemoteSaveAction::CloseProject => self.close_after_save(),
                 RemoteSaveAction::CloseDocument(url) => self.close_document_after_save(url),
                 RemoteSaveAction::Open(path) => self.open_selected_after_save(path),
@@ -10136,5 +10152,19 @@ mod approval_card_tests {
         assert!(texts.contains(&"-old".to_string()) && texts.contains(&"+new".to_string()), "{texts:?}");
         assert!(all.iter().any(|w| w.widget_name() == "pitex.assistant.approve"));
         assert!(all.iter().any(|w| w.widget_name() == "pitex.assistant.alwaysAllow"));
+    }
+}
+
+#[cfg(test)]
+mod remote_save_queue_tests {
+    use super::RemoteSaveAction;
+
+    /// Build, then Save on notes.md while the Build still uploads: the
+    /// queued Save must not drop the Build the user asked for.
+    #[test]
+    fn a_queued_save_keeps_a_build_that_has_not_run() {
+        assert!(matches!(RemoteSaveAction::Save.queue_over(true), RemoteSaveAction::Build));
+        assert!(matches!(RemoteSaveAction::Save.queue_over(false), RemoteSaveAction::Save));
+        assert!(matches!(RemoteSaveAction::CloseProject.queue_over(true), RemoteSaveAction::CloseProject));
     }
 }

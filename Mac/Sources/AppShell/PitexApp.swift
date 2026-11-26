@@ -1168,7 +1168,7 @@ final class WorkspaceModel: ObservableObject {
     func save() async {
         guard canSave else { return }
         if remote != nil {
-            if let problem = await saveRemoteSources(build: true) {
+            if let problem = await saveRemoteSources(build: await saveStartsBuild()) {
                 showRemoteSaveFailure(problem)
             }
         } else {
@@ -1179,7 +1179,7 @@ final class WorkspaceModel: ObservableObject {
     func saveAll() async {
         guard !isClosing else { return }
         if remote != nil {
-            if let problem = await saveRemoteSources(build: true) {
+            if let problem = await saveRemoteSources(build: await saveStartsBuild()) {
                 showRemoteSaveFailure(problem)
             }
         } else if let problem = await persistDirtySessions() {
@@ -1207,6 +1207,16 @@ final class WorkspaceModel: ObservableObject {
 
     private static func readOnlyProblem(_ path: String) -> String {
         String(format: String(localized: "save.read_only_detail"), (path as NSString).lastPathComponent)
+    }
+
+    /// Remote Save uploads, then builds only when it commits a TeX build
+    /// input; saving notes.md alone just uploads it.
+    private func saveStartsBuild() async -> Bool {
+        var dirty: [String] = []
+        for session in registeredSessions where await session.snapshot().saveState == .dirty {
+            dirty.append(session.path.rawValue)
+        }
+        return BuildInputs.saveStartsBuild(activePath: documentSnapshot?.path.rawValue, dirtyPaths: dirty)
     }
 
     private func saveLocalDocument() async {

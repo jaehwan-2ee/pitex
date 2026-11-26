@@ -120,6 +120,7 @@ fn manual_clock() -> (Rc<Cell<u64>>, Rc<dyn Fn() -> u64>) {
 struct Fixture {
     _dir: TempDir,
     model: WorkspaceModel,
+    tx: std::sync::mpsc::Sender<WorkspaceMessage>,
     rx: Receiver<WorkspaceMessage>,
     store: SettingsStore,
     now: Rc<Cell<u64>>,
@@ -127,11 +128,19 @@ struct Fixture {
 
 impl Fixture {
     fn open(tag: &str, main: &str, command: &str) -> Self {
+        Self::open_with(tag, main, command, &[])
+    }
+
+    /// `open` plus `extra` project files written before the scan.
+    fn open_with(tag: &str, main: &str, command: &str, extra: &[(&str, &str)]) -> Self {
         let dir = TempDir::new(tag);
         write(
             &dir.join(main),
             "\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}\n",
         );
+        for (path, text) in extra {
+            write(&dir.join(path), text);
+        }
         let mut store = SettingsStore::new(Preferences::standard());
         store.set_live_compile_enabled(true);
         // These scenarios exercise the compiler live-build path; the
@@ -142,7 +151,7 @@ impl Fixture {
         let mut model = WorkspaceModel::new();
         let (tx, rx) = std::sync::mpsc::channel();
         model.set_event_sink(tx.clone());
-        model.open(dir.path().to_path_buf(), tx);
+        model.open(dir.path().to_path_buf(), tx.clone());
         let message = pump(&mut model, &rx, |m| {
             matches!(m, WorkspaceMessage::OpenFinished(_))
         });
@@ -165,10 +174,25 @@ impl Fixture {
         Self {
             _dir: dir,
             model,
+            tx,
             rx,
             store,
             now,
         }
+    }
+
+    /// Makes `path` the active document the way a tree click does.
+    fn activate(&mut self, path: &str) {
+        if self.model.active_document_url == Some(self._dir.join(path)) {
+            return;
+        }
+        self.model.activate_document(self._dir.join(path), self.tx.clone());
+        let WorkspaceMessage::ActivateFinished { result, .. } = pump(&mut self.model, &self.rx, |m| {
+            matches!(m, WorkspaceMessage::ActivateFinished { .. })
+        }) else {
+            unreachable!()
+        };
+        self.model.apply_activate(result.unwrap_or_else(|e| panic!("activate {path}: {e}")));
     }
 
     /// main.tex-relative edit, noted through the real bridge.
@@ -1026,4 +1050,40 @@ fn blank_build_command_runs_fallback() {
         fx.model.build_state
     );
     assert!(!marker.exists());
+}
+
+/// Owner report: in an SSH project, Save on notes.md uploaded it and then
+/// started the LaTeX compiler. An explicit Save builds only when it commits
+/// a TeX build input — the active document or any other dirty session.
+#[test]
+fn an_explicit_save_builds_only_when_it_saves_a_tex_build_input() {
+    let starts_build = |active: &str, dirty: &[&str]| {
+        let mut f = Fixture::open_with(
+            "save-build",
+            "main.tex",
+            "true",
+            &[
+                ("notes.md", "# notes\n"),
+                ("README.markdown", "# readme\n"),
+                ("chapters/intro.tex", "intro\n"),
+                ("refs.bib", "@misc{a, title={A}}\n"),
+            ],
+        );
+        for path in dirty {
+            f.activate(path);
+            edit(&mut f.model, path, "more\n");
+        }
+        f.activate(active);
+        f.model.save_starts_build()
+    };
+    // The Linux tree opens only .tex/.bib/.md/.markdown as sources.
+    for plain in ["notes.md", "README.markdown"] {
+        assert!(!starts_build(plain, &[plain]), "saving {plain} must not build");
+    }
+    assert!(starts_build("main.tex", &[]), "Save on the main .tex still builds");
+    assert!(starts_build("main.tex", &["main.tex"]));
+    assert!(starts_build("chapters/intro.tex", &["chapters/intro.tex"]));
+    assert!(starts_build("refs.bib", &["refs.bib"]));
+    // Save writes every dirty session; an unsaved chapter .tex goes too.
+    assert!(starts_build("notes.md", &["chapters/intro.tex", "notes.md"]));
 }
