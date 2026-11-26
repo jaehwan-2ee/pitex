@@ -368,6 +368,9 @@ jobs:
       - name: Replaced editors release their buffer and state
         run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib editor_release_tests -- --ignored --nocapture --test-threads=1
         working-directory: Linux
+      - name: Routed Open asks before replacing a dirty workspace
+        run: GSK_RENDERER=cairo xvfb-run -a dbus-run-session -- cargo test -p pitex-shell --lib routed_open_tests -- --ignored --nocapture --test-threads=1
+        working-directory: Linux
       - name: Native GTK editing and PDF worker checks
         run: xvfb-run -a cargo test -p pitex-shell --test native -- --ignored
         working-directory: Linux
