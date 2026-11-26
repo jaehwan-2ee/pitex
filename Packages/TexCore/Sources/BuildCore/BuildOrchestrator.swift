@@ -702,19 +702,24 @@ public actor BuildOrchestrator {
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         ) else { return }
+        // Darwin enumerates /var and /tmp roots as /private/..., while the
+        // roots here come from resolvingSymlinksInPath, which strips /private.
+        // Entered directories are never symlinks, so resolving only
+        // normalizes that prefix.
         for case let url as URL in enumerator {
             let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             if values.isDirectory == true {
                 if values.isSymbolicLink == true
-                    || url.path == outputURL.path
+                    || url.resolvingSymlinksInPath().path == outputURL.path
                     || Self.prunedSubdirectoryNames.contains(url.lastPathComponent) {
                     enumerator.skipDescendants()
                 }
                 continue
             }
+            let directory = url.deletingLastPathComponent().resolvingSymlinksInPath()
             guard url.pathExtension == "tex",
-                  url.path.hasPrefix(root.path + "/") else { continue }
-            let relative = String(url.deletingLastPathComponent().path.dropFirst(root.path.count + 1))
+                  directory.path.hasPrefix(root.path + "/") else { continue }
+            let relative = String(directory.path.dropFirst(root.path.count + 1))
             guard !relative.isEmpty else { continue }
             let destination = outputURL.appendingPathComponent(relative)
             try requireUnredirected(destination, relativePath: relative)
