@@ -674,3 +674,6 @@
 "assistant.rewind.done" = "대화를 되감았습니다.";
 "assistant.rewind.done_files" = "대화를 되감고 %@을(를) 복원했습니다.";
 "assistant.rewind.failed" = "되감지 못했습니다: %@";
+"save.failed_title" = "변경 내용이 저장되지 않았습니다";
+"save.read_only_detail" = "%@ 파일이 읽기 전용이라 변경하지 않았습니다. 변경 내용은 편집기에 그대로 있습니다. 다른 이름으로 저장…을 선택해 새 파일로 보관하세요.";
+"save.failed_dismiss" = "확인";

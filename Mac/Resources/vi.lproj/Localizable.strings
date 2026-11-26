@@ -673,3 +673,6 @@
 "assistant.rewind.done" = "Đã tua lại cuộc trò chuyện.";
 "assistant.rewind.done_files" = "Đã tua lại cuộc trò chuyện và khôi phục %@.";
 "assistant.rewind.failed" = "Không thể tua lại: %@";
+"save.failed_title" = "Các thay đổi chưa được lưu";
+"save.read_only_detail" = "%@ chỉ đọc nên không bị thay đổi. Các thay đổi của bạn vẫn còn trong trình soạn thảo; chọn Lưu thành… để giữ chúng trong một tệp mới.";
+"save.failed_dismiss" = "OK";
