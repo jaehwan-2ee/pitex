@@ -19,6 +19,8 @@ final class AgentStdinWriterTests: XCTestCase {
         XCTAssertEqual(received, prompt + next, "commands arrive whole and in order")
     }
 
+    #if canImport(Darwin)
+    // Only Darwin has F_SETNOSIGPIPE; elsewhere this write raises SIGPIPE.
     func testAWriteToAClosedChildReportsTheFailureOnce() {
         let pipe = Pipe()
         try? pipe.fileHandleForReading.close()
@@ -30,4 +32,5 @@ final class AgentStdinWriterTests: XCTestCase {
         writer.write(Data("{}\n".utf8))
         wait(for: [failed], timeout: 5)
     }
+    #endif
 }
