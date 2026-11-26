@@ -639,6 +639,53 @@ fn git_command_waits_for_mirror_transfer() {
     assert!(git_started.exists());
 }
 
+/// A client whose "ssh" runs the command on this machine: the production
+/// remote scripts against a local folder.
+#[cfg(unix)]
+fn local_shell_client(directory: &TempDir) -> SshClient {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = directory.join("ssh-local");
+    write(&executable, "#!/bin/sh\nfor argument do command=$argument; done\nexec /bin/sh -c \"$command\"\n");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut client = SshClient::new(SshConnection::new("fixture", "fixture", None, None, None));
+    client.ssh_executable = executable;
+    client.control_directory = None;
+    client
+}
+
+/// R03: a mirror edit that keeps the file's size and modification time
+/// (a timestamp-preserving copy or restore) must still be compared by its
+/// bytes before a pull replaces or deletes it.
+#[cfg(unix)]
+#[test]
+fn pull_keeps_mirror_edit_that_preserves_size_and_mtime() {
+    let directory = TempDir::new("stale-cache");
+    let remote = directory.join("remote");
+    write(&remote.join("edited.tex"), "base");
+    write(&remote.join("removed.tex"), "base");
+    let client = local_shell_client(&directory);
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.to_str().unwrap()),
+        &directory.join("store"),
+    )
+    .unwrap();
+    let sync = RemoteSync::new(mirror.clone(), client, None);
+    sync.pull().unwrap();
+    sync.pull().unwrap(); // caches size+mtime → hash of "base"
+    for name in ["edited.tex", "removed.tex"] {
+        let url = mirror.root().join(name);
+        let modified = std::fs::metadata(&url).unwrap().modified().unwrap();
+        write(&url, "mine");
+        std::fs::File::options().write(true).open(&url).unwrap().set_modified(modified).unwrap();
+    }
+    write(&remote.join("edited.tex"), "device");
+    std::fs::remove_file(remote.join("removed.tex")).unwrap();
+    let report = sync.pull().unwrap();
+    assert_eq!(read(&mirror.root().join("edited.tex")).as_deref(), Some("mine"));
+    assert_eq!(read(&mirror.root().join("removed.tex")).as_deref(), Some("mine"));
+    assert_eq!(report.conflicts, ["edited.tex", "removed.tex"]);
+}
+
 // ─── Live, against a real sshd (skipped unless configured) ──
 
 /// Configure with PITEX_TEST_SSH_DESTINATION (+ _PORT, _KEY, _KNOWN_HOSTS).

@@ -387,6 +387,97 @@ final class RemoteCoreTests: XCTestCase {
         XCTAssertTrue(manager.fileExists(atPath: gitStarted.path))
     }
 
+    /// A client whose "ssh" runs the command on this Mac: the production
+    /// remote scripts against a local folder.
+    private func localShellClient(in directory: URL) throws -> SSHClient {
+        let executable = directory.appendingPathComponent("ssh-local")
+        try "#!/bin/sh\nfor argument do command=$argument; done\nexec /bin/sh -c \"$command\"\n"
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        return SSHClient(connection: SSHConnection(name: "fixture", destination: "fixture"),
+                         sshExecutable: executable, controlDirectory: nil)
+    }
+
+    /// R03: a mirror edit that keeps the file's size and modification time
+    /// (a timestamp-preserving copy or restore) must still be compared by
+    /// its bytes before a pull replaces or deletes it.
+    func testPullKeepsMirrorEditThatPreservesSizeAndModificationDate() async throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent("pitex-stale-cache-\(UUID().uuidString)")
+        let remote = directory.appendingPathComponent("remote")
+        try manager.createDirectory(at: remote, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: directory) }
+        for name in ["edited.tex", "removed.tex"] {
+            try "base".write(to: remote.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        let client = try localShellClient(in: directory)
+        let mirror = try RemoteMirror.prepare(
+            for: RemoteProject(connection: client.connection, remoteRoot: remote.path),
+            store: directory.appendingPathComponent("store"))
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        try await sync.pull() // caches size + date → hash of "base"
+        for name in ["edited.tex", "removed.tex"] {
+            let url = mirror.root.appendingPathComponent(name)
+            let modified = try manager.attributesOfItem(atPath: url.path)[.modificationDate]
+            try "mine".write(to: url, atomically: false, encoding: .utf8)
+            try manager.setAttributes([.modificationDate: modified as Any], ofItemAtPath: url.path)
+        }
+        try "device".write(to: remote.appendingPathComponent("edited.tex"), atomically: true, encoding: .utf8)
+        try manager.removeItem(at: remote.appendingPathComponent("removed.tex"))
+        let report = try await sync.pull()
+        XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("edited.tex"), encoding: .utf8), "mine")
+        XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("removed.tex"), encoding: .utf8), "mine")
+        XCTAssertEqual(report.conflicts, ["edited.tex", "removed.tex"])
+    }
+
+    /// R12: a case-only rename on a case-sensitive device must not delete
+    /// the only copy in a case-insensitive mirror.
+    func testCaseOnlyRemoteRenameKeepsTheMirrorFile() async throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent("pitex-case-rename-\(UUID().uuidString)")
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: directory) }
+        let probe = directory.appendingPathComponent("Probe")
+        try Data().write(to: probe)
+        guard manager.fileExists(atPath: directory.appendingPathComponent("probe").path) else {
+            throw XCTSkip("the temporary volume is case-sensitive")
+        }
+        // The device: a case-sensitive disk image.
+        let image = directory.appendingPathComponent("device.dmg")
+        let remote = directory.appendingPathComponent("remote")
+        func hdiutil(_ arguments: [String]) throws -> Int32 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        }
+        guard try hdiutil(["create", "-size", "8m", "-fs", "Case-sensitive APFS", "-volname", "PitexDevice", image.path]) == 0,
+              try hdiutil(["attach", "-nobrowse", "-mountpoint", remote.path, image.path]) == 0 else {
+            throw XCTSkip("could not mount a case-sensitive disk image")
+        }
+        defer { _ = try? hdiutil(["detach", "-force", remote.path]) }
+        try "\\documentclass{article}\n".write(to: remote.appendingPathComponent("Main.tex"), atomically: true, encoding: .utf8)
+        let client = try localShellClient(in: directory)
+        let mirror = try RemoteMirror.prepare(
+            for: RemoteProject(connection: client.connection, remoteRoot: remote.path),
+            store: directory.appendingPathComponent("store"))
+        let sync = RemoteSync(mirror: mirror, client: client)
+        try await sync.pull()
+        try manager.moveItem(at: remote.appendingPathComponent("Main.tex"), to: remote.appendingPathComponent("main.tex"))
+        try await sync.pull()
+        try await sync.pull()
+        XCTAssertEqual(try manager.contentsOfDirectory(atPath: mirror.root.path).filter { $0.hasSuffix(".tex") }, ["main.tex"])
+        XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("main.tex"), encoding: .utf8),
+                       "\\documentclass{article}\n")
+        // Nothing to upload: the device and the mirror agree.
+        let pushed = try await sync.push()
+        XCTAssertEqual(pushed.uploaded, [])
+    }
+
     // MARK: - Live, against a real sshd (skipped unless configured)
 
     /// Configure with PITEX_TEST_SSH_DESTINATION (+ _PORT, _KEY,

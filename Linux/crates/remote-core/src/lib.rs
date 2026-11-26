@@ -2056,7 +2056,9 @@ impl RemoteSync {
             for path in &plan.download {
                 let Some(file) = staged.get(path) else { continue };
                 // Re-check under the gate: an edit saved while the download
-                // ran makes this a conflict instead of a loss.
+                // ran makes this a conflict instead of a loss. The bytes are
+                // rehashed: an edit can keep the cached size and mtime.
+                sync.drop_local_cache(path);
                 if sync.local_hash(path).as_deref() != local.get(path).map(String::as_str) {
                     inner.conflicts.insert(path.clone());
                     continue;
@@ -2073,6 +2075,7 @@ impl RemoteSync {
                 let mut can_delete = true;
                 if let Some(url) = sync.contained_url(path, false) {
                     if item_exists(&url) {
+                        sync.drop_local_cache(path);
                         if sync.local_hash(path).as_deref() != inner.manifest.get(path).map(String::as_str) {
                             inner.conflicts.insert(path.clone());
                             can_delete = false;
