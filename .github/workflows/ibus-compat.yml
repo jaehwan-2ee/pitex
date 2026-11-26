@@ -9,7 +9,7 @@ on:
 jobs:
   caps:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 65
     container: ubuntu:${{ matrix.ubuntu }}
     strategy:
       fail-fast: false

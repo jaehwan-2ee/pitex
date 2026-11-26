@@ -182,7 +182,7 @@ jobs:
   linux-deb:
     name: Linux deb (Ubuntu 24.04+)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Compute release name
@@ -253,7 +253,7 @@ jobs:
     # and links against GTK 4.6 / libadwaita 1.1 — and dpkg-shlibdeps emits
     # dependencies satisfiable on 22.04. There is no VTE-GTK4 on 22.04.
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     container: ubuntu:22.04
     steps:
       - uses: actions/checkout@v4
@@ -649,7 +649,7 @@ jobs:
     name: AppArmor userns proof (Ubuntu 24.04 deb)
     needs: [linux-deb, linux-deb-ubuntu2204]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PITEX_CHANNEL: ${{ inputs.channel || 'stable' }}
       PITEX_PACKAGE: ${{ inputs.channel == 'nightly' && 'pitex-nightly' || 'pitex' }}

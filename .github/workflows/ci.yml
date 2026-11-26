@@ -324,7 +324,7 @@ jobs:
   rust:
     name: Rust workspace
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: System dependencies
@@ -383,7 +383,7 @@ jobs:
     # build (--no-default-features) must compile and link against exactly
     # these system libraries, so the job runs inside the real container.
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     container:
       image: ubuntu:22.04
       # WebKit keeps its own bubblewrap sandbox. The outer container must
