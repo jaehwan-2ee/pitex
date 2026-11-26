@@ -372,7 +372,9 @@ pub enum WorkspaceMessage {
     /// ran (upload error, or files changed on both sides). `build` keeps a
     /// stale failure from cancelling a newer run's state.
     RemoteBuildPrepFailed { build: BuildID, problem: String },
-    ActivateFinished(Result<ActivatedDocument, String>),
+    /// `generation` and `root` identify the request; `finish_activate`
+    /// drops a result a later selection or a workspace close superseded.
+    ActivateFinished { generation: u64, root: PathBuf, result: Result<ActivatedDocument, String> },
     AgentActivityFinished,
     /// Git Integration refresh — `Ok(None)` means the project is not a
     /// repository; `Err` means git itself could not run.
@@ -650,7 +652,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             Self::RemotePullFinished { .. } => write!(f, "RemotePullFinished"),
             Self::RemoteResolveFinished { .. } => write!(f, "RemoteResolveFinished"),
             Self::RemoteBuildPrepFailed { .. } => write!(f, "RemoteBuildPrepFailed"),
-            Self::ActivateFinished(_) => write!(f, "ActivateFinished"),
+            Self::ActivateFinished { .. } => write!(f, "ActivateFinished"),
             Self::AgentActivityFinished => write!(f, "AgentActivityFinished"),
             Self::GitRefreshed { .. } => write!(f, "GitRefreshed"),
             Self::GitOpFinished { .. } => write!(f, "GitOpFinished"),
@@ -1435,6 +1437,10 @@ pub struct WorkspaceModel {
     pending_writes: Vec<std::thread::JoinHandle<()>>,
     /// Jump-to-line requested by inverse sync while activation was in flight.
     pending_jump: Option<(usize, usize)>,
+    /// The latest activation request and the file it reads while in
+    /// flight; any other result is stale.
+    activation_generation: u64,
+    activating: Option<PathBuf>,
 
     // UI callbacks (fired on the main thread by the owning window).
     /// The canonical snapshot changed — UI pushes it into the editor buffer.
@@ -1556,6 +1562,8 @@ impl WorkspaceModel {
             writes: Arc::default(),
             pending_writes: Vec::new(),
             pending_jump: None,
+            activation_generation: 0,
+            activating: None,
             on_snapshot_changed: None,
             on_active_document_changed: None,
             on_synctex_highlight: None,
@@ -1800,6 +1808,8 @@ impl WorkspaceModel {
     }
 
     pub fn activate_document(&mut self, url: PathBuf, sink: Sender<WorkspaceMessage>) {
+        self.activation_generation += 1;
+        self.activating = None;
         if self.active_document_url.as_ref() == Some(&url) {
             return;
         }
@@ -1816,6 +1826,8 @@ impl WorkspaceModel {
         let files = self.project_files.clone();
         let pinned = self.pinned_build_target.clone();
         let preferred = self.automatic_build_target.clone();
+        let generation = self.activation_generation;
+        self.activating = Some(url.clone());
         std::thread::spawn(move || {
             let result = (|| -> Result<ActivatedDocument, WorkspaceOpenError> {
                 let text = Self::read_exact_utf8(&url)?;
@@ -1845,10 +1857,39 @@ impl WorkspaceModel {
                     built_pdf,
                 })
             })();
-            let _ = sink.send(WorkspaceMessage::ActivateFinished(
-                result.map_err(|e| e.to_string()),
-            ));
+            let _ = sink.send(WorkspaceMessage::ActivateFinished {
+                generation,
+                root,
+                result: result.map_err(|e| e.to_string()),
+            });
         });
+    }
+
+    /// Applies the latest activation's result and returns it with the
+    /// session to attach; `None` for a superseded one, whose session is
+    /// released unless a tab or the newer request for the same file uses it.
+    pub fn finish_activate(
+        &mut self,
+        generation: u64,
+        root: PathBuf,
+        result: Result<ActivatedDocument, String>,
+    ) -> Option<Result<DocumentSession, String>> {
+        if generation != self.activation_generation {
+            if let Ok(stale) = result {
+                let in_use = self.registered_sessions.iter().any(|s| s.same_session(&stale.session))
+                    || self.activating.as_ref() == Some(&stale.url);
+                if !in_use {
+                    let _ = self.registry.close(&root, &stale.session);
+                }
+            }
+            return None;
+        }
+        self.activating = None;
+        Some(result.map(|activated| {
+            let session = activated.session.clone();
+            self.apply_activate(activated);
+            session
+        }))
     }
 
     pub fn apply_activate(&mut self, activated: ActivatedDocument) {
@@ -2313,9 +2354,7 @@ impl WorkspaceModel {
                 .unwrap_or(false)
         }) {
             let session = self.registered_sessions.remove(index);
-            if self.active_document_url.as_deref() == Some(url) {
-                let _ = self.registry.close(&root, &session);
-            }
+            let _ = self.registry.close(&root, &session);
         }
         self.open_documents.retain(|u| u != url);
         if self.active_document_url.as_deref() == Some(url) {
@@ -2372,6 +2411,8 @@ impl WorkspaceModel {
         // orphaned so the scheduler slot still frees.
         self.invalidate_live();
         self.reset_embedded_context();
+        self.activation_generation += 1;
+        self.activating = None;
         let root = self.project_url.take();
         let sessions = std::mem::take(&mut self.registered_sessions);
         if let Some(root) = root {
