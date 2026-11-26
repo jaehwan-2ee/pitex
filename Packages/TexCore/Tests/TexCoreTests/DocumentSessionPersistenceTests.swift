@@ -543,6 +543,28 @@ final class DocumentSessionPersistenceTests: XCTestCase {
         )
     }
 
+    /// R09: rename needs only the folder's write permission, so a save
+    /// could replace a file the user cannot write. It must refuse instead.
+    func testSaveRefusesToReplaceAReadOnlyFile() throws {
+        let root = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: root.appendingPathComponent("main.tex").path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let fileURL = root.appendingPathComponent("main.tex")
+        try Data("original".utf8).write(to: fileURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: fileURL.path)
+
+        let outcome = FoundationAtomicDocumentStore().save(
+            text: "draft",
+            to: fileURL,
+            expectedBaselineHash: .hashing("original")
+        )
+
+        XCTAssertEqual(outcome, .permissionFailure(path: fileURL.path))
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "original")
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("texspark-tests-\(UUID().uuidString)", isDirectory: true)
