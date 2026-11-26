@@ -144,6 +144,26 @@ final class DocumentSessionPersistenceTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fileURL), Data("saved π content".utf8))
     }
 
+    func testSaveKeepsTheOriginalFileMode() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for mode in [0o600, 0o755] {
+            let fileURL = root.appendingPathComponent("main-\(String(mode, radix: 8)).tex")
+            try "baseline".write(to: fileURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: fileURL.path)
+
+            let save = FoundationAtomicDocumentStore().save(
+                text: "edit",
+                to: fileURL,
+                expectedBaselineHash: .hashing("baseline")
+            )
+
+            XCTAssertEqual(save, .saved(PersistedDocument(text: "edit")))
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, mode)
+        }
+    }
+
     func testInterruptedWriteRemovesOnlyItsTemporaryFile() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -680,6 +680,7 @@ impl AtomicDocumentStore {
                     .create_new(true)
                     .open(&temporary_url)
                     .map_err(classify_io)?;
+                adopt_permissions(&file, url)?;
                 file.write_all(text.as_bytes()).map_err(classify_io)?;
                 file.sync_all().map_err(classify_io)?;
             }
@@ -736,6 +737,7 @@ impl AtomicDocumentStore {
                 .create_new(true)
                 .open(&temporary)
                 .map_err(classify_io)?;
+            adopt_permissions(&file, url)?;
             file.write_all(bytes).map_err(classify_io)?;
             file.sync_all().map_err(classify_io)?;
             std::fs::rename(&temporary, url).map_err(classify_io)?;
@@ -744,6 +746,20 @@ impl AtomicDocumentStore {
         })();
         let _ = std::fs::remove_file(&temporary);
         written.map_err(|_| format!("The file {} could not be saved.", url.display()))
+    }
+}
+
+/// Gives the still-empty temporary file the destination's mode, so the rename
+/// does not widen a private file's access or drop its executable bits.
+/// Windows has only a read-only flag, which would block removing a failed temp.
+fn adopt_permissions(temporary: &std::fs::File, destination: &Path) -> Result<(), StoreError> {
+    if cfg!(not(unix)) {
+        return Ok(());
+    }
+    match std::fs::metadata(destination) {
+        Ok(metadata) => temporary.set_permissions(metadata.permissions()).map_err(classify_io),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(classify_io(error)),
     }
 }
 
