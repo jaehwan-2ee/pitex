@@ -695,18 +695,21 @@ fn is_case_insensitive(directory: &Path) -> bool {
 }
 
 /// R12: a case-only rename on a case-sensitive device must not delete the
-/// only copy in a case-insensitive mirror (ext4 casefold, macOS APFS). Runs
-/// where such a volume exists: `chattr +F` on a casefold-enabled ext4, or
-/// the default macOS volume with the device on a case-sensitive disk image.
+/// only copy in a case-insensitive mirror (ext4 casefold, macOS APFS).
+/// PITEX_TEST_CASEFOLD_DIR names a casefold (`chattr +F`) directory to hold
+/// the mirror (CI mounts one); otherwise it runs only where the temporary
+/// folder is case-insensitive, with the device on a case-sensitive image.
 #[cfg(unix)]
 #[test]
 fn case_only_remote_rename_keeps_the_mirror_file() {
     let directory = TempDir::new("case-rename");
-    let store = directory.join("store");
+    let casefold = std::env::var_os("PITEX_TEST_CASEFOLD_DIR").map(PathBuf::from);
+    let store_owner = casefold.as_ref().map(|dir| TempDir(dir.join(uuid_like())));
+    let store = store_owner.as_ref().map_or_else(|| directory.join("store"), |dir| dir.0.clone());
     std::fs::create_dir_all(&store).unwrap();
-    let _ = Command::new("chattr").arg("+F").arg(&store).status();
     if !is_case_insensitive(&store) {
-        eprintln!("skipped: no case-insensitive directory here (chattr +F unsupported)");
+        assert!(casefold.is_none(), "PITEX_TEST_CASEFOLD_DIR is not case-insensitive");
+        eprintln!("skipped: the temporary folder is case-sensitive; set PITEX_TEST_CASEFOLD_DIR");
         return;
     }
     let remote = directory.join("remote");
