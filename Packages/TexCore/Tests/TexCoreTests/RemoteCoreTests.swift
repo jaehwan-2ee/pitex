@@ -422,7 +422,11 @@ final class RemoteCoreTests: XCTestCase {
             var info = stat()
             XCTAssertEqual(lstat(url.path, &info), 0)
             try "mine".write(to: url, atomically: false, encoding: .utf8)
+            #if canImport(Darwin)
             var times = [info.st_atimespec, info.st_mtimespec] // exact, to the nanosecond
+            #else
+            var times = [info.st_atim, info.st_mtim]
+            #endif
             XCTAssertEqual(utimensat(AT_FDCWD, url.path, &times, 0), 0)
         }
         try "device".write(to: remote.appendingPathComponent("edited.tex"), atomically: true, encoding: .utf8)
