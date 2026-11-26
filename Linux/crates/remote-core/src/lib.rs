@@ -2079,6 +2079,19 @@ impl RemoteSync {
                         if sync.local_hash(path).as_deref() != inner.manifest.get(path).map(String::as_str) {
                             inner.conflicts.insert(path.clone());
                             can_delete = false;
+                        } else if let Some(kept) = remote
+                            .keys()
+                            .filter(|other| *other != path && other.to_lowercase() == path.to_lowercase())
+                            .filter_map(|other| sync.contained_url(other, false))
+                            .find(|other| is_same_file(&url, other))
+                        {
+                            // A case-only rename on the device: on a
+                            // case-insensitive mirror (ext4 casefold) the new
+                            // spelling is this same file, so rename it.
+                            if std::fs::rename(&url, &kept).is_err() {
+                                failed.push(path.clone());
+                                can_delete = false;
+                            }
                         } else if std::fs::remove_file(&url).is_err() {
                             failed.push(path.clone());
                             can_delete = false;
@@ -2841,6 +2854,22 @@ fn remote_io_json(error: serde_json::Error) -> SshError {
 
 fn item_exists(url: &Path) -> bool {
     std::fs::symlink_metadata(url).is_ok()
+}
+
+#[cfg(unix)]
+fn is_same_file(first: &Path, second: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::symlink_metadata(first), std::fs::symlink_metadata(second)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// Windows never gets here: pull() fails case-clashing paths before
+/// planning deletes (`case_clashing_groups`).
+#[cfg(not(unix))]
+fn is_same_file(_first: &Path, _second: &Path) -> bool {
+    false
 }
 
 /// `base` + a `/`-separated mirror-relative path, component by component —

@@ -686,6 +686,79 @@ fn pull_keeps_mirror_edit_that_preserves_size_and_mtime() {
     assert_eq!(report.conflicts, ["edited.tex", "removed.tex"]);
 }
 
+#[cfg(unix)]
+fn is_case_insensitive(directory: &Path) -> bool {
+    write(&directory.join("Probe"), "");
+    let folded = directory.join("probe").exists();
+    let _ = std::fs::remove_file(directory.join("Probe"));
+    folded
+}
+
+/// R12: a case-only rename on a case-sensitive device must not delete the
+/// only copy in a case-insensitive mirror (ext4 casefold, macOS APFS). Runs
+/// where such a volume exists: `chattr +F` on a casefold-enabled ext4, or
+/// the default macOS volume with the device on a case-sensitive disk image.
+#[cfg(unix)]
+#[test]
+fn case_only_remote_rename_keeps_the_mirror_file() {
+    let directory = TempDir::new("case-rename");
+    let store = directory.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let _ = Command::new("chattr").arg("+F").arg(&store).status();
+    if !is_case_insensitive(&store) {
+        eprintln!("skipped: no case-insensitive directory here (chattr +F unsupported)");
+        return;
+    }
+    let remote = directory.join("remote");
+    std::fs::create_dir_all(&remote).unwrap();
+    struct Detach(PathBuf);
+    impl Drop for Detach {
+        fn drop(&mut self) {
+            let _ = Command::new("hdiutil").args(["detach", "-force"]).arg(&self.0).output();
+        }
+    }
+    let mut _mounted = None;
+    if is_case_insensitive(&remote) {
+        let image = directory.join("device.dmg");
+        let created = Command::new("hdiutil")
+            .args(["create", "-size", "8m", "-fs", "Case-sensitive APFS", "-volname", "PitexDevice"])
+            .arg(&image)
+            .output();
+        let attached = created.is_ok_and(|o| o.status.success())
+            && Command::new("hdiutil")
+                .args(["attach", "-nobrowse", "-mountpoint"])
+                .arg(&remote)
+                .arg(&image)
+                .output()
+                .is_ok_and(|o| o.status.success());
+        if !attached {
+            eprintln!("skipped: could not mount a case-sensitive device folder");
+            return;
+        }
+        _mounted = Some(Detach(remote.clone()));
+    }
+    write(&remote.join("Main.tex"), "\\documentclass{article}\n");
+    let client = local_shell_client(&directory);
+    let mirror = RemoteMirror::prepare(
+        RemoteProject::new(client.connection.clone(), remote.to_str().unwrap()),
+        &store,
+    )
+    .unwrap();
+    let sync = RemoteSync::new(mirror.clone(), client, None);
+    sync.pull().unwrap();
+    std::fs::rename(remote.join("Main.tex"), remote.join("main.tex")).unwrap();
+    sync.pull().unwrap();
+    sync.pull().unwrap();
+    let names: Vec<String> = std::fs::read_dir(mirror.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tex"))
+        .collect();
+    assert_eq!(names, ["main.tex"]);
+    assert_eq!(read(&mirror.root().join("main.tex")).as_deref(), Some("\\documentclass{article}\n"));
+    assert!(sync.push().unwrap().uploaded.is_empty(), "the device and the mirror agree");
+}
+
 // ─── Live, against a real sshd (skipped unless configured) ──
 
 /// Configure with PITEX_TEST_SSH_DESTINATION (+ _PORT, _KEY, _KNOWN_HOSTS).
