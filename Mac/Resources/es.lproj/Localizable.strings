@@ -109,6 +109,9 @@
 "close.unsaved_one" = "¿Quieres guardar los cambios de “%@”?";
 "close.unsaved_many" = "¿Quieres guardar los cambios de %d documentos?";
 "close.unsaved_detail" = "Si no los guardas, los cambios se perderán.";
+"close.conflict_one" = "“%@” tiene cambios externos sin resolver.";
+"close.conflict_many" = "%d documentos tienen cambios externos sin resolver.";
+"close.conflict_detail" = "El archivo cambió fuera de la app mientras lo editabas. Conservar mis cambios guarda tu versión sobre la externa. Usar cambios externos reemplaza tus ediciones por la versión externa.";
 "command.build" = "Compilar";
 "command.cancel_build" = "Cancelar compilación";
 "command.settings" = "Ajustes…";
