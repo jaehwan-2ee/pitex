@@ -2070,6 +2070,28 @@ impl WorkspaceModel {
         self.workspace_executor.use_remote(None);
     }
 
+    /// Remote Save uploads, then builds only when it commits a TeX build
+    /// input — the active document or any dirty session it writes with it.
+    /// Saving notes.md alone just uploads it.
+    pub fn save_starts_build(&self) -> bool {
+        let dirty = self
+            .registered_sessions
+            .iter()
+            .map(|s| s.snapshot())
+            .filter(|s| s.save_state == DocumentSaveState::Dirty)
+            .map(|s| s.path);
+        self.document_snapshot
+            .iter()
+            .map(|s| s.path.clone())
+            .chain(dirty)
+            .any(|path| {
+                Path::new(path.raw_value())
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| Self::LIVE_SOURCE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+            })
+    }
+
     /// The sole source-upload entry point: an explicit Save, Save All,
     /// manual Build, or the forced Save before close. Internal persistence
     /// and background activity never call this method.

@@ -430,11 +430,7 @@ extension WorkspaceModel {
         "snm", "vrb", "xdv", "lof", "lot",
     ]
 
-    /// Extensions whose edits can move the compiled output — a Markdown or
-    /// figure change in the same project never schedules a live build.
-    static let liveCompileExtensions: Set<String> = [
-        "tex", "ltx", "dtx", "sty", "cls", "clo", "def", "bib", "bst",
-    ]
+    static let liveCompileExtensions = BuildInputs.extensions
 
     /// Builds the active document with the configured engine. The request
     /// goes through the live-compile scheduler — manual work never
