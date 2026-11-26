@@ -2088,7 +2088,7 @@ impl RemoteSync {
                             // A case-only rename on the device: on a
                             // case-insensitive mirror (ext4 casefold) the new
                             // spelling is this same file, so rename it.
-                            if std::fs::rename(&url, &kept).is_err() {
+                            if rename_case(&url, &kept).is_err() {
                                 failed.push(path.clone());
                                 can_delete = false;
                             }
@@ -2863,6 +2863,19 @@ fn is_same_file(first: &Path, second: &Path) -> bool {
         (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
         _ => false,
     }
+}
+
+/// Linux rename(2) between two names of one inode does nothing, so a
+/// case-only rename on a casefold directory goes through a temporary name.
+fn rename_case(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut name = std::ffi::OsString::from(".pitex-case-");
+    name.push(from.file_name().unwrap_or_default());
+    let temporary = from.with_file_name(name);
+    std::fs::rename(from, &temporary)?;
+    std::fs::rename(&temporary, to).map_err(|error| {
+        let _ = std::fs::rename(&temporary, from);
+        error
+    })
 }
 
 /// Windows never gets here: pull() fails case-clashing paths before
