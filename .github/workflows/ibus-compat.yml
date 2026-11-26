@@ -9,6 +9,7 @@ on:
 jobs:
   caps:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     container: ubuntu:${{ matrix.ubuntu }}
     strategy:
       fail-fast: false
@@ -16,10 +17,12 @@ jobs:
         ubuntu: ['22.04', '24.04']
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - timeout-minutes: 15
+        run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y gcc pkg-config libibus-1.0-dev python3-gi gir1.2-gtk-4.0 gir1.2-gtksource-5 libglib2.0-bin ibus-hangul ibus-gtk4 dbus-x11 xvfb xdotool
       - name: App build dependencies
+        timeout-minutes: 15
         run: |
           apt-get install -y build-essential curl ca-certificates libssl-dev libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libpoppler-glib-dev
       - uses: dtolnay/rust-toolchain@stable

@@ -42,6 +42,7 @@ jobs:
   deb-installer:
     name: Sandboxed APT installer (Ubuntu ${{ matrix.ubuntu }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       matrix:
         ubuntu: ['22.04', '24.04']
@@ -58,6 +59,7 @@ jobs:
   macos-dmg:
     name: macOS DMG
     runs-on: macos-latest
+    timeout-minutes: 30
     needs: [bundle-helpers]
     steps:
       - uses: actions/checkout@v4
@@ -180,11 +182,13 @@ jobs:
   linux-deb:
     name: Linux deb (Ubuntu 24.04+)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Compute release name
         run: echo "NAME=$(printf '%s' "$GITHUB_REF_NAME" | tr / -)" >> "$GITHUB_ENV"
       - name: System dependencies
+        timeout-minutes: 15
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev \
@@ -249,12 +253,14 @@ jobs:
     # and links against GTK 4.6 / libadwaita 1.1 — and dpkg-shlibdeps emits
     # dependencies satisfiable on 22.04. There is no VTE-GTK4 on 22.04.
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     container: ubuntu:22.04
     steps:
       - uses: actions/checkout@v4
       - name: Compute release name
         run: echo "NAME=$(printf '%s' "$GITHUB_REF_NAME" | tr / -)" >> "$GITHUB_ENV"
       - name: System dependencies
+        timeout-minutes: 15
         run: |
           apt-get update
           apt-get install -y build-essential pkg-config libssl-dev curl \
@@ -309,6 +315,7 @@ jobs:
     # Portable zip: pitex.exe + the GTK runtime DLLs and resources, bundled
     # by Windows/build.sh under a real UCRT64 toolchain.
     runs-on: windows-latest
+    timeout-minutes: 40
     defaults:
       run:
         shell: msys2 {0}
@@ -536,6 +543,7 @@ jobs:
   bundle-helpers:
     name: Bundle Rust preview-engine helpers (macos-15)
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -641,6 +649,7 @@ jobs:
     name: AppArmor userns proof (Ubuntu 24.04 deb)
     needs: [linux-deb, linux-deb-ubuntu2204]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       PITEX_CHANNEL: ${{ inputs.channel || 'stable' }}
       PITEX_PACKAGE: ${{ inputs.channel == 'nightly' && 'pitex-nightly' || 'pitex' }}
@@ -691,6 +700,7 @@ jobs:
           ! dpkg-deb -I "$D22" conffiles 2>/dev/null | grep -q 'apparmor' \
             || { echo "22.04 deb must not declare the conffile" >&2; exit 1; }
       - name: Upgrade path - install the latest release first, then this deb (no prompt)
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -784,6 +794,7 @@ jobs:
     name: Publish GitHub Release
     needs: [macos-dmg, linux-deb, linux-deb-ubuntu2204, windows-zip, apparmor-userns, deb-installer]
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: write
     # W9/A3-D5: publish only on a real tag push — never on pull_request or
