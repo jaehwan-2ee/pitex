@@ -576,7 +576,8 @@ mod tests {
         let pkexec = root.join("pkexec");
         let observed = root.join("staged-path");
         let id = crate::identity::current();
-        crate::write_test_executable(&pkexec, &format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'apt install -y' ] && [ -r \"$4\" ] || exit 1\ncase \"$4\" in /tmp/{}-update-*/{}.deb) ;; *) exit 1;; esac\n[ \"$(/usr/bin/stat -c %a \"${{4%/*}}\")\" = 755 ] || exit 1\n[ \"$(/usr/bin/stat -c %a \"$4\")\" = 644 ] || exit 1\nprintf '%s' \"$4\" > {}\n", id.temp_prefix, id.linux_package_name, shell_quote(&observed.to_string_lossy())), 0o755);
+        std::fs::write(&pkexec, format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'apt install -y' ] && [ -r \"$4\" ] || exit 1\ncase \"$4\" in /tmp/{}-update-*/{}.deb) ;; *) exit 1;; esac\n[ \"$(/usr/bin/stat -c %a \"${{4%/*}}\")\" = 755 ] || exit 1\n[ \"$(/usr/bin/stat -c %a \"$4\")\" = 644 ] || exit 1\nprintf '%s' \"$4\" > {}\n", id.temp_prefix, id.linux_package_name, shell_quote(&observed.to_string_lossy()))).unwrap();
+        std::fs::set_permissions(&pkexec, std::fs::Permissions::from_mode(0o755)).unwrap();
         let query = root.join("dpkg-query");
         let package = root.join("update.deb");
         std::fs::write(&package, "test package").unwrap();
@@ -585,7 +586,8 @@ mod tests {
         std::env::set_var("TMPDIR", &root);
         let info = UpdateInfo { tag: "v1.1.4".into(), asset_name: "update.deb".into(), asset_url: String::new() };
         for (version, succeeds) in [("install ok installed 1.1.3-1", false), ("install ok installed 1.1.4-1", true), ("deinstall ok config-files 1.1.4-1", false)] {
-            crate::write_test_executable(&query, &format!("#!/bin/sh\nprintf '%s' '{version}'\n"), 0o755);
+            std::fs::write(&query, format!("#!/bin/sh\nprintf '%s' '{version}'\n")).unwrap();
+            std::fs::set_permissions(&query, std::fs::Permissions::from_mode(0o755)).unwrap();
             let result = install(&package, &info);
             assert_eq!(result.is_ok(), succeeds, "{version}: {result:?}");
             let staged = PathBuf::from(std::fs::read_to_string(&observed).unwrap());
