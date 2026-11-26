@@ -141,6 +141,45 @@ final class EditorMacAdapterMutationTests: XCTestCase {
         await assertSession(session, equals: paragraph + " first second later\n\n" + following)
     }
 
+    /// Swift `==` treats canonically equivalent strings as equal, but the
+    /// session hashes and saves bytes, so these must still reach it.
+    @MainActor
+    func testNormalizationOnlyNativeEditReachesTheSession() async throws {
+        for (original, selected, replacement) in [("caf\u{E9}", 1, "e\u{301}"), ("cafe\u{301}", 2, "\u{E9}")] {
+            let session = GatedEditorSession(text: original)
+            addTeardownBlock { await session.releaseAll() }
+            let (adapter, window) = try await mount(session)
+            defer { window.orderOut(nil) }
+            let view = adapter.textView
+            let range = NSRange(location: 3, length: selected)
+
+            view.insertText(replacement, replacementRange: range)
+
+            let expected = "caf" + replacement
+            XCTAssertEqual(Array(view.string.utf8), Array(expected.utf8))
+            try await waitForSubmission(1, session)
+            try await finishSubmission(adapter, session)
+            let saved = await session.currentText
+            XCTAssertEqual(Array(saved.utf8), Array(expected.utf8))
+        }
+    }
+
+    @MainActor
+    func testExternalNormalizationOnlyChangeReplacesTheNativeText() async throws {
+        let session = GatedEditorSession(text: "caf\u{E9} x")
+        addTeardownBlock { await session.releaseAll() }
+        let (adapter, window) = try await mount(session)
+        defer { window.orderOut(nil) }
+        let view = adapter.textView
+        view.setSelectedRange(NSRange(location: 6, length: 0))
+
+        await session.replaceExternally(with: "cafe\u{301} x")
+        await adapter.refreshFromSession()
+
+        XCTAssertEqual(Array(view.string.utf8), Array("cafe\u{301} x".utf8))
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 7, length: 0))
+    }
+
     @MainActor
     func testSnapshotSuspendedAcrossAWholeSubmitCannotRollBackTheDocument() async throws {
         let original = paragraph + "\n\n" + following
@@ -434,6 +473,10 @@ private actor GatedEditorSession: DocumentSessionPort {
         submissionCount += 1
         guard isHolding else { return result }
         return await withCheckedContinuation { acknowledgements.append(($0, result)) }
+    }
+
+    func replaceExternally(with text: String) {
+        current = DocumentSnapshot(revision: current.revision + 1, text: text)
     }
 
     func holdNextSnapshot() { shouldHoldSnapshot = true }

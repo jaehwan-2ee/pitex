@@ -298,7 +298,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
                 forName: name, object: nativeUndoManager, queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, self.desiredText != self.textView.string else { return }
+                    guard let self, !Self.sameText(self.desiredText, self.textView.string) else { return }
                     self.textDidChange(Notification(name: NSText.didChangeNotification, object: self.textView))
                 }
             })
@@ -332,7 +332,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     /// submit Task has even started.
     public func refreshFromSession() async {
         let snapshot = await session.snapshot()
-        if isSubmitting || desiredText != committed.text { needsRefresh = true; return }
+        if isSubmitting || !Self.sameText(desiredText, committed.text) { needsRefresh = true; return }
         apply(snapshot)
     }
 
@@ -523,7 +523,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
     }
 
     private func submitPendingChangeIfNeeded() {
-        guard !isSubmitting, desiredText != committed.text else { return }
+        guard !isSubmitting, !Self.sameText(desiredText, committed.text) else { return }
         isSubmitting = true
         let submittedText = desiredText
         let submittedVersion = inputVersion
@@ -556,11 +556,11 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
                     switch try await session.submit(mutation) {
                     case let .applied(snapshot):
                         committed = snapshot
-                        if desiredText == submittedText, snapshot.text != submittedText {
+                        if Self.sameText(desiredText, submittedText), !Self.sameText(snapshot.text, submittedText) {
                             apply(snapshot)
                         }
                     case let .rejected(current):
-                        if current.text == committed.text, attempts < 3 {
+                        if Self.sameText(current.text, committed.text), attempts < 3 {
                             committed = current
                             mutation = DocumentMutation(
                                 baseRevision: current.revision,
@@ -599,7 +599,7 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         guard snapshot.revision >= committed.revision else { return }
         committed = snapshot
         desiredText = snapshot.text
-        guard textView.string != snapshot.text else { return }
+        guard !Self.sameText(textView.string, snapshot.text) else { return }
 
         scrollLineStarts = nil
         // The flag goes up before discarding the composition — a delegate
@@ -627,6 +627,12 @@ public final class EditorMacAdapter: NSObject, NSTextViewDelegate {
         isApplyingSessionSnapshot = false
         textView.setSelectedRange(Self.map(selection, over: range, replacementLength: replacement.utf16.count))
         sessionTextView.findController?.contentDidChange()
+    }
+
+    /// Swift `==` is canonical equivalence, but the session saves and hashes
+    /// bytes, so a normalization-only edit must still count as a change.
+    static func sameText(_ a: String, _ b: String) -> Bool {
+        a.utf8.count == b.utf8.count && a.utf8.elementsEqual(b.utf8)
     }
 
     /// Common-prefix/suffix shrink of a full-text replacement, in UTF-16
