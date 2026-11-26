@@ -474,7 +474,7 @@ final class DocumentSessionPersistenceTests: XCTestCase {
         let session = try makeSession(initialText: "base")
         _ = try await session.apply(.replaceText("mine"), expectedRevision: 0)
         try FileManager.default.removeItem(at: fileURL)
-        _ = try await session.applyTextNeutral(.recordExternalChange(observedDiskHash: .hashing("")))
+        _ = try await session.applyTextNeutral(.recordExternalChange(observedDiskHash: nil))
 
         let snapshot = await session.snapshot()
         let conflict = try XCTUnwrap(snapshot.conflict)

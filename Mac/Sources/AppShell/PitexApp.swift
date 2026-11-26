@@ -1091,7 +1091,7 @@ final class WorkspaceModel: ObservableObject {
         url: URL,
         session: DocumentSessionCore.DocumentSession,
         shouldWrite: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> Bool,
-        baseline: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash,
+        baseline: @escaping @Sendable (DocumentSessionCore.DocumentSnapshot) -> DiskContentHash?,
         resolvesConflict: Bool = false
     ) -> Task<SessionWriteResult, Never> {
         let url = url.standardizedFileURL
@@ -1135,9 +1135,8 @@ final class WorkspaceModel: ObservableObject {
                 return SessionWriteResult(kind: .saved, snapshot: snapshot)
             case let .staleBaseline(conflict):
                 self?.lastOwnWrite[url] = previousOwnWrite
-                let observedHash = conflict.observedDisk?.hash ?? .hashing("")
                 if let conflicted = try? await session.applyTextNeutral(
-                    .recordSaveConflict(observedDiskHash: observedHash)
+                    .recordSaveConflict(observedDiskHash: conflict.observedDisk?.hash)
                 ) {
                     snapshot = conflicted
                 } else {
@@ -1256,7 +1255,10 @@ final class WorkspaceModel: ObservableObject {
                     url: url,
                     session: session,
                     shouldWrite: { $0.saveState == .conflicted },
-                    baseline: { $0.conflict?.observedDisk ?? $0.diskBaselineHash },
+                    baseline: { snapshot in
+                        guard let conflict = snapshot.conflict else { return snapshot.diskBaselineHash }
+                        return conflict.observedDisk
+                    },
                     resolvesConflict: true
                 ).value
                 guard documentLoadGeneration == generation else { return }
@@ -2065,11 +2067,13 @@ final class WorkspaceModel: ObservableObject {
         }.value
         guard let (diskText, observedHash) = disk else {
             // Deleted or unreadable: never replace content with nothing. Flag
-            // a conflict only when unsaved in-memory edits are at stake.
+            // a conflict only when unsaved in-memory edits are at stake. A
+            // deletion is recorded as absent so Keep Mine can recreate the file.
             let snapshot = await session.snapshot()
+            let observed: DiskContentHash? = FileManager.default.fileExists(atPath: url.path) ? .hashing("") : nil
             if snapshot.saveState != .clean, snapshot.conflict == nil,
                let updated = try? await session.applyTextNeutral(
-                   .recordExternalChange(observedDiskHash: .hashing(""))
+                   .recordExternalChange(observedDiskHash: observed)
                ), snapshot.path == documentSnapshot?.path {
                 documentSnapshot = updated
             }
