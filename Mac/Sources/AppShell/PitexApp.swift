@@ -1256,13 +1256,7 @@ final class WorkspaceModel: ObservableObject {
                     url: url,
                     session: session,
                     shouldWrite: { $0.saveState == .conflicted },
-                    baseline: { snapshot in
-                        snapshot.conflict.flatMap { conflict in
-                            if case let .externalModification(_, observed) = conflict { return observed }
-                            if case let .saveCollision(_, observed) = conflict { return observed }
-                            return nil
-                        } ?? snapshot.diskBaselineHash
-                    },
+                    baseline: { $0.conflict?.observedDisk ?? $0.diskBaselineHash },
                     resolvesConflict: true
                 ).value
                 guard documentLoadGeneration == generation else { return }
@@ -2866,9 +2860,7 @@ final class WorkspaceModel: ObservableObject {
     func cleanBuildArtifacts() {
         guard let root = projectURL, let relative = buildSourceRelativePath() else { return }
         let stem = (relative as NSString).deletingPathExtension
-        for ext in Self.generatedOutputExtensions {
-            try? FileManager.default.removeItem(at: root.appendingPathComponent("\(stem).\(ext)"))
-        }
+        BuildOutputCleaner.clean(stem: stem, extensions: Self.generatedOutputExtensions, in: root)
         latestBuiltPDFName = nil
         terminalSession.feed("\u{001B}[90mcleaned generated files for \(stem)\u{001B}[0m\r\n")
         consoleSection = .terminal

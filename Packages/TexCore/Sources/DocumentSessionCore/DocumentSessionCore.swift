@@ -47,6 +47,15 @@ public enum DocumentConflict: Hashable, Codable, Sendable {
     )
 }
 
+extension DocumentConflict {
+    /// The disk content a Keep Mine write expects to replace.
+    public var observedDisk: DiskContentHash {
+        switch self {
+        case let .externalModification(_, observed), let .saveCollision(_, observed): observed
+        }
+    }
+}
+
 public enum DocumentSaveState: String, Codable, Sendable {
     case clean
     case dirty

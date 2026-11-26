@@ -1,6 +1,5 @@
 import AppKit
 import BuildCore
-import CryptoKit
 import Foundation
 import RemoteCore
 
@@ -274,25 +273,13 @@ extension WorkspaceModel {
         return await task.value
     }
 
-    /// A forced close must never claim that sources excluded from the
-    /// mirror protocol reached the device. Validate open documents before
-    /// transferring rather than silently dropping them from the scan.
     private func remoteSavedSourceHashes(root: URL) async throws -> [String: String] {
-        var hashes: [String: String] = [:]
+        var sources: [(path: String, isClean: Bool)] = []
         for session in registeredSessions {
             let snapshot = await session.snapshot()
-            let path = snapshot.path.rawValue
-            let file = root.appendingPathComponent(path)
-            guard !RemoteSyncRules.isExcludedPath(path),
-                  let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                  values.isRegularFile == true, values.isSymbolicLink != true,
-                  let size = values.fileSize, size < RemoteSyncRules.maximumFileSize,
-                  let data = try? Data(contentsOf: file) else {
-                throw SSHError.remote(status: -1, message: "The file \(path) cannot be saved to the SSH device. Sources must be readable regular files smaller than 50 MB outside excluded folders.")
-            }
-            hashes[path] = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            sources.append((snapshot.path.rawValue, snapshot.saveState == .clean))
         }
-        return hashes
+        return try RemoteSyncRules.savedSourceHashes(root: root, openSources: sources)
     }
 
     /// Keep the workspace/editor alive so a failed save can be retried.
