@@ -187,8 +187,8 @@ impl Fixture {
             return;
         }
         self.model.activate_document(self._dir.join(path), self.tx.clone());
-        let WorkspaceMessage::ActivateFinished(result) = pump(&mut self.model, &self.rx, |m| {
-            matches!(m, WorkspaceMessage::ActivateFinished(_))
+        let WorkspaceMessage::ActivateFinished { result, .. } = pump(&mut self.model, &self.rx, |m| {
+            matches!(m, WorkspaceMessage::ActivateFinished { .. })
         }) else {
             unreachable!()
         };
