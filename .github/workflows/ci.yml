@@ -120,9 +120,11 @@ jobs:
           if-no-files-found: warn
       - name: Native editor regression checks
         run: swift test --package-path Packages/TexApp --build-system native
-      - name: Git and subprocess regression checks
+      # The whole package: the Ubuntu job cannot see Darwin-only Foundation
+      # behavior such as /private-prefixed enumeration of /var and /tmp.
+      - name: TexCore, Git and subprocess regression checks
         run: |
-          swift test --package-path Packages/TexCore --build-system native --filter 'GitSupportTests|GitRepositoryReaderTests|ProcessRunnerTests|DiskContentHashTests|RemoteCoreTests'
+          swift test --package-path Packages/TexCore --build-system native
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-git-performance --
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin check-ime-completion --
       - name: Native highlighting checks
