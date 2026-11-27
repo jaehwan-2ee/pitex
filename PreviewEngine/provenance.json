@@ -593,7 +593,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/xdv2pdf.rs",
-   "sha256": "912253ff283c47a00bf8dc59108e4afc36c952be410930fcaa3574f15df6b4c1",
+   "sha256": "02fc40422368793218b4c229474179118d3bab886201f1b906fc9066bb1e5aa5",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -1202,7 +1202,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/xdv2pdf.rs",
-   "sha256": "d64067f71cf07c0d2583c564867682a215a31341925662e50d2af4a226e55dd9",
+   "sha256": "bdf484aa1388f948e752463f46702d6725227c2898420fde25e5c1bbe81a4236",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -1844,7 +1844,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/pdf_document.rs",
-   "sha256": "46a48020eeeac53e0d9358281d91b4a18bf392ac780ec938d978aa03e047ffe3"
+   "sha256": "28bc5810b0afbf69896c05199631c5c1e563593514bf79c9f17e9d5558b6e192"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
@@ -1868,7 +1868,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/pdf_threads.rs",
-   "sha256": "c572e7f6001bb37de9213554f90d8b6c2b78f610fef18a07245eba171a621300"
+   "sha256": "02ffc14efa3d2d83a55a349f34d6c70f11cce1b408cb90b05a51f1519664064d"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",

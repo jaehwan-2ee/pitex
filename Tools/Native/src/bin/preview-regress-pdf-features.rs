@@ -57,6 +57,19 @@ fn check(condition: bool, message: &str) -> Result<()> {
 fn count_refs(value: &str) -> usize {
     value.split_whitespace().filter(|part| *part == "R").count()
 }
+/// The first annotation rectangle on page 1 agrees with the reference within 0.05 bp.
+fn same_rectangle(pdf: &Path, reference: &Path) -> Result<bool> {
+    let numbers = |pdf: &Path| -> Result<Vec<f64>> {
+        Ok(show(pdf, "pages/1/Annots/1/Rect")?
+            .split_whitespace()
+            .filter_map(|v| v.parse::<f64>().ok())
+            .collect())
+    };
+    let (actual, oracle) = (numbers(pdf)?, numbers(reference)?);
+    Ok(actual.len() == 4
+        && oracle.len() == 4
+        && actual.iter().zip(&oracle).all(|(a, b)| (a - b).abs() < 0.05))
+}
 fn validate(name: &str, pdf: &Path, reference: &Path) -> Result<()> {
     let all = show(pdf, "grep")?;
     match name {
@@ -119,26 +132,19 @@ fn validate(name: &str, pdf: &Path, reference: &Path) -> Result<()> {
                 show(pdf, "pages/1/Annots/1/Contents")?.contains("Audit annotation"),
                 "annotation contents missing",
             )?;
-            let rectangle = show(pdf, "pages/1/Annots/1/Rect")?;
-            let expected = show(reference, "pages/1/Annots/1/Rect")?;
-            let numbers = |value: &str| {
-                value
-                    .split_whitespace()
-                    .filter_map(|v| v.parse::<f64>().ok())
-                    .collect::<Vec<_>>()
-            };
-            let actual = numbers(&rectangle);
-            let oracle = numbers(&expected);
             check(
-                actual.len() == 4 && oracle.len() == 4,
-                "annotation rectangle malformed",
+                same_rectangle(pdf, reference)?,
+                "annotation geometry differs from XeLaTeX",
+            )?;
+        }
+        "phantom-link" => {
+            check(
+                count_refs(&show(pdf, "pages/1/Annots")?) == 1,
+                "link around an empty box (dvipdfmx:catch_phantom) missing",
             )?;
             check(
-                actual
-                    .iter()
-                    .zip(&oracle)
-                    .all(|(a, b)| (a - b).abs() < 0.05),
-                "annotation geometry differs from XeLaTeX",
+                same_rectangle(pdf, reference)?,
+                "phantom link geometry differs from XeLaTeX",
             )?;
         }
         "metadata" => {
@@ -415,7 +421,7 @@ fn run() -> Result<()> {
         // Outline counts and annotation rectangles are compared with XeLaTeX.
         preview_regression::pass(
             name,
-            matches!(name, "links" | "annotation" | "unicode").then_some("xetex"),
+            matches!(name, "links" | "annotation" | "phantom-link" | "unicode").then_some("xetex"),
             &[&source],
             "PDF objects and two unsaved generations",
         )?;
@@ -483,6 +489,12 @@ const CASES: &[(&str, &str, &str)] = &[
         "annotation",
         "",
         r"\special{pdf:ann width 40pt height 14pt depth 0pt << /Type /Annot /Subtype /Text /Contents (Audit annotation) >>}Annotation here.",
+    ),
+    (
+        // Beamer's navigation symbols under XeTeX: links around empty boxes.
+        "phantom-link",
+        "",
+        r"\noindent\special{dvipdfmx:catch_phantom true height 8pt depth 1.5pt}\special{pdf:bann << /Subtype /Link /A << /S /URI /URI (https://example.org) >> >>}\vbox to7.5pt{}\kern20pt\special{pdf:eann}",
     ),
     (
         "metadata",

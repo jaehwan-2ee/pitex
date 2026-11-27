@@ -38,6 +38,23 @@ pub struct Document {
     graphics_stack: Vec<[f64; 6]>,
     outlines: Vec<Outline>,
     links: Vec<Link>,
+    phantom: Phantom,
+}
+/// `dvipdfmx:catch_phantom`: horizontal moves inside a link grow its rectangle.
+#[derive(Default, Clone, Copy)]
+enum Phantom {
+    #[default]
+    Off,
+    FontSize,
+    Fixed { height: f64, depth: f64 },
+}
+/// pdfTeX `\pdfstartlink` geometry: rectangles come from the parent hbox, not from the ink.
+struct PdftexLink {
+    width: Option<f64>,
+    height: Option<f64>,
+    depth: Option<f64>,
+    /// Box id and local rectangle of the line segment still being laid out.
+    open: Option<(usize, [f64; 4])>,
 }
 #[derive(Clone)]
 struct PitexColorStack { initial: String, values: Vec<String>, page: bool, direct: bool }
@@ -50,13 +67,22 @@ struct Outline {
     open: bool,
     dict: BTreeMap<String, String>,
 }
+impl PdftexLink {
+    /// pdfTeX `set_rect_dimens` in local coordinates, before the link margin.
+    fn segment(&self, parent: [f64; 4], baseline: f64, left: f64) -> [f64; 4] {
+        [
+            left,
+            self.depth.map_or(parent[1], |d| baseline - d),
+            self.width.map_or(parent[2], |w| left + w),
+            self.height.map_or(parent[3], |h| baseline + h),
+        ]
+    }
+}
 struct Link {
     start_box:Option<usize>,
     level:Option<i32>,
     first_object:Option<i32>,
-    fixed_width:Option<f64>,
-    fixed_height:Option<f64>,
-    fixed_depth:Option<f64>,
+    pdftex:Option<PdftexLink>,
     matrix:[f64;6],
     dict: BTreeMap<String, String>,
     boxes: Vec<(i32, [f64; 4], f64)>,
@@ -298,9 +324,44 @@ impl Document {
             return;
         }
         pdf_threads::Threads::touch(c,x,y,width,height,depth);
+        Self::touch_links(c,x,y,width,height,depth);
+    }
+    /// A DVI horizontal move of `width` points from (x, y) under `dvipdfmx:catch_phantom`.
+    pub unsafe fn phantom_move(c: *mut conv_ctx, x: f64, y: f64, width: f64, font_size: f64) {
+        if (*c).document.is_null() || !(*c).render || width == 0. || (*(*c).document).links.is_empty() {
+            return;
+        }
+        let (height, depth) = match (*(*c).document).phantom {
+            Phantom::Off => return,
+            Phantom::FontSize => (font_size, 0.),
+            Phantom::Fixed { height, depth } => (height, depth),
+        };
+        Self::touch_links(c, x.min(x + width), y, width.abs(), height, depth);
+    }
+    pub unsafe fn catch_phantom(c: *mut conv_ctx, raw: &str) {
+        let raw = raw.trim();
+        let doc = &mut *(*c).document;
+        if raw.starts_with("false") {
+            doc.phantom = Phantom::Off;
+        } else if let Some(mut rest) = raw.strip_prefix("true") {
+            doc.phantom = Phantom::FontSize;
+            let (mut height, mut depth) = (None, 0.);
+            loop {
+                rest = rest.trim_start();
+                let Some(key) = ["height", "depth"].into_iter().find(|key| rest.starts_with(*key)) else { break };
+                let Some((value, used)) = read_dimension(rest[key.len()..].trim_start()) else { break };
+                rest = &rest[key.len()..].trim_start()[used..];
+                if key == "height" { height = Some(value) } else { depth = value }
+            }
+            if let Some(height) = height {
+                doc.phantom = Phantom::Fixed { height, depth };
+            }
+        }
+    }
+    unsafe fn touch_links(c: *mut conv_ctx, x: f64, y: f64, width: f64, height: f64, depth: f64) {
         let rectangle = Self::rectangle(c, [x, y - depth, x + width, y + height]);
         for link in &mut (*(*c).document).links {
-            if !pdf_threads::Threads::link_enabled(c,link.start_box,link.level){continue;}
+            if link.pdftex.is_some()||!pdf_threads::Threads::link_enabled(c,link.start_box,link.level){continue;}
             // A link spanning multiple lines has one annotation per line/page.
             if let Some((_, r, _)) = link.boxes.iter_mut().find(|(page, _, baseline)| {
                 *page == (*c).this_page && (*baseline - y).abs() < height.max(depth).max(1.) * 0.65
@@ -318,10 +379,33 @@ impl Document {
         if !(*c).render{return;}
         pdf_threads::Threads::touch_rectangle(c,r);
         for link in &mut (*(*c).document).links {
-            if !pdf_threads::Threads::link_enabled(c,link.start_box,link.level){continue;}
+            if link.pdftex.is_some()||!pdf_threads::Threads::link_enabled(c,link.start_box,link.level){continue;}
             let baseline=inverse_matrix(link.matrix).map(|m|transform_point(m,r[0],r[1]).1).unwrap_or(r[1]);
             if let Some((_,box_,_))=link.boxes.iter_mut().find(|(page,_,y)|*page==(*c).this_page&&(*y-baseline).abs()<(r[3]-r[1]).max(1.)*0.65){box_[0]=box_[0].min(r[0]);box_[1]=box_[1].min(r[1]);box_[2]=box_[2].max(r[2]);box_[3]=box_[3].max(r[3]);}
             else{link.boxes.push(((*c).this_page,r,baseline));}
+        }
+    }
+    /// pdfTeX `end_link`/`append_link` across lines: a box at the link's level that closes ends its segment.
+    unsafe fn close_pdftex_segments(c: *mut conv_ctx, level: i32) {
+        let closing = pdf_threads::Threads::open_box_ids(c, level);
+        let page = (*c).this_page;
+        for link in &mut (*(*c).document).links {
+            let Some(pdftex) = link.pdftex.as_mut() else { continue };
+            if let Some((_, r)) = pdftex.open.take_if(|(id, _)| closing.contains(id)) {
+                link.boxes.push((page, Self::rectangle(c, r), 0.));
+            }
+        }
+    }
+    unsafe fn continue_pdftex_links(c: *mut conv_ctx) {
+        let Some((id, level, kind, local, baseline)) = pdf_threads::Threads::current_box(c) else { return };
+        if kind != 'h' || !(*(*c).document).threads.running_links {
+            return;
+        }
+        for link in &mut (*(*c).document).links {
+            let Some(pdftex) = link.pdftex.as_mut() else { continue };
+            if pdftex.open.is_none() && pdftex.width.is_none() && link.level == Some(level) {
+                pdftex.open = Some((id, pdftex.segment(local, baseline, local[0])));
+            }
         }
     }
     unsafe fn annotation(
@@ -423,7 +507,16 @@ impl Document {
         let command = text(command, n);
         let raw = text(arg, end.offset_from(arg) as usize);
         let raw = raw.trim();
-        if pdf_threads::Threads::special(c,&command,raw,x,y){return true;}
+        if command == "boxend" {
+            if let Ok(level) = raw.parse::<i32>() {
+                Self::close_pdftex_segments(c, level);
+            }
+        }
+        let threads = pdf_threads::Threads::special(c,&command,raw,x,y);
+        if command == "boxbegin" {
+            Self::continue_pdftex_links(c);
+        }
+        if threads {return true;}
         match command.as_str() {
             "pitextokenconfig" => {
                 if let Some((name,value))=raw.split_once(' ') {
@@ -746,20 +839,24 @@ impl Document {
                     let value = substitute(c, &input, x, y);
                     let dict = dictionary(&value);
                     let (start_box,level)=pdf_threads::Threads::link_box(c);
-                    (*(*c).document).links.push(Link {start_box,level,first_object,fixed_width,fixed_height,fixed_depth,matrix:(*(*c).document).ctm,dict,boxes:Vec::new()});
+                    let pdftex=(command=="pitexbann").then(||{
+                        let mut link=PdftexLink{width:fixed_width,height:fixed_height,depth:fixed_depth,open:None};
+                        if let Some((id,_,_,parent,baseline))=pdf_threads::Threads::current_box(c){link.open=Some((id,link.segment(parent,baseline,x)));}
+                        link
+                    });
+                    (*(*c).document).links.push(Link {start_box,level,first_object,pdftex,matrix:(*(*c).document).ctm,dict,boxes:Vec::new()});
                 }
                 true
             }
             "eann" | "eannot" | "endann" => {
-                if let Some(link) = (*(*c).document).links.pop() {
-                    for (index,(page,mut rectangle,baseline))in link.boxes.into_iter().enumerate(){
-                        if link.fixed_width.is_some()||link.fixed_height.is_some()||link.fixed_depth.is_some(){
-                            let mut local=inverse_matrix(link.matrix).map(|m|transform_rectangle(m,rectangle)).unwrap_or(rectangle);
-                            if let Some(w)=link.fixed_width{local[2]=local[0]+w;}
-                            if let Some(h)=link.fixed_height{local[3]=baseline+h;}
-                            if let Some(d)=link.fixed_depth{local[1]=baseline-d;}
-                            rectangle=transform_rectangle(link.matrix,local);
+                if let Some(mut link) = (*(*c).document).links.pop() {
+                    if let Some(pdftex)=link.pdftex.as_mut(){
+                        if let Some((_,mut r))=pdftex.open.take(){
+                            if pdftex.width.is_none(){r[2]=x;}
+                            link.boxes.push(((*c).this_page,Self::rectangle(c,r),0.));
                         }
+                    }
+                    for (index,(page,mut rectangle,_))in link.boxes.into_iter().enumerate(){
                         let object=if index==0{link.first_object.unwrap_or_else(||pdfw_alloc((*c).pw))}else{pdfw_alloc((*c).pw)};
                         let margin=(*(*c).document).threads.link_margin;
                         rectangle=[rectangle[0]-margin,rectangle[1]-margin,rectangle[2]+margin,rectangle[3]+margin];
@@ -1463,10 +1560,6 @@ fn pdf_string_bytes(value: &str) -> Option<Vec<u8>> {
 }
 
 fn transform_point(m:[f64;6],x:f64,y:f64)->(f64,f64){(m[0]*x+m[2]*y+m[4],m[1]*x+m[3]*y+m[5])}
-fn transform_rectangle(m:[f64;6],r:[f64;4])->[f64;4]{
-    let points=[(r[0],r[1]),(r[0],r[3]),(r[2],r[1]),(r[2],r[3])].map(|(x,y)|transform_point(m,x,y));
-    [points.iter().map(|p|p.0).fold(f64::INFINITY,f64::min),points.iter().map(|p|p.1).fold(f64::INFINITY,f64::min),points.iter().map(|p|p.0).fold(f64::NEG_INFINITY,f64::max),points.iter().map(|p|p.1).fold(f64::NEG_INFINITY,f64::max)]
-}
 fn inverse_matrix(m:[f64;6])->Option<[f64;6]>{let det=m[0]*m[3]-m[1]*m[2];if det.abs()<1e-15||!det.is_finite(){return None;}let(a,b,c,d)=(m[3]/det,-m[1]/det,-m[2]/det,m[0]/det);Some([a,b,c,d,-a*m[4]-c*m[5],-b*m[4]-d*m[5]])}
 
 fn pdf_array_elements(value:&str)->Vec<String>{
