@@ -4537,12 +4537,14 @@ impl WorkspaceModel {
             .filter(|(_, _, _, modified)| *modified)
             .map(|(path, hash, text, _)| (path, hash, text))
             .collect();
+        let build_command = store.settings.build.build_command(&self.build_command_text);
         let outcome = self.embedded.flush(crate::embedded_preview::UpdateContext {
             root: &root,
             main_relative: &main,
             buffers,
             identity,
             sink,
+            program: crate::embedded_preview::preview_program(build_command),
         });
         // A skipped flush gets no `idle` reply: bind SyncTeX here, as the `idle` outcome would.
         if outcome == crate::embedded_preview::FlushOutcome::Skipped && self.displaying_editing_preview() {

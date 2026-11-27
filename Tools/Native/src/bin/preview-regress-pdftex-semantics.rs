@@ -24,7 +24,33 @@ type Case = (
     &'static str,
     &'static [(&'static str, Option<&'static str>)],
 );
+/// Cases named `pdflatex-*` run under the pdfLaTeX personality, as for a
+/// project whose build command runs pdflatex; the others keep the XeLaTeX format.
 const CASES: &[Case] = &[
+    (
+        "pdflatex-personality",
+        "",
+        r"\typeout{SEM-ENGINE=\ifdefined\XeTeXversion xetex\else pdftex\fi,\the\pdfoutput,\fontname\font,\ifdefined\Umathcode unicode\else 8-bit\fi}Ła “quoted” 10°C",
+        &[("text", Some("Ła “quoted” 10°C"))],
+    ),
+    (
+        "pdflatex-global-letterspace",
+        "",
+        r"{\global\letterspacefont\spaced\font 200 \global\pdfcopyfont\copied\font}\typeout{SEM-LS=\ifdefined\spaced yes\else no\fi,\ifdefined\copied yes\else no\fi}{\spaced Spaced}",
+        &[],
+    ),
+    (
+        "pdflatex-open-action",
+        "",
+        r"\pdfcatalog{/AuditCatalog (Works)} openaction goto page 1 {/Fit}Opened.",
+        &[
+            ("trailer/Root/AuditCatalog", None),
+            ("trailer/Root/OpenAction/S", None),
+            ("trailer/Root/OpenAction/D/1/Type", None),
+            ("trailer/Root/OpenAction/D/2", None),
+            ("text", Some("openaction")),
+        ],
+    ),
     (
         "color-stack",
         "",
@@ -355,6 +381,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .arg(&out)
                 .arg("--cache")
                 .arg(work.join("cache"))
+                .envs(name.starts_with("pdflatex-").then_some(("PITEX_PREVIEW_PROGRAM", "pdflatex")))
                 .stderr(Stdio::null()),
             &out,
         )?;

@@ -67,14 +67,15 @@ def single_pass(work, program, outdir):
 # ---------- built-in (embedded preview helper) ----------
 
 class Helper:
-    def __init__(self, bin_dir, work, out, cache):
+    def __init__(self, bin_dir, work, out, cache, program):
         out.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.out = out
+        # The apps pass the engine of the project's build command the same way.
         self.proc = subprocess.Popen(
             [str(bin_dir / "pitex-preview"), "--root", str(work), "--main", "main.tex",
              "--out", str(out), "--cache", str(cache)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            start_new_session=True)
+            env={**os.environ, "PITEX_PREVIEW_PROGRAM": program}, start_new_session=True)
         self.buffer = b""
         self.displayed = None
 
@@ -361,7 +362,7 @@ def bench(name, bin_dir, runs, dpi, workroot, cache):
     # Warm: an edit right after \begin{document} in the same session.
     builtin_cold, builtin_warm, first = [], [], None
     for attempt in range(runs):
-        helper = Helper(bin_dir, work, workroot / f"{name}-out{attempt}", cache)
+        helper = Helper(bin_dir, work, workroot / f"{name}-out{attempt}", cache, program)
         try:
             start = time.perf_counter()
             event, _ = helper.update(1, [])
@@ -456,15 +457,19 @@ def main():
     workroot = Path(tempfile.mkdtemp(prefix="pitex-fidelity-", dir=args.out))
     cache = workroot / "cache"
     cache.mkdir(mode=0o700)
-    # Format generation is a one-time per-install cost; time it separately.
-    warm = workroot / "_format"
-    warm.mkdir()
-    (warm / "main.tex").write_text("\\documentclass{article}\\begin{document}x\\end{document}\n")
-    helper = Helper(bin_dir, warm, workroot / "_format-out", cache)
-    start = time.perf_counter()
-    event, _ = helper.update(1, [])
-    helper.close()
-    header = {"format_build_s": round(time.perf_counter() - start, 3), "format_event": event.get("event"),
+    # Format generation is a one-time per-install cost for each engine personality; time it separately.
+    format_s = {}
+    for program in ("xelatex", "pdflatex"):
+        warm = workroot / f"_format-{program}"
+        warm.mkdir()
+        (warm / "main.tex").write_text("\\documentclass{article}\\begin{document}x\\end{document}\n")
+        helper = Helper(bin_dir, warm, workroot / f"_format-{program}-out", cache, program)
+        start = time.perf_counter()
+        event, _ = helper.update(1, [])
+        helper.close()
+        format_s[program] = round(time.perf_counter() - start, 3)
+    header = {"format_build_s": format_s["xelatex"], "format_build_pdflatex_s": format_s["pdflatex"],
+              "format_event": event.get("event"),
               "tex_version": run(["pdftex", "--version"]).stdout.decode().splitlines()[0],
               "helpers": str(bin_dir), "runs": args.runs, "dpi": args.dpi}
     print(json.dumps(header), flush=True)

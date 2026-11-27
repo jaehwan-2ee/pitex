@@ -518,6 +518,8 @@ pub struct EmbeddedPreview {
     pending_force: bool,
     /// A build-target change retired a preview that should come back once the target is non-nil again (set by the model, which alone knows what is on screen); every `stop` clears it.
     pub restart_wanted: bool,
+    /// `PITEX_PREVIEW_PROGRAM` the running helper was started with.
+    session_program: Option<&'static str>,
 }
 
 impl Default for EmbeddedPreview {
@@ -537,6 +539,7 @@ impl Default for EmbeddedPreview {
             last_flush: None,
             pending_force: false,
             restart_wanted: false,
+            session_program: None,
         }
     }
 }
@@ -558,6 +561,15 @@ pub struct UpdateContext<'a> {
     /// Identity of all open TeX buffers at this update (SyncTeX check).
     pub identity: BufferSnapshot,
     pub sink: Sender<WorkspaceMessage>,
+    /// Engine of the project's build command (`preview_program`).
+    pub program: Option<&'static str>,
+}
+
+/// The helper typesets with the engine personality the manual build runs:
+/// pdflatex or xelatex. `None` (custom or unparsable commands) lets the
+/// helper read the document's `% !TEX program` line.
+pub fn preview_program(build_command: &str) -> Option<&'static str> {
+    build_core::ExactEquationProfile::resolve(build_command).map(|p| p.engine.raw_value())
 }
 
 impl EmbeddedPreview {
@@ -685,6 +697,7 @@ impl EmbeddedPreview {
                 .arg("--cache")
                 .arg(&cache)
                 .envs(environment)
+                .envs(ctx.program.map(|p| ("PITEX_PREVIEW_PROGRAM", p)))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null());
@@ -772,6 +785,10 @@ impl EmbeddedPreview {
     pub fn flush(&mut self, ctx: UpdateContext) -> FlushOutcome {
         self.pending_since = None;
         let force = std::mem::take(&mut self.pending_force);
+        // The format is chosen at helper start; a new build engine needs a new helper.
+        if self.session.is_some() && self.session_program != ctx.program {
+            self.stop();
+        }
         if self.session.is_none() {
             if let Err(e) = self.spawn(&ctx) {
                 self.status = PreviewStatus::Unavailable(e);
@@ -1170,7 +1187,26 @@ mod tests {
             buffers: Vec::new(),
             identity: files.iter().map(|(p, h)| (PathBuf::from(*p), *h)).collect(),
             sink: std::sync::mpsc::channel().0,
+            program: None,
         }
+    }
+
+    #[test]
+    fn preview_follows_the_build_command_engine() {
+        assert_eq!(preview_program("xelatex -interaction=nonstopmode -synctex=1 {file}"), Some("xelatex"));
+        assert_eq!(preview_program("pdflatex -interaction=nonstopmode -synctex=1 {file}"), Some("pdflatex"));
+        assert_eq!(preview_program("latexmk -pdf -interaction=nonstopmode -synctex=1 {file}"), Some("pdflatex"));
+        assert_eq!(preview_program("latexmk -xelatex {file}"), Some("xelatex"));
+        assert_eq!(preview_program("make pdf && open main.pdf"), None);
+    }
+
+    #[test]
+    fn a_new_build_engine_retires_the_helper() {
+        let mut ep = running();
+        assert_eq!(ep.flush(ctx("main.tex", MAIN)), FlushOutcome::Sent);
+        let pdflatex = UpdateContext { program: Some("pdflatex"), ..ctx("main.tex", MAIN) };
+        ep.flush(pdflatex);
+        assert_ne!(ep.session_id(), Some(1), "the helper started for the old engine keeps its format");
     }
 
     fn queued_generation(ep: &EmbeddedPreview) -> Option<u64> {

@@ -99,6 +99,7 @@ extern "C" {
     ) -> ::core::ffi::c_long;
     fn xdv_index_page_count(x: *const xdv_index) -> ::core::ffi::c_int;
     fn xdv_index_page(x: *const xdv_index, i: ::core::ffi::c_int) -> *const xdv_page;
+    fn xdv_index_trailer(x: *const xdv_index, begin: *mut size_t, end: *mut size_t) -> bool;
     fn xdv_index_preamble(
         x: *const xdv_index,
         num: *mut uint32_t,
@@ -6140,6 +6141,14 @@ pub unsafe extern "C" fn xdv2pdf_write(
                     *page_objs.offset(fresh1 as isize) = pobj;
                 }
                 pg += 1;
+            }
+            // Objects written after the last page (pgf's resource objects at \end{document}).
+            let (mut trailer_begin, mut trailer_end) = (0 as size_t, 0 as size_t);
+            if last == xdv_index_page_count((*rg).index)
+                && xdv_index_trailer((*rg).index, &raw mut trailer_begin, &raw mut trailer_end)
+            {
+                (*c).render = false;
+                interpret(c, st, (*rg).data.offset(trailer_begin as isize), (*rg).data.offset(trailer_end as isize), 0);
             }
             let mut i_2: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
             while i_2 < NCAT as ::core::ffi::c_int {

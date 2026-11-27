@@ -242,7 +242,9 @@ pub fn prepare(main: &str, mut load: impl FnMut(&str) -> Option<String>) -> Prep
         if let Some(original) = result.files.get(main).cloned().or_else(|| load(main)) {
             // Install the driver adapter only when the real engine primitives
             // are present. Native paragraph line breaking applies expansion.
-            let hook = r"\ifdefined\PitexFontExpansion\AddToHook{package/microtype/after}{\expandafter\def\csname MT@setup@expansion\endcsname{\csname ifMT@expansion\endcsname\global\PitexFontExpansion=2 \global\PitexFontStretch=20 \global\PitexFontShrink=20 \global\PitexFontStep=1 \ifcsname MT@stretch\endcsname\ifnum\csname MT@stretch\endcsname>-1 \global\PitexFontStretch=\csname MT@stretch\endcsname\relax\fi\fi\ifcsname MT@shrink\endcsname\ifnum\csname MT@shrink\endcsname>-1 \global\PitexFontShrink=\csname MT@shrink\endcsname\relax\fi\fi\ifcsname MT@step\endcsname\ifnum\csname MT@step\endcsname>0 \global\PitexFontStep=\csname MT@step\endcsname\relax\fi\fi\fi}}\fi ";
+            // The pdfLaTeX personality (no \XeTeXversion) keeps microtype's pdftex driver;
+            // the hook is dropped as an argument so its unbalanced \ifMT@expansion is never scanned.
+            let hook = r"\long\def\PitexKeep#1{#1}\long\def\PitexDrop#1{}\ifdefined\XeTeXversion\let\PitexMicrotype\PitexKeep\else\let\PitexMicrotype\PitexDrop\fi\PitexMicrotype{\ifdefined\PitexFontExpansion\AddToHook{package/microtype/after}{\expandafter\def\csname MT@setup@expansion\endcsname{\csname ifMT@expansion\endcsname\global\PitexFontExpansion=2 \global\PitexFontStretch=20 \global\PitexFontShrink=20 \global\PitexFontStep=1 \ifcsname MT@stretch\endcsname\ifnum\csname MT@stretch\endcsname>-1 \global\PitexFontStretch=\csname MT@stretch\endcsname\relax\fi\fi\ifcsname MT@shrink\endcsname\ifnum\csname MT@shrink\endcsname>-1 \global\PitexFontShrink=\csname MT@shrink\endcsname\relax\fi\fi\ifcsname MT@step\endcsname\ifnum\csname MT@step\endcsname>0 \global\PitexFontStep=\csname MT@step\endcsname\relax\fi\fi\fi}}\fi}";
             result
                 .files
                 .insert(main.to_string(), format!("{hook}{original}"));
