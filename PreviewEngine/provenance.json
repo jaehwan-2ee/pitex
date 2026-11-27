@@ -1694,7 +1694,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/embedded_aux.rs",
-   "sha256": "c1e2a36d88326c704330d80f68021317011aa96dee27285d1f7f3d6f8be9bbd4"
+   "sha256": "da0eebc465ac442e7d11b7c63b7fc8a65f8f42eb7fd1244024440c38db8cdf14"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
