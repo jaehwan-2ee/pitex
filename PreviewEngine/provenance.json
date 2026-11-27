@@ -599,7 +599,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/xdv2pdf.rs",
-   "sha256": "e7a43717840f63de05a954d8146930bfff9785f69b7b8a43b98daa547e02b488",
+   "sha256": "1b10ef97494f0bbfaf796032d541bd49d77f36e1fdce5cf857d9355938e50e3e",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -1208,7 +1208,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/xdv2pdf.rs",
-   "sha256": "0ac723bdac57a86a97be68cde39e20868ec83e5fc5b367a59516e232f6c99489",
+   "sha256": "fe327c9b05688008a90f79f9d80b65beb77536adb85788b585d0a4ada0ae2138",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -1658,7 +1658,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/backend_options.rs",
-   "sha256": "2be5a1990f925bb12aca4384b885ae4e05d1fae4dc0196ed901f8ce76b655060"
+   "sha256": "fe6e1b02666fc929d0a04268984fea7b79d8033560887076a3c5bc08b8afb9b5"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
@@ -1790,7 +1790,13 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/font_output.rs",
-   "sha256": "b8bacc791e8b6667903465ed326bf0675d7371a4b05121048d23e8edba1d404a"
+   "sha256": "e3a13f6f045848cf07b362e58b4b82a4f38a9588bf3472c404858dfc890e845b"
+  },
+  {
+   "license_in_file": "AGPL-3.0-or-later (Pitex)",
+   "origin": "pitex",
+   "path": "src/shared/font_subset.rs",
+   "sha256": "69bf69a4b085b398ec0048c90b2797dcac771f410b94575ae50c9c0a8fb3b31b"
   },
   {
    "license_in_file": "MIT/X11 (SIL International)",
@@ -1856,7 +1862,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/pdf_inclusion.rs",
-   "sha256": "017e507351a96bcb9d9e8bf21d5e9dbf6963196d3ad9641e2e758a191bda340e"
+   "sha256": "317ba812b0b5cab55fdb4b1176094236bf46021bab0acfe29abb1fdc3662ebb6"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
