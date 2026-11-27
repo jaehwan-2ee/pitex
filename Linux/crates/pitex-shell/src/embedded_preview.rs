@@ -569,7 +569,7 @@ pub struct UpdateContext<'a> {
 /// pdflatex or xelatex. `None` (custom or unparsable commands) lets the
 /// helper read the document's `% !TEX program` line.
 pub fn preview_program(build_command: &str) -> Option<&'static str> {
-    build_core::ExactEquationProfile::resolve(build_command).map(|p| p.engine.raw_value())
+    build_core::equation_exact::ExactEquationProfile::resolve(build_command).map(|p| p.engine.raw_value())
 }
 
 impl EmbeddedPreview {
