@@ -5,7 +5,8 @@
   "tex_version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
   "runs": 3,
   "dpi": 72,
-  "helpers": "Pitex v1.1.7 release package (75e1919)"
+  "helpers": "Pitex v1.1.7 release package (75e1919)",
+  "note": "biblatex-biber re-measured with biber thinned to arm64 outside the TeX Live tree (lipo -thin arm64); the TeX Live 2026 universal biber wrapper fails to start on this machine"
  },
  "results": [
   {
@@ -247,19 +248,64 @@
   {
    "name": "biblatex-biber",
    "program": "pdflatex",
-   "ref_ok": false,
+   "ref_ok": true,
    "ref_errors": 0,
-   "ref_warnings": 9,
-   "ref_cold_s": 1.9140539579675533,
-   "ref_warm_s": 0.5784030000213534,
+   "ref_warnings": 0,
+   "ref_cold_s": 2.7948274170048535,
+   "ref_warm_s": 0.5310421250178479,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 3.020577334042173,
-   "builtin_warm_s": 2.979994041030295,
-   "builtin_log_warnings": 0
+   "builtin_cold_s": 2.529861750022974,
+   "builtin_warm_s": 2.460987667029258,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 0.40114613180515757,
+   "text_min": 0.40114613180515757,
+   "raster_median": 0.13259808856393876,
+   "raster_min": 0.13259808856393876,
+   "raster_pages": [
+    0.1326
+   ],
+   "fonts": [
+    [
+     "SFBX1440",
+     "SFCC1000",
+     "SFRM1000",
+     "SFTI0700",
+     "SFTI1000",
+     "SFTT1000"
+    ],
+    [
+     "LMMono10-Regular",
+     "LMRoman10-Italic",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman7-Italic",
+     "LMRomanCaps10-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    null,
+    null
+   ],
+   "outline_items": [
+    1,
+    1
+   ],
+   "pdf_bytes": [
+    96778,
+    687698
+   ]
   },
   {
    "name": "enumitem-lists",

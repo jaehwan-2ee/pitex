@@ -145,18 +145,21 @@ Built-in times on the runner are 1.1–1.6× comet's, and its warm times are noi
 Same corpus and harness, v1.1.7 helpers copied out of the release DMG, every step under `/tmp/swe-m4lock.py`.
 Format build: 4.7 s.
 
-All 24 documents whose reference builds score the same as on Linux to three decimals, except `listings-code` (text 0.670, raster 0.758), `math-ams` (text 0.904) and `microtype` (0 built-in errors, text 0.937, raster 0.929). TeX Live 2026 ships newer package versions, so the reference output itself moved.
+Of the 24 other documents whose reference builds there, all score the same as on Linux to three decimals except `listings-code` (text 0.670, raster 0.758), `math-ams` (text 0.904) and `microtype` (0 built-in errors, text 0.937, raster 0.929). TeX Live 2026 ships newer package versions, so the reference output itself moved.
 TeX Live 2026's microtype accepts letterspacing under XeTeX, which removes the two errors.
 Built-in cold time is lower than the reference on 19 of 24 documents (median ratio 0.84); warm median ratio is 0.26.
 
-Four documents could not be compared on the M4 because of the machine, not the engine:
+`biblatex-biber` fails on the M4 (gap 2): text 0.401, raster 0.133, while the same helper scores 1.000 / 0.959 against TeX Live 2023 on Linux.
+
+Three documents could not be compared on the M4 because of the machine, not the engine:
 `korean-kotex`, `korean-oblivoir` and `beamer-korean` need Noto CJK KR, which is not installed.
-Biber in that TeX Live fails to start (`extracting arm64 binary with lipo failed`), so `biblatex-biber` has no reference.
+The TeX Live 2026 `biber` is a universal binary whose wrapper fails to start (`extracting arm64 binary with lipo failed`).
+The TeX Live tree is root-owned, so the run uses an arm64 copy outside it: `lipo /usr/local/texlive/2026/bin/universal-darwin/biber -thin arm64 -output /tmp/pitex-fidelity/biber-arm64/biber`, prepended to `PATH` for the benchmark only (biber 2.21 starts).
 MuPDF is not installed, so links are not counted there.
-Nothing was installed on the M4.
+Nothing in the owner's installation was changed.
 
 The Mac helper shares the writer and engine sources with Linux apart from platform font discovery (CoreText instead of Fontconfig).
-The matching numbers say the Mac path does not need its own gap list today.
+The matching numbers say the Mac path does not need its own gap list today; gap 2 follows the TeX Live release, not the platform.
 
 ## Gaps
 
@@ -167,15 +170,16 @@ Effort: S ≤ 3 days, M 1–2 weeks, L 3–6 weeks.
 | # | Gap | Documents | Symptom | Root cause | Effort | Expected gain | Kind |
 |---|---|---|---|---|---|---|---|
 | 1 | pdfLaTeX documents run as XeLaTeX | `ieeetran-conf`, `inputenc-babel`, `listings-code`, `hyperref-refs`, `microtype`; every pdfLaTeX document without `\usepackage[T1]{fontenc}` | Wrong font family (Times → Latin Modern, raster 0.499); missing glyphs Ł ź ř € © ° “ ” (text 0.773); bold typewriter instead of CM typewriter; different line breaks from OT1/CM vs TU/LM widths (page raster 0.734); microtype tracking and letterspacing refused (2 errors on TL 2023) | Format is hard-coded to `xelatex.ini` (`PreviewEngine/src/linux/xetex/main/main.rs:1858`, `src/macos/xetex/main/main.rs:1806`). LaTeX sees `\XeTeXversion`, selects TU/lmr and Unicode input, `\pdfoutput` stays 0 (`COMPATIBILITY.md`). Measured | L | 5 documents from 0.50–0.93 raster to ≥ 0.97 (inferred) | Fixable: the core already has TFM fonts, `\XeTeXinputencoding bytes` and 154 of 163 pdfTeX primitives with evidence; a pdfTeX-personality format hides the XeTeX identity |
-| 2 | Beamer navigation links dropped | `beamer-basic`, any Beamer deck | 9 links instead of 121 (real XeLaTeX also gives 121); 3 of 17 annotations per frame survive | Breakable annotation specials (`pdf:bann`/`pdf:eann`) handled at `src/linux/driver/xdv2pdf.rs:4431`; the navigation-bar links inside headline/footline boxes are not emitted. Exact branch not located | S–M | Link parity on all Beamer output | Fixable |
-| 3 | Copied math text wrong | `korean-kotex` (∑ copies as X), `math-ams`, `xelatex-fontspec` (∫ variant lost) | Text 0.92–0.97 while raster is 0.98–1.0 | Type 1 fonts with a built-in encoding (CMEX10) get ToUnicode from character codes rather than glyph names; OpenType MATH variant glyphs have no cmap or GSUB path to a code point (`src/linux/driver/fonts.rs:549` `set_unicode`, `:859` `parse_script_unicode`). Inferred | S | Text ≥ 0.98 on math documents | Fixable |
-| 4 | Fonts embedded whole, no subsetting | All; worst on CJK | PDFs 5.7× larger at the median, 55–140 MB for Korean (reference 11–38 KB). Korean cold builds 4.0–6.0 s vs 1.25–2.24 s; the first publication wrote 97 MB | Deliberate shortcut at `src/linux/driver/xdv2pdf.rs:24` ("fonts are embedded whole (no subsetting)"). The same face is listed several times in one PDF. Measured size and bytes written; the cold-time link is inferred | M–L | Korean cold time toward the XeLaTeX reference (2–3× faster, hypothesis); size parity | Fixable |
-| 5 | Bibliography documents slow on every edit | `biblatex-biber` (and any biblatex document) | Warm edit 2.12 s, slower than the 0.44 s reference pass and the built-in cold build | Each body edit regenerates the BBL in process and reruns passes to convergence even when citation keys and databases did not change (`src/shared/embedded_aux.rs`). Inferred from timing | M | Warm ≈ 0.2–0.4 s on bibliography documents | Fixable |
-| 6 | Slow cold start on small package-heavy documents | `pgfplots`, `siunitx`, `tikz-basic`, `enumitem-lists`, `footnotes-margins` | Cold 0.44–0.84 s vs reference 0.25–0.47 s | Each session rebuilds the TeX file index (about 1,900 `ls-R` precedence lines in `driver.log` per session) and reruns until aux files are byte-stable. Inferred | S | −0.2 s per cold session | Fixable |
-| 7 | Beamer title-box shadow | `beamer-basic` frame 1 | Page raster 0.896, softer shadow | pgf fading and soft-mask transparency path in the writer. Not located | S–M | Frame 1 to ≥ 0.97 | Fixable |
-| 8 | Paragraph breaks with font expansion | `microtype` | Raster 0.927, text 0.909 | Pitex's expansion optimizer can choose other breaks than pdfTeX (`COMPATIBILITY.md`, "Service and policy limits"). Partly masked by gap 1 | M | ≥ 0.97 after gap 1 | Semi-fundamental: pdfTeX's exact expansion arithmetic must be matched, not approximated |
-| 9 | URL link borders not drawn by poppler | `biblatex-biber` | Raster 0.959; the cyan URL boxes appear only in the reference rendering | `/Border` and `/C` match the reference. The difference is elsewhere in the annotation (indirect `/Annots` array or key set). Not located | S | ≥ 0.98 | Fixable; viewer-dependent |
-| 10 | Duplicate-destination warnings | `thesis-long` | Warning "duplicate destination ignored; the first definition is kept"; output matches | Writer reports what hyperref's `xetex` driver emits under XeLaTeX semantics; disappears with gap 1 (inferred) | S | Clean warnings | Fixable |
+| 2 | Biber BBL syntax rejected by current biblatex | `biblatex-biber` on TeX Live 2026 (M4); every biblatex document on that release | Bibliography prints raw name fields (`author1hash=…family=Knuth, familyi=K., given=…`); text 0.401, raster 0.133. Same document on TeX Live 2023: 1.000 / 0.959 | The in-process BBL writer emits names as one-line `{{hash=…}{family={…}, familyi={…}, given={}, …}}` with empty parts (`src/shared/embedded_aux.rs:1197`). Biber 2.21 writes `{{un=0,uniquepart=base,hash=…}{family={…}, … givenun=0}}` and omits empty parts; biblatex 3.21 parses only that form, biblatex in TeX Live 2023 tolerates both. Measured | S | biblatex documents on TeX Live 2026 from unreadable to ≥ 0.96 raster | Fixable |
+| 3 | Beamer navigation links dropped | `beamer-basic`, any Beamer deck | 9 links instead of 121 (real XeLaTeX also gives 121); 3 of 17 annotations per frame survive | Breakable annotation specials (`pdf:bann`/`pdf:eann`) handled at `src/linux/driver/xdv2pdf.rs:4431`; the navigation-bar links inside headline/footline boxes are not emitted. Exact branch not located | S–M | Link parity on all Beamer output | Fixable |
+| 4 | Copied math text wrong | `korean-kotex` (∑ copies as X), `math-ams`, `xelatex-fontspec` (∫ variant lost) | Text 0.92–0.97 while raster is 0.98–1.0 | Type 1 fonts with a built-in encoding (CMEX10) get ToUnicode from character codes rather than glyph names; OpenType MATH variant glyphs have no cmap or GSUB path to a code point (`src/linux/driver/fonts.rs:549` `set_unicode`, `:859` `parse_script_unicode`). Inferred | S | Text ≥ 0.98 on math documents | Fixable |
+| 5 | Fonts embedded whole, no subsetting | All; worst on CJK | PDFs 5.7× larger at the median, 55–140 MB for Korean (reference 11–38 KB). Korean cold builds 4.0–6.0 s vs 1.25–2.24 s; the first publication wrote 97 MB | Deliberate shortcut at `src/linux/driver/xdv2pdf.rs:24` ("fonts are embedded whole (no subsetting)"). The same face is listed several times in one PDF. Measured size and bytes written; the cold-time link is inferred | M–L | Size parity; Korean cold time toward XeLaTeX (2–3× faster, hypothesis; informational since Korean is out of scope) | Fixable |
+| 6 | Bibliography documents slow on every edit | `biblatex-biber` (and any biblatex document) | Warm edit 2.12 s, slower than the 0.44 s reference pass and the built-in cold build | Each body edit regenerates the BBL in process and reruns passes to convergence even when citation keys and databases did not change (`src/shared/embedded_aux.rs`). Inferred from timing | M | Warm ≈ 0.2–0.4 s on bibliography documents | Fixable |
+| 7 | Slow cold start on small package-heavy documents | `pgfplots`, `siunitx`, `tikz-basic`, `enumitem-lists`, `footnotes-margins` | Cold 0.44–0.84 s vs reference 0.25–0.47 s | Each session rebuilds the TeX file index (about 1,900 `ls-R` precedence lines in `driver.log` per session) and reruns until aux files are byte-stable. Inferred | S | −0.2 s per cold session | Fixable |
+| 8 | Beamer title-box shadow | `beamer-basic` frame 1 | Page raster 0.896, softer shadow | pgf fading and soft-mask transparency path in the writer. Not located | S–M | Frame 1 to ≥ 0.97 | Fixable |
+| 9 | Paragraph breaks with font expansion | `microtype` | Raster 0.927, text 0.909 | Pitex's expansion optimizer can choose other breaks than pdfTeX (`COMPATIBILITY.md`, "Service and policy limits"). Partly masked by gap 1 | M | ≥ 0.97 after gap 1 | Semi-fundamental: pdfTeX's exact expansion arithmetic must be matched, not approximated |
+| 10 | URL link borders not drawn by poppler | `biblatex-biber` | Raster 0.959; the cyan URL boxes appear only in the reference rendering | `/Border` and `/C` match the reference. The difference is elsewhere in the annotation (indirect `/Annots` array or key set). Not located | S | ≥ 0.98 | Fixable; viewer-dependent |
+| 11 | Duplicate-destination warnings | `thesis-long` | Warning "duplicate destination ignored; the first definition is kept"; output matches | Writer reports what hyperref's `xetex` driver emits under XeLaTeX semantics; disappears with gap 1 (inferred) | S | Clean warnings | Fixable |
 
 Not gaps, despite low numbers:
 
@@ -186,23 +190,26 @@ Not gaps, despite low numbers:
 Fundamental limits, outside this corpus:
 LuaLaTeX-only documents (`luacode`, `luaotfload` features) need a Lua engine.
 Shell-escape tools (`minted` without a frozen cache, `gnuplottex`, `svg` through Inkscape) are refused by preview policy.
-Exact pdfTeX paragraph output with font expansion (gap 8) needs pdfTeX's arithmetic, which is a port, not a fix.
+Exact pdfTeX paragraph output with font expansion (gap 9) needs pdfTeX's arithmetic, which is a port, not a fix.
 Nothing measured here requires a new TeX implementation; the core is XeTeX.
 
 ## Definition of done: "nearly equivalent"
 
-Measured with `Tools/tex-fidelity.py` on the CI `preview-engine` runner (TeX Live 2023/Debian) and on comet, over this corpus plus the round 3 additions.
-Gap 8 documents may carry a written exemption.
+Measured with `Tools/tex-fidelity.py` on the CI `preview-engine` runner (TeX Live 2023/Debian), on comet, and on the M4 with TeX Live 2026, over this corpus plus the round 3 additions.
+Korean and CJK are out of scope by owner decision (2026-11-27): `korean-kotex`, `korean-oblivoir` and `beamer-korean` stay in the corpus and the report as informational rows and do not count toward any gate.
+The "Today" column covers the other 25 documents on Linux.
+Gap 9 documents may carry a written exemption.
 
 | Gate | Threshold | Today (Linux) |
 |---|---|---|
-| Build | 100% of documents that build with the reference build with the same error count | 27 / 28 |
-| Pages | 100% equal page count | 28 / 28 |
-| Raster | Every document median ≥ 0.97 and every page ≥ 0.90; corpus median ≥ 0.99 | 21 / 28 and 23 / 28; 0.993 |
-| Text | Every document median ≥ 0.98; none below 0.95 | 20 / 28 |
-| Links and outline | Equal counts on 100% | 27 / 28 links, 28 / 28 outline |
+| Build | 100% of documents that build with the reference build with the same error count | 24 / 25 |
+| Pages | 100% equal page count | 25 / 25 |
+| Raster | Every document median ≥ 0.97 and every page ≥ 0.90; corpus median ≥ 0.99 | 18 / 25 and 20 / 25; 0.991 |
+| Text | Every document median ≥ 0.98; none below 0.95 | 18 / 25 and 18 / 25 |
+| Links and outline | Equal counts on 100% | 24 / 25 links, 25 / 25 outline |
 | Fonts | 0 unembedded | 0 |
-| Speed | No document's built-in cold or warm median slower than this baseline by more than 5%; corpus median not slower; Korean cold ≤ 1.2× the XeLaTeX reference | Korean cold is 1.8–3.2× |
+| Speed | No document's built-in cold or warm median slower than this baseline by more than 5%; corpus median not slower | Baseline (this report) |
+| TeX Live drift | The same gates hold on the newest TeX Live release (TeX Live 2026 on the M4 today) | `biblatex-biber` fails (gap 2) |
 
 Speed is gated on comet and the M4, not on shared CI runners: median of 5, the same helper build on both sides of the comparison, `-j 4`, under the memory scope.
 CI keeps a loose guard of +25% on the built-in/reference time ratio, because runner noise is larger than 5%.
@@ -216,27 +223,30 @@ Each PR below owns a file set, so PRs in one round do not edit the same files.
 
 | PR | Gap | Owns | Done when |
 |---|---|---|---|
-| 1A pdfTeX personality | 1, 10 | `src/{linux,macos}/xetex/main/main.rs`, a new `PreviewEngine/format/pitex-pdflatex.ini`, `src/bin/pitex-preview.rs` (reads `% !TEX program`, passes the format to the engine) | `ieeetran-conf`, `inputenc-babel`, `listings-code`, `hyperref-refs` reach raster ≥ 0.97; `microtype` has 0 errors; XeLaTeX documents unchanged |
-| 1B Link annotations | 2, 9 | `src/{linux,macos}/driver/xdv2pdf.rs`, special-handling section only (`pdf:bann`/`eann`/`ann`, around lines 4400–4700) | `beamer-basic` 121/121 links; `biblatex-biber` raster ≥ 0.98 |
-| 1C OpenType ToUnicode | 3 (OpenType part) | `src/{linux,macos}/driver/fonts.rs`, `src/shared/font_output.rs`, `src/shared/opentype_math.rs` | `xelatex-fontspec` text ≥ 0.99 |
+| 1A pdfTeX personality | 1, 11 | `src/{linux,macos}/xetex/main/main.rs`, a new `PreviewEngine/format/pitex-pdflatex.ini`, `src/bin/pitex-preview.rs` (reads `% !TEX program`, passes the format to the engine) | `ieeetran-conf`, `inputenc-babel`, `listings-code`, `hyperref-refs` reach raster ≥ 0.97; `microtype` has 0 errors; XeLaTeX documents unchanged |
+| 1B Link annotations | 3, 10 | `src/{linux,macos}/driver/xdv2pdf.rs`, special-handling section only (`pdf:bann`/`eann`/`ann`, around lines 4400–4700) | `beamer-basic` 121/121 links; `biblatex-biber` raster ≥ 0.98 |
+| 1C OpenType ToUnicode | 4 (OpenType part) | `src/{linux,macos}/driver/fonts.rs`, `src/shared/font_output.rs`, `src/shared/opentype_math.rs` | `xelatex-fontspec` text ≥ 0.99 |
+| 1E Biber BBL syntax | 2 | `src/shared/embedded_aux.rs` BBL writer (around line 1197) | `biblatex-biber` on TeX Live 2026 matches the TeX Live 2023 numbers; TeX Live 2023 unchanged |
 | 1D Fidelity gate | — | `Tools/tex-fidelity.py` (`--check` against committed thresholds), `Fixtures/tex-fidelity/`, `.github/workflows/ci.yml` | CI fails on any regression from the committed baseline |
 
 ### Round 2 (parallel, after round 1 merges)
 
 | PR | Gap | Owns | Done when |
 |---|---|---|---|
-| 2A Font subsetting and deduplication | 4, 3 (Type 1 part) | `src/{linux,macos}/driver/xdv2pdf.rs` font-emission section (around lines 5250–5600), new `src/shared/font_subset.rs` | Korean cold ≤ 1.2× XeLaTeX; median size ratio ≤ 1.5×; `korean-kotex` and `math-ams` text ≥ 0.98 |
-| 2B Bibliography warm path | 5 | `src/shared/embedded_aux.rs`, `src/shared/bibliography_*.rs` | `biblatex-biber` warm ≤ 0.5 s with identical output |
-| 2C Session start and rerun policy | 6 | `src/{linux,macos}/driver/main.rs`, `src/{linux,macos}/driver/fs.rs` | Small-document cold within 5% of the reference |
-| 2D Shading and soft masks | 7 | `src/shared/postscript_color.rs` or the pgf soft-mask path it leads to | `beamer-basic` frame 1 ≥ 0.97 |
+| 2A Font subsetting and deduplication | 5, 4 (Type 1 part) | `src/{linux,macos}/driver/xdv2pdf.rs` font-emission section (around lines 5250–5600), new `src/shared/font_subset.rs` | Median size ratio ≤ 1.5× and no document slower; `math-ams` text ≥ 0.98 |
+| 2B Bibliography warm path | 6 | `src/shared/embedded_aux.rs`, `src/shared/bibliography_*.rs` | `biblatex-biber` warm ≤ 0.5 s with identical output |
+| 2C Session start and rerun policy | 7 | `src/{linux,macos}/driver/main.rs`, `src/{linux,macos}/driver/fs.rs` | Small-document cold within 5% of the reference |
+| 2D Shading and soft masks | 8 | `src/shared/postscript_color.rs` or the pgf soft-mask path it leads to | `beamer-basic` frame 1 ≥ 0.97 |
 
 2A and 1B share `xdv2pdf.rs` but different sections; 2A waits for 1B, so they never run in parallel.
+2B and 1E share `embedded_aux.rs`; 2B starts after 1E merges.
 2C edits `driver/main.rs`, which 1A does not touch.
 
 ### Round 3
 
-- Corpus growth: `acmart`, `elsarticle`, `llncs`, `revtex4-2`, KOMA-Script, `memoir`, `tcolorbox`, `chemfig`, `minted` with a frozen cache, pdfLaTeX `kotex` with UnFonts on CI.
-- Gap 8 (pdfTeX expansion arithmetic) if microtype documents still miss the raster gate.
+- Corpus growth: `acmart`, `elsarticle`, `llncs`, `revtex4-2`, KOMA-Script, `memoir`, `tcolorbox`, `chemfig`, `minted` with a frozen cache.
+- Run the benchmark against the newest TeX Live in CI as well as Ubuntu's 2023 packages; gap 2 shows that package updates alone can break the built-in path.
+- Gap 9 (pdfTeX expansion arithmetic) if microtype documents still miss the raster gate.
 - Tighten the CI gate to the full definition of done and add a macOS runner with the CJK fonts.
 
 ## Running the benchmark
@@ -255,7 +265,9 @@ From a source build, set `PITEX_BIN` to `$BUILD_DIR/bin` after `make -C PreviewE
 macOS (M4 `mini`): the installed `Pitex.app` may be older than the release under test.
 Attach the release DMG read-only (`hdiutil attach -nobrowse -readonly`), copy `Pitex.app/Contents/Helpers/PreviewEngine/` including its `lib/` directory, detach, and point `PITEX_BIN` at the copy.
 Wrap each run in `python3 /tmp/swe-m4lock.py`.
-On that machine Noto CJK KR is missing, the TeX Live 2026 `biber` fails to start, and `mutool` is absent, so the Korean and Biber documents have no reference and links are not counted.
+On that machine Noto CJK KR and `mutool` are missing, so the Korean documents have no reference and links are not counted.
+The TeX Live 2026 `biber` wrapper fails to start; put an arm64 copy first on `PATH` (`lipo /usr/local/texlive/2026/bin/universal-darwin/biber -thin arm64 -output /tmp/pitex-fidelity/biber-arm64/biber`).
+A permanent fix needs root, for example `sudo tlmgr update --self && sudo tlmgr update biber`, or replacing the universal binary with that arm64 copy.
 
 The script needs `latexmk`, `pdflatex`, `xelatex`, `bibtex`, `biber` and poppler (`pdfinfo`, `pdftotext`, `pdftoppm`, `pdffonts`, `pdftohtml`) on `PATH`; `mutool` is optional.
 Runs are sequential so timings do not compete; a full `--runs 3` pass takes about 15 minutes on comet.
