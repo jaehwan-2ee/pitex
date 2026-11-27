@@ -19,6 +19,7 @@ corpus is never written.
 """
 import argparse
 import difflib
+import html
 import json
 import os
 import re
@@ -141,12 +142,82 @@ def page_count(pdf):
     return int(match.group(1)) if match else 0
 
 
-def page_texts(pdf, pages):
+# pdfTeX writes no ToUnicode for CMEX10 unless \pdfgentounicode is on, so its big operators copy
+# as the ASCII letter at their code point (a display sum copies as "X"). These are the glyphs
+# that glyphtounicode.tex (and xdvipdfmx, and the built-in engine) map; the reference side is
+# corrected to them so text similarity counts real differences. Text and display sizes share
+# a base glyph name: summationtext is "P", summationdisplay is "X".
+CMEX_BIG_OPERATORS = {
+    "P": "∑", "X": "∑",  # summation
+    "Q": "∏", "Y": "∏",  # product
+    "R": "∫", "Z": "∫",  # integral
+    "S": "∪", "[": "∪",  # union
+    "T": "∩", "\\": "∩",  # intersection
+    "U": "⊎", "]": "⊎",  # unionmulti
+    "V": "∧", "^": "∧",  # logicaland
+    "W": "∨", "_": "∨",  # logicalor
+    "`": "⨿", "a": "⨿",  # coproduct
+    "J": "⊙", "K": "⊙",  # circledot
+    "L": "⊕", "M": "⊕",  # circleplus
+    "N": "⊗", "O": "⊗",  # circlemultiply
+}
+
+
+def cmex_corrections(pdf):
+    """Per page, one entry per CMEX big operator: ({text as pdftotext may join it}, corrected).
+
+    pdftohtml names the font of each text run; pdftotext -bbox gives each word's box. A word is
+    corrected only where a run of one table character in a CMEX font (or Latin Modern's copy,
+    LMMathExtension) starts inside it. Plain pdftotext may join the operator to the next words
+    on its line ("P" "n" -> "Pn"), so up to two following words are accepted.
+    """
+    xml = run(["pdftohtml", "-xml", "-i", "-stdout", "-zoom", "1", str(pdf)]).stdout.decode("utf-8", "replace")
+    fonts = set(re.findall(
+        r'<fontspec id="(\d+)"[^>]*family="(?:[A-Z]{6}\+)?(?:CMEX\d+|LMMathExtension\d+)(?:-Regular)?"', xml))
+    runs = {}
+    for number, body in re.findall(r'<page number="(\d+)"(.*?)</page>', xml, re.S):
+        for top, left, font, char in re.findall(
+                r'<text top="(-?\d+)" left="(-?\d+)"[^>]*font="(\d+)"[^>]*>(.*?)</text>', body):
+            char = html.unescape(char)
+            if font in fonts and char in CMEX_BIG_OPERATORS:
+                runs.setdefault(int(number), []).append((float(left), float(top), char))
+    if not runs:
+        return {}
+    bbox = run(["pdftotext", "-bbox", str(pdf), "-"]).stdout.decode("utf-8", "replace")
+    corrections = {}
+    for number, body in enumerate(re.findall(r"<page [^>]*>(.*?)</page>", bbox, re.S), 1):
+        words = [(float(x0), float(y0), float(x1), float(y1), html.unescape(w)) for x0, y0, x1, y1, w in re.findall(
+            r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</word>', body)]
+        for left, top, char in runs.get(number, []):
+            for index, (x0, y0, x1, y1, word) in enumerate(words):
+                if x0 - 1 <= left <= x1 and y0 - 1 <= top <= y1 and char in word:
+                    joined = [word + "".join(w[4] for w in words[index + 1:index + 1 + k]) for k in range(3)]
+                    corrections.setdefault(number, []).append(
+                        ({j: j.replace(char, CMEX_BIG_OPERATORS[char], 1) for j in joined}))
+                    break
+    return corrections
+
+
+def correct_words(words, hits):
+    """Each hit corrects the first remaining word it names; other words stay as extracted."""
+    pending, out = list(hits), []
+    for word in words:
+        hit = next((h for h in pending if word in h), None)
+        if hit is not None:
+            pending.remove(hit)
+            word = hit[word]
+        out.append(word)
+    return out
+
+
+def page_texts(pdf, pages, reference=False):
     texts = []
+    corrections = cmex_corrections(pdf) if reference else {}
     for page in range(1, pages + 1):
         proc = run(["pdftotext", "-f", str(page), "-l", str(page), str(pdf), "-"])
+        words = correct_words(proc.stdout.decode("utf-8", "replace").split(), corrections.get(page, []))
         # NFKC + casefold: ligature code points and small-caps ActualText are not content changes.
-        text = unicodedata.normalize("NFKC", proc.stdout.decode("utf-8", "replace")).casefold()
+        text = unicodedata.normalize("NFKC", " ".join(words)).casefold()
         texts.append(text.split())
     return texts
 
@@ -241,7 +312,7 @@ def log_counts(log):
 def compare(reference, builtin, dpi, scratch):
     ref_pages, out_pages = page_count(reference), page_count(builtin)
     common = min(ref_pages, out_pages)
-    ref_text, out_text = page_texts(reference, ref_pages), page_texts(builtin, out_pages)
+    ref_text, out_text = page_texts(reference, ref_pages, reference=True), page_texts(builtin, out_pages)
     text = [difflib.SequenceMatcher(None, ref_text[i], out_text[i], autojunk=False).ratio()
             for i in range(common)] + [0.0] * abs(ref_pages - out_pages)
     ref_raster, out_raster = rasters(reference, dpi, scratch / "ref"), rasters(builtin, dpi, scratch / "out")
@@ -361,6 +432,7 @@ def self_test():
         assert ink_rows(*read_pgm(path)) == [0b101, 0b100]
     assert program_of("% !TEX program = xelatex\n") == "xelatex"
     assert program_of("\\documentclass{article}") == "pdflatex"
+    assert correct_words(["Proof", "X", "Pn", "X"], [{"X": "∑"}, {"P": "∑", "Pn": "∑n"}]) == ["Proof", "∑", "∑n", "X"]
     print("self-test ok")
 
 
