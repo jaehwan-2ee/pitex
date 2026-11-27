@@ -1,7 +1,7 @@
 //! Session start cost through the long-lived preview protocol. A cold build
 //! whose AUX and TOC files appear in the first pass must still rerun to resolve
 //! references, but the rerun resumes the running engine at `\begin{document}`
-//! instead of launching a new one, and the TeX Live file list is asked of
+//! instead of launching a new one (Linux), and the TeX Live file list is asked of
 //! kpsewhich once per session rather than once per process.
 use pitex_native_tools::{
     preview_regression::{self, Session},
@@ -109,10 +109,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     if !log.contains("[rerun]") {
         return Err(format!("no auxiliary rerun: {log}").into());
     }
+    // macOS takes no checkpoint before the first page is output (platform
+    // fonts are not fork-safe there), so its AUX rerun still starts afresh.
     let launches = log.matches("[process] launched").count();
-    if launches != 1 {
-        return Err(format!("the AUX rerun launched {launches} engine processes, expected 1").into());
+    if launches != if cfg!(target_os = "macos") { 2 } else { 1 } {
+        return Err(format!("the AUX rerun launched {launches} engine processes").into());
     }
+    // Each launch would list ls-R again without the driver's exported list.
     if calls != 1 {
         return Err(format!("kpsewhich listed ls-R {calls} times in one session, expected 1").into());
     }
