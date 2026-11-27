@@ -36,7 +36,7 @@
    "license_in_file": "n/a (documentation)",
    "origin": "pitex",
    "path": "COMPATIBILITY.md",
-   "sha256": "209faed2703d42281089912a7992d3a4474de5d4e39288bfdf27e19dadb7246a"
+   "sha256": "6468d94e286d06c6d8ceb5337ec89ad5cb70bfca6abff2871f9ab4e13b9fc478"
   },
   {
    "license_in_file": "none-in-file",
@@ -60,7 +60,7 @@
    "license_in_file": "n/a (documentation)",
    "origin": "pitex",
    "path": "PROTOCOL.md",
-   "sha256": "399fbf61c18e8eeb5556970e2ba2d9c59facb21ad3ff8b6bf1a826e0c8a201ce"
+   "sha256": "375f52ca2160823894a77ca1d1691e1d703697c8ba7a1ceb790a3d54d61ea6ec"
   },
   {
    "license_in_file": "n/a (documentation)",
@@ -132,7 +132,7 @@
    "license_in_file": "none-in-file",
    "origin": "pitex",
    "path": "build.rs",
-   "sha256": "0c66f4445b02c8b76fd28f6cb3ae69577678046113e2dd05b3a6522c2275be8f"
+   "sha256": "fa0d8fe458adc17cd1ff09093b8a8465600b0f0173457787dcdb4fd996eed528"
   },
   {
    "license_in_file": "none-in-file",
@@ -227,6 +227,12 @@
    "origin": "pitex",
    "path": "driver/xdv2pdf.h",
    "sha256": "38449645e9cc17ca326d75a09d00d0d388d0c76e35109fd0320b890d41ac160b"
+  },
+  {
+   "license_in_file": "none-in-file",
+   "origin": "pitex",
+   "path": "format/pitex-pdflatex.ini",
+   "sha256": "404c759202d7b44713e852618432b55bb6c72dc192fe4751e023444dd5b6ed92"
   },
   {
    "license_in_file": "none-in-file",
@@ -581,7 +587,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/xdv.rs",
-   "sha256": "ba8abf732ea54d26128b8336389582dd6e0bbfdf31c7e0fd5e9914b861eed097",
+   "sha256": "9abe134f4ad5e1180c533734794f251c3096c74397f6b060ce1d2bb857aa1a0f",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv.c",
@@ -593,7 +599,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/xdv2pdf.rs",
-   "sha256": "02fc40422368793218b4c229474179118d3bab886201f1b906fc9066bb1e5aa5",
+   "sha256": "e7a43717840f63de05a954d8146930bfff9785f69b7b8a43b98daa547e02b488",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -734,7 +740,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_ini.rs",
-   "sha256": "8242dd2905c8c78cdb5dee953f67708dd255098bda88323cb7489d88fb46dcff",
+   "sha256": "d907140f562f9f80e8541bd35da3382f30151b00024b59c8b158d5fed8ba3777",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-ini.c",
@@ -878,7 +884,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_shipout.rs",
-   "sha256": "10a19f76be944df5a5be9d60dc69d9c535e2bbdef3a3df78cfaa632761a9acd1",
+   "sha256": "3e4cb50cef58c7fc9b0a97dc162634bb735582dd96c8bbb329e1842610e005dd",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-shipout.c",
@@ -942,7 +948,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_xetex0.rs",
-   "sha256": "d95ebc01954dd32ca904a5693b37ba9209896e1e4f65f26676417fada385fc64",
+   "sha256": "3cd926d7b03cbc74028bbeb440923ea7d369babc1b6a1a0c71601cd65930d0b5",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-xetex0.c",
@@ -990,7 +996,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/main/main.rs",
-   "sha256": "de322a9211cd3a8111a8f19f085c41649fc6bca3e82e97191ebacb70529123c4",
+   "sha256": "a6705f240091c1e11b1490b5fa13a4fad5fb94f2a10e8c6d8c7ea6d466eefe96",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/main/main.c",
@@ -1190,7 +1196,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/xdv.rs",
-   "sha256": "80baf83649a054ff3eec97f1f99224bb2b4d99d021012098fd53a3b938f62ec4",
+   "sha256": "f0a02307ebd0dc8f47ea06dcb0678895efa8a6a011999141190c3ce9ab4d77fe",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv.c",
@@ -1202,7 +1208,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/xdv2pdf.rs",
-   "sha256": "bdf484aa1388f948e752463f46702d6725227c2898420fde25e5c1bbe81a4236",
+   "sha256": "0ac723bdac57a86a97be68cde39e20868ec83e5fc5b367a59516e232f6c99489",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -1343,7 +1349,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_ini.rs",
-   "sha256": "1199bb7ffe0e9b57dc6020fb43eb39683dd7829e2960234f1c2bc9e293c38b72",
+   "sha256": "bb64b26faaed0a8a94ad1e8bd23ac686f8264d0c0f5dcd1037383274a1fa2977",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-ini.c",
@@ -1487,7 +1493,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_shipout.rs",
-   "sha256": "75686bd28a90d2777a54e3cb8e9420aef30a053836b08e9fecc653cad69bc5f0",
+   "sha256": "7d29c9a76df6a993a3f67a7a6decb53ffdffc4a8fa7f2c78bdeeda190f539b07",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-shipout.c",
@@ -1551,7 +1557,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_xetex0.rs",
-   "sha256": "7f12c0bf4fb81223c31328066656760d014053b82f9e42968b7129426655deb5",
+   "sha256": "af4e22e0780e8f6332582bc0d0cf14146b0d48785edc71dd9712092708514237",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-xetex0.c",
@@ -1599,7 +1605,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/main/main.rs",
-   "sha256": "3a5944d0d16a29f0d28169a6763a0433e91f4667f7f848701fe89be6a3f5fd65",
+   "sha256": "fa035f053a66a8d6f7c36ec509cb1571ad59b5a637844bf100145ec62948e252",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/main/main.c",
@@ -1688,13 +1694,13 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/embedded_aux.rs",
-   "sha256": "66de6b212c188264657b773fe77b5a5297a1bdb317dc75197cbd201296bbd77a"
+   "sha256": "c1e2a36d88326c704330d80f68021317011aa96dee27285d1f7f3d6f8be9bbd4"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/engine_fonts.rs",
-   "sha256": "708bce5539b44d850a5269c514e13a87e9bf9a0e308094144aa541155b874d95"
+   "sha256": "8d0dd50de6cb0268781fc5cf0e5b3c1a14bd763d9e0873a6828be9f626dedf6f"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",

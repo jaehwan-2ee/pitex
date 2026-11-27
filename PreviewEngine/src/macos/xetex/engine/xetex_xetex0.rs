@@ -23307,6 +23307,18 @@ fn pitex_pdf_string(value: &str) -> String {
     format!("({})", value.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)"))
 }
 
+// \pdfcatalog's openaction: user <text> or goto (page <n> <text> | name <text> | num <n>).
+unsafe fn pitex_pdf_open_action() -> String {
+    if scan_keyword(b"user\0".as_ptr().cast()) { return pitex_scan_pdf_text(); }
+    scan_keyword(b"goto\0".as_ptr().cast());
+    if scan_keyword(b"page\0".as_ptr().cast()) {
+        scan_int();
+        let page = cur_val;
+        return format!("<< /S /GoTo /D [ @page{} {} ] >>", page, pitex_scan_pdf_text());
+    }
+    format!("<< /S /GoTo /D {} >>", pitex_pdf_destination_name())
+}
+
 unsafe fn pitex_pdf_destination_name() -> String {
     if scan_keyword(b"name\0".as_ptr().cast()) { pitex_pdf_string(&pitex_scan_pdf_text()) }
     else {
@@ -23800,7 +23812,10 @@ unsafe fn pitex_pdf_extension(code: int32_t) {
         }
         104 => {
             let body = pitex_scan_pdf_text();
-            pitex_append_global_special(&format!("pdf:pdftexcatalog << {} >>", body));
+            let open_action = if scan_keyword(b"openaction\0".as_ptr().cast()) {
+                format!(" /OpenAction {}", pitex_pdf_open_action())
+            } else { String::new() };
+            pitex_append_global_special(&format!("pdf:pdftexcatalog << {}{} >>", body, open_action));
         }
         105 => pitex_append_special("pdf:literal direct q"),
         106 => pitex_append_special("pdf:literal direct Q"),

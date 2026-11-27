@@ -3108,6 +3108,15 @@ pub unsafe extern "C" fn finalize_dvi_file() {
     if cur_s == -(2 as int32_t) {
         return;
     }
+    // Objects defined after the last shipout (\immediate\pdfobj in \AtEndDocument
+    // or pgf's end-of-job resources) go between the last page and the postamble.
+    for index in 0..pitex_global_special_count() {
+        let text = std::ffi::CStr::from_ptr(pitex_global_special_at(index)).to_bytes();
+        dvi_out(XXX4 as eight_bits);
+        dvi_four(text.len() as int32_t);
+        for byte in text { dvi_out(*byte as eight_bits); }
+    }
+    pitex_global_specials_clear();
     dvi_out(POST as eight_bits);
     dvi_four(last_bop);
     last_bop = dvi_offset + dvi_ptr - 5 as int32_t;

@@ -2845,7 +2845,9 @@ pub unsafe extern "C" fn prefixed_command() {
                 break;
             }
         }
-        if cur_cmd as ::core::ffi::c_int <= MAX_NON_PREFIXED_COMMAND {
+        if cur_cmd as ::core::ffi::c_int <= MAX_NON_PREFIXED_COMMAND
+            && !crate::engine_fonts::accepts_prefix(cur_cmd as i32, cur_chr)
+        {
             error_here_with_diagnostic(
                 b"You can't use a prefix with `\0" as *const u8 as *const ::core::ffi::c_char,
             );
@@ -2911,6 +2913,7 @@ pub unsafe extern "C" fn prefixed_command() {
         }
     }
     match cur_cmd as ::core::ffi::c_int {
+        EXTENSION => crate::engine_fonts::define_font_copy(cur_chr, a as ::core::ffi::c_int >= 4),
         SET_FONT => {
             if a as ::core::ffi::c_int >= 4 as ::core::ffi::c_int {
                 geq_define(CUR_FONT_LOC as int32_t, DATA as uint16_t, cur_chr);

@@ -70,6 +70,8 @@ pub struct xdv_index {
     pub npages: ::core::ffi::c_int,
     pub cap: ::core::ffi::c_int,
     pub broken: bool,
+    /// Offset of the postamble; 0 until it is indexed.
+    pub post: size_t,
 }
 pub const true_0: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const false_0: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
@@ -371,6 +373,7 @@ pub unsafe extern "C" fn xdv_index_update(
         }
         (*x).in_page = false_0 != 0;
         (*x).broken = false_0 != 0;
+        (*x).post = 0;
         if (*x).npages > 0 as ::core::ffi::c_int {
             (*x).scan = (*(*x)
                 .pages
@@ -386,6 +389,12 @@ pub unsafe extern "C" fn xdv_index_update(
     let mut end: *const ::core::ffi::c_uchar = data.offset(len as isize);
     while (*x).scan < len {
         let mut p: *const ::core::ffi::c_uchar = data.offset((*x).scan as isize);
+        // The postamble has no instruction length; index stops there.
+        if (*x).have_pre && *p as ::core::ffi::c_int == DVI_POST as ::core::ffi::c_int {
+            (*x).post = (*x).scan;
+            (*x).scan = len;
+            break;
+        }
         let mut n: ::core::ffi::c_long = xdv_insn_length(p, end);
         if n == 0 as ::core::ffi::c_long {
             break;
@@ -442,13 +451,25 @@ pub unsafe extern "C" fn xdv_index_update(
                     .wrapping_add(1 as size_t);
                 (*x).npages += 1;
                 (*x).in_page = false_0 != 0;
-            } else if op == DVI_POST as ::core::ffi::c_int {
-                (*x).scan = len;
-                break;
             }
             (*x).scan = (*x).scan.wrapping_add(n as size_t);
         }
     }
+}
+/// Specials TeX wrote after the last page (objects from `\immediate\pdfobj`
+/// at the end of the job), between the last `eop` and the postamble.
+#[no_mangle]
+pub unsafe extern "C" fn xdv_index_trailer(
+    x: *const xdv_index,
+    begin: *mut size_t,
+    end: *mut size_t,
+) -> bool {
+    if (*x).post == 0 || (*x).npages == 0 {
+        return false;
+    }
+    *begin = (*(*x).pages.offset(((*x).npages - 1) as isize)).eop_end;
+    *end = (*x).post;
+    *begin < *end
 }
 #[no_mangle]
 pub unsafe extern "C" fn xdv_index_page_count(

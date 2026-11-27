@@ -18,8 +18,9 @@ The helpers implement typesetting, PDF output, bibliography generation and code 
 They delegate only to the user's TeX distribution for data: `kpsewhich`, `.sty`/`.cls`/`.tfm`/font files and hyphenation patterns.
 Installed `xelatex`, `pdflatex`, `xdvipdfmx`, BibTeX and Biber are test oracles, not fallbacks (`PreviewEngine/COMPATIBILITY.md`).
 
-The format is always XeLaTeX: `format_name = "xelatex.ini"` at `PreviewEngine/src/linux/xetex/main/main.rs:1858` and `src/macos/xetex/main/main.rs:1806`.
-A document marked `% !TEX program = pdflatex` is still typeset with XeLaTeX semantics: TU encoding, OpenType Latin Modern, `\pdfoutput=0` and the `xetex`/`dvipdfmx` package drivers.
+At the baseline the format was always XeLaTeX (`format_name = "xelatex.ini"`), so a document marked `% !TEX program = pdflatex` was typeset with XeLaTeX semantics: TU encoding, OpenType Latin Modern, `\pdfoutput=0` and the `xetex`/`dvipdfmx` package drivers.
+Since track 1A the helper builds a pdfLaTeX personality from `PreviewEngine/format/pitex-pdflatex.ini` when the project's build command runs pdflatex (`PITEX_PREVIEW_PROGRAM`, passed by the apps) or the main file says `% !TEX program = pdflatex` (`select_format` in `src/{linux,macos}/xetex/main/main.rs`).
+With the default build command (`xelatex ...`) and no magic comment, documents still use XeLaTeX.
 
 Selection:
 

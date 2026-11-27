@@ -25,6 +25,13 @@ symlinked project root) — the helper resolves them the same way.
 - `stdin`/`stdout` are pipes; `stderr` may be `/dev/null` (diagnostics go to
   `<out>/driver.log`, truncated at 8 MiB).
 - `PATH` must contain the TeX distribution (`kpsewhich`), like final builds.
+- `PITEX_PREVIEW_PROGRAM=pdflatex|xelatex` in the environment names the
+  engine of the project's build command. `pdflatex` selects the pdfLaTeX
+  personality (`format/pitex-pdflatex.ini`: 8-bit input, TFM fonts and the
+  pdftex package drivers); `xelatex` the XeLaTeX format. Without it, or with
+  another value, the main file's leading `% !TEX program = ...` comment
+  decides, and XeLaTeX is the default. The format is chosen when the helper
+  starts; restart the helper when the build engine changes.
 - `--engine` defaults to `pitex-preview-xetex` next to the helper. `--cache`
   holds the engine's own generated format (per user, e.g.
   `~/.cache/pitex/preview-engine` / `~/Library/Caches/Pitex/preview-engine`).

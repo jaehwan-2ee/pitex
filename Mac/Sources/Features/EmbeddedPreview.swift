@@ -1,7 +1,9 @@
+import BuildCore
 import BuildFeature
 import Darwin
 import DocumentSessionCore
 import Foundation
+import SettingsFeature
 import TexDomain
 
 // Embedded editing preview — the macOS client of the `pitex-preview` helper
@@ -75,6 +77,8 @@ final class EmbeddedPreviewSession: @unchecked Sendable {
     let id: UInt64
     let root: URL
     let mainRelative: String
+    /// `PITEX_PREVIEW_PROGRAM`: the build command's engine, which picks the helper's format.
+    let program: String?
     let directory: URL
     private let pid: pid_t
     /// `directory` in canonical spelling — the helper may report artifact
@@ -88,10 +92,11 @@ final class EmbeddedPreviewSession: @unchecked Sendable {
     private var shutDown = false
     private var reaped = false
 
-    private init(id: UInt64, root: URL, mainRelative: String, directory: URL, pid: pid_t, input: Int32) {
+    private init(id: UInt64, root: URL, mainRelative: String, program: String?, directory: URL, pid: pid_t, input: Int32) {
         self.id = id
         self.root = root
         self.mainRelative = mainRelative
+        self.program = program
         self.directory = directory
         self.pid = pid
         writer = EmbeddedPreviewWriter(fileDescriptor: input)
@@ -137,7 +142,7 @@ final class EmbeddedPreviewSession: @unchecked Sendable {
     /// Starts the helper. `deliver` receives events in order on the reader
     /// thread; the PDF bytes of a publication are already read.
     static func launch(
-        id: UInt64, helper: URL, root: URL, mainRelative: String,
+        id: UInt64, helper: URL, root: URL, mainRelative: String, program: String?,
         directory: URL, cache: URL,
         deliver: @escaping @Sendable (EmbeddedPreviewEvent) -> Void
     ) throws -> EmbeddedPreviewSession {
@@ -183,6 +188,7 @@ final class EmbeddedPreviewSession: @unchecked Sendable {
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
             + ":/Library/TeX/texbin:/opt/homebrew/bin:/usr/local/bin"
+        environment["PITEX_PREVIEW_PROGRAM"] = program
         // Canonical root: the driver realpaths it and prefix-matches the
         // (equally canonical) override paths under it — the client must
         // spell the same POSIX identity, not an alias like /tmp for
@@ -209,7 +215,8 @@ final class EmbeddedPreviewSession: @unchecked Sendable {
             throw EmbeddedPreviewError.spawnFailed(code)
         }
         let session = EmbeddedPreviewSession(
-            id: id, root: root, mainRelative: mainRelative, directory: directory, pid: pid, input: toChild[1]
+            id: id, root: root, mainRelative: mainRelative, program: program, directory: directory, pid: pid,
+            input: toChild[1]
         )
         let output = fromChild[0]
         let reader = Thread { session.read(output, deliver: deliver) }
@@ -610,9 +617,16 @@ extension WorkspaceModel {
         if let session = state.session, session.mainRelative != main || session.root != root {
             stopEmbeddedPreview(resetContext: true)
         }
+        // The helper typesets with the engine the manual build runs; its format is fixed at launch.
+        let program = ExactEquationProfile.resolve(
+            buildCommand: settings.settings.build.buildCommand(field: buildCommandText)
+        )?.engine.rawValue
+        if let session = state.session, session.program != program {
+            stopEmbeddedPreview(resetContext: false)
+        }
         if state.session == nil {
             do {
-                try startEmbeddedPreviewSession(root: root, main: main)
+                try startEmbeddedPreviewSession(root: root, main: main, program: program)
             } catch {
                 setEmbeddedPreviewStatus(.unavailable(error.localizedDescription))
                 return
@@ -640,7 +654,7 @@ extension WorkspaceModel {
         setEmbeddedPreviewStatus(.updating)
     }
 
-    private func startEmbeddedPreviewSession(root: URL, main: String) throws {
+    private func startEmbeddedPreviewSession(root: URL, main: String, program: String?) throws {
         guard let helper = EmbeddedPreviewSession.helperURL() else { throw EmbeddedPreviewError.helperMissing }
         let files = FileManager.default
         let sessionRoot = try EmbeddedPreviewSession.prepareSessionRoot()
@@ -655,7 +669,7 @@ extension WorkspaceModel {
         let sink = EmbeddedPreviewEventSink(workspace: self, session: id)
         do {
             embeddedPreview.session = try EmbeddedPreviewSession.launch(
-                id: id, helper: helper, root: root, mainRelative: main,
+                id: id, helper: helper, root: root, mainRelative: main, program: program,
                 directory: directory, cache: cache, deliver: { sink.deliver($0) }
             )
         } catch {

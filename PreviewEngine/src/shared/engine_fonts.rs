@@ -338,6 +338,28 @@ pub unsafe fn new_letterspaced_font(source: i32, amount: i32) -> i32 {
     }
     target
 }
+// pdfTeX defines \pdfcopyfont and \letterspacefont like \font, so they take \global.
+pub fn accepts_prefix(command: i32, code: i32) -> bool {
+    command == tex::EXTENSION && matches!(code, 131 | 132)
+}
+pub unsafe fn define_font_copy(code: i32, global: bool) {
+    tex::get_r_token();
+    let control = state::cur_cs;
+    tex::scan_optional_equals();
+    tex::scan_font_ident();
+    let source = state::cur_val;
+    let target = if code == 132 {
+        tex::scan_int();
+        new_letterspaced_font(source, state::cur_val)
+    } else {
+        new_letterspaced_font(source, 0)
+    };
+    if global {
+        tex::geq_define(control, tex::SET_FONT as u16, target);
+    } else {
+        tex::eq_define(control, tex::SET_FONT as u16, target);
+    }
+}
 pub unsafe fn extension(code: i32) {
     match code {
         130 => {
@@ -352,20 +374,7 @@ pub unsafe fn extension(code: i32) {
             tex::scan_keyword(b"autoexpand\0".as_ptr().cast());
             set_expansion(font, stretch, shrink, step);
         }
-        131 | 132 => {
-            tex::get_r_token();
-            let control = state::cur_cs;
-            tex::scan_optional_equals();
-            tex::scan_font_ident();
-            let source = state::cur_val;
-            let target = if code == 132 {
-                tex::scan_int();
-                new_letterspaced_font(source, state::cur_val)
-            } else {
-                new_letterspaced_font(source, 0)
-            };
-            tex::eq_define(control, tex::SET_FONT as u16, target);
-        }
+        131 | 132 => define_font_copy(code, false),
         133 => {
             tex::scan_font_ident();
             disable_ligatures(state::cur_val);

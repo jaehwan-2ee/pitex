@@ -1702,6 +1702,10 @@ unsafe extern "C" fn validate_format() -> bool {
     return result;
 }
 unsafe extern "C" fn bootstrap_format() -> bool {
+    let source = format_source();
+    if source.is_null() {
+        return false;
+    }
     let mut path: *const ::core::ffi::c_char = format_path(
         b".deps\0" as *const u8 as *const ::core::ffi::c_char,
     );
@@ -1723,7 +1727,7 @@ unsafe extern "C" fn bootstrap_format() -> bool {
         return 0 as ::core::ffi::c_int != 0;
     }
     in_initex_mode = true_0 != 0;
-    primary_document = format_name;
+    primary_document = source;
     let mut result: tt_history_t = tt_run_engine(
         b"texpresso.fmt\0" as *const u8 as *const ::core::ffi::c_char,
         format_name,
@@ -1855,7 +1859,7 @@ unsafe fn main_0(
         return 1 as ::core::ffi::c_int;
     }
     fprintf(stderr, b"Using TeX Live.\n\0" as *const u8 as *const ::core::ffi::c_char);
-    format_name = b"xelatex.ini\0" as *const u8 as *const ::core::ffi::c_char;
+    select_format(doc_path);
     lock_format();
     if !validate_format() && !bootstrap_format() {
         fprintf(
@@ -1971,6 +1975,95 @@ unsafe fn main_0(
         return 0 as ::core::ffi::c_int;
     }
     return 1 as ::core::ffi::c_int;
+}
+// pdfLaTeX personality (format/pitex-pdflatex.ini) for documents whose build
+// runs pdflatex; everything else keeps the XeLaTeX format.
+const PDFLATEX_INI: &str = include_str!("../../../../format/pitex-pdflatex.ini");
+
+/// The app passes the engine of the project's build command in
+/// PITEX_PREVIEW_PROGRAM; without it, the document's `% !TEX program` line decides.
+fn wants_pdflatex(requested: Option<&str>, source: &[u8]) -> bool {
+    match requested {
+        Some("pdflatex") => true,
+        Some("xelatex") => false,
+        _ => magic_program(source).as_deref() == Some("pdflatex"),
+    }
+}
+
+/// `% !TEX program = x` or `% !TEX TS-program = x` among the leading comment lines.
+fn magic_program(source: &[u8]) -> Option<String> {
+    for line in String::from_utf8_lossy(source).lines() {
+        let line = line.trim().to_ascii_lowercase();
+        if line.is_empty() {
+            continue;
+        }
+        let comment = line.strip_prefix('%')?;
+        let Some(rest) = comment.trim_start().strip_prefix("!tex") else { continue };
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix("ts-").unwrap_or(rest);
+        let Some(value) = rest.strip_prefix("program").and_then(|r| r.trim_start().strip_prefix('=')) else {
+            continue;
+        };
+        return value.split_whitespace().next().map(str::to_string);
+    }
+    None
+}
+
+unsafe fn select_format(doc_path: *const ::core::ffi::c_char) {
+    use std::io::Read;
+    let mut source = Vec::new();
+    if !doc_path.is_null() {
+        let path = std::ffi::CStr::from_ptr(doc_path).to_string_lossy().into_owned();
+        if let Ok(file) = std::fs::File::open(path) {
+            let _ = file.take(64 * 1024).read_to_end(&mut source);
+        }
+    }
+    let requested = std::env::var("PITEX_PREVIEW_PROGRAM").ok();
+    format_name = if wants_pdflatex(requested.as_deref(), &source) {
+        b"pitex-pdflatex.ini\0".as_ptr().cast()
+    } else {
+        b"xelatex.ini\0".as_ptr().cast()
+    };
+}
+
+/// The format's source: TeX Live's xelatex.ini, or the embedded pdfLaTeX ini
+/// written next to the cached format.
+unsafe fn format_source() -> *const ::core::ffi::c_char {
+    if std::ffi::CStr::from_ptr(format_name).to_bytes() != b"pitex-pdflatex.ini" {
+        return format_name;
+    }
+    let path = format_path(b"-source.ini\0".as_ptr().cast());
+    if path.is_null() {
+        return ::core::ptr::null();
+    }
+    let path = std::ffi::CStr::from_ptr(path).to_owned();
+    if std::fs::write(std::ffi::OsStr::from_encoded_bytes_unchecked(path.to_bytes()), PDFLATEX_INI).is_err() {
+        return ::core::ptr::null();
+    }
+    path.into_raw()
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn build_program_overrides_the_magic_comment() {
+        let pdf = b"% !TEX program = pdflatex\n\\documentclass{article}";
+        assert!(wants_pdflatex(None, pdf));
+        assert!(!wants_pdflatex(Some("xelatex"), pdf));
+        assert!(wants_pdflatex(Some("pdflatex"), b"\\documentclass{article}"));
+        assert!(!wants_pdflatex(None, b"\\documentclass{article}"));
+        assert!(!wants_pdflatex(Some("lualatex"), b"\\documentclass{article}"));
+    }
+
+    #[test]
+    fn magic_comment_spellings() {
+        assert_eq!(magic_program(b"%!TEX program=pdflatex\n").as_deref(), Some("pdflatex"));
+        assert_eq!(magic_program(b"% !TeX TS-program = XeLaTeX\n").as_deref(), Some("xelatex"));
+        assert_eq!(magic_program(b"\n% intro\n% !TEX encoding = UTF-8\n% !TEX program = pdflatex\n").as_deref(), Some("pdflatex"));
+        assert_eq!(magic_program(b"\\documentclass{article}\n% !TEX program = pdflatex\n"), None);
+    }
 }
 pub const TECTONIC_FORMAT_VERSION: ::core::ffi::c_int = 36 as ::core::ffi::c_int;
 pub const O_RDWR: ::core::ffi::c_int = 0o2 as ::core::ffi::c_int;

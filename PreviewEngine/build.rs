@@ -53,6 +53,9 @@ fn main() {
         println!("cargo:rerun-if-changed={}",path.display());
         if let Ok(bytes)=fs::read(path) {for byte in bytes {fingerprint ^= byte as u64;fingerprint = fingerprint.wrapping_mul(0x100000001b3);}}
     }
+    // The embedded pdfLaTeX format source changes the dumped format too.
+    println!("cargo:rerun-if-changed=format/pitex-pdflatex.ini");
+    for byte in fs::read("format/pitex-pdflatex.ini").expect("pdfLaTeX format source") {fingerprint ^= byte as u64;fingerprint = fingerprint.wrapping_mul(0x100000001b3);}
     println!("cargo:rustc-env=PITEX_PREVIEW_FORMAT_SCHEMA={fingerprint:016x}");
     for variable in [
         "CXX",

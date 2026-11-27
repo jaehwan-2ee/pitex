@@ -25,8 +25,9 @@ Its [report](compatibility/pdftex-vocabulary-report.json) records the helper has
 Regenerate it after rebuilding the helpers; an older report cannot describe a newer binary.
 Registration or a successful `\meaning` query does not verify argument scanning, typography or output behavior.
 
-Three identity names remain deliberately unavailable: `pdftexbanner`, `pdftexrevision` and `pdftexversion`.
+Three identity names remain deliberately unavailable as primitives: `pdftexbanner`, `pdftexrevision` and `pdftexversion`.
 The engine reports its real XeTeX identity instead of claiming to be pdfTeX.
+The pdfLaTeX personality (below) defines them as format macros so packages take their pdfTeX paths.
 The audit rejects evidence links on these names.
 
 ### Semantic evidence
@@ -62,7 +63,7 @@ These native behaviors differ from pdfLaTeX and are outside the tested levels:
 
 | Command | Native behavior |
 |---|---|
-| `pdfoutput` | Stays 0, so XeTeX-aware packages keep their xdvipdfmx paths; pdfLaTeX sets 1 |
+| `pdfoutput` | Stays 0 in the XeLaTeX format, so XeTeX-aware packages keep their xdvipdfmx paths; the pdfLaTeX personality sets 1 like pdfLaTeX |
 | `pdfobj`, `pdfrefobj` | Every object is written, with or without `\immediate` or `\pdfrefobj`; pdfTeX omits unreferenced non-immediate objects |
 | `pdfxform`, `pdfpageresources` | Resource text merges only standard resource categories; other keys are dropped |
 | `pdfxform` | Form bounding boxes use the box baseline as origin, where pdfTeX uses the lower edge; placement matches |
@@ -71,6 +72,14 @@ These native behaviors differ from pdfLaTeX and are outside the tested levels:
 | `pdftrailerid` | Without `\pdftrailerid`, no `/ID` is written; pdfTeX derives one from the time and file name |
 | `pdfdecimaldigits` | Applies to text coordinates; page boxes are written with up to six decimal places |
 | `pdfadjustspacing`, `pdffontexpand` | Expansion can choose different paragraph breaks (see below) |
+
+## pdfLaTeX personality
+
+When the project's build command runs pdflatex (`PITEX_PREVIEW_PROGRAM`, see [PROTOCOL.md](PROTOCOL.md)) or the main file says `% !TEX program = pdflatex`, the helper builds its format from [format/pitex-pdflatex.ini](format/pitex-pdflatex.ini) instead of `xelatex.ini`.
+That format reads input as bytes, loads `pdftexconfig.tex`, defines the three identity names, and removes every `XeTeX*` and `U*` primitive before `latex.ltx`.
+LaTeX then decodes UTF-8 with inputenc, uses OT1/T1 TFM fonts, and packages load their pdftex drivers (`hpdftex.def`, `pdftex.def`, `l3backend-pdftex.def`), which the backported pdfTeX commands implement.
+Hyphenation patterns are the UTF-8 ones a Unicode engine loads, so non-ASCII hyphenation can differ from pdfLaTeX's 8-bit patterns.
+The core remains XeTeX; fontspec and other XeTeX-only packages stop with their usual "requires XeTeX or LuaTeX" error, as under pdfLaTeX.
 
 ## Implemented interfaces
 
