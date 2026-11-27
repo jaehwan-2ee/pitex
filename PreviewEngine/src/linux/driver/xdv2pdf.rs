@@ -11,6 +11,8 @@ mod postscript_pdf;
 mod bitmap_fonts;
 #[path = "../../shared/font_output.rs"]
 mod font_output;
+#[path = "../../shared/font_subset.rs"]
+mod font_subset;
 
 /* Pitex embedded preview engine — XDV to PDF conversion.
  *
@@ -19,10 +21,7 @@ mod font_output;
  * LaTeX xetex drivers (graphics-def xetex.def, pgfsys-dvipdfmx/xetex.def),
  * producing a self-contained PDF. Independently written from the published
  * format descriptions and driver sources' documented special syntax; no
- * xdvipdfmx/dvipdfmx or MuPDF code. Pitex-authored (AGPL-3.0-or-later).
- *
- * ponytail: fonts are embedded whole (no subsetting) and compressed once
- * per session; subset them if very large CJK fonts make publishing slow. */
+ * xdvipdfmx/dvipdfmx or MuPDF code. Pitex-authored (AGPL-3.0-or-later). */
 // Translated from driver/xdv2pdf.c with C2Rust 0.22.1.
 extern "C" {
     fn font_map_reset(fc:*mut font_cache);
@@ -324,6 +323,7 @@ pub struct xdv2pdf {
     pub fonts: *mut font_cache,
     pub images: *mut cached_image,
     pub epoch: ::core::ffi::c_int,
+    pub subsets: *mut font_subset::Cache,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -5265,17 +5265,8 @@ unsafe extern "C" fn write_form(
 }
 unsafe extern "C" fn write_native_font(mut c: *mut conv_ctx, mut p: *mut pdf_font) {
     let mut f: *mut native_face = (*p).nf;
-    if (*f).deflated.len == 0 {
-        pbuf_deflate(
-            &raw mut (*f).deflated,
-            (*f).sfnt,
-            (*f).sfnt_len,
-            6 as ::core::ffi::c_int,
-        );
-    }
     let mut desc: ::core::ffi::c_int = pdfw_alloc((*c).pw);
-    let mut fd: ::core::ffi::c_int = pdfw_alloc((*c).pw);
-    let mut ff: ::core::ffi::c_int = pdfw_alloc((*c).pw);
+    let fd = font_subset::native_descriptor(c, p);
     let mut tu: ::core::ffi::c_int = if font_output::allow_unicode(c,p) {pdfw_alloc((*c).pw)} else {0};
     let mut o: *mut pbuf = pdfw_out((*c).pw);
     pdfw_begin((*c).pw, (*p).obj);
@@ -5342,60 +5333,6 @@ unsafe extern "C" fn write_native_font(mut c: *mut conv_ctx, mut p: *mut pdf_fon
     }
     pbuf_puts(o, b"]>>\0" as *const u8 as *const ::core::ffi::c_char);
     pdfw_end((*c).pw);
-    pdfw_begin((*c).pw, fd);
-    pbuf_puts(
-        o,
-        b"<</Type/FontDescriptor/FontName\0" as *const u8 as *const ::core::ffi::c_char,
-    );
-    pdfw_name(o, &raw mut (*f).psname as *mut ::core::ffi::c_char);
-    pbuf_puts(o, b"/Flags 4/FontBBox[\0" as *const u8 as *const ::core::ffi::c_char);
-    let mut i: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-    while i < 4 as ::core::ffi::c_int {
-        pbuf_real(o, (*f).bbox[i as usize]);
-        pbuf_putc(o, if i < 3 as ::core::ffi::c_int { ' ' as i32 } else { ']' as i32 });
-        i += 1;
-    }
-    pbuf_puts(o, b"/ItalicAngle \0" as *const u8 as *const ::core::ffi::c_char);
-    pbuf_real(o, (*f).italic_angle);
-    pbuf_puts(o, b"/Ascent \0" as *const u8 as *const ::core::ffi::c_char);
-    pbuf_real(o, (*f).ascent);
-    pbuf_puts(o, b"/Descent \0" as *const u8 as *const ::core::ffi::c_char);
-    pbuf_real(o, (*f).descent);
-    pbuf_puts(o, b"/CapHeight \0" as *const u8 as *const ::core::ffi::c_char);
-    pbuf_real(o, (*f).cap_height);
-    pbuf_printf(
-        o,
-        b"/StemV 80/%s %d 0 R>>\0" as *const u8 as *const ::core::ffi::c_char,
-        if (*f).cff as ::core::ffi::c_int != 0 {
-            b"FontFile3\0" as *const u8 as *const ::core::ffi::c_char
-        } else {
-            b"FontFile2\0" as *const u8 as *const ::core::ffi::c_char
-        },
-        ff,
-    );
-    pdfw_end((*c).pw);
-    let mut dict: [::core::ffi::c_char; 96] = [0; 96];
-    if (*f).cff {
-        snprintf(
-            &raw mut dict as *mut ::core::ffi::c_char,
-            ::core::mem::size_of::<[::core::ffi::c_char; 96]>() as size_t,
-            b"/Subtype/OpenType\0" as *const u8 as *const ::core::ffi::c_char,
-        );
-    } else {
-        snprintf(
-            &raw mut dict as *mut ::core::ffi::c_char,
-            ::core::mem::size_of::<[::core::ffi::c_char; 96]>() as size_t,
-            b"/Length1 %zu\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).sfnt_len,
-        );
-    }
-    pdfw_stream_deflated(
-        (*c).pw,
-        ff,
-        &raw mut dict as *mut ::core::ffi::c_char,
-        (*f).deflated.data as *const ::core::ffi::c_void,
-        (*f).deflated.len,
-    );
     if tu>0 {
     let mut cmap: pbuf = pbuf {
         data: ::core::ptr::null_mut::<::core::ffi::c_uchar>(),
@@ -5480,14 +5417,6 @@ unsafe extern "C" fn write_native_font(mut c: *mut conv_ctx, mut p: *mut pdf_fon
 }
 unsafe extern "C" fn write_type1_font(mut c: *mut conv_ctx, mut p: *mut pdf_font) {
     let mut t: *mut type1_font = (*p).t1;
-    if (*t).deflated.len == 0 {
-        pbuf_deflate(
-            &raw mut (*t).deflated,
-            (*t).data,
-            (*t).len1.wrapping_add((*t).len2).wrapping_add((*t).len3),
-            6 as ::core::ffi::c_int,
-        );
-    }
     let mut first: ::core::ffi::c_int = 256 as ::core::ffi::c_int;
     let mut last: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
     let mut i: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
@@ -5504,8 +5433,7 @@ unsafe extern "C" fn write_type1_font(mut c: *mut conv_ctx, mut p: *mut pdf_font
         last = 0 as ::core::ffi::c_int;
         first = last;
     }
-    let mut fd: ::core::ffi::c_int = pdfw_alloc((*c).pw);
-    let mut ff: ::core::ffi::c_int = pdfw_alloc((*c).pw);
+    let fd = font_subset::type1_descriptor(c, p);
     let mut o: *mut pbuf = pdfw_out((*c).pw);
     let unicode = backend_options::type1_unicode(c,p);
     pdfw_begin((*c).pw, (*p).obj);
@@ -5574,52 +5502,6 @@ unsafe extern "C" fn write_type1_font(mut c: *mut conv_ctx, mut p: *mut pdf_font
     font_output::attributes(c,p,o);
     pbuf_puts(o, b">>\0" as *const u8 as *const ::core::ffi::c_char);
     pdfw_end((*c).pw);
-    pdfw_begin((*c).pw, fd);
-    pbuf_puts(
-        o,
-        b"<</Type/FontDescriptor/FontName\0" as *const u8 as *const ::core::ffi::c_char,
-    );
-    pdfw_name(o, &raw mut (*t).fontname as *mut ::core::ffi::c_char);
-    pbuf_puts(o, b"/Flags 4/FontBBox[\0" as *const u8 as *const ::core::ffi::c_char);
-    let mut i_2: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-    while i_2 < 4 as ::core::ffi::c_int {
-        pbuf_real(o, (*t).bbox[i_2 as usize]);
-        pbuf_putc(
-            o,
-            if i_2 < 3 as ::core::ffi::c_int { ' ' as i32 } else { ']' as i32 },
-        );
-        i_2 += 1;
-    }
-    pbuf_puts(o, b"/ItalicAngle 0/Ascent \0" as *const u8 as *const ::core::ffi::c_char);
-    pbuf_real(o, (*t).bbox[3 as ::core::ffi::c_int as usize]);
-    pbuf_puts(o, b"/Descent \0" as *const u8 as *const ::core::ffi::c_char);
-    pbuf_real(o, (*t).bbox[1 as ::core::ffi::c_int as usize]);
-    pbuf_puts(o, b"/CapHeight \0" as *const u8 as *const ::core::ffi::c_char);
-    pbuf_real(o, (*t).bbox[3 as ::core::ffi::c_int as usize]);
-    pbuf_printf(
-        o,
-        b"/StemV 80/FontFile %d 0 R\0" as *const u8 as *const ::core::ffi::c_char,
-        ff,
-    );
-    font_output::charset(c,p,o);pbuf_puts(o,b">>\0".as_ptr().cast());
-    pdfw_end((*c).pw);
-    let mut dict: [::core::ffi::c_char; 96] = [0; 96];
-    snprintf(
-        &raw mut dict as *mut ::core::ffi::c_char,
-        ::core::mem::size_of::<[::core::ffi::c_char; 96]>() as size_t,
-        b"/Length1 %zu/Length2 %zu/Length3 %zu\0" as *const u8
-            as *const ::core::ffi::c_char,
-        (*t).len1,
-        (*t).len2,
-        (*t).len3,
-    );
-    pdfw_stream_deflated(
-        (*c).pw,
-        ff,
-        &raw mut dict as *mut ::core::ffi::c_char,
-        (*t).deflated.data as *const ::core::ffi::c_void,
-        (*t).deflated.len,
-    );
 }
 unsafe extern "C" fn write_xobject(mut c: *mut conv_ctx, mut u: *mut xobj_use) {
     let mut ci: *mut cached_image = (*u).ci;
@@ -5960,6 +5842,7 @@ pub unsafe extern "C" fn xdv2pdf_new(mut resolver: xdv_resolver) -> *mut xdv2pdf
     }
     (*w).res = resolver;
     (*w).fonts = font_cache_new(resolver);
+    (*w).subsets = Box::into_raw(Box::default());
     return w;
 }
 #[no_mangle]
@@ -5978,6 +5861,7 @@ pub unsafe extern "C" fn xdv2pdf_free(mut w: *mut xdv2pdf) {
         ci = n;
     }
     font_cache_free((*w).fonts);
+    drop(Box::from_raw((*w).subsets));
     free(w as *mut ::core::ffi::c_void);
 }
 unsafe extern "C" fn prune_images(mut w: *mut xdv2pdf) {

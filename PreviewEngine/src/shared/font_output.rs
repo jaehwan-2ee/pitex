@@ -67,53 +67,6 @@ pub unsafe fn attributes(c: *mut conv_ctx, p: *mut pdf_font, out: *mut pbuf) {
     append(out, text);
     free(rendered.cast());
 }
-pub unsafe fn charset(c: *mut conv_ctx, font: *mut pdf_font, out: *mut pbuf) {
-    if (*(*c).document).backend.integer("pdfomitcharset") != 0 {
-        return;
-    }
-    let mut names = BTreeMap::new();
-    if !(*font).enc.is_null() {
-        for code in 0..256 {
-            let name = (*(*font).enc).glyph[code];
-            if !name.is_null() {
-                names.insert(
-                    code,
-                    std::ffi::CStr::from_ptr(name)
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-            }
-        }
-    } else {
-        let text = String::from_utf8_lossy(std::slice::from_raw_parts(
-            (*(*font).t1).data,
-            (*(*font).t1).len1,
-        ));
-        let words = text.split_ascii_whitespace().collect::<Vec<_>>();
-        for row in words.windows(4) {
-            if row[0] == "dup" && row[3] == "put" {
-                if let (Ok(code), Some(name)) = (row[1].parse::<usize>(), row[2].strip_prefix('/'))
-                {
-                    if code < 256 {
-                        names.insert(code, name.to_string());
-                    }
-                }
-            }
-        }
-    }
-    let mut set = String::new();
-    for (code, name) in names {
-        if *(*font).used.offset(code as isize) != 0 {
-            set.push('/');
-            set.push_str(&name);
-        }
-    }
-    let set = set
-        .replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)");
-    append(out, &format!("/CharSet ({set})"));
-}
 pub unsafe fn mark_included(c: *mut conv_ctx, s: *mut font_slot, p: *mut pdf_font) {
     let Some(included) = (*(*c).font_output).included.get(&(*s).k) else {
         return;
