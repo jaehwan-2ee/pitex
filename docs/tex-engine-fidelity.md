@@ -137,7 +137,7 @@ Summary (Linux):
 The `preview-engine` job ran the same corpus once (`--runs 1`) with helpers built from source rather than the release package.
 Every fidelity number matches the comet table to three decimals except three documents:
 `footnotes-margins` raster 0.739 (comet 0.984), `twocolumn` text 0.770/0.541 (comet 0.991/0.981), and `thesis-long` with 22 pages in both reference and built-in output (comet 23).
-The reference changed with them, so these come from the runner's TeX Live or fonts, not the engine; they are not investigated yet.
+On the runner the reference PDFs of all three differ in size from comet's and both logs carry one extra warning, so the cause is the runner's TeX Live or fonts rather than the engine (inferred; the warning text is not inspected yet).
 Built-in times on the runner are 1.1–1.6× comet's, and its warm times are noisier, which is why the speed gate below runs on comet and the M4.
 
 ### macOS (M4 `mini`, TeX Live 2026, pdfTeX 1.40.29)
