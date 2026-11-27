@@ -134,6 +134,7 @@ extern "C" {
     fn tbuf_from_copy(data: *const ::core::ffi::c_void, len: size_t) -> *mut tbuf;
     fn tbuf_read_file(path: *const ::core::ffi::c_char) -> *mut tbuf;
     fn tbuf_drop(b: *mut tbuf);
+    fn tbuf_keep(b: *mut tbuf) -> *mut tbuf;
     fn tbuf_append(b: *mut tbuf, data: *const ::core::ffi::c_void, len: size_t);
     fn state_init(st: *mut state_t);
     fn filesystem_new() -> *mut filesystem_t;
@@ -1108,6 +1109,7 @@ unsafe extern "C" fn lookup_path(
 unsafe extern "C" fn need_snapshot(
     mut self_0: *mut tex_engine,
     mut time: ::core::ffi::c_int,
+    mut eager: bool,
 ) -> bool {
     if (*self_0).fence_pos != -(1 as ::core::ffi::c_int) {
         return 0 as ::core::ffi::c_int != 0;
@@ -1137,7 +1139,36 @@ unsafe extern "C" fn need_snapshot(
     } else {
         last_time = 0 as ::core::ffi::c_int;
     }
-    return time > 500 as ::core::ffi::c_int + last_time;
+    return eager || time > 500 as ::core::ffi::c_int + last_time;
+}
+// Offset of the main file's first line-initial \begin{document} within [pos, pos+n), or -1.
+// The AUX file is first read there, so a checkpoint at that line lets an
+// auxiliary-file rerun replay only the body.
+unsafe fn begin_document_line(
+    self_0: *mut tex_engine,
+    e: *mut fileentry_t,
+    data: *mut tbuf,
+    pos: ::core::ffi::c_int,
+    n: ssize_t,
+) -> ssize_t {
+    if n <= 0 || pos < 0 || strcmp((*e).path, (*self_0).name) != 0 {
+        return -1;
+    }
+    let all = std::slice::from_raw_parts((*data).data, (*data).len);
+    let (pos, end) = (pos as usize, pos as usize + n as usize);
+    let mut at = pos;
+    while at < end {
+        let line = at;
+        let indent = all[line..].iter().take_while(|&&c| c == b' ' || c == b'\t').count();
+        if (line == 0 || all[line - 1] == b'\n') && all[line + indent..].starts_with(b"\\begin{document}") {
+            return line as ssize_t;
+        }
+        match all[at..end].iter().position(|&c| c == b'\n') {
+            Some(newline) => at += newline + 1,
+            None => break,
+        }
+    }
+    -1
 }
 unsafe extern "C" fn answer_query(mut self_0: *mut tex_engine, mut q: *mut query_t) {
     let mut p: *mut process_t = get_process(self_0);
@@ -1469,10 +1500,25 @@ unsafe extern "C" fn answer_query(mut self_0: *mut tex_engine, mut q: *mut query
                     abort();
                 }
             }
+            let begin_document = begin_document_line(
+                self_0,
+                e_0,
+                data_0,
+                (*q).c2rust_unnamed.read.pos,
+                n_0,
+            );
+            if fork_0 == 0 && begin_document > (*q).c2rust_unnamed.read.pos as ssize_t {
+                // End this chunk at that line so the next read can fork there.
+                n_0 = begin_document - (*q).c2rust_unnamed.read.pos as ssize_t;
+            }
             if fork_0 != 0 {
                 a.tag = A_FORK;
                 (*self_0).fence_pos -= 1 as ::core::ffi::c_int;
-            } else if need_snapshot(self_0, (*q).time) {
+            } else if need_snapshot(
+                self_0,
+                (*q).time,
+                begin_document == (*q).c2rust_unnamed.read.pos as ssize_t,
+            ) {
                 a.tag = A_FORK;
             } else {
                 memmove(
@@ -2209,6 +2255,11 @@ unsafe extern "C" fn respawn_from_scratch(mut self_0: *mut tex_engine) {
     (*self_0).fence_pos = -(1 as ::core::ffi::c_int);
     prepare_process(self_0);
 }
+unsafe fn same_bytes(a: *mut tbuf, b: *mut tbuf) -> bool {
+    !a.is_null() && !b.is_null()
+        && std::slice::from_raw_parts((*a).data, (*a).len)
+            == std::slice::from_raw_parts((*b).data, (*b).len)
+}
 #[no_mangle]
 pub unsafe extern "C" fn txp_engine_finish_convergence(
     mut self_0: *mut tex_engine,
@@ -2270,6 +2321,9 @@ pub unsafe extern "C" fn txp_engine_finish_convergence(
         (*self_0).aux_dirty = false_0 != 0;
         return false_0 != 0;
     }
+    // Roll back to the first access of a changed file, as an edit does, instead of
+    // retypesetting the preamble; a fresh process only when no checkpoint precedes it.
+    rollback_begin(self_0);
     let mut index_0: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     loop {
         e = filesystem_scan((*self_0).fs, &raw mut index_0);
@@ -2288,14 +2342,27 @@ pub unsafe extern "C" fn txp_engine_finish_convergence(
         if !(*e).edit_data.is_null() && !(*e).edit_data_from_convergence {
             continue;
         }
-        tbuf_drop((*e).edit_data);
+        // What this pass read: the stashed bytes, or the disk copy when none was stashed.
+        let mut previous: *mut tbuf = if !(*e).edit_data.is_null() {
+            (*e).edit_data
+        } else {
+            tbuf_keep((*e).fs_data)
+        };
         (*e).edit_data = tbuf_from_copy(
             (*(*e).saved.data).data as *const ::core::ffi::c_void,
             (*(*e).saved.data).len,
         );
         (*e).edit_data_from_convergence = true_0 != 0;
+        if !same_bytes(previous, (*e).edit_data) {
+            rollback_add_change(self_0, e, 0 as ::core::ffi::c_int);
+        }
+        tbuf_drop(previous);
     }
-    respawn_from_scratch(self_0 as *mut tex_engine);
+    if txp_engine_end_changes(self_0) {
+        prepare_process(self_0);
+    } else {
+        respawn_from_scratch(self_0 as *mut tex_engine);
+    }
     (*self_0).aux_dirty = false_0 != 0;
     return true_0 != 0;
 }
