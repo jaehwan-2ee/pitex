@@ -267,7 +267,7 @@ Attach the release DMG read-only (`hdiutil attach -nobrowse -readonly`), copy `P
 Wrap each run in `python3 /tmp/swe-m4lock.py`.
 On that machine Noto CJK KR and `mutool` are missing, so the Korean documents have no reference and links are not counted.
 The TeX Live 2026 `biber` wrapper fails to start; put an arm64 copy first on `PATH` (`lipo /usr/local/texlive/2026/bin/universal-darwin/biber -thin arm64 -output /tmp/pitex-fidelity/biber-arm64/biber`).
-A permanent fix needs root, for example `sudo tlmgr update --self && sudo tlmgr update biber`, or replacing the universal binary with that arm64 copy.
+A permanent fix needs root: replace the universal binary with that arm64 copy, or try `sudo tlmgr update --self && sudo tlmgr update biber` (untested; the wrapper bug may persist in the update).
 
 The script needs `latexmk`, `pdflatex`, `xelatex`, `bibtex`, `biber` and poppler (`pdfinfo`, `pdftotext`, `pdftoppm`, `pdffonts`, `pdftohtml`) on `PATH`; `mutool` is optional.
 Runs are sequential so timings do not compete; a full `--runs 3` pass takes about 15 minutes on comet.
