@@ -124,6 +124,13 @@ impl Threads {
             )
         })
     }
+    /// Innermost open box: id, level, kind, local bounds [left, baseline-depth, right, baseline+height], baseline.
+    pub(super) unsafe fn current_box(c: *mut conv_ctx) -> Option<(usize, i32, char, [f64; 4], f64)> {
+        (*(*c).document).threads.boxes.last().map(|b| (b.id, b.level, b.kind, b.local, b.origin[1]))
+    }
+    pub(super) unsafe fn open_box_ids(c: *mut conv_ctx, from_level: i32) -> Vec<usize> {
+        (*(*c).document).threads.boxes.iter().filter(|b| b.level >= from_level).map(|b| b.id).collect()
+    }
     pub unsafe fn link_box(c: *mut conv_ctx) -> (Option<usize>, Option<i32>) {
         (*(*c).document)
             .threads

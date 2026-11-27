@@ -157,6 +157,24 @@ const CASES: &[Case] = &[
         ],
     ),
     (
+        // Link rectangles come from the parent hbox (empty boxes too) and
+        // continue in each later hbox at the same level, as in pdfTeX.
+        // Rules only, so glyph metrics cannot move the rectangles.
+        "running-links",
+        r"\pdfpagewidth=\paperwidth \pdfpageheight=\paperheight",
+        r"\noindent\hbox{\pdfstartlink user{/Subtype /Link /A << /S /URI /URI (https://example.org/box) >>}\vbox to7.5pt{}\kern20pt\pdfendlink} \vrule width10pt height5pt depth1pt\ \pdfstartlink attr{/Border [0 0 1]} user{/Subtype /Link /A << /S /URI /URI (https://example.org/kern) >>}\kern30pt\pdfendlink\par\noindent\parbox{3cm}{\leavevmode\pdfstartlink user{/Subtype /Link /A << /S /URI /URI (https://example.org/wrap) >>}\vrule width2cm height6pt depth2pt\ \vrule width2cm height4pt depth3pt\ \vrule width1cm height7pt depth0pt\pdfendlink}",
+        &[
+            ("pages/1/Annots/1/Rect", None),
+            ("pages/1/Annots/1/A/URI", None),
+            ("pages/1/Annots/2/Rect", None),
+            ("pages/1/Annots/3/Rect", None),
+            ("pages/1/Annots/4/Rect", None),
+            ("pages/1/Annots/5/Rect", None),
+            ("pages/1/Annots/5/A/URI", None),
+            ("pages/1/Annots/6", None),
+        ],
+    ),
+    (
         "content-operators",
         "",
         r"\pdfliteral{0 0 1 RG}\pdfliteral direct{1 0 0 rg 0 0 80 30 re f}\pdfliteral page{0.5 g}\leavevmode\pdfsave\pdfsetmatrix{1.5 0 0 1}\rlap{\vrule width10pt height10pt}\pdfrestore Restored.",

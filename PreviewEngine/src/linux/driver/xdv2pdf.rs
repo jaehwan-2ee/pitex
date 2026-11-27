@@ -3356,6 +3356,10 @@ unsafe extern "C" fn do_special(
     s = skip_ws(s, end);
     let special_text = String::from_utf8_lossy(std::slice::from_raw_parts(s.cast::<u8>(),end.offset_from(s) as usize));
     if font_output::special(c,&special_text,cx,cy) { return; }
+    if let Some(value) = special_text.strip_prefix("dvipdfmx:catch_phantom") {
+        pdf_document::Document::catch_phantom(c, value);
+        return;
+    }
     if let Some(value) = special_text.strip_prefix("pitex:font-expansion ") {
         if let Ok(ratio) = value.trim().parse::<f64>() {
             if ratio.is_finite() && ratio>0. && ratio<10. { (*c).expansion=ratio; }
@@ -4868,6 +4872,7 @@ unsafe extern "C" fn interpret(
         let mut op: ::core::ffi::c_int = *p.offset(0 as ::core::ffi::c_int as isize)
             as ::core::ffi::c_int;
         let mut sc: ::core::ffi::c_double = (*st).scale;
+        let h_before = (*st).r.h;
         if op < 128 as ::core::ffi::c_int
             || op >= DVI_SET1 as ::core::ffi::c_int
                 && op < DVI_SET1 as ::core::ffi::c_int + 4 as ::core::ffi::c_int
@@ -5101,6 +5106,10 @@ unsafe extern "C" fn interpret(
                 );
             }
             (*st).r.h += w as ::core::ffi::c_double;
+        }
+        if (DVI_RIGHT1 as ::core::ffi::c_int..DVI_X1 as ::core::ffi::c_int + 4).contains(&op) {
+            let size = if (*st).font.is_null() { 0. } else { (*(*st).font).size * (*c).conv };
+            pdf_document::Document::phantom_move(c, X(c, h_before), Y(c, (*st).r.v), ((*st).r.h - h_before) * (*c).conv, size);
         }
         p = p.offset(n as isize);
     }
