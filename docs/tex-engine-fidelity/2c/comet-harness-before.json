@@ -1,0 +1,1783 @@
+{
+ "header": {
+  "format_build_s": 3.326,
+  "format_build_pdflatex_s": 3.213,
+  "format_event": "published",
+  "tex_version": "pdfTeX 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian)",
+  "helpers": "/home/comet/.cache/orca-host/tmp/claude-1000/-home-comet-orca-workspaces-pitex-nudibranch/4cf48a00-34b5-4eed-a0ae-12544b76632f/scratchpad/build-base/bin",
+  "runs": 5,
+  "dpi": 72
+ },
+ "results": [
+  {
+   "name": "algorithms",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.4732787648681551,
+   "ref_warm_s": 0.19451591302640736,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.4533163201995194,
+   "builtin_warm_s": 0.10578784206882119,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMBX10",
+     "CMMI10",
+     "CMMI7",
+     "CMR10",
+     "CMR7",
+     "CMR8",
+     "CMSY10",
+     "CMSY7"
+    ],
+    [
+     "CMBX10",
+     "CMMI10",
+     "CMMI7",
+     "CMR10",
+     "CMR7",
+     "CMR8",
+     "CMSY10",
+     "CMSY7"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    83536,
+    265166
+   ]
+  },
+  {
+   "name": "article-basic",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.5316817450802773,
+   "ref_warm_s": 0.21369163086637855,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.4698784800712019,
+   "builtin_warm_s": 0.12225594697520137,
+   "builtin_log_warnings": 0,
+   "pages": [
+    3,
+    3
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9971457028545199,
+   "raster_min": 0.9967940629088705,
+   "raster_pages": [
+    0.9976,
+    0.9968,
+    0.9971
+   ],
+   "fonts": [
+    [
+     "LMMathItalic10-Regular",
+     "LMMathItalic8-Regular",
+     "LMMono10-Regular",
+     "LMRoman10-Bold",
+     "LMRoman10-Italic",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular",
+     "LMRoman6-Regular",
+     "LMRoman8-Regular",
+     "LMRoman9-Italic",
+     "LMRoman9-Regular",
+     "LMRomanCaps10-Regular"
+    ],
+    [
+     "LMMathItalic10-Regular",
+     "LMMathItalic8-Regular",
+     "LMMono10-Regular",
+     "LMRoman10-Bold",
+     "LMRoman10-Italic",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular",
+     "LMRoman6-Regular",
+     "LMRoman8-Regular",
+     "LMRoman9-Italic",
+     "LMRoman9-Regular",
+     "LMRomanCaps10-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    273184,
+    2279067
+   ]
+  },
+  {
+   "name": "beamer-basic",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 1.2647552050184458,
+   "ref_warm_s": 0.5596248270012438,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 1.3346879640594125,
+   "builtin_warm_s": 0.3277108238544315,
+   "builtin_log_warnings": 0,
+   "pages": [
+    7,
+    7
+   ],
+   "text_median": 1.0,
+   "text_min": 0.782608695652174,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMEX10",
+     "CMSS10",
+     "CMSS12",
+     "CMSS8",
+     "CMSSI10",
+     "CMSSI8",
+     "LMSans17-Regular"
+    ],
+    [
+     "CMEX10",
+     "CMSS10",
+     "CMSS12",
+     "CMSS8",
+     "CMSSI10",
+     "CMSSI8",
+     "LMSans17-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    121,
+    121
+   ],
+   "outline_items": [
+    2,
+    2
+   ],
+   "pdf_bytes": [
+    93460,
+    403943
+   ]
+  },
+  {
+   "name": "beamer-korean",
+   "program": "xelatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 2,
+   "ref_cold_s": 2.254372932948172,
+   "ref_warm_s": 1.093408629996702,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 5.1884286920540035,
+   "builtin_warm_s": 0.46196885616518557,
+   "builtin_log_warnings": 2,
+   "pages": [
+    2,
+    2
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0,
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMSS10",
+     "LMSans10-Oblique-Identity-H",
+     "LMSans10-Regular-Identity-H",
+     "LMSans8-Regular-Identity-H",
+     "NotoSansCJKjp-Black-Identity-H",
+     "NotoSansCJKjp-Regular-Identity-H"
+    ],
+    [
+     "CMSS10",
+     "LMSans10-Oblique",
+     "LMSans10-Regular",
+     "LMSans8-Regular",
+     "NotoSansCJKkr-Black",
+     "NotoSansCJKkr-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    11971,
+    56413661
+   ]
+  },
+  {
+   "name": "biblatex-biber",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 2.2994626539293677,
+   "ref_warm_s": 0.4438269529491663,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 1.6651130819227546,
+   "builtin_warm_s": 1.8471957060974091,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9992726684604413,
+   "raster_min": 0.9992726684604413,
+   "raster_pages": [
+    0.9993
+   ],
+   "fonts": [
+    [
+     "SFBX1440",
+     "SFCC1000",
+     "SFRM1000",
+     "SFTI0700",
+     "SFTI1000",
+     "SFTT1000"
+    ],
+    [
+     "SFBX1440",
+     "SFCC1000",
+     "SFRM1000",
+     "SFTI0700",
+     "SFTI1000",
+     "SFTT1000"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    9,
+    9
+   ],
+   "outline_items": [
+    1,
+    1
+   ],
+   "pdf_bytes": [
+    96866,
+    936548
+   ]
+  },
+  {
+   "name": "enumitem-lists",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.24854686786420643,
+   "ref_warm_s": 0.180573760997504,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.3969352152198553,
+   "builtin_warm_s": 0.052898846101015806,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9985652797704447,
+   "raster_min": 0.9985652797704447,
+   "raster_pages": [
+    0.9986
+   ],
+   "fonts": [
+    [
+     "CMBX10",
+     "CMMI10",
+     "CMR10"
+    ],
+    [
+     "CMBX10",
+     "CMMI10",
+     "CMR10"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    36412,
+    104391
+   ]
+  },
+  {
+   "name": "footnotes-margins",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.26659221202135086,
+   "ref_warm_s": 0.19322630111128092,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.4497768939472735,
+   "builtin_warm_s": 0.0689300219528377,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9983499655651982,
+   "raster_min": 0.9983499655651982,
+   "raster_pages": [
+    0.9983
+   ],
+   "fonts": [
+    [
+     "CMR10",
+     "CMR6",
+     "CMR7",
+     "CMR8",
+     "CMTI7"
+    ],
+    [
+     "CMR10",
+     "CMR6",
+     "CMR7",
+     "CMR8",
+     "CMTI7"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    58084,
+    202552
+   ]
+  },
+  {
+   "name": "graphics",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.497132871998474,
+   "ref_warm_s": 0.20090543595142663,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.503772797062993,
+   "builtin_warm_s": 0.08846628991886973,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9998054474708171,
+   "raster_min": 0.9998054474708171,
+   "raster_pages": [
+    0.9998
+   ],
+   "fonts": [
+    [
+     "CMR10",
+     "CMR9",
+     "LMSans17-Regular"
+    ],
+    [
+     "CMR10",
+     "CMR9",
+     "LMSans17-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    54529,
+    198747
+   ]
+  },
+  {
+   "name": "hyperref-refs",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.7102270880714059,
+   "ref_warm_s": 0.30524176312610507,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.7838982369285077,
+   "builtin_warm_s": 0.17085464298725128,
+   "builtin_log_warnings": 0,
+   "pages": [
+    2,
+    2
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9977302115599929,
+   "raster_min": 0.9976114048051654,
+   "raster_pages": [
+    0.9978,
+    0.9976
+   ],
+   "fonts": [
+    [
+     "CMBX10",
+     "CMBX12",
+     "CMMI10",
+     "CMR10",
+     "CMR6",
+     "CMR7",
+     "CMR8",
+     "CMTT8"
+    ],
+    [
+     "CMBX10",
+     "CMBX12",
+     "CMMI10",
+     "CMR10",
+     "CMR6",
+     "CMR7",
+     "CMR8",
+     "CMTT8"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    14,
+    14
+   ],
+   "outline_items": [
+    4,
+    4
+   ],
+   "pdf_bytes": [
+    89326,
+    293907
+   ]
+  },
+  {
+   "name": "ieeetran-conf",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 1.2506765881553292,
+   "ref_warm_s": 0.22196077089756727,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "Pitex embedded auxiliary warning: Bibliography style top: Str(\"-- IEEEtran.bst version 1.14 (2015/08/26) by Michael Shell.\")\nPitex embedded auxiliary warning: Bibliography style top: Str(\"-- http://www.michaelshell.org/tex/ieeetran/bibtex/\")\nPitex embedded auxiliary warning: Bibliography style top: Str(\"-- See the \\\"IEEEtran_bst_HOWTO.pdf\\\" manual for usage information.\")\nPitex embedded auxiliary ",
+   "builtin_cold_s": 0.5800656569190323,
+   "builtin_warm_s": 0.24647401506081223,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 0.9959514170040485,
+   "text_min": 0.9959514170040485,
+   "raster_median": 0.9936204139349653,
+   "raster_min": 0.9936204139349653,
+   "raster_pages": [
+    0.9936
+   ],
+   "fonts": [
+    [
+     "CMMI10",
+     "CMR10",
+     "LMSans17-Regular",
+     "NimbusRomNo9L-Medi",
+     "NimbusRomNo9L-MediItal",
+     "NimbusRomNo9L-Regu",
+     "NimbusRomNo9L-ReguItal"
+    ],
+    [
+     "CMMI10",
+     "CMR10",
+     "LMSans17-Regular",
+     "NimbusRomNo9L-Medi",
+     "NimbusRomNo9L-MediItal",
+     "NimbusRomNo9L-Regu",
+     "NimbusRomNo9L-ReguItal"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    84856,
+    631650
+   ]
+  },
+  {
+   "name": "inputenc-babel",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.502260915003717,
+   "ref_warm_s": 0.20983011415228248,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.449629781069234,
+   "builtin_warm_s": 0.08571119396947324,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9996193376475067,
+   "raster_min": 0.9996193376475067,
+   "raster_pages": [
+    0.9996
+   ],
+   "fonts": [
+    [
+     "LMRoman10-Regular"
+    ],
+    [
+     "LMRoman10-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    36031,
+    238251
+   ]
+  },
+  {
+   "name": "korean-kotex",
+   "program": "xelatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 2,
+   "ref_cold_s": 1.2376612578518689,
+   "ref_warm_s": 0.6490691620856524,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 4.220152889145538,
+   "builtin_warm_s": 0.7306867048610002,
+   "builtin_log_warnings": 2,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 0.9827586206896551,
+   "text_min": 0.9827586206896551,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMEX10",
+     "CMMI10",
+     "CMMI7",
+     "CMR10",
+     "CMR7",
+     "LMRoman10-Regular-Identity-H",
+     "LMRoman12-Bold-Identity-H",
+     "NotoSansCJKjp-Regular-Identity-H",
+     "NotoSerifCJKjp-Bold-Identity-H",
+     "NotoSerifCJKjp-Regular-Identity-H"
+    ],
+    [
+     "CMEX10",
+     "CMMI10",
+     "CMMI7",
+     "CMR10",
+     "CMR7",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "NotoSansCJKkr-Regular",
+     "NotoSerifCJKkr-Bold",
+     "NotoSerifCJKkr-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    35126,
+    97134146
+   ]
+  },
+  {
+   "name": "korean-oblivoir",
+   "program": "xelatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 2.1649394759442657,
+   "ref_warm_s": 0.7813838208094239,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 6.059616396902129,
+   "builtin_warm_s": 0.7444333890452981,
+   "builtin_log_warnings": 0,
+   "pages": [
+    2,
+    2
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9820532507355039,
+   "raster_min": 0.9644936481996179,
+   "raster_pages": [
+    0.9645,
+    0.9996
+   ],
+   "fonts": [
+    [
+     "LMRoman10-Bold-Identity-H",
+     "LMRoman10-Regular-Identity-H",
+     "LMRoman12-Bold-Identity-H",
+     "LMRoman6-Regular-Identity-H",
+     "LMRoman7-Regular-Identity-H",
+     "NotoSerifCJKjp-Bold-Identity-H",
+     "NotoSerifCJKjp-Regular-Identity-H"
+    ],
+    [
+     "LMRoman10-Bold",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman6-Regular",
+     "LMRoman7-Regular",
+     "NotoSerifCJKkr-Bold",
+     "NotoSerifCJKkr-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    5,
+    5
+   ],
+   "outline_items": [
+    4,
+    4
+   ],
+   "pdf_bytes": [
+    38977,
+    143514584
+   ]
+  },
+  {
+   "name": "listings-code",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.5062766619957983,
+   "ref_warm_s": 0.211750659160316,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.47677897079847753,
+   "builtin_warm_s": 0.10293396702036262,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMR10",
+     "CMR9",
+     "CMTT9"
+    ],
+    [
+     "CMR10",
+     "CMR9",
+     "CMTT9"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    39664,
+    99582
+   ]
+  },
+  {
+   "name": "math-ams",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.5328702519182116,
+   "ref_warm_s": 0.21492156712338328,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.47643630392849445,
+   "builtin_warm_s": 0.13285088585689664,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 0.9307875894988067,
+   "text_min": 0.9307875894988067,
+   "raster_median": 0.9989577905158936,
+   "raster_min": 0.9989577905158936,
+   "raster_pages": [
+    0.999
+   ],
+   "fonts": [
+    [
+     "CMBX10",
+     "CMBX12",
+     "CMEX10",
+     "CMMI10",
+     "CMMI7",
+     "CMMIB10",
+     "CMMIB7",
+     "CMR10",
+     "CMR5",
+     "CMR7",
+     "CMSY10",
+     "CMSY7",
+     "EUFM10",
+     "MSAM10",
+     "MSBM10"
+    ],
+    [
+     "CMBX10",
+     "CMBX12",
+     "CMEX10",
+     "CMMI10",
+     "CMMI7",
+     "CMMIB10",
+     "CMMIB7",
+     "CMR10",
+     "CMR5",
+     "CMR7",
+     "CMSY10",
+     "CMSY7",
+     "EUFM10",
+     "MSAM10",
+     "MSBM10"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    143375,
+    483857
+   ]
+  },
+  {
+   "name": "microtype",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.527417667908594,
+   "ref_warm_s": 0.22041505691595376,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.5113610529806465,
+   "builtin_warm_s": 0.23012808803468943,
+   "builtin_log_warnings": 0,
+   "pages": [
+    2,
+    2
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9271831642119259,
+   "raster_min": 0.9033900647077219,
+   "raster_pages": [
+    0.951,
+    0.9034
+   ],
+   "fonts": [
+    [
+     "LMRoman10-Regular",
+     "LMRomanCaps10-Regular"
+    ],
+    [
+     "LMRoman10-Regular",
+     "LMRomanCaps10-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    56855,
+    356580
+   ]
+  },
+  {
+   "name": "natbib-bibtex",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 1.1436540139839053,
+   "ref_warm_s": 0.19093769509345293,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.5543709420599043,
+   "builtin_warm_s": 0.12960630794987082,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9988354074552414,
+   "raster_min": 0.9988354074552414,
+   "raster_pages": [
+    0.9988
+   ],
+   "fonts": [
+    [
+     "SFBX1440",
+     "SFRM0700",
+     "SFRM1000",
+     "SFTI0700",
+     "SFTI1000",
+     "SFTT1000"
+    ],
+    [
+     "SFBX1440",
+     "SFRM0700",
+     "SFRM1000",
+     "SFTI0700",
+     "SFTI1000",
+     "SFTT1000"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    87181,
+    979000
+   ]
+  },
+  {
+   "name": "pgfplots",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.4708168429788202,
+   "ref_warm_s": 0.3777499911375344,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.8130827939603478,
+   "builtin_warm_s": 0.11542942794039845,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMMI10",
+     "CMR10"
+    ],
+    [
+     "CMMI10",
+     "CMR10"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    25835,
+    75043
+   ]
+  },
+  {
+   "name": "report-chapters",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.5075261760503054,
+   "ref_warm_s": 0.21258330601267517,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.5027889530174434,
+   "builtin_warm_s": 0.16655615903437138,
+   "builtin_log_warnings": 0,
+   "pages": [
+    7,
+    7
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9984708372822708,
+   "raster_min": 0.997420174094808,
+   "raster_pages": [
+    1.0,
+    1.0,
+    0.9984,
+    0.9974,
+    0.9998,
+    0.9985,
+    0.9974
+   ],
+   "fonts": [
+    [
+     "LMRoman10-Bold",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular"
+    ],
+    [
+     "LMRoman10-Bold",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    138187,
+    825011
+   ]
+  },
+  {
+   "name": "siunitx",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.3256850061006844,
+   "ref_warm_s": 0.24835918587632477,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.5460724201984704,
+   "builtin_warm_s": 0.08625438483431935,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMMI10",
+     "CMR10",
+     "CMR7",
+     "CMSY10",
+     "CMSY7"
+    ],
+    [
+     "CMMI10",
+     "CMR10",
+     "CMR7",
+     "CMSY10",
+     "CMSY7"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    51126,
+    163184
+   ]
+  },
+  {
+   "name": "tables",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.4872148600406945,
+   "ref_warm_s": 0.20002913800999522,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.4644609389360994,
+   "builtin_warm_s": 0.07983770687133074,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9987320353776988,
+   "raster_min": 0.9987320353776988,
+   "raster_pages": [
+    0.9987
+   ],
+   "fonts": [
+    [
+     "CMBX10",
+     "CMR10"
+    ],
+    [
+     "CMBX10",
+     "CMR10"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    34533,
+    71197
+   ]
+  },
+  {
+   "name": "theorems",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.6913287260103971,
+   "ref_warm_s": 0.2894405908882618,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.6388008471112698,
+   "builtin_warm_s": 0.08932747785001993,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9997743173098623,
+   "raster_min": 0.9997743173098623,
+   "raster_pages": [
+    0.9998
+   ],
+   "fonts": [
+    [
+     "CMBX10",
+     "CMBX12",
+     "CMMI10",
+     "CMMI7",
+     "CMR10",
+     "CMR7",
+     "CMSY10",
+     "CMTI10"
+    ],
+    [
+     "CMBX10",
+     "CMBX12",
+     "CMMI10",
+     "CMMI7",
+     "CMR10",
+     "CMR7",
+     "CMSY10",
+     "CMTI10"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    3,
+    3
+   ],
+   "outline_items": [
+    1,
+    1
+   ],
+   "pdf_bytes": [
+    89287,
+    272215
+   ]
+  },
+  {
+   "name": "thesis-long",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.7135329141747206,
+   "ref_warm_s": 0.29627248807810247,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "PDF special: duplicate destination ignored; the first definition is kept\n",
+   "builtin_cold_s": 0.810352219035849,
+   "builtin_warm_s": 0.17408221494406462,
+   "builtin_log_warnings": 0,
+   "pages": [
+    23,
+    23
+   ],
+   "text_median": 1.0,
+   "text_min": 0.9951573849878934,
+   "raster_median": 0.9994715841434634,
+   "raster_min": 0.9989692526401652,
+   "raster_pages": [
+    1.0,
+    1.0,
+    0.9996,
+    0.9993,
+    0.9997,
+    0.9998,
+    0.9992,
+    0.9995,
+    0.9992,
+    0.9992,
+    0.999,
+    0.9994,
+    0.9993,
+    0.9995,
+    1.0,
+    0.999,
+    0.9994,
+    0.9994,
+    1.0,
+    0.9995,
+    0.9996,
+    0.999,
+    1.0
+   ],
+   "fonts": [
+    [
+     "LMMathExtension10-Regular",
+     "LMMathItalic10-Regular",
+     "LMMathItalic8-Regular",
+     "LMRoman10-Bold",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular",
+     "LMRoman8-Regular",
+     "LMSans17-Regular"
+    ],
+    [
+     "LMMathExtension10-Regular",
+     "LMMathItalic10-Regular",
+     "LMMathItalic8-Regular",
+     "LMRoman10-Bold",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular",
+     "LMRoman8-Regular",
+     "LMSans17-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    7,
+    7
+   ],
+   "outline_items": [
+    6,
+    6
+   ],
+   "pdf_bytes": [
+    225796,
+    1301941
+   ]
+  },
+  {
+   "name": "tikz-basic",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.359467432834208,
+   "ref_warm_s": 0.2723442439455539,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.601370224962011,
+   "builtin_warm_s": 0.09828765108250082,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0
+   ],
+   "fonts": [
+    [
+     "CMMI10",
+     "CMR10"
+    ],
+    [
+     "CMMI10",
+     "CMR10"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    24104,
+    73237
+   ]
+  },
+  {
+   "name": "twocolumn",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.5476739138830453,
+   "ref_warm_s": 0.22548877797089517,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.5488333459943533,
+   "builtin_warm_s": 0.12035888410173357,
+   "builtin_log_warnings": 0,
+   "pages": [
+    2,
+    2
+   ],
+   "text_median": 0.9906444906444907,
+   "text_min": 0.9812889812889813,
+   "raster_median": 0.9987136832304786,
+   "raster_min": 0.9979635914537907,
+   "raster_pages": [
+    0.998,
+    0.9995
+   ],
+   "fonts": [
+    [
+     "LMMathExtension10-Regular",
+     "LMMathItalic10-Regular",
+     "LMMathItalic7-Regular",
+     "LMMathSymbols10-Regular",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular",
+     "LMSans17-Regular"
+    ],
+    [
+     "LMMathExtension10-Regular",
+     "LMMathItalic10-Regular",
+     "LMMathItalic7-Regular",
+     "LMMathSymbols10-Regular",
+     "LMRoman10-Regular",
+     "LMRoman12-Bold",
+     "LMRoman12-Regular",
+     "LMRoman17-Regular",
+     "LMSans17-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    140630,
+    794645
+   ]
+  },
+  {
+   "name": "xcolor-geometry",
+   "program": "pdflatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.5141518509481102,
+   "ref_warm_s": 0.21483662608079612,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.4986305038910359,
+   "builtin_warm_s": 0.07676347717642784,
+   "builtin_log_warnings": 0,
+   "pages": [
+    2,
+    2
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 0.9983268300451578,
+   "raster_min": 0.997456563468219,
+   "raster_pages": [
+    0.9975,
+    0.9992
+   ],
+   "fonts": [
+    [
+     "CMR10",
+     "CMR12"
+    ],
+    [
+     "CMR10",
+     "CMR12"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    31588,
+    72009
+   ]
+  },
+  {
+   "name": "xelatex-fontspec",
+   "program": "xelatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 1.1779606398195028,
+   "ref_warm_s": 0.5982229867950082,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 1.0845689759589732,
+   "builtin_warm_s": 0.22670270293019712,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 1.0,
+   "text_min": 1.0,
+   "raster_median": 1.0,
+   "raster_min": 1.0,
+   "raster_pages": [
+    1.0
+   ],
+   "fonts": [
+    [
+     "TeXGyreCursor-Regular-Identity-H",
+     "TeXGyreHeros-Regular-Identity-H",
+     "TeXGyreTermes-Bold-Identity-H",
+     "TeXGyreTermes-BoldItalic-Identity-H",
+     "TeXGyreTermes-Italic-Identity-H",
+     "TeXGyreTermes-Regular-Identity-H",
+     "TeXGyreTermesMath-Regular-Identity-H"
+    ],
+    [
+     "TeXGyreCursor-Regular",
+     "TeXGyreHeros-Regular",
+     "TeXGyreTermes-Bold",
+     "TeXGyreTermes-BoldItalic",
+     "TeXGyreTermes-Italic",
+     "TeXGyreTermes-Regular",
+     "TeXGyreTermesMath-Regular"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    21761,
+    1423264
+   ]
+  },
+  {
+   "name": "xelatex-multilingual",
+   "program": "xelatex",
+   "ref_ok": true,
+   "ref_errors": 0,
+   "ref_warnings": 0,
+   "ref_cold_s": 0.9448197181336582,
+   "ref_warm_s": 0.47618480306118727,
+   "builtin_event": "published",
+   "builtin_ok": true,
+   "builtin_errors": 0,
+   "builtin_first_error": null,
+   "builtin_compat_warnings": "",
+   "builtin_cold_s": 0.8195146878715605,
+   "builtin_warm_s": 0.17008238891139627,
+   "builtin_log_warnings": 0,
+   "pages": [
+    1,
+    1
+   ],
+   "text_median": 0.9473684210526315,
+   "text_min": 0.9473684210526315,
+   "raster_median": 0.9983104483920248,
+   "raster_min": 0.9983104483920248,
+   "raster_pages": [
+    0.9983
+   ],
+   "fonts": [
+    [
+     "CMUSerif-Roman-Identity-H"
+    ],
+    [
+     "CMUSerif-Roman"
+    ]
+   ],
+   "unembedded_fonts": [
+    0,
+    0
+   ],
+   "links": [
+    0,
+    0
+   ],
+   "outline_items": [
+    0,
+    0
+   ],
+   "pdf_bytes": [
+    13533,
+    604423
+   ]
+  }
+ ]
+}
