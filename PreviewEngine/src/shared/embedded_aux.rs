@@ -322,11 +322,9 @@ pub fn prepare_from_controls(main: &str, mut load: impl FnMut(&str) -> Option<St
                 if let Some(start) = bbl.find("\\datalist[") {
                     if let Some(end) = bbl.rfind("\\enddatalist") {
                         let mut block = bbl[start..end + "\\enddatalist".len()].to_string();
-                        block = block.replacen(
-                            &format!("{{{}/global//global/global}}", list.sorting),
-                            &format!("{{{}}}", list.name),
-                            1,
-                        );
+                        if let (Some(open), Some(close)) = (block.find('{'), block.find('}')) {
+                            block.replace_range(open + 1..close, &list.name);
+                        }
                         if list.kind == "shorthand" {
                             block = block.replacen("\\datalist[entry]", "\\datalist[shorthand]", 1);
                         }
@@ -1155,7 +1153,13 @@ fn biblatex_bbl(
         .nth(1)
         .and_then(|s| s.split('}').next())
         .unwrap_or("3.2");
-    let mut s=format!("% $ biblatex auxiliary file $\n% $ biblatex bbl format version {version} $\n% Pitex in-process bibliography data\n\\refsection{{0}}\n\\datalist[entry]{{{sorting}/global//global/global}}\n");
+    // bbl format 3.3 (biblatex 3.21) adds a sixth refcontext part and a fourth \entry argument.
+    let v33 = version
+        .split_once('.')
+        .and_then(|(major, minor)| Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?)))
+        .is_some_and(|v| v >= (3, 3));
+    let (context_tail, entry_tail) = if v33 { ("/global", "{}") } else { ("", "") };
+    let mut s=format!("% $ biblatex auxiliary file $\n% $ biblatex bbl format version {version} $\n% Pitex in-process bibliography data\n\\refsection{{0}}\n\\datalist[entry]{{{sorting}/global//global/global{context_tail}}}\n");
     let mut alpha_labels = BTreeMap::new();
     for entry in entries {
         let alpha = if let Some(root) = document {
@@ -1178,7 +1182,7 @@ fn biblatex_bbl(
     let mut alpha_seen = BTreeMap::<String, usize>::new();
     for e in entries {
         s.push_str(&format!(
-            "\\entry{{{}}}{{{}}}{{}}\n",
+            "\\entry{{{}}}{{{}}}{{}}{entry_tail}\n",
             e.key,
             if e.kind == "conference" {
                 "inproceedings"
@@ -1876,6 +1880,33 @@ mod tests {
         assert!(bbl.contains("\\entry{doe}{article}"));
         assert!(bbl.contains("family={Doe}"));
         assert!(bbl.contains("\\field{year}{2025}"));
+    }
+    #[test]
+    fn bbl_follows_installed_biblatex_format() {
+        for (version, datalist, entry) in [
+            ("3.2", "/global//global/global}\n", "\\entry{doe}{article}{}\n"),
+            ("3.3", "/global//global/global/global}\n", "\\entry{doe}{article}{}{}\n"),
+        ] {
+            let map = BTreeMap::from([
+                (
+                    "main.tex".to_string(),
+                    "\\usepackage[backend=biber]{biblatex}\\addbibresource{refs.bib}\\autocite{doe}"
+                        .to_string(),
+                ),
+                (
+                    "refs.bib".into(),
+                    "@article{doe,author={Jane Doe},title={Paper},year=2025}".into(),
+                ),
+                (
+                    "biblatex.sty".into(),
+                    format!("\\def\\blx@bblversion{{{version}}}"),
+                ),
+            ]);
+            let bbl = &prepare("main.tex", |p| map.get(p).cloned()).files["main.bbl"];
+            assert!(bbl.contains(&format!("format version {version} $")), "{bbl}");
+            assert!(bbl.contains(datalist), "{version}: {bbl}");
+            assert!(bbl.contains(entry), "{version}: {bbl}");
+        }
     }
     #[test]
     fn prepared_bbl_is_preserved() {
