@@ -207,6 +207,7 @@ pub fn prepare(main: &str, mut load: impl FnMut(&str) -> Option<String>) -> Prep
         .collect::<Vec<_>>()
         .join("\n");
     bibliography(main, &combined, &mut load, &mut result, None);
+    reuse_executed_bbl(main, &mut result.files);
     result.bibliography_warning_count = result.warnings.len();
     for command in command_args(&combined, "ShellEscape") {
         result.warnings.push(format!(
@@ -253,9 +254,57 @@ pub fn prepare(main: &str, mut load: impl FnMut(&str) -> Option<String>) -> Prep
     result
 }
 
+thread_local! {
+    // Per main file: the last source-scan BBL and the executed-control BBL that replaced it.
+    static BBL_CACHE: std::cell::RefCell<BTreeMap<String, (String, String)>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+fn bbl_name(main: &str) -> String {
+    let job = Path::new(main).file_stem().unwrap_or_default().to_string_lossy();
+    format!("{job}.bbl")
+}
+
+// Any change to main.bbl reruns TeX. The bootstrap is a pure function of the cited
+// keys, the bibliography databases and the sorting options, so while it is unchanged
+// the executed BBL still holds; refresh_embedded_bibliography corrects anything else.
+fn reuse_executed_bbl(main: &str, files: &mut BTreeMap<String, String>) {
+    BBL_CACHE.with_borrow_mut(|cache| {
+        let Some(bbl) = files.get_mut(&bbl_name(main)) else {
+            cache.remove(main);
+            return;
+        };
+        match cache.get(main) {
+            Some((bootstrap, executed)) if bootstrap == bbl => *bbl = executed.clone(),
+            _ => {
+                cache.insert(main.to_string(), (bbl.clone(), bbl.clone()));
+            }
+        }
+    });
+}
+
+fn remember_executed_bbl(main: &str, files: &BTreeMap<String, String>) {
+    if let Some(bbl) = files.get(&bbl_name(main)) {
+        BBL_CACHE.with_borrow_mut(|cache| {
+            if let Some((_, executed)) = cache.get_mut(main) {
+                *executed = bbl.clone();
+            }
+        });
+    }
+}
+
 // Actual TeX execution supplies expanded citation/resource names and section
 // contexts. Source scanning is only the first-pass bootstrap.
-pub fn prepare_from_controls(main: &str, mut load: impl FnMut(&str) -> Option<String>) -> Prepared {
+pub fn prepare_from_controls(main: &str, load: impl FnMut(&str) -> Option<String>) -> Prepared {
+    let result = prepare_from_controls_uncached(main, load);
+    remember_executed_bbl(main, &result.files);
+    result
+}
+
+fn prepare_from_controls_uncached(
+    main: &str,
+    mut load: impl FnMut(&str) -> Option<String>,
+) -> Prepared {
     let mut result = Prepared::default();
     let control = match bibliography_control::read(main, &mut load) {
         Ok(Some(control)) => control,
@@ -2054,6 +2103,58 @@ mod tests {
         assert_eq!(bbl.matches("\\entry{a}").count(), 1);
         assert_eq!(bbl.matches("\\entry{b}").count(), 1);
         assert_eq!(bbl.matches("\\endinput").count(), 1);
+    }
+    // The executed BCF also cites `hidden`, as a macro-expanded \cite would, so the
+    // executed BBL differs from the source-scan bootstrap.
+    const BIB: &str = r"@article{a,author={Jane Doe},title={One},year=2025}@article{hidden,author={Ann Lee},title={Hidden},year=2023}@article{b,author={John Roe},title={Two},year=2024}";
+    const SOURCE: &str = r"\usepackage[backend=biber,sorting=nty]{biblatex}\addbibresource{refs.bib}\begin{document}\cite{a}\end{document}";
+    fn edit_after_executed_bbl(main: &str, edited: &str, bib: &str) -> (String, String) {
+        let bcf = r#"<bcf:controlfile><bcf:bibdata section="0"><bcf:datasource type="file" datatype="bibtex">refs.bib</bcf:datasource></bcf:bibdata><bcf:section number="0"><bcf:citekey order="1">a</bcf:citekey><bcf:citekey order="2">hidden</bcf:citekey></bcf:section><bcf:datalist section="0" type="entry" name="nty/global//global/global" sortingtemplatename="nty"/></bcf:controlfile>"#;
+        let job = main.trim_end_matches(".tex");
+        let run = |tex: &str, bib: &str| {
+            prepare(main, |p| match p {
+                p if p == main => Some(tex.into()),
+                "refs.bib" => Some(bib.into()),
+                _ => None,
+            })
+            .files
+            .remove(&format!("{job}.bbl"))
+            .unwrap()
+        };
+        let bootstrap = run(SOURCE, BIB);
+        let executed = prepare_from_controls(main, |p| match p {
+            p if p == format!("{job}.bcf") => Some(bcf.into()),
+            "refs.bib" => Some(BIB.into()),
+            _ => None,
+        })
+        .files
+        .remove(&format!("{job}.bbl"))
+        .unwrap();
+        assert!(!bootstrap.contains("{Hidden}") && executed.contains("{Hidden}"));
+        (run(edited, bib), executed)
+    }
+    #[test]
+    fn body_edit_keeps_executed_bbl() {
+        let edited = SOURCE.replace("\\cite{a}", "Edited \\cite{a}");
+        let (bbl, executed) = edit_after_executed_bbl("main.tex", &edited, BIB);
+        assert_eq!(bbl, executed);
+    }
+    #[test]
+    fn new_citation_replaces_executed_bbl() {
+        let edited = SOURCE.replace("\\cite{a}", "\\cite{a}\\cite{b}");
+        let (bbl, _) = edit_after_executed_bbl("main.tex", &edited, BIB);
+        assert!(bbl.contains("\\entry{b}"), "{bbl}");
+    }
+    #[test]
+    fn bib_edit_replaces_executed_bbl() {
+        let (bbl, _) = edit_after_executed_bbl("main.tex", SOURCE, &BIB.replace("{One}", "{Changed}"));
+        assert!(bbl.contains("{Changed}"), "{bbl}");
+    }
+    #[test]
+    fn biblatex_option_edit_replaces_executed_bbl() {
+        let edited = SOURCE.replace("sorting=nty", "sorting=ynt");
+        let (bbl, _) = edit_after_executed_bbl("main.tex", &edited, BIB);
+        assert!(bbl.contains("\\datalist[entry]{ynt/"), "{bbl}");
     }
     #[test]
     fn mixed_package_lists_and_local_requirepackage() {
