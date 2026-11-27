@@ -618,6 +618,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The fidelity gate diffs the PR merge commit against its base parent.
+          fetch-depth: 2
       - uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2026-10-04
@@ -682,17 +685,27 @@ jobs:
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-audit-pdftex-vocabulary --
           --require-native --evidence "$RUNNER_TEMP/pitex-semantic-evidence.jsonl"
           --check PreviewEngine/compatibility/pdftex-vocabulary-report.json
-      # Informational, not a gate yet: built-in vs stock pdfLaTeX/XeLaTeX on the
-      # corpus in Fixtures/tex-fidelity (see docs/tex-engine-fidelity.md).
-      - name: TeX engine fidelity benchmark
+      # Gate: built-in vs stock pdfLaTeX/XeLaTeX on Fixtures/tex-fidelity must not score
+      # lower than the committed CI baseline (docs/tex-engine-fidelity.md, "Fidelity gate").
+      # The whole corpus takes about 2 minutes; PRs that touch neither the engine nor the
+      # harness skip it, pushes to main and manual runs always gate.
+      - name: TeX engine fidelity gate
         timeout-minutes: 20
         env:
           PITEX_BIN: ${{ runner.temp }}/pitex-preview-engine/bin
         run: |
           python3 Tools/tex-fidelity.py --self-test
+          if [ "${{ github.event_name }}" = "pull_request" ] && ! git diff --name-only HEAD^1 HEAD |
+              grep -qE '^(PreviewEngine/|Tools/tex-fidelity\.py$|Fixtures/tex-fidelity/|docs/tex-engine-fidelity/)'; then
+            echo "No engine or harness change; fidelity gate skipped." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          status=0
           python3 Tools/tex-fidelity.py --runs 1 --out "$RUNNER_TEMP" \
-            --json "$RUNNER_TEMP/tex-fidelity.json" --markdown "$RUNNER_TEMP/tex-fidelity.md"
+            --json "$RUNNER_TEMP/tex-fidelity.json" --markdown "$RUNNER_TEMP/tex-fidelity.md" \
+            --check docs/tex-engine-fidelity/gate-baseline-ci.json || status=$?
           cat "$RUNNER_TEMP/tex-fidelity.md" >> "$GITHUB_STEP_SUMMARY"
+          exit $status
       - name: Upload TeX engine fidelity results
         if: always()
         uses: actions/upload-artifact@v4
