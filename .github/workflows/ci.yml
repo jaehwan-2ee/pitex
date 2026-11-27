@@ -739,7 +739,7 @@ jobs:
           brew install --cask basictex
           echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
           sudo /Library/TeX/texbin/tlmgr update --self
-          sudo /Library/TeX/texbin/tlmgr install collection-xetex collection-latexrecommended unicode-math lm-math
+          sudo /Library/TeX/texbin/tlmgr install collection-xetex collection-latexrecommended unicode-math lm-math biblatex biber logreq csquotes latexmk cm-super
       - name: Build helpers against the macOS SDK
         run: make -C PreviewEngine BUILD_DIR="$RUNNER_TEMP/pitex-preview-engine" all selftest
       - name: In-process service and PDF interpreter tests
@@ -756,6 +756,15 @@ jobs:
           PITEX_LAYOUT_CASE=metric-cache cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
           PITEX_LAYOUT_CASE=vertical cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-discovery
+      # BasicTeX is the newest TeX Live, so this guards the in-process bbl writer against the
+      # current biblatex format (fidelity gap 2: TeX Live 2026 scored text 0.401 before #82).
+      - name: Biblatex bibliography on the newest TeX Live
+        timeout-minutes: 10
+        env:
+          PITEX_BIN: ${{ runner.temp }}/pitex-preview-engine/bin
+        run: |
+          python3 Tools/tex-fidelity.py --runs 1 --only biblatex-biber --json "$RUNNER_TEMP/biblatex-newest-tl.json"
+          python3 -c 'import json, sys; r = json.load(open(sys.argv[1]))["results"][0]; print(r); sys.exit(0 if r.get("ref_ok") and r.get("builtin_ok") and r.get("text_median", 0) >= 0.98 else "biblatex-biber: reference or built-in failed, or text < 0.98")' "$RUNNER_TEMP/biblatex-newest-tl.json"
       - name: Audit helper linkage
         timeout-minutes: 10
         run: bash PreviewEngine/tools/audit-linkage.sh "$RUNNER_TEMP/pitex-preview-engine/bin"
