@@ -132,6 +132,14 @@ Summary (Linux):
 | Median time, built-in vs reference, warm | 0.12 s vs 0.23 s (ratio median 0.47) |
 | Median PDF size ratio, built-in / reference | 5.7× |
 
+### CI cross-check (GitHub `ubuntu-24.04`, helpers built from this branch's source)
+
+The `preview-engine` job ran the same corpus once (`--runs 1`) with helpers built from source rather than the release package.
+Every fidelity number matches the comet table to three decimals except three documents:
+`footnotes-margins` raster 0.739 (comet 0.984), `twocolumn` text 0.770/0.541 (comet 0.991/0.981), and `thesis-long` with 22 pages in both reference and built-in output (comet 23).
+The reference changed with them, so these come from the runner's TeX Live or fonts, not the engine; they are not investigated yet.
+Built-in times on the runner are 1.1–1.6× comet's, and its warm times are noisier, which is why the speed gate below runs on comet and the M4.
+
 ### macOS (M4 `mini`, TeX Live 2026, pdfTeX 1.40.29)
 
 Same corpus and harness, v1.1.7 helpers copied out of the release DMG, every step under `/tmp/swe-m4lock.py`.
