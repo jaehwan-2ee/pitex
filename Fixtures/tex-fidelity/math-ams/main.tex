@@ -1,0 +1,38 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{amsmath,amssymb,mathtools,bm}
+\DeclarePairedDelimiter\abs{\lvert}{\rvert}
+\DeclarePairedDelimiter\norm{\lVert}{\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\begin{document}
+\section{Equations}
+\begin{equation}\label{eq:gauss}
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+\end{equation}
+\begin{align}
+f(x) &= \sum_{n=0}^{\infty} \frac{f^{(n)}(a)}{n!}(x-a)^n \label{eq:taylor}\\
+g(x) &\coloneqq \prod_{i=1}^{N} \left(1 + \frac{x}{i}\right) \nonumber\\
+\hat{\bm\theta} &= \argmin_{\bm\theta \in \Theta} \norm*{\mathbf{y} - X\bm\theta}_2^2 + \lambda\abs{\bm\theta}_1
+\end{align}
+\begin{gather}
+a^2 + b^2 = c^2 \\ \nabla \cdot \mathbf{E} = \frac{\rho}{\varepsilon_0}
+\end{gather}
+\begin{multline}
+p(x) = a_0 + a_1x + a_2x^2 + a_3x^3 + a_4x^4 + a_5x^5 \\ + a_6x^6 + a_7x^7 + a_8x^8 + a_9x^9 + a_{10}x^{10}
+\end{multline}
+\begin{equation}
+\begin{split}
+(a+b)^3 &= (a+b)(a+b)^2\\ &= a^3 + 3a^2b + 3ab^2 + b^3
+\end{split}
+\end{equation}
+\[
+|x| = \begin{dcases} x & x \ge 0,\\ -x & \text{otherwise},\end{dcases}\qquad
+A = \begin{pmatrix} a_{11} & \cdots & a_{1n}\\ \vdots & \ddots & \vdots\\ a_{m1} & \cdots & a_{mn}\end{pmatrix},\quad
+\det\begin{vmatrix}1&2\\3&4\end{vmatrix} = -2
+\]
+Symbols: $\mathbb{R}, \mathcal{L}, \mathfrak{g}$, $\mathbb{N}\subseteq\mathbb{Z}\subsetneq\mathbb{Q}$, $\forall\epsilon>0\,\exists\delta$, $\leqslant, \geqslant, \nsim, \therefore, \blacksquare$.
+Equations \eqref{eq:gauss} and \eqref{eq:taylor} use $\binom{n}{k}$, $\tfrac12$, $\overbrace{a+b}^{2}$, $\underbrace{c+d}_{3}$, $\xrightarrow[\text{below}]{\text{above}}$.
+\begin{align*}
+\lim_{n\to\infty}\left(1+\frac{1}{n}\right)^n &= e, & \oint_{\partial\Omega} \omega &= \int_\Omega d\omega.
+\end{align*}
+\end{document}

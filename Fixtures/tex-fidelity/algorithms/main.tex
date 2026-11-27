@@ -1,0 +1,30 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\begin{document}
+\begin{algorithm}[ht]
+\caption{Euclid's algorithm (algorithmic)}\label{alg:euclid}
+\begin{algorithmic}[1]
+\REQUIRE integers $a \ge b \ge 0$
+\ENSURE $\gcd(a,b)$
+\WHILE{$b \neq 0$}
+  \STATE $t \gets b$
+  \STATE $b \gets a \bmod b$
+  \STATE $a \gets t$
+\ENDWHILE
+\IF{$a = 0$} \STATE \textbf{error} \ELSE \RETURN $a$ \ENDIF
+\end{algorithmic}
+\end{algorithm}
+\begin{algorithm}[ht]
+\caption{Gradient descent}
+\begin{algorithmic}[1]
+\FOR{$t = 1$ \TO $T$}
+  \STATE $\theta_t \gets \theta_{t-1} - \eta \nabla L(\theta_{t-1})$
+  \IF{$\|\nabla L\| < \epsilon$} \STATE break \ENDIF
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+Algorithm~\ref{alg:euclid} terminates.
+\end{document}

@@ -1,0 +1,30 @@
+% !TEX program = pdflatex
+\documentclass{beamer}
+\usetheme{Madrid}
+\usecolortheme{beaver}
+\title{Beamer Fidelity}\author{Speaker}\institute{Example Lab}\date{2024}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Outline}\tableofcontents\end{frame}
+\section{Motivation}
+\begin{frame}{Bullets and overlays}
+\begin{itemize}
+\item First point
+\pause
+\item Second point with $\sum_{k=1}^n k = \frac{n(n+1)}{2}$
+\item<3-> Third point
+\end{itemize}
+\end{frame}
+\section{Blocks}
+\begin{frame}{Blocks}
+\begin{block}{Definition}A block with text.\end{block}
+\begin{alertblock}{Warning}An alert block.\end{alertblock}
+\begin{exampleblock}{Example}An example block.\end{exampleblock}
+\end{frame}
+\begin{frame}{Columns}
+\begin{columns}
+\column{0.5\textwidth}\includegraphics[width=\linewidth]{example-image-a}
+\column{0.5\textwidth}Text in the second column. \textcolor{red}{Red}, \alert{alerted}.
+\end{columns}
+\end{frame}
+\end{document}

@@ -631,6 +631,8 @@ jobs:
             texlive-xetex texlive-latex-extra texlive-science texlive-pstricks \
             texlive-fonts-recommended texlive-fonts-extra texlive-bibtex-extra biber \
             texlive-lang-korean texlive-lang-cjk \
+            texlive-publishers texlive-lang-french texlive-lang-german \
+            texlive-lang-greek texlive-lang-cyrillic latexmk \
             fonts-noto-cjk fonts-sil-padauk fonts-arphic-uming \
             fonts-dejavu-core fonts-dejavu-extra fonts-lato \
             poppler-utils mupdf-tools ghostscript
@@ -680,6 +682,24 @@ jobs:
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-audit-pdftex-vocabulary --
           --require-native --evidence "$RUNNER_TEMP/pitex-semantic-evidence.jsonl"
           --check PreviewEngine/compatibility/pdftex-vocabulary-report.json
+      # Informational, not a gate yet: built-in vs stock pdfLaTeX/XeLaTeX on the
+      # corpus in Fixtures/tex-fidelity (see docs/tex-engine-fidelity.md).
+      - name: TeX engine fidelity benchmark
+        timeout-minutes: 20
+        env:
+          PITEX_BIN: ${{ runner.temp }}/pitex-preview-engine/bin
+        run: |
+          python3 Tools/tex-fidelity.py --self-test
+          python3 Tools/tex-fidelity.py --runs 1 --out "$RUNNER_TEMP" \
+            --json "$RUNNER_TEMP/tex-fidelity.json" --markdown "$RUNNER_TEMP/tex-fidelity.md"
+          cat "$RUNNER_TEMP/tex-fidelity.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload TeX engine fidelity results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tex-fidelity
+          path: ${{ runner.temp }}/tex-fidelity.*
+          if-no-files-found: ignore
       - name: Audit helper linkage
         timeout-minutes: 10
         run: bash PreviewEngine/tools/audit-linkage.sh "$RUNNER_TEMP/pitex-preview-engine/bin"

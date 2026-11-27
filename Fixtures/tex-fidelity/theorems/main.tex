@@ -1,0 +1,17 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\theoremstyle{plain}\newtheorem{theorem}{Theorem}[section]\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}\newtheorem*{remark}{Remark}
+\begin{document}
+\section{Results}
+\begin{definition}\label{def:prime}A natural number $p>1$ is \emph{prime} if its only divisors are $1$ and $p$.\end{definition}
+\begin{lemma}\label{lem:div}Every integer $n>1$ has a prime divisor.\end{lemma}
+\begin{proof}Let $d$ be the least divisor of $n$ greater than $1$. If $d$ were composite, it would have a smaller divisor.\end{proof}
+\begin{theorem}[Euclid]\label{thm:inf}There are infinitely many primes.\end{theorem}
+\begin{proof}Suppose $p_1,\dots,p_k$ are all primes and let $N = p_1\cdots p_k + 1$. By \cref{lem:div}, $N$ has a prime divisor not in the list. \qedhere\end{proof}
+\begin{remark}\Cref{thm:inf} uses \cref{def:prime}.\end{remark}
+\end{document}

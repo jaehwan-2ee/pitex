@@ -1,0 +1,13 @@
+% !TEX program = pdflatex
+% !BIB program = biber
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{csquotes}
+\usepackage[backend=biber,style=authoryear,maxcitenames=2]{biblatex}
+\usepackage{hyperref}
+\addbibresource{refs.bib}
+\begin{document}
+\section{Related work}
+\textcite{knuth1984} introduced literate programming; see also \parencite{lamport1994}. Attention \autocite{vaswani2017}, information \autocite[380]{shannon1948}, \cite{ctan}, \cite{doe2020}.
+\printbibliography
+\end{document}

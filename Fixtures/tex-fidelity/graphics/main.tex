@@ -1,0 +1,18 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{caption,subcaption}
+\begin{document}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=.6\linewidth]{example-image-a.pdf}
+\caption{A PDF figure.}\label{fig:pdf}
+\end{figure}
+\begin{figure}[ht]
+\centering
+\begin{subfigure}{.45\linewidth}\includegraphics[width=\linewidth]{example-image-b.png}\caption{PNG}\end{subfigure}\hfill
+\begin{subfigure}{.45\linewidth}\includegraphics[width=\linewidth]{example-image-c.jpg}\caption{JPEG}\end{subfigure}
+\caption{Raster figures.}\label{fig:raster}
+\end{figure}
+Figures \ref{fig:pdf} and \ref{fig:raster}. Rotated: \includegraphics[height=1cm,angle=90]{example-image-a.pdf}, scaled: \scalebox{1.5}{Scaled text}.
+\end{document}

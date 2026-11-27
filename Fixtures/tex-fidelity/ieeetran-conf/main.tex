@@ -1,0 +1,21 @@
+% !TEX program = pdflatex
+% !BIB program = bibtex
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,graphicx,cite}
+\usepackage{lipsum}
+\begin{document}
+\title{An IEEE Conference Paper}
+\author{\IEEEauthorblockN{First Author}\IEEEauthorblockA{Example University\\ email@example.org}}
+\maketitle
+\begin{abstract}\lipsum[1][1-5]\end{abstract}
+\begin{IEEEkeywords}typesetting, fidelity\end{IEEEkeywords}
+\section{Introduction}
+\lipsum[2] Prior work~\cite{knuth1984,lamport1994,vaswani2017}.
+\section{Method}
+\lipsum[3-4]
+\begin{equation}y = Wx + b\end{equation}
+\begin{figure}[t]\centering\includegraphics[width=\columnwidth]{example-image-a}\caption{Overview.}\end{figure}
+\section{Conclusion}\lipsum[5]
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+\end{document}

@@ -1,0 +1,14 @@
+% !TEX program = xelatex
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{cmunrm.otf}[BoldFont=cmunbx.otf,ItalicFont=cmunti.otf]
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguages{greek,russian,german}
+\begin{document}
+English text with ligatures: office.
+\begin{greek}Η γρήγορη καφέ αλεπού πηδάει πάνω από τον τεμπέλη σκύλο.\end{greek}
+\begin{russian}Съешь же ещё этих мягких французских булок, да выпей чаю.\end{russian}
+\begin{german}Zwölf Boxkämpfer jagen Viktor quer über den großen Sylter Deich.\end{german}
+Symbols: ∀x∈ℝ, ≤ ≥ ≠, ← ↑ → ↓, €, ‰, §.
+\end{document}

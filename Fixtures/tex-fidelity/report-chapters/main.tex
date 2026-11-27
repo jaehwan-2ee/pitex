@@ -1,0 +1,22 @@
+% !TEX program = pdflatex
+\documentclass[a4paper]{report}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{lipsum}
+\begin{document}
+\title{Technical Report}\author{Research Group}\date{2024}
+\maketitle
+\tableofcontents
+\listoffigures
+\chapter{Background}
+\lipsum[1-3]
+\begin{figure}[ht]\centering\rule{6cm}{3cm}\caption{A placeholder rule.}\label{fig:rule}\end{figure}
+\section{Prior work}
+\lipsum[4-5] See Figure~\ref{fig:rule} on page~\pageref{fig:rule}.
+\chapter{Results}
+\section{Experiment}
+\lipsum[6-8]
+\appendix
+\chapter{Extra material}
+\lipsum[9]
+\end{document}
