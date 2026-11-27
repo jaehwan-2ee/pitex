@@ -10,7 +10,13 @@ Usage:
   PITEX_BIN=<dir with pitex-preview and pitex-preview-xetex> \
     python3 Tools/tex-fidelity.py [--runs 3] [--dpi 72] [--only a,b] \
       [--out DIR] [--json results.json] [--markdown table.md]
+  python3 Tools/tex-fidelity.py --check BASELINE.json [--results RUN.json] \
+      [--speed ratio|absolute] [--speed-tolerance 0.25]
   python3 Tools/tex-fidelity.py --self-test
+
+--check runs the corpus (or reads --results) and exits 1 when a gated
+document scores lower than in BASELINE, loses a definition-of-done gate it
+held there, or the built-in engine got slower beyond the speed tolerance.
 
 Requires latexmk, pdflatex/xelatex, bibtex/biber and poppler-utils
 (pdfinfo, pdftotext, pdftoppm, pdffonts, pdftohtml) on PATH. Standard
@@ -335,6 +341,100 @@ def compare(reference, builtin, dpi, scratch):
     }
 
 
+# ---------- gate (--check) ----------
+
+# Definition of done in docs/tex-engine-fidelity.md. Korean and CJK documents are reported, never gated.
+INFORMATIONAL = {"korean-kotex", "korean-oblivoir", "beamer-korean"}
+# Same helpers on the same machine give identical scores (CI runs agree to 4 decimals); this only absorbs float noise.
+SCORE_TOLERANCE = 0.001
+
+
+def doc_gates(r):
+    """Per-document definition-of-done gates: name -> held."""
+    pages, links_pair, outline = r.get("pages"), r.get("links"), r.get("outline_items")
+    return {
+        "build": not r["ref_ok"] or (r["builtin_ok"] and r.get("builtin_errors") == r.get("ref_errors")),
+        "pages": bool(pages) and pages[0] == pages[1],
+        "raster median >= 0.97": r.get("raster_median", 0.0) >= 0.97,
+        "raster every page >= 0.90": r.get("raster_min", 0.0) >= 0.90,
+        "text median >= 0.98": r.get("text_median", 0.0) >= 0.98,
+        "text every page >= 0.95": r.get("text_min", 0.0) >= 0.95,
+        "links equal": bool(links_pair) and links_pair[0] == links_pair[1],
+        "outline equal": bool(outline) and outline[0] == outline[1],
+        "fonts embedded": (r.get("unembedded_fonts") or [0, 0])[1] == 0,
+    }
+
+
+def doc_scores(r):
+    """Higher is better; a drop beyond SCORE_TOLERANCE is a regression."""
+    def gap(pair):
+        return -abs(pair[0] - pair[1]) if pair and None not in pair else 0
+    return {
+        "text median": r.get("text_median", 0.0), "text min": r.get("text_min", 0.0),
+        "raster median": r.get("raster_median", 0.0), "raster min": r.get("raster_min", 0.0),
+        "page gap": gap(r.get("pages")), "link gap": gap(r.get("links")),
+        "outline gap": gap(r.get("outline_items")),
+        "error gap": gap([r.get("ref_errors"), r.get("builtin_errors")]),
+    }
+
+
+def corpus_raster(results):
+    return statistics.median(r.get("raster_median", 0.0) for r in results) if results else 0.0
+
+
+def speeds(results, mode):
+    """Corpus speed figures: built-in/reference ratio medians, or built-in medians in seconds."""
+    out = {}
+    for kind in ("cold", "warm"):
+        values = [r[f"builtin_{kind}_s"] / r[f"ref_{kind}_s"] if mode == "ratio" else r[f"builtin_{kind}_s"]
+                  for r in results if r.get(f"builtin_{kind}_s") and r.get(f"ref_{kind}_s")]
+        out[kind] = statistics.median(values) if values else None
+    return out
+
+
+def check(baseline, results, speed="ratio", tolerance=0.25):
+    """Returns (failures, report lines) for gated documents present in both runs."""
+    base = {r["name"]: r for r in baseline}
+    now = [r for r in results if r["name"] in base and r["name"] not in INFORMATIONAL]
+    was = [base[r["name"]] for r in now]
+    failures = []
+    for new, old in zip(now, was):
+        name = new["name"]
+        new_scores, old_scores = doc_scores(new), doc_scores(old)
+        for metric, value in old_scores.items():
+            if new_scores[metric] < value - SCORE_TOLERANCE:
+                failures.append(f"{name}: {metric} {new_scores[metric]:.4f} < baseline {value:.4f}")
+        new_gates = doc_gates(new)
+        for gate, held in doc_gates(old).items():
+            if held and not new_gates[gate]:
+                failures.append(f"{name}: lost gate '{gate}'")
+        if speed == "absolute":
+            for kind in ("cold", "warm"):
+                key = f"builtin_{kind}_s"
+                if new.get(key) and old.get(key) and new[key] > old[key] * (1 + tolerance):
+                    failures.append(f"{name}: built-in {kind} {new[key]:.3f} s > baseline {old[key]:.3f} s +{tolerance:.0%}")
+    if corpus_raster(was) >= 0.99 > corpus_raster(now):
+        failures.append(f"corpus raster median {corpus_raster(now):.4f} fell below 0.99")
+    new_speed, old_speed = speeds(now, speed), speeds(was, speed)
+    # Absolute: the corpus median may not get slower at all; ratio (shared CI runners): loose guard.
+    corpus_tolerance = 0.0 if speed == "absolute" else tolerance
+    for kind in ("cold", "warm"):
+        if new_speed[kind] and old_speed[kind] and new_speed[kind] > old_speed[kind] * (1 + corpus_tolerance):
+            failures.append(f"corpus built-in {kind} median ({speed}) {new_speed[kind]:.3f} > baseline "
+                            f"{old_speed[kind]:.3f} +{corpus_tolerance:.0%}")
+    lines = [f"Fidelity gate: {len(now)} gated documents ({', '.join(sorted(INFORMATIONAL))} informational)", "",
+             "| Gate | Now | Baseline |", "|---|---|---|"]
+    for gate in doc_gates(now[0]) if now else []:
+        lines.append(f"| {gate} | {sum(doc_gates(r)[gate] for r in now)} / {len(now)} | "
+                     f"{sum(doc_gates(r)[gate] for r in was)} / {len(was)} |")
+    lines.append(f"| corpus raster median >= 0.99 | {corpus_raster(now):.4f} | {corpus_raster(was):.4f} |")
+    for kind in ("cold", "warm"):
+        f = lambda v: "—" if v is None else f"{v:.3f}"
+        lines.append(f"| built-in {kind} median ({speed}) | {f(new_speed[kind])} | {f(old_speed[kind])} |")
+    lines += ["", f"{len(failures)} regression(s)" + (":" if failures else "")] + [f"- {f}" for f in failures]
+    return failures, lines
+
+
 # ---------- driver ----------
 
 def bench(name, bin_dir, runs, dpi, workroot, cache):
@@ -434,6 +534,23 @@ def self_test():
     assert program_of("% !TEX program = xelatex\n") == "xelatex"
     assert program_of("\\documentclass{article}") == "pdflatex"
     assert correct_words(["Proof", "X", "Pn", "X"], [{"X": "∑"}, {"P": "∑", "Pn": "∑n"}]) == ["Proof", "∑", "∑n", "X"]
+    doc = {"name": "d", "program": "pdflatex", "ref_ok": True, "builtin_ok": True, "ref_errors": 0,
+           "builtin_errors": 0, "pages": [2, 2], "text_median": 0.99, "text_min": 0.96, "raster_median": 0.98,
+           "raster_min": 0.95, "links": [3, 3], "outline_items": [1, 1], "unembedded_fonts": [0, 0],
+           "ref_cold_s": 1.0, "ref_warm_s": 0.5, "builtin_cold_s": 1.0, "builtin_warm_s": 0.25}
+    assert check([doc], [doc])[0] == []
+    assert check([doc], [dict(doc, raster_median=0.9795)])[0] == [], "float noise is tolerated"
+    assert check([doc], [dict(doc, raster_min=0.94)])[0][0].startswith("d: raster min"), "score drop"
+    assert check([doc], [dict(doc, links=[3, 2])])[0] == ["d: link gap -1.0000 < baseline 0.0000",
+                                                          "d: lost gate 'links equal'"]
+    assert check([doc], [dict(doc, builtin_ok=False, builtin_errors=None, text_median=0.0)])[0], "build failure"
+    korean = dict(doc, name="korean-kotex")
+    assert check([korean], [dict(korean, text_median=0.5)])[0] == [], "Korean is informational"
+    assert check([doc], [dict(doc, builtin_cold_s=1.2)])[0] == [], "ratio guard allows +25% on CI"
+    assert check([doc], [dict(doc, builtin_cold_s=1.3)])[0][0].startswith("corpus built-in cold median (ratio)")
+    slower = check([doc], [dict(doc, builtin_warm_s=0.27)], speed="absolute", tolerance=0.05)[0]
+    assert slower[0].startswith("d: built-in warm 0.270 s") and slower[1].startswith("corpus built-in warm"), slower
+    assert check([doc], [dict(doc, name="new")])[0] == [], "documents without a baseline are not gated"
     print("self-test ok")
 
 
@@ -445,10 +562,18 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--json", type=Path)
     parser.add_argument("--markdown", type=Path)
+    parser.add_argument("--check", type=Path, metavar="BASELINE")
+    parser.add_argument("--results", type=Path, help="with --check: gate this JSON instead of running")
+    parser.add_argument("--speed", choices=("ratio", "absolute"), default="ratio",
+                        help="ratio: built-in/reference corpus medians (shared runners); "
+                             "absolute: built-in seconds per document, same machine as the baseline")
+    parser.add_argument("--speed-tolerance", type=float, default=0.25)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
+    if args.check and args.results:
+        return gate(args, json.loads(args.results.read_text())["results"])
     bin_dir = Path(os.environ.get("PITEX_BIN", "")).resolve()
     if not (bin_dir / "pitex-preview").is_file():
         sys.exit("PITEX_BIN must name the directory holding pitex-preview and pitex-preview-xetex")
@@ -471,7 +596,8 @@ def main():
     header = {"format_build_s": format_s["xelatex"], "format_build_pdflatex_s": format_s["pdflatex"],
               "format_event": event.get("event"),
               "tex_version": run(["pdftex", "--version"]).stdout.decode().splitlines()[0],
-              "helpers": str(bin_dir), "runs": args.runs, "dpi": args.dpi}
+              "helpers": str(bin_dir), "runs": args.runs, "dpi": args.dpi,
+              "commit": os.environ.get("GITHUB_SHA") or run(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).stdout.decode().strip()}
     print(json.dumps(header), flush=True)
     results = []
     for name in names:
@@ -485,6 +611,18 @@ def main():
         args.markdown.write_text(table)
     print(table)
     print(f"work directory: {workroot}")
+    if args.check:
+        gate(args, results)
+
+
+def gate(args, results):
+    failures, lines = check(json.loads(args.check.read_text())["results"], results, args.speed, args.speed_tolerance)
+    print("\n".join(lines))
+    if args.markdown:
+        with args.markdown.open("a") as table:
+            table.write("\n" + "\n".join(lines) + "\n")
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
