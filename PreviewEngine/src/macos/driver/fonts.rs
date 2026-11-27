@@ -1017,6 +1017,66 @@ unsafe extern "C" fn parse_script_unicode(mut f: *mut native_face) {
         i = i.wrapping_add(1);
     }
 }
+/// Size variants from the OpenType MATH table copy as their base character,
+/// as xdvipdfmx does through glyph names (a display integral copies as U+222B).
+unsafe fn parse_math_unicode(f: *mut native_face) {
+    let mut t: *const ::core::ffi::c_uchar = ::core::ptr::null();
+    let mut len: size_t = 0;
+    if !find_table((*f).sfnt, (*f).sfnt_len, b"MATH\0".as_ptr().cast(), &raw mut t, &raw mut len) {
+        return;
+    }
+    let to_unicode = std::slice::from_raw_parts((*f).to_unicode, (*f).num_glyphs as usize);
+    let pairs = math_size_variants(std::slice::from_raw_parts(t, len))
+        .into_iter()
+        .filter_map(|(base, variant)| Some((variant, *to_unicode.get(base as usize)?)))
+        .collect::<Vec<_>>();
+    for (variant, cp) in pairs {
+        if cp != 0 {
+            set_unicode(f, variant as ::core::ffi::c_uint, cp);
+        }
+    }
+}
+/// (base glyph, size variant glyph) pairs of MathVariants, vertical then horizontal.
+fn math_size_variants(math: &[u8]) -> Vec<(u16, u16)> {
+    let u16_at = |data: &[u8], at: usize| Some(u16::from_be_bytes([*data.get(at)?, *data.get(at + 1)?]));
+    let coverage = |table: &[u8]| -> Option<Vec<u16>> {
+        let mut glyphs = Vec::new();
+        let count = u16_at(table, 2)? as usize;
+        match u16_at(table, 0)? {
+            1 => (0..count).try_for_each(|i| Some(glyphs.push(u16_at(table, 4 + 2 * i)?)))?,
+            2 => (0..count).try_for_each(|i| {
+                let (start, end) = (u16_at(table, 4 + 6 * i)?, u16_at(table, 6 + 6 * i)?);
+                Some(glyphs.extend(start..=end))
+            })?,
+            _ => return None,
+        }
+        Some(glyphs)
+    };
+    let mut pairs = Vec::new();
+    let Some(variants) = u16_at(math, 8).and_then(|at| math.get(at as usize..)) else {
+        return pairs;
+    };
+    let mut construction_offsets = 10;
+    for (coverage_at, count_at) in [(2, 6), (4, 8)] {
+        let (Some(coverage_offset), Some(count)) = (u16_at(variants, coverage_at), u16_at(variants, count_at)) else {
+            return pairs;
+        };
+        let bases = variants.get(coverage_offset as usize..).and_then(coverage).unwrap_or_default();
+        for i in 0..count as usize {
+            let construction = u16_at(variants, construction_offsets + 2 * i)
+                .and_then(|at| variants.get(at as usize..));
+            if let (Some(&base), Some(construction)) = (bases.get(i), construction) {
+                for k in 0..u16_at(construction, 2).unwrap_or(0) as usize {
+                    if let Some(variant) = u16_at(construction, 4 + 4 * k) {
+                        pairs.push((base, variant));
+                    }
+                }
+            }
+        }
+        construction_offsets += 2 * count as usize;
+    }
+    pairs
+}
 unsafe extern "C" fn read_psname(mut f: *mut native_face, mut fc: *mut font_cache) {
     let mut t: *const ::core::ffi::c_uchar = ::core::ptr::null::<::core::ffi::c_uchar>();
     let mut len: size_t = 0;
@@ -1336,6 +1396,7 @@ pub unsafe extern "C" fn font_native(
     ) as *mut uint32_t;
     parse_cmap(f);
     parse_script_unicode(f);
+    parse_math_unicode(f);
     read_psname(f, fc);
     (*f).ok = true_0 != 0;
     return f;

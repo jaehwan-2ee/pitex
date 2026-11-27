@@ -249,7 +249,13 @@ pub fn glyph_unicode(name: &str, options: &Options) -> Option<String> {
             "quoteright" => "’",
             "quotedblleft" => "“",
             "quotedblright" => "”",
-            _ => return None,
+            // TeX size variants (CMEX summationdisplay, parenleftbigg) copy as their base, as in xdvipdfmx.
+            _ => {
+                return ["display", "text", "bigg", "Bigg", "big", "Big"]
+                    .iter()
+                    .find_map(|size| base.strip_suffix(size).filter(|b| !b.is_empty()))
+                    .and_then(|b| glyph_unicode(b, options))
+            }
         }
         .to_string()
     };
@@ -343,5 +349,10 @@ mod tests {
         assert_eq!(glyph_unicode("aacute.sc", &o).as_deref(), Some("00E1"));
         assert_eq!(glyph_unicode("Alpha.alt", &o).as_deref(), Some("0391"));
         assert_eq!(glyph_unicode("a.alt", &o).as_deref(), Some("03B1"));
+        o.builtin_glyph_unicode.insert("summation".into(), "2211".into());
+        assert_eq!(glyph_unicode("summationdisplay", &o).as_deref(), Some("2211"));
+        assert_eq!(glyph_unicode("summationtext", &o).as_deref(), Some("2211"));
+        assert_eq!(glyph_unicode("parenleftbigg", &o).as_deref(), Some("0028"));
+        assert_eq!(glyph_unicode("display", &o), None);
     }
 }
