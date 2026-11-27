@@ -52,6 +52,13 @@ const CASES: &[Case] = &[
         ],
     ),
     (
+        // pgf's pattern: resources reserved up front, filled after the last page.
+        "pdflatex-objects-after-last-page",
+        r"\pdfobj reserveobjnum \edef\later{\the\pdflastobj}\edef\resources{/ExtGState \later\space 0 R}\global\expandafter\pdfpageresources\expandafter{\resources}\AddToHook{enddocument/afterlastpage}{\immediate\pdfobj useobjnum\later{<< /AuditGS << /CA 0.5 >> >>}}",
+        r"Filled later.",
+        &[("pages/1/Resources/ExtGState/AuditGS/CA", None)],
+    ),
+    (
         "color-stack",
         "",
         r"\edef\stack{\pdfcolorstackinit page direct{0 g 0 G}}\edef\other{\pdfcolorstackinit{1 g}}\typeout{SEM-STACKS=\stack,\other}\pdfcolorstack\stack push{1 0 0 rg 1 0 0 RG}\rule{20pt}{10pt}\pdfcolorstack\stack set{0 0 1 rg}\rule{20pt}{10pt}\pdfcolorstack\stack pop\rule{20pt}{10pt}\pdfcolorstack\stack current",
