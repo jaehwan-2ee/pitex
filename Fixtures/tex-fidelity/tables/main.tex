@@ -1,0 +1,32 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{booktabs,multirow,tabularx,longtable,array}
+\usepackage[table]{xcolor}
+\begin{document}
+\begin{table}[ht]\centering
+\caption{Results with booktabs and multirow.}
+\begin{tabular}{llrr}
+\toprule
+\multirow{2}{*}{Model} & \multirow{2}{*}{Data} & \multicolumn{2}{c}{Score} \\
+\cmidrule(lr){3-4} & & Acc. & F1 \\
+\midrule
+Baseline & A & 81.2 & 79.0 \\
+Ours & A & \textbf{88.4} & \textbf{86.1} \\
+\addlinespace
+Baseline & B & 70.3 & 68.8 \\
+Ours & B & \textbf{75.9} & \textbf{74.2} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{tabularx}{\linewidth}{>{\bfseries}lX}
+\rowcolor{gray!20} Term & Description \\
+Alpha & A long description that wraps across several lines in the X column to test paragraph cells in tabularx. \\
+Beta & Short. \\
+\end{tabularx}
+\begin{longtable}{rl}
+\caption{A long table.}\\ \toprule N & Square \\ \midrule \endfirsthead
+\toprule N & Square \\ \midrule \endhead
+1 & 1\\ 2 & 4\\ 3 & 9\\ 4 & 16\\ 5 & 25\\ 6 & 36\\ 7 & 49\\ 8 & 64\\ 9 & 81\\ 10 & 100\\
+\bottomrule
+\end{longtable}
+\end{document}

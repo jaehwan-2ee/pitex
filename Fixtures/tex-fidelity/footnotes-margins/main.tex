@@ -1,0 +1,9 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{lipsum}
+\begin{document}
+\lipsum[1]\footnote{First footnote.} \lipsum[2][1-3]\footnote{Second footnote, which is long enough to wrap onto a second line in the footnote area at the bottom of the page.}
+\marginpar{A margin note}
+\lipsum[3]\footnote[42]{Custom-numbered footnote.}
+\begin{minipage}{.8\linewidth}Minipage text\footnote{Minipage footnote.}\end{minipage}
+\end{document}

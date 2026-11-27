@@ -1,0 +1,12 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{siunitx}
+\usepackage{booktabs}
+\begin{document}
+Speed \qty{3.5}{\metre\per\second}, mass \qty{1.2e-3}{\kilo\gram}, number \num{1234567.891}, range \qtyrange{10}{20}{\celsius}, list \numlist{1;2;3}, angle \ang{12.5}, product \qtyproduct{2 x 3}{\milli\metre}.
+\begin{table}[ht]\centering
+\begin{tabular}{l S[table-format=3.2] S[table-format=1.3e1]}
+\toprule Sample & {Value} & {Error} \\ \midrule
+A & 12.34 & 1.2e-3 \\ B & 123.4 & 4.567e2 \\ C & 1.5 & 9.9e-1 \\ \bottomrule
+\end{tabular}\end{table}
+\end{document}

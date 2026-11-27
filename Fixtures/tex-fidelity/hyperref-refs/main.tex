@@ -1,0 +1,20 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{lipsum}
+\usepackage[colorlinks=true,linkcolor=blue,urlcolor=magenta]{hyperref}
+\usepackage{nameref}
+\usepackage{cleveref}
+\hypersetup{pdftitle={Hyperref Fidelity},pdfauthor={Tester}}
+\begin{document}
+\tableofcontents
+\section{First}\label{sec:first}
+\lipsum[1]\footnote{Footnote with a link: \url{https://www.ctan.org/pkg/hyperref}.}
+\begin{equation}E=mc^2\label{eq:e}\end{equation}
+\subsection{Nested}\label{sec:nested}
+See \cref{sec:second}, \autoref{eq:e}, \nameref{sec:nested}, page~\pageref{sec:second}, \href{https://example.org}{an external link} and \hyperref[sec:first]{an internal link}.
+\section{Second}\label{sec:second}
+\lipsum[2-4]
+\section{Third}
+Back to \cref{sec:first} and \eqref{eq:e}.
+\end{document}

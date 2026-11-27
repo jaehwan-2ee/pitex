@@ -1,0 +1,17 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage[inline]{enumitem}
+\begin{document}
+\begin{enumerate}[label=(\roman*),leftmargin=*]
+\item First \item Second \begin{enumerate}[label=\alph*.] \item nested a \item nested b\end{enumerate}
+\item Third
+\end{enumerate}
+\begin{itemize}[noitemsep,label=$\triangleright$]
+\item compact one \item compact two
+\end{itemize}
+\begin{description}[style=nextline]
+\item[Term] Description on the next line.
+\item[Longer term] Another.
+\end{description}
+Inline: \begin{enumerate*}[label=(\arabic*)]\item a \item b \item c\end{enumerate*}.
+\end{document}

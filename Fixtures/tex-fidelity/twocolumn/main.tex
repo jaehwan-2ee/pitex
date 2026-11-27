@@ -1,0 +1,15 @@
+% !TEX program = pdflatex
+\documentclass[twocolumn]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,graphicx,amsmath,lipsum}
+\title{A Two-Column Paper}\author{Author}\date{}
+\begin{document}
+\maketitle
+\begin{abstract}\lipsum[1][1-4]\end{abstract}
+\section{Introduction}\lipsum[2-3]
+\begin{figure*}[t]\centering\includegraphics[width=.8\textwidth,height=3cm]{example-image-a}\caption{A full-width figure.}\end{figure*}
+\begin{equation}\mathcal{L}(\theta)=-\sum_i \log p_\theta(y_i\mid x_i)\end{equation}
+\section{Experiments}\lipsum[4-7]
+\begin{figure}[h]\centering\includegraphics[width=\columnwidth]{example-image-b}\caption{Column figure.}\end{figure}
+\section{Conclusion}\lipsum[8]
+\end{document}

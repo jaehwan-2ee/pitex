@@ -1,0 +1,15 @@
+% !TEX program = xelatex
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+% File names, not system font names: TeX Live fonts are not registered with CoreText.
+\setmainfont{texgyretermes}[Extension=.otf,UprightFont=*-regular,ItalicFont=*-italic,BoldFont=*-bold,BoldItalicFont=*-bolditalic]
+\setsansfont{texgyreheros}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold]
+\setmonofont{texgyrecursor}[Extension=.otf,UprightFont=*-regular]
+\setmathfont{texgyretermes-math.otf}
+\begin{document}
+\section{OpenType fonts}
+Regular, \textit{italic}, \textbf{bold}, \textbf{\textit{bold italic}}, \textsf{sans}, \texttt{mono}. Ligatures: office, affluent. Old-style numerals: {\addfontfeatures{Numbers=OldStyle}0123456789}. Small caps: \textsc{Small Caps}.
+Unicode input: α β γ, ∑, →, “quotes”, ½, ﬁ.
+\[ \symbf{F} = m\symbf{a},\quad \int_0^\infty e^{-x}\,\mathrm{d}x = 1,\quad \mathbb{R}^n,\ \mathcal{O}(n\log n),\ \sum_{k=1}^{n}\frac{1}{k^2} \]
+\end{document}

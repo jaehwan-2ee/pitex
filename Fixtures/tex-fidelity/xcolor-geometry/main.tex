@@ -1,0 +1,16 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage[a5paper,margin=1.5cm,top=2cm]{geometry}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{lipsum}
+\definecolor{brand}{RGB}{20,90,160}
+\begin{document}
+\textcolor{brand}{\Large Brand heading}\par
+\lipsum[1]
+\colorbox{yellow}{Highlighted} \fcolorbox{red}{white}{Framed} \textcolor{ForestGreen}{dvipsnames} \textcolor{blue!40!black}{mixed}.
+{\color{Maroon}\lipsum[2]}
+\newpage
+\newgeometry{margin=3cm}
+\lipsum[3]
+\restoregeometry
+\end{document}

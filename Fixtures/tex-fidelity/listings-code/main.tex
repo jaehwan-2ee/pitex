@@ -1,0 +1,20 @@
+% !TEX program = pdflatex
+\documentclass{article}
+\usepackage{listings,xcolor}
+\lstset{basicstyle=\ttfamily\small,keywordstyle=\color{blue}\bfseries,commentstyle=\color{gray},stringstyle=\color{red!70!black},numbers=left,frame=single,breaklines=true}
+\begin{document}
+\begin{lstlisting}[language=Python,caption={Python example}]
+def fib(n: int) -> int:
+    """Return the n-th Fibonacci number."""  # docstring
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+print(fib(10), "done")
+\end{lstlisting}
+\begin{lstlisting}[language=C]
+#include <stdio.h>
+int main(void) { printf("hello\n"); return 0; } /* comment */
+\end{lstlisting}
+Inline \lstinline|x = y + 1|.
+\end{document}

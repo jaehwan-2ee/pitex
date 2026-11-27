@@ -1,0 +1,34 @@
+% !TEX program = pdflatex
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{lipsum}
+\title{A Basic Article}
+\author{A. Author\thanks{Example University.} \and B. Author}
+\date{1 January 2024}
+\begin{document}
+\maketitle
+\begin{abstract}
+This abstract summarises a short article used to compare typesetting engines. It contains ``quotes'', dashes -- and --- and ligatures: office, affinity, flow.
+\end{abstract}
+\tableofcontents
+\section{Introduction}
+\lipsum[1-2]\footnote{A first footnote with \emph{emphasis}.}
+\subsection{Motivation}
+\lipsum[3] Inline math $e^{i\pi}+1=0$ and \textbf{bold}, \textit{italic}, \textsc{Small Caps}, \texttt{typewriter}.
+\begin{itemize}
+\item First item.
+\item Second item with a nested list:
+  \begin{enumerate}
+  \item one
+  \item two
+  \end{enumerate}
+\end{itemize}
+\section{Method}
+\lipsum[4-5]
+\begin{quote}
+\lipsum[6][1-3]
+\end{quote}
+\section{Conclusion}
+\lipsum[7]
+\end{document}
