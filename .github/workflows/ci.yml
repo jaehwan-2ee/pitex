@@ -739,7 +739,7 @@ jobs:
           brew install --cask basictex
           echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
           sudo /Library/TeX/texbin/tlmgr update --self
-          sudo /Library/TeX/texbin/tlmgr install collection-xetex collection-latexrecommended unicode-math lm-math biblatex biber logreq csquotes latexmk
+          sudo /Library/TeX/texbin/tlmgr install collection-xetex collection-latexrecommended unicode-math lm-math biblatex biber logreq csquotes latexmk cm-super
       - name: Build helpers against the macOS SDK
         run: make -C PreviewEngine BUILD_DIR="$RUNNER_TEMP/pitex-preview-engine" all selftest
       - name: In-process service and PDF interpreter tests
