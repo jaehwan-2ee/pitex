@@ -231,17 +231,24 @@ Each PR below owns a file set, so PRs in one round do not edit the same files.
 - Gap 8 (pdfTeX expansion arithmetic) if microtype documents still miss the raster gate.
 - Tighten the CI gate to the full definition of done and add a macOS runner with the CJK fonts.
 
-## Reproducing
+## Running the benchmark
 
-Linux, no source build needed (TECkit headers are not on comet; the helpers come from the release package):
+Linux needs no source build. comet has no TECkit development headers, so `make -C PreviewEngine` fails there; the release package's helpers run as they are (the runtime `libTECkit.so.0` is installed):
 
 ```sh
 gh release download v1.1.7 -R jaehwan-2ee/pitex -p 'Pitex-v1.1.7-ubuntu24.04-amd64.deb'
-dpkg-deb -x Pitex-v1.1.7-ubuntu24.04-amd64.deb pkg
+dpkg-deb -x Pitex-v1.1.7-ubuntu24.04-amd64.deb pkg   # extracts only, installs nothing
 systemd-run --user --scope -p MemoryMax=6G \
   env PITEX_BIN=pkg/usr/lib/pitex python3 Tools/tex-fidelity.py --runs 3 --json linux.json
 ```
 
 From a source build, set `PITEX_BIN` to `$BUILD_DIR/bin` after `make -C PreviewEngine BUILD_DIR=...`.
-macOS: copy `Contents/Helpers/PreviewEngine/` (with its `lib/`) out of the DMG and point `PITEX_BIN` at it.
+
+macOS (M4 `mini`): the installed `Pitex.app` may be older than the release under test.
+Attach the release DMG read-only (`hdiutil attach -nobrowse -readonly`), copy `Pitex.app/Contents/Helpers/PreviewEngine/` including its `lib/` directory, detach, and point `PITEX_BIN` at the copy.
+Wrap each run in `python3 /tmp/swe-m4lock.py`.
+On that machine Noto CJK KR is missing, the TeX Live 2026 `biber` fails to start, and `mutool` is absent, so the Korean and Biber documents have no reference and links are not counted.
+
+The script needs `latexmk`, `pdflatex`, `xelatex`, `bibtex`, `biber` and poppler (`pdfinfo`, `pdftotext`, `pdftoppm`, `pdffonts`, `pdftohtml`) on `PATH`; `mutool` is optional.
+Runs are sequential so timings do not compete; a full `--runs 3` pass takes about 15 minutes on comet.
 CI runs the benchmark once per push in the `preview-engine` job and attaches the table to the step summary and the `tex-fidelity` artifact.
