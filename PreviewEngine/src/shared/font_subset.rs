@@ -2,8 +2,9 @@
 // publication uses, and faces shared by several font resources are written
 // once (ISO 32000-1 9.6.4, 9.8, 9.9). Glyph ids and character codes do not
 // change, so widths, encodings and ToUnicode CMaps stay as written.
-// Formats: OpenType 'glyf'/'loca' and 'CFF ' (Adobe TN 5176), Type 1
-// (Adobe Type 1 Font Format, eexec and charstring encryption).
+// Formats: OpenType 'glyf'/'loca' and 'CFF ' (Adobe TN 5176, Type 2
+// charstrings TN 5177), Type 1 (Adobe Type 1 Font Format, eexec and
+// charstring encryption).
 // Copyright (c) 2026 Pitex contributors. SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 use std::collections::{BTreeSet, HashMap};
@@ -22,6 +23,8 @@ struct Program {
     /// `None` keeps the whole program (a format this module does not subset).
     deflated: Option<Vec<u8>>,
     lengths: [usize; 3],
+    /// `deflated` is a bare CFF rather than an sfnt.
+    bare: bool,
 }
 
 unsafe fn cache(c: *mut conv_ctx) -> &'static mut Cache {
@@ -102,10 +105,13 @@ pub unsafe fn native_descriptor(c: *mut conv_ctx, p: *mut pdf_font) -> i32 {
         key: Vec::new(),
         deflated: None,
         lengths: [0; 3],
+        bare: false,
     });
     if program.key != key || program.lengths[0] == 0 {
         let font = std::slice::from_raw_parts((*f).sfnt, (*f).sfnt_len);
-        let subset = subset_sfnt(font, &used);
+        let bare = if (*f).cff { bare_cff(font, &used) } else { None };
+        program.bare = bare.is_some();
+        let subset = bare.or_else(|| subset_sfnt(font, &used));
         program.lengths = [subset.as_ref().map_or(font.len(), Vec::len), 0, 0];
         program.deflated = subset.map(|s| deflate(&s));
         program.key = key;
@@ -127,7 +133,9 @@ pub unsafe fn native_descriptor(c: *mut conv_ctx, p: *mut pdf_font) -> i32 {
     reals(o, &[(*f).cap_height]);
     put(o, &format!("/StemV 80/{} {ff} 0 R>>", if (*f).cff { "FontFile3" } else { "FontFile2" }));
     pdfw_end((*c).pw);
-    let dict = if (*f).cff {
+    let dict = if program.bare {
+        "/Subtype/CIDFontType0C".to_string()
+    } else if (*f).cff {
         "/Subtype/OpenType".to_string()
     } else {
         format!("/Length1 {}", program.lengths[0])
@@ -159,6 +167,7 @@ pub unsafe fn type1_descriptor(c: *mut conv_ctx, p: *mut pdf_font) -> i32 {
         key: Vec::new(),
         deflated: None,
         lengths: [0; 3],
+        bare: false,
     });
     let data = std::slice::from_raw_parts((*t).data, (*t).len1 + (*t).len2 + (*t).len3);
     if program.key != key || program.lengths[0] == 0 {
@@ -497,6 +506,45 @@ fn walk(cff: &[u8], code: std::ops::Range<usize>, subrs: &mut [Subrs; 2], stems:
     }
     Some(false)
 }
+/// Private DICT ranges of a CFF font and the one each glyph uses: CID-keyed
+/// fonts pick one per glyph through FDSelect, others have a single one.
+fn private_dicts(cff: &[u8], top: &[u8], glyphs: usize) -> Option<(Vec<Fd>, Vec<usize>)> {
+    let private = |dict: &[u8]| -> Option<std::ops::Range<usize>> {
+        let operands = dict_operands(dict, 18)?;
+        let (size, offset) = (usize::try_from(*operands.first()?).ok()?, usize::try_from(*operands.get(1)?).ok()?);
+        cff.get(offset..offset.checked_add(size)?)?;
+        Some(offset..offset + size)
+    };
+    let (Some(fd_array), Some(fd_select)) = (dict_offset(top, 0x0c24), dict_offset(top, 0x0c25)) else {
+        return Some((vec![Fd { private: private(top)?, dict: None }], vec![0; glyphs]));
+    };
+    let fds = cff_index(cff, fd_array)?;
+    let privates = fds.windows(2).map(|w| Some(Fd { private: private(&cff[w[0]..w[1]])?, dict: Some(w[0]..w[1]) })).collect::<Option<Vec<_>>>()?;
+    let select = match cff.get(fd_select)? {
+        0 => cff.get(fd_select + 1..fd_select + 1 + glyphs)?.iter().map(|&fd| fd as usize).collect(),
+        3 => {
+            let mut select = vec![0; glyphs];
+            for r in 0..be(cff, fd_select + 1, 2)? {
+                let range = fd_select + 3 + 3 * r;
+                let (first, fd, last) = (be(cff, range, 2)?, *cff.get(range + 2)? as usize, be(cff, range + 3, 2)?);
+                select.get_mut(first..last.min(glyphs))?.fill(fd);
+            }
+            select
+        }
+        _ => return None,
+    };
+    select.iter().all(|&fd| fd < privates.len()).then_some((privates, select))
+}
+/// A Private DICT and, in a CID-keyed font, the Font DICT that points to it.
+struct Fd {
+    private: std::ops::Range<usize>,
+    dict: Option<std::ops::Range<usize>>,
+}
+impl Fd {
+    fn local_subrs(&self, cff: &[u8]) -> Option<Subrs> {
+        Subrs::read(cff, dict_offset(&cff[self.private.clone()], 19).map(|subrs| self.private.start + subrs))
+    }
+}
 /// CFF with every unused charstring replaced by `endchar` and every
 /// subroutine no kept charstring calls replaced by `return`.
 // shortcut: Type 2 `endchar` used as seac is not followed; handle it if a CFF
@@ -513,34 +561,8 @@ pub fn subset_cff(cff: &[u8], used: &[bool]) -> Option<Vec<u8>> {
     let starts = cff_index(cff, charstrings)?;
     let keep = (0..used.len()).map(|g| g == 0 || used[g]).collect::<Vec<_>>();
     let mut global = Subrs::read(cff, Some(*strings.last()?))?;
-    // Local subroutines of a Private DICT given as (size, offset).
-    let local = |private: Vec<i64>| -> Option<Subrs> {
-        let (size, offset) = (usize::try_from(private[0]).ok()?, usize::try_from(private[1]).ok()?);
-        let dict = cff.get(offset..offset + size)?;
-        Subrs::read(cff, dict_offset(dict, 19).map(|subrs| offset + subrs))
-    };
-    // CID-keyed fonts pick a Private DICT per glyph through FDSelect.
-    let (mut locals, select) = match (dict_offset(top, 0x0c24), dict_offset(top, 0x0c25)) {
-        (Some(fd_array), Some(fd_select)) => {
-            let fds = cff_index(cff, fd_array)?;
-            let locals = fds.windows(2).map(|w| local(dict_operands(&cff[w[0]..w[1]], 18)?)).collect::<Option<Vec<_>>>()?;
-            let select = match cff.get(fd_select)? {
-                0 => cff.get(fd_select + 1..fd_select + 1 + used.len())?.iter().map(|&fd| fd as usize).collect(),
-                3 => {
-                    let mut select = vec![0; used.len()];
-                    for r in 0..be(cff, fd_select + 1, 2)? {
-                        let range = fd_select + 3 + 3 * r;
-                        let (first, fd, last) = (be(cff, range, 2)?, cff[range + 2] as usize, be(cff, range + 3, 2)?);
-                        select.get_mut(first..last.min(used.len()))?.fill(fd);
-                    }
-                    select
-                }
-                _ => return None,
-            };
-            (locals, select)
-        }
-        _ => (vec![local(dict_operands(top, 18)?)?], vec![0; used.len()]),
-    };
+    let (privates, select) = private_dicts(cff, top, used.len())?;
+    let mut locals = privates.iter().map(|fd| fd.local_subrs(cff)).collect::<Option<Vec<_>>>()?;
     for g in (0..used.len()).filter(|&g| keep[g]) {
         let fd = *select.get(g)?;
         let local = std::mem::replace(locals.get_mut(fd)?, Subrs::read(cff, None)?);
@@ -556,6 +578,234 @@ pub fn subset_cff(cff: &[u8], used: &[bool]) -> Option<Vec<u8>> {
         blank_index(cff, &mut out, subrs.at, &subrs.used, 11)?;
     }
     Some(out)
+}
+
+/// Operator and full bytes (operands included) of each CFF DICT entry.
+fn dict_entries(dict: &[u8]) -> Option<Vec<(u16, &[u8])>> {
+    let (mut entries, mut start, mut at) = (Vec::new(), 0, 0);
+    while at < dict.len() {
+        at += match dict[at] {
+            12 => {
+                entries.push((0x0c00 | *dict.get(at + 1)? as u16, &dict[start..at + 2]));
+                start = at + 2;
+                2
+            }
+            op @ 0..=21 => {
+                entries.push((op as u16, &dict[start..at + 1]));
+                start = at + 1;
+                1
+            }
+            28 => 3,
+            29 => 5,
+            30 => 2 + dict[at + 1..].iter().position(|&v| v & 0x0f == 0x0f || v >> 4 == 0x0f)?,
+            32..=246 => 1,
+            247..=254 => 2,
+            _ => return None,
+        };
+    }
+    (start == dict.len()).then_some(entries)
+}
+/// DICT integer in its fixed five-byte form, so offsets can be filled in later.
+fn int5(value: usize) -> [u8; 5] {
+    let [a, b, c, d] = (value as i32).to_be_bytes();
+    [29, a, b, c, d]
+}
+fn write_index(objects: &[Vec<u8>]) -> Vec<u8> {
+    if objects.is_empty() {
+        return vec![0, 0];
+    }
+    let end = 1 + objects.iter().map(Vec::len).sum::<usize>();
+    let size = (1..4).find(|&s| end < 1 << (8 * s)).unwrap_or(4);
+    let mut out = (objects.len() as u16).to_be_bytes().to_vec();
+    out.push(size as u8);
+    let mut offset = 1usize;
+    for o in objects {
+        out.extend(&offset.to_be_bytes()[8 - size..]);
+        offset += o.len();
+    }
+    out.extend(&offset.to_be_bytes()[8 - size..]);
+    objects.iter().for_each(|o| out.extend(o));
+    out
+}
+/// A charstring being copied without subroutine calls. The operand count and
+/// stem count carry across calls: a subroutine works on its caller's stack.
+#[derive(Default)]
+struct Flat {
+    out: Vec<u8>,
+    operands: usize,
+    stems: usize,
+    /// Output position and value of the number just copied.
+    last: Option<(usize, i64)>,
+}
+/// Copies a Type 2 charstring with each subroutine call replaced by the
+/// subroutine's body. Returns whether `endchar` ended the glyph. `None` for
+/// what such a copy cannot keep exact: a subroutine number computed by
+/// arithmetic, and `endchar` used as seac, whose accent glyphs a subset drops.
+fn flatten(cff: &[u8], code: std::ops::Range<usize>, subrs: [&Subrs; 2], f: &mut Flat, depth: u8) -> Option<bool> {
+    let mut at = code.start;
+    while at < code.end {
+        let b = cff[at];
+        let width = match b {
+            28 => 3,
+            32..=246 => 1,
+            247..=254 => 2,
+            255 => 5,
+            _ => 0,
+        };
+        if width > 0 {
+            let token = cff.get(at..at + width)?;
+            let value = match b {
+                28 => Some(be(token, 1, 2)? as i16 as i64),
+                32..=246 => Some(b as i64 - 139),
+                247..=250 => Some((b as i64 - 247) * 256 + token[1] as i64 + 108),
+                251..=254 => Some(-(b as i64 - 251) * 256 - token[1] as i64 - 108),
+                _ => None,
+            };
+            f.last = value.map(|v| (f.out.len(), v));
+            f.out.extend(token);
+            f.operands += 1;
+            at += width;
+            continue;
+        }
+        at += 1;
+        let mut copy = cff.get(at - 1..at)?;
+        match b {
+            10 | 29 => {
+                let (start, number) = f.last.take()?;
+                f.out.truncate(start);
+                f.operands -= 1;
+                let set = subrs[(b == 29) as usize];
+                let index = usize::try_from(number + set.bias()).ok()?;
+                let body = *set.starts.get(index)?..*set.starts.get(index + 1)?;
+                if depth >= 10 {
+                    return None;
+                }
+                if flatten(cff, body, subrs, f, depth + 1)? {
+                    return Some(true);
+                }
+                continue;
+            }
+            11 => return (depth > 0).then_some(false),
+            14 if f.operands >= 4 => return None,
+            14 => {
+                f.out.push(14);
+                return Some(true);
+            }
+            1 | 3 | 18 | 23 => f.stems += f.operands / 2,
+            19 | 20 => {
+                f.stems += f.operands / 2;
+                copy = cff.get(at - 1..at + f.stems.div_ceil(8))?;
+            }
+            // dotsection and the flex operators; the others are arithmetic.
+            12 if [0, 34, 35, 36, 37].contains(cff.get(at)?) => copy = &cff[at - 1..at + 1],
+            12 => return None,
+            _ => {}
+        }
+        at += copy.len() - 1;
+        f.out.extend(copy);
+        f.operands = 0;
+        f.last = None;
+    }
+    Some(false)
+}
+/// Bare CID-keyed CFF for FontFile3/CIDFontType0C with .notdef and the used
+/// glyphs only, their charstrings flattened so no subroutines remain, as
+/// xdvipdfmx writes OpenType CFF faces. Each glyph's CID is its glyph id in
+/// the face, so content-stream codes, widths and ToUnicode stay as written.
+pub fn bare_cff(font: &[u8], used: &[bool]) -> Option<Vec<u8>> {
+    let cff = (0..be(font, 4, 2)?).find_map(|i| {
+        let record = 12 + 16 * i;
+        let offset = be(font, record + 8, 4)?;
+        (font.get(record..record + 4)? == b"CFF ").then(|| font.get(offset..offset.checked_add(be(font, record + 12, 4)?)?))?
+    })?;
+    if *cff.first()? != 1 {
+        return None;
+    }
+    let names_at = *cff.get(2)? as usize;
+    let names = cff_index(cff, names_at)?;
+    let tops = cff_index(cff, *names.last()?)?;
+    let top = cff.get(*tops.first()?..*tops.get(1)?)?;
+    let strings = cff_index(cff, *tops.last()?)?;
+    let starts = cff_index(cff, dict_offset(top, 17)?)?;
+    if starts.len() != used.len() + 1 || dict_operands(top, 0x0c06).is_some_and(|t| t != [2]) {
+        return None;
+    }
+    let global = Subrs::read(cff, Some(*strings.last()?))?;
+    let (fds, select) = private_dicts(cff, top, used.len())?;
+    if fds.len() > 256 {
+        return None;
+    }
+    let locals = fds.iter().map(|fd| fd.local_subrs(cff)).collect::<Option<Vec<_>>>()?;
+    let glyphs = (0..used.len()).filter(|&g| g == 0 || used[g]).collect::<Vec<_>>();
+    let charstrings = glyphs
+        .iter()
+        .map(|&g| {
+            let mut flat = Flat::default();
+            flatten(cff, starts[g]..starts[g + 1], [&locals[select[g]], &global], &mut flat, 0)?;
+            Some(flat.out)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    // Glyph names fill most of a name-keyed font's String INDEX; keep only the
+    // strings DICT entries name, renumbered (391 standard strings come first).
+    let mut kept_strings = vec![b"Adobe".to_vec(), b"Identity".to_vec()];
+    let mut entries = |dict: &[u8], dropped: &[u16]| -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        for (op, bytes) in dict_entries(dict)?.into_iter().filter(|e| !dropped.contains(&e.0)) {
+            let sid = [0, 1, 2, 3, 4, 0x0c00, 0x0c15, 0x0c16, 0x0c26].contains(&op).then(|| dict_operands(bytes, op)).flatten();
+            match sid.as_deref() {
+                Some(&[sid]) if sid >= 391 => {
+                    let at = usize::try_from(sid - 391).ok()?;
+                    kept_strings.push(cff.get(*strings.get(at)?..*strings.get(at + 1)?)?.to_vec());
+                    out.extend(int5(390 + kept_strings.len()));
+                    out.extend(&bytes[bytes.len() - if op > 0xff { 2 } else { 1 }..]);
+                }
+                _ => out.extend(bytes),
+            }
+        }
+        Some(out)
+    };
+    let copied = entries(top, &[15, 16, 17, 18, 0x0c14, 0x0c1e, 0x0c22, 0x0c24, 0x0c25])?;
+    let fd_entries = fds
+        .iter()
+        .map(|fd| fd.dict.as_ref().map_or(Some(Vec::new()), |dict| entries(&cff[dict.clone()], &[18])))
+        .collect::<Option<Vec<Vec<u8>>>>()?;
+    let privates = fds.iter().map(|fd| entries(&cff[fd.private.clone()], &[19])).collect::<Option<Vec<Vec<u8>>>>()?;
+    let strings = write_index(&kept_strings);
+    // Format 0 charset (GID 1.. -> CID) and FDSelect (one FD byte per GID).
+    let charset = std::iter::once(0).chain(glyphs[1..].iter().flat_map(|&g| (g as u16).to_be_bytes())).collect::<Vec<_>>();
+    let fd_select = std::iter::once(0).chain(glyphs.iter().map(|&g| select[g] as u8)).collect::<Vec<_>>();
+    let charstrings = write_index(&charstrings);
+    // Offsets are five-byte integers, so a first pass with zeros fixes every length.
+    let layout = |at: [usize; 4], private_at: &[usize]| {
+        let mut top = [int5(391), int5(392), int5(0)].concat();
+        top.extend([12, 30]);
+        top.extend(copied.iter());
+        for (value, op) in [(used.len(), &[12, 34][..]), (at[0], &[15]), (at[1], &[12, 37]), (at[2], &[17]), (at[3], &[12, 36])] {
+            top.extend(int5(value));
+            top.extend(op);
+        }
+        let fd_dicts = fd_entries
+            .iter()
+            .zip(privates.iter().zip(private_at))
+            .map(|(entries, (private, &at))| [entries.as_slice(), &int5(private.len()), &int5(at), &[18]].concat())
+            .collect::<Vec<_>>();
+        (write_index(&[top]), write_index(&fd_dicts))
+    };
+    let head = [&[1, 0, 4, 4][..], &cff[names_at..*names.last()?]].concat();
+    let (top_index, fd_array) = layout([0; 4], &vec![0; fds.len()]);
+    let charset_at = head.len() + top_index.len() + strings.len() + 2;
+    let fd_select_at = charset_at + charset.len();
+    let charstrings_at = fd_select_at + fd_select.len();
+    let fd_array_at = charstrings_at + charstrings.len();
+    let mut private_at = Vec::new();
+    let mut next = fd_array_at + fd_array.len();
+    for private in &privates {
+        private_at.push(next);
+        next += private.len();
+    }
+    let (top_index, fd_array) = layout([charset_at, fd_select_at, charstrings_at, fd_array_at], &private_at);
+    let out = [head, top_index, strings, vec![0, 0], charset, fd_select, charstrings, fd_array, privates.concat()].concat();
+    (out.len() == next).then_some(out)
 }
 
 const EEXEC: u16 = 55665;
@@ -932,6 +1182,65 @@ mod tests {
         assert_eq!(objects(charstrings_at), [glyphs[0], &[14], glyphs[2]]);
         assert_eq!(objects(gsubrs_at), [&[139, 139, 21, 11][..], &[11]]);
         assert!(subset[cff_index(&subset, charstrings_at).unwrap()[3]..].iter().all(|&b| b == 0));
+    }
+
+    /// Name-keyed CFF with a global and a local subroutine, wrapped in an sfnt.
+    /// FullName is string 392; string 391 stands in for the glyph names.
+    fn cff_face(glyphs: &[&[u8]]) -> Vec<u8> {
+        let head = [1u8, 0, 4, 1];
+        let names = index(&[b"F"]);
+        let strings = index(&[b"glyphname", b"Full"]);
+        let gsubrs = index(&[&[139, 139, 21, 11]]);
+        let lsubrs = index(&[&[139, 139, 5, 11]]);
+        let charstrings = index(glyphs);
+        // Top DICT: FullName (2), CharStrings (17) and Private (18) as five-byte integers.
+        let top = |charstrings_at: usize, private_at: usize| {
+            [&int5(392)[..], &[2], &int5(charstrings_at), &[17], &int5(6), &int5(private_at), &[18]].concat()
+        };
+        let charstrings_at = head.len() + names.len() + index(&[&top(0, 0)]).len() + strings.len() + gsubrs.len();
+        let private_at = charstrings_at + charstrings.len();
+        let private = [&int5(6)[..], &[19]].concat();
+        let top = top(charstrings_at, private_at);
+        let cff = [&head[..], &names, &index(&[&top]), &strings, &gsubrs, &charstrings, &private, &lsubrs].concat();
+        assert_eq!(cff_index(&cff, private_at + private.len()).unwrap().len(), 2);
+        sfnt(&[(b"CFF ", cff), (b"head", vec![0; 54])])
+    }
+    fn objects(cff: &[u8], at: usize) -> Vec<Vec<u8>> {
+        cff_index(cff, at).unwrap().windows(2).map(|w| cff[w[0]..w[1]].to_vec()).collect()
+    }
+
+    #[test]
+    fn bare_cff_keeps_used_glyphs_as_cids_with_subroutines_inlined() {
+        // Glyph 2: hstemhm 0 10, hintmask (one byte), callgsubr 0, callsubr 0, endchar.
+        let glyph = [139, 149, 18, 19, 0x80, 32, 29, 32, 10, 14];
+        let face = cff_face(&[&[139, 14], &[139, 139, 21, 14], &glyph]);
+        let bare = bare_cff(&face, &[false, false, true]).unwrap();
+        let names = cff_index(&bare, 4).unwrap();
+        let top = &objects(&bare, *names.last().unwrap())[0];
+        assert_eq!(dict_operands(top, 0x0c1e).unwrap(), [391, 392, 0]);
+        assert_eq!(dict_operands(top, 0x0c22).unwrap(), [3]);
+        let charstrings = objects(&bare, dict_offset(top, 17).unwrap());
+        assert_eq!(charstrings, [vec![139, 14], vec![139, 149, 18, 19, 0x80, 139, 139, 21, 139, 139, 5, 14]]);
+        let charset = dict_offset(top, 15).unwrap();
+        assert_eq!(bare[charset..charset + 3], [0, 0, 2]);
+        let fd_select = dict_offset(top, 0x0c25).unwrap();
+        assert_eq!(bare[fd_select..fd_select + 3], [0, 0, 0]);
+        let fd = &objects(&bare, dict_offset(top, 0x0c24).unwrap())[0];
+        let private = dict_operands(fd, 18).unwrap();
+        let private = &bare[private[1] as usize..(private[0] + private[1]) as usize];
+        assert!(dict_entries(private).unwrap().iter().all(|e| e.0 != 19));
+        assert_eq!(dict_operands(top, 2).unwrap(), [393]);
+        let strings_at = cff_index(&bare, *names.last().unwrap()).unwrap()[1];
+        assert_eq!(objects(&bare, strings_at), [b"Adobe".to_vec(), b"Identity".to_vec(), b"Full".to_vec()]);
+        assert_eq!(bare[*cff_index(&bare, strings_at).unwrap().last().unwrap()..][..2], [0, 0]);
+    }
+
+    #[test]
+    fn bare_cff_refuses_seac_and_computed_subroutine_numbers() {
+        // endchar with four operands is seac; "1 1 add callsubr" computes the number.
+        assert!(bare_cff(&cff_face(&[&[139, 14], &[139, 139, 140, 140, 14]]), &[false, true]).is_none());
+        assert!(bare_cff(&cff_face(&[&[139, 14], &[140, 140, 12, 10, 10, 14]]), &[false, true]).is_none());
+        assert!(bare_cff(&cff_face(&[&[139, 14], &[139, 139, 21, 14]]), &[false, true]).is_some());
     }
 
     fn sfnt(tables: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {

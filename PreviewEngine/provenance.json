@@ -1796,7 +1796,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/font_subset.rs",
-   "sha256": "1242bd4a1b9bb51339995d0dd5c8c70c36b5672e9b1154069d45fc7f309046a7"
+   "sha256": "4f924984604da0242e1b0cf4d1cf3f873d16f6c729d3539ed01c26d438ea2b33"
   },
   {
    "license_in_file": "MIT/X11 (SIL International)",
