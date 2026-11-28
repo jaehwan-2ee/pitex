@@ -177,12 +177,17 @@ pub unsafe fn type1_descriptor(c: *mut conv_ctx, p: *mut pdf_font) -> i32 {
     pdfw_name(o, (*t).fontname.as_ptr());
     put(o, "/Flags 4/FontBBox[");
     reals(o, &(*t).bbox);
+    // pdfTeX takes these from the TFM; pdftotext sizes each glyph's box from Ascent and Descent.
+    let [ascent, cap_height, descent] = match (*p).tfm.as_ref() {
+        Some(tfm) if tfm.ok => tfm.descriptor,
+        _ => [(*t).bbox[3], (*t).bbox[3], (*t).bbox[1]],
+    };
     put(o, "]/ItalicAngle 0/Ascent ");
-    reals(o, &[(*t).bbox[3]]);
+    reals(o, &[ascent]);
     put(o, "/Descent ");
-    reals(o, &[(*t).bbox[1]]);
+    reals(o, &[descent]);
     put(o, "/CapHeight ");
-    reals(o, &[(*t).bbox[3]]);
+    reals(o, &[cap_height]);
     put(o, &format!("/StemV 80/FontFile {ff} 0 R"));
     if (*(*c).document).backend.integer("pdfomitcharset") == 0 {
         let set = names.iter().map(|n| format!("/{n}")).collect::<String>();

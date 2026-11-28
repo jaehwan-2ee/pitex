@@ -16,7 +16,8 @@ use std::{
 };
 const TIMEOUT: Duration = Duration::from_secs(60);
 /// `(case, preamble, body, probes)`. A probe is a `mutool show` selector, or
-/// `header`/`text` for the PDF header line and extracted text. With a needle,
+/// `header`/`text` for the PDF header line and extracted text, or `bbox` for the
+/// word boxes `pdftotext -bbox` reports outside the marker line. With a needle,
 /// the probe compares whether that substring is present.
 type Case = (
     &'static str,
@@ -57,6 +58,14 @@ const CASES: &[Case] = &[
         r"\pdfobj reserveobjnum \edef\later{\the\pdflastobj}\edef\resources{/ExtGState \later\space 0 R}\global\expandafter\pdfpageresources\expandafter{\resources}\AddToHook{enddocument/afterlastpage}{\immediate\pdfobj useobjnum\later{<< /AuditGS << /CA 0.5 >> >>}}",
         r"Filled later.",
         &[("pages/1/Resources/ExtGState/AuditGS/CA", None)],
+    ),
+    (
+        // pdftotext sizes glyph boxes from the FontDescriptor; a FontBBox-tall cmex10
+        // sum overlapped the next line and moved the formula in reading order.
+        "pdflatex-font-descriptor-metrics",
+        "",
+        r"Sum $\sum_{k=1}^n k$ and \(\int x\).",
+        &[("bbox", None)],
     ),
     (
         "color-stack",
@@ -263,6 +272,16 @@ fn probes(pdf: &Path, probes: &[(&str, Option<&str>)]) -> Result<Vec<String>, Bo
             "text" => String::from_utf8(
                 output_timeout(Command::new("pdftotext").arg(pdf).arg("-"), TIMEOUT)?.stdout,
             )?,
+            "bbox" => {
+                let shown = output_timeout(Command::new("pdftotext").arg("-bbox").arg(pdf).arg("-"), TIMEOUT)?;
+                let word = regex::Regex::new(r#"<word xMin="(\S+)" yMin="(\S+)" xMax="(\S+)" yMax="(\S+)">(.*)</word>"#)?;
+                // Boxes only: pdfTeX copies the cmex10 sum as "P", the preview as U+2211.
+                word.captures_iter(&String::from_utf8(shown.stdout)?)
+                    .filter(|word| !word[5].contains("SemanticMarker"))
+                    .map(|word| format!("{} {} {} {}", &word[1], &word[2], &word[3], &word[4]))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }
             _ => {
                 let shown = output_timeout(
                     Command::new("mutool").arg("show").arg(pdf).arg(selector),
