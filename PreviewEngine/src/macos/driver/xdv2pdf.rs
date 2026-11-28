@@ -497,6 +497,8 @@ pub struct tfm_font {
     pub design: int32_t,
     pub width: [int32_t; 256],
     pub exists: [bool; 256],
+    /// pdfTeX's FontDescriptor Ascent, CapHeight and Descent, in 1/1000 of the design size.
+    pub descriptor: [f64; 3],
 }
 #[derive(Copy, Clone)]
 #[repr(C)]

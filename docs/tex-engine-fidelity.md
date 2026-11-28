@@ -75,10 +75,15 @@ A missing page scores 0 for text and raster.
 Identical layouts rendered from different font embeddings score 0.975–1.0 on raster; that is the metric's noise floor.
 Text similarity is order-sensitive, so it also drops when superscripts or a `?` node are emitted in a different reading order.
 The reference text is corrected where pdfLaTeX copies math extension glyphs as something other than their meaning, so the score counts real differences.
-Big operators copy as the letter at their code point (a display sum is "X") and are mapped back (`CMEX_BIG_OPERATORS`).
-Sized delimiters (`\big(` through `\Bigg\}`) have no glyphtounicode.tex entry, so they copy as nothing or as a letter (`\Big[` is "h").
-`CMEX_DELIMITERS` lists their 56 cmex10 codes, and the harness adds them to a copy of the reference's CMEX ToUnicode CMap through MuPDF before running `pdftotext`; without `mutool` the reference is read unchanged.
-On `math-ams` this raises text from 0.931 to 0.947, and what remains is word order only: both pages hold the same words.
+Big operators copy as the letter at their code point (a display sum is "X"), and sized delimiters (`\big(` through `\Bigg\}`) have no glyphtounicode.tex entry, so they copy as nothing or as a letter (`\Big[` is "h").
+`CMEX_BIG_OPERATORS` and `CMEX_DELIMITERS` (56 cmex10 codes) list their meanings, and the harness adds both to a copy of the reference's CMEX ToUnicode CMap through MuPDF before running `pdftotext`; without `mutool` the reference is read unchanged.
+The CMap is corrected rather than the extracted words because `pdftotext` orders words partly by their characters: on `math-ams`, with identical glyph boxes, the reference integral copied as "Z" lands elsewhere in reading order than the same glyph copied as "∫" (measured 2026-11-28).
+
+`pdftotext` sizes each glyph's box from the font's FontDescriptor `Ascent` and `Descent`, and groups words into lines and blocks by those boxes.
+pdfTeX takes them from the TFM (`preset_fontmetrics` in writefont.c: the height of `h`, the height of `H` for CapHeight, the depth of `y`); the built-in writer used the FontBBox, so a cmex10 sum was 40 bp tall, overlapped the next line and moved the formula in reading order (`beamer-basic` frame 3, text 0.783).
+The writer now uses pdfTeX's rule, and all 15 Type 1 descriptors on `math-ams` match pdfTeX's values.
+What remains on `math-ams` (0.981) is word order among words whose boxes agree to 0.01 bp and whose glyphs appear in the same stream order; the positions still differ below 0.01 bp (pdfTeX writes relative `Td` moves and 4-decimal font sizes).
+Writing 4-decimal font sizes alone made `twocolumn` worse (0.992 to 0.796), so matching that needs pdfTeX's whole positioning arithmetic, not a rounding change.
 
 ## Baseline
 

@@ -32,7 +32,6 @@ corpus is never written.
 """
 import argparse
 import difflib
-import html
 import json
 import os
 import random
@@ -159,9 +158,12 @@ def page_count(pdf):
 
 # pdfTeX writes no ToUnicode for CMEX10 unless \pdfgentounicode is on, so its big operators copy
 # as the ASCII letter at their code point (a display sum copies as "X"). These are the glyphs
-# that glyphtounicode.tex (and xdvipdfmx, and the built-in engine) map; the reference side is
-# corrected to them so text similarity counts real differences. Text and display sizes share
-# a base glyph name: summationtext is "P", summationdisplay is "X".
+# that glyphtounicode.tex (and xdvipdfmx, and the built-in engine) map; the reference copy's
+# CMap gets them (with_cmex_unicode) so text similarity counts real differences. Text and
+# display sizes share a base glyph name: summationtext is "P", summationdisplay is "X".
+# The CMap, not the extracted words, is corrected because pdftotext orders words partly by
+# their characters: with the same glyph boxes, a reference integral copied as "Z" lands
+# elsewhere in reading order than the same glyph copied as "∫" (math-ams, 2026-11-28).
 CMEX_BIG_OPERATORS = {
     "P": "∑", "X": "∑",  # summation
     "Q": "∏", "Y": "∏",  # product
@@ -194,9 +196,9 @@ CMEX_DELIMITERS = {code: char for char, codes in {
     "/": (0x0E, 0x2E, 0x1E, 0x2C), "\\": (0x0F, 0x2F, 0x1F, 0x2D),
 }.items() for code in codes}
 
-# Adds CMEX_DELIMITERS to the ToUnicode CMap of every CMEX10/LMMathExtension font (scriptArgs:
+# Adds CMEX_BIG_OPERATORS and CMEX_DELIMITERS to the ToUnicode CMap of every CMEX10/LMMathExtension font (scriptArgs:
 # input, output, {"hex code": "hex UTF-16"}). MuPDF buffers expose bytes by index only.
-CMEX_DELIMITERS_JS = """var doc = new PDFDocument(scriptArgs[0]); var table = JSON.parse(scriptArgs[2]);
+CMEX_UNICODE_JS = """var doc = new PDFDocument(scriptArgs[0]); var table = JSON.parse(scriptArgs[2]);
 var block = "", count = 0;
 for (var code in table) { block += "<" + code + "><" + table[code] + ">\\n"; count++; }
 block = count + " beginbfchar\\n" + block + "endbfchar\\n";
@@ -219,71 +221,24 @@ doc.save(scriptArgs[1], "compress");
 """
 
 
-def with_cmex_delimiters(pdf, scratch):
-    """A copy of the reference whose CMEX fonts copy sized delimiters; the reference itself without mutool."""
+def with_cmex_unicode(pdf, scratch):
+    """A copy of the reference whose CMEX fonts copy big operators and sized delimiters; the reference itself without mutool."""
     if not shutil.which("mutool"):
         return pdf
     scratch.mkdir(parents=True, exist_ok=True)
     script, out = scratch / "cmex-delimiters.js", scratch / "reference-cmex.pdf"
-    script.write_text(CMEX_DELIMITERS_JS)
+    script.write_text(CMEX_UNICODE_JS)
     table = {f"{code:02X}": f"{ord(char):04X}" for code, char in CMEX_DELIMITERS.items()}
+    table.update({f"{ord(code):02X}": f"{ord(char):04X}" for code, char in CMEX_BIG_OPERATORS.items()})
     proc = run(["mutool", "run", str(script), str(pdf), str(out), json.dumps(table)])
     return out if proc.returncode == 0 and out.is_file() else pdf
 
 
-def cmex_corrections(pdf):
-    """Per page, one entry per CMEX big operator: ({text as pdftotext may join it}, corrected).
-
-    pdftohtml names the font of each text run; pdftotext -bbox gives each word's box. A word is
-    corrected only where a run of one table character in a CMEX font (or Latin Modern's copy,
-    LMMathExtension) starts inside it. Plain pdftotext may join the operator to the next words
-    on its line ("P" "n" -> "Pn"), so up to two following words are accepted.
-    """
-    xml = run(["pdftohtml", "-xml", "-i", "-stdout", "-zoom", "1", str(pdf)]).stdout.decode("utf-8", "replace")
-    fonts = set(re.findall(
-        r'<fontspec id="(\d+)"[^>]*family="(?:[A-Z]{6}\+)?(?:CMEX\d+|LMMathExtension\d+)(?:-Regular)?"', xml))
-    runs = {}
-    for number, body in re.findall(r'<page number="(\d+)"(.*?)</page>', xml, re.S):
-        for top, left, font, char in re.findall(
-                r'<text top="(-?\d+)" left="(-?\d+)"[^>]*font="(\d+)"[^>]*>(.*?)</text>', body):
-            char = html.unescape(char)
-            if font in fonts and char in CMEX_BIG_OPERATORS:
-                runs.setdefault(int(number), []).append((float(left), float(top), char))
-    if not runs:
-        return {}
-    bbox = run(["pdftotext", "-bbox", str(pdf), "-"]).stdout.decode("utf-8", "replace")
-    corrections = {}
-    for number, body in enumerate(re.findall(r"<page [^>]*>(.*?)</page>", bbox, re.S), 1):
-        words = [(float(x0), float(y0), float(x1), float(y1), html.unescape(w)) for x0, y0, x1, y1, w in re.findall(
-            r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</word>', body)]
-        for left, top, char in runs.get(number, []):
-            for index, (x0, y0, x1, y1, word) in enumerate(words):
-                if x0 - 1 <= left <= x1 and y0 - 1 <= top <= y1 and char in word:
-                    joined = [word + "".join(w[4] for w in words[index + 1:index + 1 + k]) for k in range(3)]
-                    corrections.setdefault(number, []).append(
-                        ({j: j.replace(char, CMEX_BIG_OPERATORS[char], 1) for j in joined}))
-                    break
-    return corrections
-
-
-def correct_words(words, hits):
-    """Each hit corrects the first remaining word it names; other words stay as extracted."""
-    pending, out = list(hits), []
-    for word in words:
-        hit = next((h for h in pending if word in h), None)
-        if hit is not None:
-            pending.remove(hit)
-            word = hit[word]
-        out.append(word)
-    return out
-
-
-def page_texts(pdf, pages, reference=False):
+def page_texts(pdf, pages):
     texts = []
-    corrections = cmex_corrections(pdf) if reference else {}
     for page in range(1, pages + 1):
         proc = run(["pdftotext", "-f", str(page), "-l", str(page), str(pdf), "-"])
-        words = correct_words(proc.stdout.decode("utf-8", "replace").split(), corrections.get(page, []))
+        words = proc.stdout.decode("utf-8", "replace").split()
         # NFKC + casefold: ligature code points and small-caps ActualText are not content changes.
         text = unicodedata.normalize("NFKC", " ".join(words)).casefold()
         texts.append(text.split())
@@ -380,7 +335,7 @@ def log_counts(log):
 def compare(reference, builtin, dpi, scratch):
     ref_pages, out_pages = page_count(reference), page_count(builtin)
     common = min(ref_pages, out_pages)
-    ref_text = page_texts(with_cmex_delimiters(reference, scratch), ref_pages, reference=True)
+    ref_text = page_texts(with_cmex_unicode(reference, scratch), ref_pages)
     out_text = page_texts(builtin, out_pages)
     text = [difflib.SequenceMatcher(None, ref_text[i], out_text[i], autojunk=False).ratio()
             for i in range(common)] + [0.0] * abs(ref_pages - out_pages)
@@ -699,7 +654,6 @@ def self_test():
     assert program_of("% !TEX program = xelatex\n") == "xelatex"
     assert program_of("\\documentclass{article}") == "pdflatex"
     assert len(CMEX_DELIMITERS) == 56 and CMEX_DELIMITERS[0x12] == "(" and CMEX_DELIMITERS[0x68] == "["
-    assert correct_words(["Proof", "X", "Pn", "X"], [{"X": "∑"}, {"P": "∑", "Pn": "∑n"}]) == ["Proof", "∑", "∑n", "X"]
     doc = {"name": "d", "program": "pdflatex", "ref_ok": True, "builtin_ok": True, "ref_errors": 0,
            "builtin_errors": 0, "pages": [2, 2], "text_median": 0.99, "text_min": 0.96, "raster_median": 0.98,
            "raster_min": 0.95, "links": [3, 3], "outline_items": [1, 1], "unembedded_fonts": [0, 0],

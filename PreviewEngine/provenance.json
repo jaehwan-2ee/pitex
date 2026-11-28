@@ -450,7 +450,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/fonts.rs",
-   "sha256": "0c24ea8b748d34458eadac53f59eea3458846643e55742e8d200b84d87c1ff13",
+   "sha256": "42a2991b3aa02ef03ab5a3d0cf3c5706259c5dd4e4dfa61bcd875256c58ba6fd",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -599,7 +599,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/xdv2pdf.rs",
-   "sha256": "1b10ef97494f0bbfaf796032d541bd49d77f36e1fdce5cf857d9355938e50e3e",
+   "sha256": "e044bd4c08eb4bd2aebb03707df7047f2cb0298e03b375688f2735e6c96aaa8c",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -1059,7 +1059,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/fonts.rs",
-   "sha256": "d4ae2aa6f0903ae34012ed14de47116c14a0bbb5da197a1284a68681e2984a26",
+   "sha256": "8fc974429745d4381771b5bc9d42d0f2c8d9d8b3139c3f25c266dbda4e673f66",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -1208,7 +1208,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/xdv2pdf.rs",
-   "sha256": "fe327c9b05688008a90f79f9d80b65beb77536adb85788b585d0a4ada0ae2138",
+   "sha256": "d28b8ed64206bc28d2f08fcc781a0871f66e22e07cead0b61e32dffaf1f454d5",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/xdv2pdf.c",
@@ -1796,7 +1796,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/font_subset.rs",
-   "sha256": "69bf69a4b085b398ec0048c90b2797dcac771f410b94575ae50c9c0a8fb3b31b"
+   "sha256": "1242bd4a1b9bb51339995d0dd5c8c70c36b5672e9b1154069d45fc7f309046a7"
   },
   {
    "license_in_file": "MIT/X11 (SIL International)",

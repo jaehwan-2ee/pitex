@@ -1,13 +1,13 @@
 {
  "header": {
-  "format_build_s": 6.678,
-  "format_build_pdflatex_s": 6.5,
+  "format_build_s": 4.112,
+  "format_build_pdflatex_s": 3.959,
   "format_event": "published",
   "tex_version": "pdfTeX 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian)",
   "helpers": "/home/runner/work/_temp/pitex-preview-engine/bin",
   "runs": 1,
   "dpi": 72,
-  "commit": "6a41d9988f4c36a793502d90f8388f98492fd49b"
+  "commit": "df10ba35817d23cfbdadacf3f1659700c51b8208"
  },
  "results": [
   {
@@ -16,15 +16,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.7799671239999952,
-   "ref_warm_s": 0.305759647000059,
+   "ref_cold_s": 0.603581356000177,
+   "ref_warm_s": 0.24725242099998468,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.7467633720000322,
-   "builtin_warm_s": 0.44809703900000386,
+   "builtin_cold_s": 0.3314752229998703,
+   "builtin_warm_s": 0.10952297700009694,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -73,7 +73,7 @@
    ],
    "pdf_bytes": [
     83522,
-    265154
+    94869
    ]
   },
   {
@@ -82,15 +82,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 0.8696636140000464,
-   "ref_warm_s": 0.3537781349998568,
+   "ref_cold_s": 0.6675312580000536,
+   "ref_warm_s": 0.2737886980000894,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.9549348570001257,
-   "builtin_warm_s": 0.5293089490000966,
+   "builtin_cold_s": 0.38210035399993103,
+   "builtin_warm_s": 0.23906797699987692,
    "builtin_log_warnings": 1,
    "pages": [
     3,
@@ -153,7 +153,7 @@
    ],
    "pdf_bytes": [
     273217,
-    2279071
+    316140
    ]
   },
   {
@@ -162,22 +162,22 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 2.3044427529998757,
-   "ref_warm_s": 1.2384568839997883,
+   "ref_cold_s": 1.683488283000088,
+   "ref_warm_s": 0.7424556200001007,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 2.5855367149999893,
-   "builtin_warm_s": 1.4705313330000536,
+   "builtin_cold_s": 1.235321446999933,
+   "builtin_warm_s": 0.878406645000041,
    "builtin_log_warnings": 0,
    "pages": [
     7,
     7
    ],
    "text_median": 1.0,
-   "text_min": 0.782608695652174,
+   "text_min": 1.0,
    "raster_median": 1.0,
    "raster_min": 1.0,
    "raster_pages": [
@@ -223,7 +223,7 @@
    ],
    "pdf_bytes": [
     93449,
-    403931
+    205763
    ]
   },
   {
@@ -232,15 +232,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 2,
-   "ref_cold_s": 3.9592309940001087,
-   "ref_warm_s": 1.9364666989999932,
+   "ref_cold_s": 2.84939774999998,
+   "ref_warm_s": 1.3900724439999976,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 8.461113029999979,
-   "builtin_warm_s": 0.9955455609999717,
+   "builtin_cold_s": 3.6552452460000495,
+   "builtin_warm_s": 0.4993001059999642,
    "builtin_log_warnings": 2,
    "pages": [
     2,
@@ -285,8 +285,8 @@
     0
    ],
    "pdf_bytes": [
-    11942,
-    55830604
+    11940,
+    1058584
    ]
   },
   {
@@ -295,15 +295,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 4.289590215000089,
-   "ref_warm_s": 0.7880633950001084,
+   "ref_cold_s": 3.0621596050000335,
+   "ref_warm_s": 0.5937095710000904,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 3.1898759350001455,
-   "builtin_warm_s": 1.0642208260001098,
+   "builtin_cold_s": 1.010715312000002,
+   "builtin_warm_s": 0.6191465019999214,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -348,7 +348,7 @@
    ],
    "pdf_bytes": [
     96855,
-    936536
+    120735
    ]
   },
   {
@@ -357,15 +357,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.40293251399998553,
-   "ref_warm_s": 0.28183994899995923,
+   "ref_cold_s": 0.31611417399994934,
+   "ref_warm_s": 0.23024240000017926,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.7154351880001286,
-   "builtin_warm_s": 0.3413590079999267,
+   "builtin_cold_s": 0.29786032300012266,
+   "builtin_warm_s": 0.10493168300013167,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -404,7 +404,7 @@
    ],
    "pdf_bytes": [
     36400,
-    104379
+    39909
    ]
   },
   {
@@ -413,15 +413,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 0.4400272519999362,
-   "ref_warm_s": 0.3041514900000948,
+   "ref_cold_s": 0.33594828700006474,
+   "ref_warm_s": 0.24525615099992137,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8318645179999749,
-   "builtin_warm_s": 0.38496137200013436,
+   "builtin_cold_s": 0.39729875199986964,
+   "builtin_warm_s": 0.07437893800010897,
    "builtin_log_warnings": 1,
    "pages": [
     1,
@@ -464,7 +464,7 @@
    ],
    "pdf_bytes": [
     58039,
-    202472
+    65974
    ]
   },
   {
@@ -473,15 +473,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.7941216859999258,
-   "ref_warm_s": 0.3202409699999862,
+   "ref_cold_s": 0.6230791059999774,
+   "ref_warm_s": 0.25792531600018265,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8366891240000314,
-   "builtin_warm_s": 0.411085895000042,
+   "builtin_cold_s": 0.41017191800006003,
+   "builtin_warm_s": 0.07436682000002293,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -520,7 +520,7 @@
    ],
    "pdf_bytes": [
     54512,
-    198735
+    82459
    ]
   },
   {
@@ -529,15 +529,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 1.2530942680000408,
-   "ref_warm_s": 0.5129241009999532,
+   "ref_cold_s": 0.9262387090000175,
+   "ref_warm_s": 0.3991683509998438,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 1.3930882069998916,
-   "builtin_warm_s": 0.7222463819998666,
+   "builtin_cold_s": 0.6104024809999373,
+   "builtin_warm_s": 0.15419988400003604,
    "builtin_log_warnings": 1,
    "pages": [
     2,
@@ -587,7 +587,7 @@
    ],
    "pdf_bytes": [
     89297,
-    293899
+    107181
    ]
   },
   {
@@ -596,22 +596,22 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 1.8882612530001097,
-   "ref_warm_s": 0.372833109000112,
+   "ref_cold_s": 1.440881433999948,
+   "ref_warm_s": 0.28600959699997475,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "Pitex embedded auxiliary warning: Bibliography style top: Str(\"-- IEEEtran.bst version 1.14 (2015/08/26) by Michael Shell.\")\nPitex embedded auxiliary warning: Bibliography style top: Str(\"-- http://www.michaelshell.org/tex/ieeetran/bibtex/\")\nPitex embedded auxiliary warning: Bibliography style top: Str(\"-- See the \\\"IEEEtran_bst_HOWTO.pdf\\\" manual for usage information.\")\nPitex embedded auxiliary ",
-   "builtin_cold_s": 1.044857213000114,
-   "builtin_warm_s": 0.6344861430000037,
+   "builtin_cold_s": 0.5579677949999677,
+   "builtin_warm_s": 0.22629356799984635,
    "builtin_log_warnings": 1,
    "pages": [
     1,
     1
    ],
-   "text_median": 0.9959514170040485,
-   "text_min": 0.9959514170040485,
+   "text_median": 0.9979757085020243,
+   "text_min": 0.9979757085020243,
    "raster_median": 0.9936044773271516,
    "raster_min": 0.9936044773271516,
    "raster_pages": [
@@ -651,7 +651,7 @@
    ],
    "pdf_bytes": [
     84841,
-    631667
+    110985
    ]
   },
   {
@@ -660,15 +660,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.8290813900000558,
-   "ref_warm_s": 0.335381709000103,
+   "ref_cold_s": 0.6430132620000677,
+   "ref_warm_s": 0.2671571009998388,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8244413529998837,
-   "builtin_warm_s": 0.5058536550000099,
+   "builtin_cold_s": 0.3939558340000531,
+   "builtin_warm_s": 0.09320527400018364,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -703,7 +703,7 @@
    ],
    "pdf_bytes": [
     36019,
-    238239
+    38860
    ]
   },
   {
@@ -712,15 +712,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 2,
-   "ref_cold_s": 2.2770329920001586,
-   "ref_warm_s": 1.1869943709998552,
+   "ref_cold_s": 1.651975149000009,
+   "ref_warm_s": 0.8683923199998844,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 7.155766636999942,
-   "builtin_warm_s": 1.4812537549998979,
+   "builtin_cold_s": 2.5496973070000877,
+   "builtin_warm_s": 0.7843868319998819,
    "builtin_log_warnings": 2,
    "pages": [
     1,
@@ -773,7 +773,7 @@
    ],
    "pdf_bytes": [
     35139,
-    97134134
+    1664204
    ]
   },
   {
@@ -782,15 +782,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 4.00385441200001,
-   "ref_warm_s": 1.3998778600000605,
+   "ref_cold_s": 2.884273140000005,
+   "ref_warm_s": 1.0232245159998001,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 10.345392431999926,
-   "builtin_warm_s": 1.8985187460000361,
+   "builtin_cold_s": 4.357125866999922,
+   "builtin_warm_s": 0.9010729130000072,
    "builtin_log_warnings": 0,
    "pages": [
     2,
@@ -837,8 +837,8 @@
     4
    ],
    "pdf_bytes": [
-    38978,
-    143514572
+    38976,
+    1168747
    ]
   },
   {
@@ -847,15 +847,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.787738594999837,
-   "ref_warm_s": 0.3423454449998644,
+   "ref_cold_s": 0.6389505779998217,
+   "ref_warm_s": 0.26720159599994986,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8551985990000048,
-   "builtin_warm_s": 0.5311247350000485,
+   "builtin_cold_s": 0.378232793999814,
+   "builtin_warm_s": 0.0802986169999258,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -894,7 +894,7 @@
    ],
    "pdf_bytes": [
     39651,
-    99570
+    46349
    ]
   },
   {
@@ -903,22 +903,22 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.8255373780000355,
-   "ref_warm_s": 0.3193623770000613,
+   "ref_cold_s": 0.6607919079999647,
+   "ref_warm_s": 0.267906997999944,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.815041113999996,
-   "builtin_warm_s": 0.4745541019999564,
+   "builtin_cold_s": 0.3638425740000457,
+   "builtin_warm_s": 0.23189529099977335,
    "builtin_log_warnings": 0,
    "pages": [
     1,
     1
    ],
-   "text_median": 0.9473684210526315,
-   "text_min": 0.9473684210526315,
+   "text_median": 0.9808612440191388,
+   "text_min": 0.9808612440191388,
    "raster_median": 0.9989577905158936,
    "raster_min": 0.9989577905158936,
    "raster_pages": [
@@ -974,7 +974,7 @@
    ],
    "pdf_bytes": [
     143363,
-    483845
+    171412
    ]
   },
   {
@@ -983,15 +983,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 0.8675538969998797,
-   "ref_warm_s": 0.35045591300013257,
+   "ref_cold_s": 0.6682192559999294,
+   "ref_warm_s": 0.2825112089999493,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8508168589999059,
-   "builtin_warm_s": 0.40161459199998717,
+   "builtin_cold_s": 0.40865489199995864,
+   "builtin_warm_s": 0.2402302640000471,
    "builtin_log_warnings": 1,
    "pages": [
     2,
@@ -1029,7 +1029,7 @@
    ],
    "pdf_bytes": [
     56844,
-    356564
+    63762
    ]
   },
   {
@@ -1038,15 +1038,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 1.5223869129999912,
-   "ref_warm_s": 0.28040758299994195,
+   "ref_cold_s": 1.2564240209999298,
+   "ref_warm_s": 0.23953505300005418,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.7853327110001374,
-   "builtin_warm_s": 0.4972977479999372,
+   "builtin_cold_s": 0.4287092350000421,
+   "builtin_warm_s": 0.1381269160001466,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1091,7 +1091,7 @@
    ],
    "pdf_bytes": [
     87168,
-    978988
+    125455
    ]
   },
   {
@@ -1100,15 +1100,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.8211162790000799,
-   "ref_warm_s": 0.6273345319998498,
+   "ref_cold_s": 0.6177019480001036,
+   "ref_warm_s": 0.4919183750000684,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 1.4900375360000453,
-   "builtin_warm_s": 0.7785370849999254,
+   "builtin_cold_s": 0.7218778019998808,
+   "builtin_warm_s": 0.15041335899991282,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1145,7 +1145,7 @@
    ],
    "pdf_bytes": [
     25823,
-    75031
+    30053
    ]
   },
   {
@@ -1154,15 +1154,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 0.7721866389999832,
-   "ref_warm_s": 0.3140565409998999,
+   "ref_cold_s": 0.6286483009998847,
+   "ref_warm_s": 0.2601915589998498,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8801231249999546,
-   "builtin_warm_s": 0.48640031600007205,
+   "builtin_cold_s": 0.39489558499985833,
+   "builtin_warm_s": 0.10540975799995067,
    "builtin_log_warnings": 1,
    "pages": [
     7,
@@ -1211,7 +1211,7 @@
    ],
    "pdf_bytes": [
     138164,
-    825015
+    154896
    ]
   },
   {
@@ -1220,15 +1220,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.5241617489998589,
-   "ref_warm_s": 0.39213040499998897,
+   "ref_cold_s": 0.4130558159999964,
+   "ref_warm_s": 0.3215689429998747,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.9087547770000128,
-   "builtin_warm_s": 0.5078307320000022,
+   "builtin_cold_s": 0.4429230279999956,
+   "builtin_warm_s": 0.08770349300016278,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1271,7 +1271,7 @@
    ],
    "pdf_bytes": [
     51114,
-    163172
+    56889
    ]
   },
   {
@@ -1280,15 +1280,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.7475593860001482,
-   "ref_warm_s": 0.3095497700001033,
+   "ref_cold_s": 0.6186358340000879,
+   "ref_warm_s": 0.25573048999990533,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.7914926939999987,
-   "builtin_warm_s": 0.3580245319999449,
+   "builtin_cold_s": 0.46355782600016937,
+   "builtin_warm_s": 0.13608633700005157,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1325,7 +1325,7 @@
    ],
    "pdf_bytes": [
     34521,
-    71185
+    36967
    ]
   },
   {
@@ -1334,15 +1334,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 1.1162083910001002,
-   "ref_warm_s": 0.466261508000116,
+   "ref_cold_s": 0.8799430839999332,
+   "ref_warm_s": 0.3751939389999279,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 1.1379612089999682,
-   "builtin_warm_s": 0.5859982189999755,
+   "builtin_cold_s": 0.5617308339999454,
+   "builtin_warm_s": 0.3736627509999835,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1391,7 +1391,7 @@
    ],
    "pdf_bytes": [
     89276,
-    272203
+    101519
    ]
   },
   {
@@ -1400,22 +1400,22 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 1.1716608570000062,
-   "ref_warm_s": 0.4728062350000073,
+   "ref_cold_s": 0.9211962199999562,
+   "ref_warm_s": 0.3866175440000461,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "PDF special: duplicate destination ignored; the first definition is kept\n",
-   "builtin_cold_s": 1.3163751619999857,
-   "builtin_warm_s": 0.8378288979999979,
+   "builtin_cold_s": 0.6787344169999869,
+   "builtin_warm_s": 0.20285976099989966,
    "builtin_log_warnings": 1,
    "pages": [
     22,
     22
    ],
    "text_median": 1.0,
-   "text_min": 0.9951573849878934,
+   "text_min": 1.0,
    "raster_median": 0.9993842202494105,
    "raster_min": 0.9986823050303733,
    "raster_pages": [
@@ -1482,7 +1482,7 @@
    ],
    "pdf_bytes": [
     225750,
-    1301564
+    282189
    ]
   },
   {
@@ -1491,15 +1491,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 0.6039624290001484,
-   "ref_warm_s": 0.4241646780001247,
+   "ref_cold_s": 0.46208305400000427,
+   "ref_warm_s": 0.3513952599998902,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.9986516070000562,
-   "builtin_warm_s": 0.538664782000069,
+   "builtin_cold_s": 0.4862101180001446,
+   "builtin_warm_s": 0.08975417900001048,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1536,7 +1536,7 @@
    ],
    "pdf_bytes": [
     24092,
-    73225
+    27280
    ]
   },
   {
@@ -1545,22 +1545,22 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 0.8614721220001229,
-   "ref_warm_s": 0.3378948079998736,
+   "ref_cold_s": 0.6831521910000902,
+   "ref_warm_s": 0.28381086400008826,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8283811969999988,
-   "builtin_warm_s": 0.4606846320000386,
+   "builtin_cold_s": 0.43925368800000797,
+   "builtin_warm_s": 0.12241188699999839,
    "builtin_log_warnings": 1,
    "pages": [
     2,
     2
    ],
-   "text_median": 0.7703549060542798,
-   "text_min": 0.5407098121085595,
+   "text_median": 0.7713987473903967,
+   "text_min": 0.5427974947807933,
    "raster_median": 0.9985566487575348,
    "raster_min": 0.997786239007923,
    "raster_pages": [
@@ -1605,7 +1605,7 @@
    ],
    "pdf_bytes": [
     140619,
-    794678
+    180084
    ]
   },
   {
@@ -1614,15 +1614,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 1,
-   "ref_cold_s": 0.8101423099999465,
-   "ref_warm_s": 0.325136885999882,
+   "ref_cold_s": 0.6615738400000737,
+   "ref_warm_s": 0.27871290600000975,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 0.8946709929998633,
-   "builtin_warm_s": 0.4997499239998433,
+   "builtin_cold_s": 0.37218637499995566,
+   "builtin_warm_s": 0.10475056600012067,
    "builtin_log_warnings": 1,
    "pages": [
     2,
@@ -1660,7 +1660,7 @@
    ],
    "pdf_bytes": [
     31590,
-    71980
+    36104
    ]
   },
   {
@@ -1669,15 +1669,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 1.9759635430000344,
-   "ref_warm_s": 0.9677696210001159,
+   "ref_cold_s": 1.559533872999964,
+   "ref_warm_s": 0.802035179999848,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 1.9961928199998056,
-   "builtin_warm_s": 1.0254713310000625,
+   "builtin_cold_s": 0.959939052999971,
+   "builtin_warm_s": 0.6209706820000065,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1723,8 +1723,8 @@
     0
    ],
    "pdf_bytes": [
-    21765,
-    1423252
+    21774,
+    172084
    ]
   },
   {
@@ -1733,15 +1733,15 @@
    "ref_ok": true,
    "ref_errors": 0,
    "ref_warnings": 0,
-   "ref_cold_s": 1.516323367000041,
-   "ref_warm_s": 0.7604336029999104,
+   "ref_cold_s": 1.2224637379999876,
+   "ref_warm_s": 0.6243334840000898,
    "builtin_event": "published",
    "builtin_ok": true,
    "builtin_errors": 0,
    "builtin_first_error": null,
    "builtin_compat_warnings": "",
-   "builtin_cold_s": 1.3955915200001527,
-   "builtin_warm_s": 0.7402164999998604,
+   "builtin_cold_s": 0.6762442889998965,
+   "builtin_warm_s": 0.1420381749999251,
    "builtin_log_warnings": 0,
    "pages": [
     1,
@@ -1775,8 +1775,8 @@
     0
    ],
    "pdf_bytes": [
-    13531,
-    604399
+    13530,
+    46869
    ]
   }
  ]

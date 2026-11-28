@@ -210,6 +210,8 @@ pub struct tfm_font {
     pub design: int32_t,
     pub width: [int32_t; 256],
     pub exists: [bool; 256],
+    /// pdfTeX's FontDescriptor Ascent, CapHeight and Descent, in 1/1000 of the design size.
+    pub descriptor: [f64; 3],
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -1490,8 +1492,29 @@ pub unsafe extern "C" fn font_tfm(
         }
         c = c.wrapping_add(1);
     }
+    let file = std::slice::from_raw_parts(d, (*file).len as usize);
+    (*t).descriptor = tfm_descriptor(file).unwrap_or([0.; 3]);
     (*t).ok = true_0 != 0;
     return t;
+}
+/// pdfTeX's preset_fontmetrics (writefont.c): Ascent is the height of 'h', CapHeight of 'H',
+/// Descent the depth of 'y', each 0 when the character is missing.
+fn tfm_descriptor(d: &[u8]) -> Option<[f64; 3]> {
+    let half = |i: usize| Some(u16::from_be_bytes(d.get(2 * i..2 * i + 2)?.try_into().ok()?) as usize);
+    let word = |i: usize| Some(i32::from_be_bytes(d.get(4 * i..4 * i + 4)?.try_into().ok()?));
+    let (lh, bc, ec, nw, nh) = (half(1)?, half(2)?, half(3)?, half(4)?, half(5)?);
+    let (ci, wt) = (6 + lh, 6 + lh + ec + 1 - bc);
+    let (ht, dp) = (wt + nw, wt + nw + nh);
+    let thousandths = |w: i32| (w as f64 * 1000. / 1048576.).round();
+    let info = |ch: u8| {
+        let ch = ch as usize;
+        if ch < bc || ch > ec { return None; }
+        let i = d.get(4 * (ci + ch - bc)..4 * (ci + ch - bc) + 2)?;
+        if i[0] == 0 { None } else { Some(i[1]) }
+    };
+    let height = |ch| info(ch).map_or(Some(0.), |i| word(ht + (i >> 4) as usize).map(thousandths));
+    let depth = |ch| info(ch).map_or(Some(0.), |i| word(dp + (i & 15) as usize).map(thousandths));
+    Some([height(b'h')?, height(b'H')?, (-depth(b'y')?).min(0.) + 0.])
 }
 unsafe extern "C" fn next_token(
     mut p: *mut *mut ::core::ffi::c_char,
