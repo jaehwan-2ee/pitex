@@ -23,6 +23,7 @@ held there, or the built-in engine got slower beyond the speed tolerance.
 --ab times two helper builds against each other on one machine (the per-document
 speed gate): interleaved new sessions, at least 15 per arm, and a document is
 slower only when the 95% bootstrap interval of its median ratio lies above 1.05.
+The corpus is slower when the interval of its median-of-medians ratio lies above 1.0.
 
 Requires latexmk, pdflatex/xelatex, bibtex/biber and poppler-utils
 (pdfinfo, pdftotext, pdftoppm, pdffonts, pdftohtml) on PATH. Standard
@@ -509,16 +510,25 @@ def median_ratio(a, b, rounds=2000, seed=0):
     return statistics.median(b) / statistics.median(a), ratios[int(0.025 * rounds)], ratios[int(0.975 * rounds) - 1]
 
 
+def corpus_ratio(gated, kind, rounds=2000, seed=0):
+    """Median of B's per-document medians over A's, with a 95% bootstrap interval (every arm resampled)."""
+    rng = random.Random(seed)
+    corpus = lambda arm, draw: statistics.median(draw(arms[arm][kind]) for arms in gated)
+    point = corpus("B", statistics.median) / corpus("A", statistics.median)
+    resample = lambda xs: statistics.median(rng.choices(xs, k=len(xs)))
+    ratios = sorted(corpus("B", resample) / corpus("A", resample) for _ in range(rounds))
+    return point, ratios[int(0.025 * rounds)], ratios[int(0.975 * rounds) - 1]
+
+
 def ab_verdict(docs):
     """Failures and table lines for {name: {"A": {"cold": [...], "warm": [...]}, "B": {...}}}.
 
     A gated document is slower only when the lower bound of its 95% interval for median(B)/median(A)
     is above AB_SLOWER; warm times are bimodal (an edit ends idle or republishes), so one median of a
-    few samples is not evidence. Over the gated documents, the median of B's per-document medians may
-    not exceed A's.
+    few samples is not evidence. Over the gated documents, the corpus is slower only when the 95%
+    interval for (median of B's per-document medians)/(the same for A) lies above 1.0.
     """
     failures, lines = [], ["| Document | Cold B/A [95% CI] | Warm B/A [95% CI] |", "|---|---|---|"]
-    corpus = {kind: {arm: [] for arm in "AB"} for kind in ("cold", "warm")}
     for name, arms in docs.items():
         cells = []
         for kind in ("cold", "warm"):
@@ -526,18 +536,17 @@ def ab_verdict(docs):
             cells.append(f"{ratio:.3f} [{low:.3f}–{high:.3f}]")
             if name in INFORMATIONAL:
                 continue
-            for arm in "AB":
-                corpus[kind][arm].append(statistics.median(arms[arm][kind]))
             if low > AB_SLOWER:
                 failures.append(f"{name}: {kind} median B/A {ratio:.3f}, 95% CI lower bound {low:.3f} > {AB_SLOWER}")
         lines.append(f"| {name}{' (informational)' if name in INFORMATIONAL else ''} | {cells[0]} | {cells[1]} |")
-    for kind in ("cold", "warm"):
-        a, b = (statistics.median(corpus[kind][arm]) if corpus[kind][arm] else None for arm in "AB")
-        if a is None:
-            continue
-        lines.append(f"| corpus {kind} median of medians | A {a:.3f} s | B {b:.3f} s |")
-        if b > a:
-            failures.append(f"corpus {kind} median {b:.3f} s > A {a:.3f} s")
+    gated = [arms for name, arms in docs.items() if name not in INFORMATIONAL]
+    for kind in ("cold", "warm") if gated else ():
+        a, b = (statistics.median(statistics.median(arms[arm][kind]) for arms in gated) for arm in "AB")
+        ratio, low, high = corpus_ratio(gated, kind)
+        cell = f"{ratio:.3f} [{low:.3f}–{high:.3f}] (A {a:.3f} s, B {b:.3f} s)"
+        lines.append(f"| corpus {kind} median of medians | {cell if kind == 'cold' else ''} | {cell if kind == 'warm' else ''} |")
+        if low > 1.0:
+            failures.append(f"corpus {kind} median of medians B/A {ratio:.3f}, 95% CI lower bound {low:.3f} > 1.0")
     lines += ["", f"{len(failures)} slower" + (":" if failures else "")] + [f"- {f}" for f in failures]
     return failures, lines
 
@@ -722,6 +731,16 @@ def self_test():
     failures = ab_verdict({"d": slower})[0]
     assert failures[0].startswith("d: cold median B/A") and failures[1].startswith("corpus cold"), failures
     assert ab_verdict({"korean-kotex": slower})[0] == [], "Korean is informational"
+    # Corpus rule: identical helpers (A/A, both arms drawn from one distribution) pass even when B's
+    # point median lands above A's; a broad 3% slowdown that no single document proves fails.
+    draw = lambda scale: {"cold": [scale * rng.uniform(0.95, 1.05) for _ in range(15)],
+                          "warm": [scale * rng.uniform(0.095, 0.105) for _ in range(15)]}
+    aa = {f"d{i}": {"A": draw(1.0), "B": draw(1.0)} for i in range(25)}
+    assert ab_verdict(aa)[0] == [], ab_verdict(aa)[1]
+    broad = {f"d{i}": {"A": draw(1.0), "B": draw(1.03)} for i in range(25)}
+    failures = ab_verdict(broad)[0]
+    assert not any(f.startswith("d") for f in failures), failures
+    assert any(f.startswith("corpus cold median of medians") for f in failures), failures
     print("self-test ok")
 
 
