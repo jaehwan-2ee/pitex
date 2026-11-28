@@ -214,7 +214,7 @@ Gap 9 documents may carry a written exemption.
 | Text | Every document median ≥ 0.98; none below 0.95 | 18 / 25 and 18 / 25 |
 | Links and outline | Equal counts on 100% | 24 / 25 links, 25 / 25 outline |
 | Fonts | 0 unembedded | 0 |
-| Speed | Interleaved A/B against the "before" helpers, at least 15 sessions per arm: no document's 95% bootstrap interval for median(after)/median(before) lies above 1.05, cold and warm separately; corpus median of the per-document medians not slower | Baseline (this report) |
+| Speed | Interleaved A/B against the "before" helpers, at least 15 sessions per arm: no document's 95% bootstrap interval for median(after)/median(before) lies above 1.05, cold and warm separately; the 95% bootstrap interval for the corpus median of the per-document medians, after/before, does not lie above 1.0 | Baseline (this report) |
 | TeX Live drift | The same gates hold on the newest TeX Live release (TeX Live 2026 on the M4 today) | `biblatex-biber` fails (gap 2) |
 
 Speed is gated on comet and the M4, not on shared CI runners, with `Tools/tex-fidelity.py --ab` (see "Fidelity gate"), `-j 4` builds and the memory scope.
@@ -309,7 +309,10 @@ Each sample is a new helper session per arm, and the arm order alternates.
 Cold is generation 1 to its complete publication; warm is the second edit after `\begin{document}` in that session.
 For each document and each of cold and warm, the harness takes median(B)/median(A) with a 95% bootstrap interval (2,000 resamples of each arm, fixed seed).
 A gated document counts as slower only when the interval's lower bound is above 1.05.
-The run also fails when the median of B's per-document medians exceeds A's, cold or warm.
+The run also fails when the corpus is slower: the harness bootstraps the median of the per-document medians the same way (each round resamples every arm of every gated document and divides B's median of medians by A's) and fails when the 95% interval's lower bound is above 1.0, cold or warm separately.
+Comparing the two point medians directly is not a usable rule: an A/A run on comet (7c00a99 against itself, 15 per arm, 2026-11-28) put B's corpus medians 4% (cold) and 11% (warm) above A's, while the intervals were [0.987–1.072] and [0.880–1.198].
+The A/B run from 75e1919 to 7c00a99 gives cold 0.616 [0.594–0.648] and warm 0.856 [0.782–1.027].
+With identical helpers the lower bound still lands above 1.0 in about 2.5% of runs per measure, so rerun once before reading a single marginal corpus failure as a regression.
 Korean documents are reported and not gated.
 It exits 1 on a failure and needs at least 15 samples.
 
