@@ -1335,6 +1335,7 @@ unsafe extern "C" fn hlist_out() {
                                 } else {
                                     if (*mem.offset(p as isize)).b16.s0 as ::core::ffi::c_int
                                         == NATIVE_WORD_NODE_AT
+                                        && !native_word_has_notdef(p)
                                     {
                                         if (*mem.offset((p + 4 as int32_t) as isize)).b16.s1
                                             as ::core::ffi::c_int
@@ -3235,3 +3236,14 @@ unsafe extern "C" fn dvi_pop(mut l: int32_t) {
 }
 pub const true_0: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const false_0: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+
+/// xelatex leaves words without ActualText and copies glyphs through ToUnicode, which drops
+/// characters the font lacks (shaped to .notdef). Pitex keeps ActualText on by default, so a
+/// word with a .notdef glyph would copy text that is not on the page; ship it as glyphs only.
+unsafe fn native_word_has_notdef(p: int32_t) -> bool {
+    let count = (*mem.offset((p + 4) as isize)).b16.s0 as usize;
+    let info = (*mem.offset((p + 5) as isize)).ptr as *const u8;
+    // Glyph info is `count` 8-byte locations followed by `count` glyph IDs.
+    !info.is_null()
+        && std::slice::from_raw_parts(info.add(8 * count) as *const uint16_t, count).contains(&0)
+}

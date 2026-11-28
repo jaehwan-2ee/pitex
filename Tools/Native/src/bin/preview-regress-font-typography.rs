@@ -206,6 +206,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             false,
         ),
         (
+            "native-missing-glyph",
+            r"\usepackage{fontspec}\setmainfont{cmunrm.otf}",
+            "Missing ∀x∈ℝ here.",
+            false,
+        ),
+        (
             "fake-space",
             "",
             r"A\pdffakespace B\par\pdfinterwordspaceon C D\par\pdfinterwordspaceoff E F.",
@@ -348,6 +354,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "disable-unicode" | "native-disable-unicode" => {
                     if show(pdf, "trailer/Root/AuditFont")?.contains("/ToUnicode") {
                         return Err("per-font Unicode suppression ignored".into());
+                    }
+                }
+                "native-missing-glyph" => {
+                    // xelatex copies no text for characters the font lacks.
+                    let copied = String::from_utf8(
+                        output_timeout(Command::new("pdftotext").arg(pdf).arg("-"), TIMEOUT)?
+                            .stdout,
+                    )?;
+                    if copied.contains(['∀', '∈', 'ℝ']) || !copied.contains("Missing") {
+                        return Err(format!("missing glyphs copied as text: {copied}").into());
                     }
                 }
                 "fake-space" => {
