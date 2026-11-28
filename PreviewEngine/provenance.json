@@ -435,7 +435,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/driver/engine_tex.rs",
-   "sha256": "7f31b612f0bfb3a252c0f5650b386f9c432987034ab318ef14b34f622f18881c",
+   "sha256": "09f313b971985c42bf6e97d24316a4570be184a0f19626be9fb7341e6979ae4b",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/engine_tex.c",
@@ -660,7 +660,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/common/texlive_provider.rs",
-   "sha256": "80406422377836671966bffc714cc34e4ffe33420e20536000935b2bb8f30a0e",
+   "sha256": "4e2959c7a2af6468d6fcfdd0cff5376b6e51c1f617a0a441df99a52a4b75c7b0",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/common/texlive_provider.c",
@@ -1044,7 +1044,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/driver/engine_tex.rs",
-   "sha256": "44c1de3186c718ddb70aac105e4157cf06039b2dd44cb4d074e22a392c5993a5",
+   "sha256": "c487d79ab495e115cc3426272341e8c4d42164e8d40d22833407b40ff0d53dcb",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/engine_tex.c",
@@ -1269,7 +1269,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/common/texlive_provider.rs",
-   "sha256": "57ea7b0b54b1884ee373af29d064ebecb8b99fcad2c4a68c54976e4949e9aac3",
+   "sha256": "b3b2520222b03423c0b2a4763a7dffb490869c83b036d3a2232812680955158b",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/common/texlive_provider.c",
