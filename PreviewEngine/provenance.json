@@ -772,7 +772,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_linebreak.rs",
-   "sha256": "e85464b305ac3d2969743adeedd0e36e7ac3978b5893ecbc03b7d165d9f69061",
+   "sha256": "c7491d4f6afe6e9cb7299e4fe281579b61cf2512afe9a5f65fa39f0db9d3ab78",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-linebreak.c",
@@ -1381,7 +1381,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_linebreak.rs",
-   "sha256": "d8256a012206cf8441810a91dce773947bfeeff19c3b453c6c89ffb513491a2b",
+   "sha256": "1e6f856076ca9e1df52f73bddb775d0de1ca6b598f5edf88a0dfa43da17b5b67",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-linebreak.c",
@@ -1700,7 +1700,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/engine_fonts.rs",
-   "sha256": "8d0dd50de6cb0268781fc5cf0e5b3c1a14bd763d9e0873a6828be9f626dedf6f"
+   "sha256": "a9ab37b9d10cfd6917dd50ceacad5b6b4483a0092e8737760f24e682d18b1880"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
