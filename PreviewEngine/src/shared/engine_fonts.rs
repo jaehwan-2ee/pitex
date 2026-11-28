@@ -202,11 +202,12 @@ pub unsafe fn ligatures_disabled(font: i32) -> bool {
 pub unsafe fn spacing_configured(font: i32) -> bool {
     settings(font).codes.keys().any(|(k, _)| *k != 100)
 }
-pub unsafe fn clone_settings(source: i32, target: i32, letterspace: i32) {
+pub unsafe fn clone_settings(source: i32, target: i32, letterspace: i32, native: bool) {
     let mut cloned = settings(source).clone();
     cloned.letterspace = letterspace;
     cloned.object = None;
-    cloned.no_ligatures = letterspace != 0 || cloned.no_ligatures;
+    // pdfTeX's \letterspacefont keeps ligatures and kerns unless asked for `nolig`.
+    cloned.no_ligatures = (native && letterspace != 0) || cloned.no_ligatures;
     *settings(target) = cloned;
 }
 pub unsafe fn letterspace(font: i32) -> i32 {
@@ -342,7 +343,7 @@ pub unsafe fn new_letterspaced_font(source: i32, amount: i32) -> i32 {
     }
     let delta = thousandths(em(source), amount);
     let total = letterspace(source).saturating_add(delta);
-    clone_settings(source, target, total);
+    clone_settings(source, target, total, native);
     request_definition(target);
     let count = *state::font_params.offset(source as isize);
     let end = *state::param_base.offset(target as isize) + count + 1;
@@ -415,7 +416,11 @@ pub unsafe fn define_font_copy(code: i32, global: bool) {
     let source = state::cur_val;
     let target = if code == 132 {
         tex::scan_int();
-        new_letterspaced_font(source, state::cur_val)
+        let target = new_letterspaced_font(source, state::cur_val);
+        if tex::scan_keyword(b"nolig\0".as_ptr().cast()) {
+            disable_ligatures(target);
+        }
+        target
     } else {
         new_letterspaced_font(source, 0)
     };

@@ -2065,7 +2065,7 @@ mod format_tests {
         assert_eq!(magic_program(b"\\documentclass{article}\n% !TEX program = pdflatex\n"), None);
     }
 }
-pub const TECTONIC_FORMAT_VERSION: ::core::ffi::c_int = 36 as ::core::ffi::c_int;
+pub const TECTONIC_FORMAT_VERSION: ::core::ffi::c_int = 37 as ::core::ffi::c_int;
 pub const O_RDWR: ::core::ffi::c_int = 0o2 as ::core::ffi::c_int;
 pub const O_CREAT: ::core::ffi::c_int = 0o100 as ::core::ffi::c_int;
 pub const true_0: ::core::ffi::c_int = 1 as ::core::ffi::c_int;

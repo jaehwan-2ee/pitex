@@ -73,7 +73,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new("pitex-engine-primitives-")?;
     let work = fs::canonicalize(temporary.path())?;
     let cache = work.join("cache");
-    // An old-format file is retained during automatic format36 bootstrapping.
+    // An old-format file is retained during automatic format37 bootstrapping.
     fs::create_dir_all(cache.join("format"))?;
     let old_format = cache.join("format/texlive-pitex-34-xelatex.ini.fmt");
     fs::write(&old_format, b"retained format34 cache")?;
@@ -490,7 +490,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .filter_map(Result::ok)
         .any(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
-            name.starts_with("texlive-pitex-36-") && name.ends_with("xelatex.ini.fmt")
+            name.starts_with("texlive-pitex-37-") && name.ends_with("xelatex.ini.fmt")
         })
     {
         return Err("new engine format was not generated".into());

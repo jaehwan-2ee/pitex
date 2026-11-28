@@ -2021,7 +2021,7 @@ unsafe fn pitex_expand_line(head:int32_t,desired:scaled_t) -> int32_t {
     let line_ratio=crate::engine_fonts::line_ratio(excess,capacity.stretch,capacity.shrink);
     if line_ratio==0 {return head;}
     // hpack(..., subst_ex_font): each glyph takes its font's expansion; font kerns keep their width.
-    let mut result=head;let mut tail=TEX_NULL;let mut ratio=1.;let mut in_math=false;node=head;
+    let mut result=head;let mut tail=TEX_NULL;let mut last_glyph=TEX_NULL;let mut ratio=1.;let mut in_math=false;node=head;
     while node!=TEX_NULL {
         let next=(*mem.offset(node as isize)).b32.s1;
         pitex_math_transition(node,&mut in_math);
@@ -2052,12 +2052,15 @@ unsafe fn pitex_expand_line(head:int32_t,desired:scaled_t) -> int32_t {
                 let kern=new_kern((expanded-width) as i32);(*mem.offset(kern as isize)).b16.s0=126;(*mem.offset(node as isize)).b32.s1=kern;
                 (*mem.offset(kern as isize)).b32.s1=next;tail=kern;
             }
+            last_glyph=tail;
         }
         node=next;
     }
-    if (ratio-1.).abs()>0.0000001 {
+    // The reset follows the last glyph, so the line still ends in its margin kern and \rightskip.
+    if (ratio-1.).abs()>0.0000001 && last_glyph!=TEX_NULL {
         let special=pitex_special_node(b"pitex:font-expansion 1\0".as_ptr().cast());
-        (*mem.offset(tail as isize)).b32.s1=special;
+        (*mem.offset(special as isize)).b32.s1=(*mem.offset(last_glyph as isize)).b32.s1;
+        (*mem.offset(last_glyph as isize)).b32.s1=special;
     }
     result
 }
@@ -4493,6 +4496,9 @@ unsafe extern "C" fn find_protchar_left(mut l: int32_t, mut d: bool) -> int32_t 
                     || (*mem.offset(l as isize)).b16.s1 as ::core::ffi::c_int == MARK_NODE
                     || (*mem.offset(l as isize)).b16.s1 as ::core::ffi::c_int == ADJUST_NODE
                     || (*mem.offset(l as isize)).b16.s1 as ::core::ffi::c_int == PENALTY_NODE
+                    // pdfTeX skips whatsits other than images; native glyphs are text.
+                    || (*mem.offset(l as isize)).b16.s1 as i32 == WHATSIT_NODE
+                        && !matches!((*mem.offset(l as isize)).b16.s0 as i32, NATIVE_WORD_NODE | NATIVE_WORD_NODE_AT | GLYPH_NODE | PIC_NODE | PDF_NODE)
                     || (*mem.offset(l as isize)).b16.s1 as ::core::ffi::c_int == DISC_NODE
                         && (*mem.offset((l + 1 as int32_t) as isize)).b32.s0
                             == TEX_NULL as int32_t
@@ -4559,6 +4565,9 @@ unsafe extern "C" fn find_protchar_right(mut l: int32_t, mut r: int32_t) -> int3
                     || (*mem.offset(r as isize)).b16.s1 as ::core::ffi::c_int == MARK_NODE
                     || (*mem.offset(r as isize)).b16.s1 as ::core::ffi::c_int == ADJUST_NODE
                     || (*mem.offset(r as isize)).b16.s1 as ::core::ffi::c_int == PENALTY_NODE
+                    // pdfTeX skips whatsits other than images; native glyphs are text.
+                    || (*mem.offset(r as isize)).b16.s1 as i32 == WHATSIT_NODE
+                        && !matches!((*mem.offset(r as isize)).b16.s0 as i32, NATIVE_WORD_NODE | NATIVE_WORD_NODE_AT | GLYPH_NODE | PIC_NODE | PDF_NODE)
                     || (*mem.offset(r as isize)).b16.s1 as ::core::ffi::c_int == DISC_NODE
                         && (*mem.offset((r + 1 as int32_t) as isize)).b32.s0
                             == TEX_NULL as int32_t

@@ -13190,6 +13190,9 @@ pub unsafe extern "C" fn conv_toks() {
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == MARK_NODE
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == ADJUST_NODE
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == PENALTY_NODE
+                        // pdfTeX skips whatsits other than images; native glyphs are text.
+                        || (*mem.offset(p as isize)).b16.s1 as i32 == WHATSIT_NODE
+                            && !matches!((*mem.offset(p as isize)).b16.s0 as i32, NATIVE_WORD_NODE | NATIVE_WORD_NODE_AT | GLYPH_NODE | PIC_NODE | PDF_NODE)
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == DISC_NODE
                             && (*mem.offset((p + 1 as int32_t) as isize)).b32.s0
                                 == TEX_NULL as int32_t
@@ -13238,6 +13241,9 @@ pub unsafe extern "C" fn conv_toks() {
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == MARK_NODE
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == ADJUST_NODE
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == PENALTY_NODE
+                        // pdfTeX skips whatsits other than images; native glyphs are text.
+                        || (*mem.offset(p as isize)).b16.s1 as i32 == WHATSIT_NODE
+                            && !matches!((*mem.offset(p as isize)).b16.s0 as i32, NATIVE_WORD_NODE | NATIVE_WORD_NODE_AT | GLYPH_NODE | PIC_NODE | PDF_NODE)
                         || (*mem.offset(p as isize)).b16.s1 as ::core::ffi::c_int == DISC_NODE
                             && (*mem.offset((p + 1 as int32_t) as isize)).b32.s0
                                 == TEX_NULL as int32_t

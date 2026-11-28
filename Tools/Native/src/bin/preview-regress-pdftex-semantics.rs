@@ -76,6 +76,21 @@ const CASES: &[Case] = &[
         &[],
     ),
     (
+        // microtype's \textls under pdfTeX: \letterspacefont keeps the font's kerns,
+        // and the outer kerns and margin codes place the first and last letters.
+        "pdflatex-letterspace",
+        r"\usepackage[T1]{fontenc}\usepackage{lmodern}\usepackage[protrusion=true,expansion=true,tracking=true]{microtype}",
+        r"\setbox0=\hbox{\textls[200]{PATA}}\typeout{SEM-LSWD=\the\wd0}\setbox0=\hbox{\textls[200]{P}}\typeout{SEM-LSP=\the\wd0}\setbox2=\vbox{\hsize=6cm\noindent\textls[200]{LETTERSPACED CAPITALS}\break and text.\par\unskip\unpenalty\global\setbox1=\lastbox\unskip\unpenalty\global\setbox3=\lastbox}\typeout{SEM-LSMARGIN=\leftmarginkern3,\rightmarginkern3}\setbox0=\hbox{\unhcopy3}\typeout{SEM-LSLINE=\the\wd0}",
+        &[],
+    ),
+    (
+        // \pdfadjustspacing without \pdffontexpand expands nothing in pdfTeX.
+        "pdflatex-adjustspacing-alone",
+        r"\usepackage[T1]{fontenc}\usepackage{lmodern}\pdfadjustspacing=2 \newcount\lines\def\measure{\setbox4=\lastbox\ifhbox4 \advance\lines1 \setbox6=\hbox{\unhcopy4}\typeout{SEM-LINE\the\lines=\the\wd6}\unskip\unpenalty\expandafter\measure\fi}",
+        r"\setbox0=\vbox{\hsize=6cm\noindent Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Ut purus elit, vestibulum ut, placerat ac, adipiscing vitae, felis. Curabitur dictum gravida mauris. Nam arcu libero, nonummy eget, consectetuer id, vulputate a, magna. Donec vehicula augue eu neque.\par}\setbox2=\vbox{\unvcopy0 \measure}\box0",
+        &[],
+    ),
+    (
         "color-stack",
         "",
         r"\edef\stack{\pdfcolorstackinit page direct{0 g 0 G}}\edef\other{\pdfcolorstackinit{1 g}}\typeout{SEM-STACKS=\stack,\other}\pdfcolorstack\stack push{1 0 0 rg 1 0 0 RG}\rule{20pt}{10pt}\pdfcolorstack\stack set{0 0 1 rg}\rule{20pt}{10pt}\pdfcolorstack\stack pop\rule{20pt}{10pt}\pdfcolorstack\stack current",
