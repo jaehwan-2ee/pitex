@@ -594,6 +594,7 @@ pub static mut table: table = table {
         len: 0,
     },
 };
+const LS_R_ENV: &str = "PITEX_PREVIEW_LS_R";
 unsafe extern "C" fn list_texlive_files() -> bool {
     static mut loaded: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     if loaded != 0 {
@@ -607,6 +608,20 @@ unsafe extern "C" fn list_texlive_files() -> bool {
     let mut cap: size_t = 0 as size_t;
     let mut len: ssize_t = 0;
     let mut ret: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+    // The driver exports the ls-R list it found, so the engine it starts skips
+    // a second kpsewhich run (about 0.1 s) per process launch.
+    if let Some(list) = std::env::var_os(LS_R_ENV) {
+        for path in std::os::unix::ffi::OsStrExt::as_bytes(list.as_os_str()).split(|&c| c == b'\n') {
+            if let Ok(path) = std::ffi::CString::new(path) {
+                if !path.as_bytes().is_empty() {
+                    process_line(&raw mut table, path.into_raw());
+                }
+            }
+        }
+        loaded = 1 as ::core::ffi::c_int;
+        return true;
+    }
+    let mut found: Vec<u8> = Vec::new();
     let mut p: *mut FILE = popen(
         b"kpsewhich --all -engine=xetex ls-R\0" as *const u8
             as *const ::core::ffi::c_char,
@@ -631,6 +646,8 @@ unsafe extern "C" fn list_texlive_files() -> bool {
         if len == 0 as ssize_t {
             continue;
         }
+        found.extend_from_slice(std::ffi::CStr::from_ptr(line).to_bytes());
+        found.push(b'\n');
         process_line(&raw mut table, line);
     }
     free(line as *mut ::core::ffi::c_void);
@@ -645,6 +662,7 @@ unsafe extern "C" fn list_texlive_files() -> bool {
         );
     } else {
         loaded = 1 as ::core::ffi::c_int;
+        std::env::set_var(LS_R_ENV, <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&found));
     }
     return loaded == 1 as ::core::ffi::c_int;
 }

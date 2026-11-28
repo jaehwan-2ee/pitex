@@ -435,7 +435,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/driver/engine_tex.rs",
-   "sha256": "7f31b612f0bfb3a252c0f5650b386f9c432987034ab318ef14b34f622f18881c",
+   "sha256": "09f313b971985c42bf6e97d24316a4570be184a0f19626be9fb7341e6979ae4b",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/engine_tex.c",
@@ -450,7 +450,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/fonts.rs",
-   "sha256": "4086601d3dd8b67e80c61e1d2adbd70596bf4cda483211023ae249bad665c4e5",
+   "sha256": "0c24ea8b748d34458eadac53f59eea3458846643e55742e8d200b84d87c1ff13",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -660,7 +660,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/common/texlive_provider.rs",
-   "sha256": "80406422377836671966bffc714cc34e4ffe33420e20536000935b2bb8f30a0e",
+   "sha256": "4e2959c7a2af6468d6fcfdd0cff5376b6e51c1f617a0a441df99a52a4b75c7b0",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/common/texlive_provider.c",
@@ -1044,7 +1044,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/driver/engine_tex.rs",
-   "sha256": "44c1de3186c718ddb70aac105e4157cf06039b2dd44cb4d074e22a392c5993a5",
+   "sha256": "c487d79ab495e115cc3426272341e8c4d42164e8d40d22833407b40ff0d53dcb",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/engine_tex.c",
@@ -1059,7 +1059,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/fonts.rs",
-   "sha256": "c4b43f4dde24e56bbc52e030a22d5ad1ab2701024136d829501cca2f6855e9f1",
+   "sha256": "d4ae2aa6f0903ae34012ed14de47116c14a0bbb5da197a1284a68681e2984a26",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -1269,7 +1269,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/common/texlive_provider.rs",
-   "sha256": "57ea7b0b54b1884ee373af29d064ebecb8b99fcad2c4a68c54976e4949e9aac3",
+   "sha256": "b3b2520222b03423c0b2a4763a7dffb490869c83b036d3a2232812680955158b",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/common/texlive_provider.c",
@@ -1694,7 +1694,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/embedded_aux.rs",
-   "sha256": "c1e2a36d88326c704330d80f68021317011aa96dee27285d1f7f3d6f8be9bbd4"
+   "sha256": "da0eebc465ac442e7d11b7c63b7fc8a65f8f42eb7fd1244024440c38db8cdf14"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
@@ -1784,7 +1784,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/font_map_tests.rs",
-   "sha256": "32a144851367cb7012bf7c4498a3f5e7e904d81dc93a72c3a69cdf354f83e660"
+   "sha256": "c1e6bde65fb9c66b3412b30a13d0f42bc6c177ec986eba8c5f4341391771c5b7"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
