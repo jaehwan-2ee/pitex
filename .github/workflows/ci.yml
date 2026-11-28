@@ -670,6 +670,7 @@ jobs:
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-opentype-math
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-layout
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-font-discovery
+          cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-variable-cff
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-postscript-vm
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-postscript-color
           cargo run --locked --quiet --manifest-path Tools/Native/Cargo.toml --bin preview-regress-bibliography-controls

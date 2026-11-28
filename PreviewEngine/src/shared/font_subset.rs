@@ -240,9 +240,10 @@ fn be(d: &[u8], at: usize, size: usize) -> Option<usize> {
 /// The sfnt with unused glyph outlines removed and layout tables dropped.
 /// `None` when the face has neither 'glyf' nor 'CFF ' outlines or is malformed.
 pub fn subset_sfnt(font: &[u8], used: &[bool]) -> Option<Vec<u8>> {
-    const KEEP: [&[u8; 4]; 16] = [
-        b"CFF ", b"OS/2", b"cmap", b"cvt ", b"fpgm", b"glyf", b"head", b"hhea", b"hmtx", b"loca",
-        b"maxp", b"name", b"post", b"prep", b"vhea", b"vmtx",
+    // fvar and avar stay so CFF2 blends keep their default-instance meaning.
+    const KEEP: [&[u8; 4]; 19] = [
+        b"CFF ", b"CFF2", b"OS/2", b"avar", b"cmap", b"cvt ", b"fpgm", b"fvar", b"glyf", b"head",
+        b"hhea", b"hmtx", b"loca", b"maxp", b"name", b"post", b"prep", b"vhea", b"vmtx",
     ];
     let mut tables = Vec::new();
     for i in 0..be(font, 4, 2)? {
@@ -255,7 +256,7 @@ pub fn subset_sfnt(font: &[u8], used: &[bool]) -> Option<Vec<u8>> {
         }
     }
     let table = |tag: &[u8; 4]| tables.iter().position(|(t, _)| t == tag);
-    let (glyf, loca, head, cff) = (table(b"glyf"), table(b"loca"), table(b"head"), table(b"CFF "));
+    let (glyf, loca, head, cff, cff2) = (table(b"glyf"), table(b"loca"), table(b"head"), table(b"CFF "), table(b"CFF2"));
     let mut subset = false;
     if let (Some(glyf), Some(loca), Some(head)) = (glyf, loca, head) {
         let long = be(&tables[head].1, 50, 2)? != 0;
@@ -266,6 +267,10 @@ pub fn subset_sfnt(font: &[u8], used: &[bool]) -> Option<Vec<u8>> {
     }
     if let Some(cff) = cff {
         tables[cff].1 = subset_cff(&tables[cff].1, used)?;
+        subset = true;
+    }
+    if let Some(cff2) = cff2 {
+        tables[cff2].1 = subset_cff2(&tables[cff2].1, used)?;
         subset = true;
     }
     if !subset {
@@ -344,7 +349,11 @@ fn subset_glyf(glyf: &[u8], loca: &[u8], long: bool, used: &[bool]) -> Option<(V
 
 /// CFF INDEX at `at`: absolute start of each object plus the end of the last.
 fn cff_index(d: &[u8], at: usize) -> Option<Vec<usize>> {
-    let count = be(d, at, 2)?;
+    sized_index(d, at, 2)
+}
+/// An INDEX whose count takes `count` bytes: 2 in CFF, 4 in CFF2.
+fn sized_index(d: &[u8], at: usize, count: usize) -> Option<Vec<usize>> {
+    let (count, at) = (be(d, at, count)?, at + count - 2);
     if count == 0 {
         return Some(vec![at + 2]);
     }
@@ -401,11 +410,12 @@ fn dict_offset(dict: &[u8], operator: u16) -> Option<usize> {
 /// Rewrites the INDEX at `at` in place, keeping the objects `keep` selects
 /// and replacing the others with `filler`. The new INDEX is never longer, so
 /// no other offset moves; the freed tail is zeroed and compresses away.
-fn blank_index(cff: &[u8], out: &mut [u8], at: usize, keep: &[bool], filler: u8) -> Option<()> {
-    let starts = cff_index(cff, at)?;
+fn blank_index(cff: &[u8], out: &mut [u8], at: usize, keep: &[bool], filler: &[u8], count: usize) -> Option<()> {
+    let starts = sized_index(cff, at, count)?;
     if starts.len() != keep.len() + 1 || keep.is_empty() {
         return None;
     }
+    let at = at + count - 2;
     let size = cff[at + 2] as usize;
     let mut data = Vec::new();
     for (i, &kept) in keep.iter().enumerate() {
@@ -413,7 +423,7 @@ fn blank_index(cff: &[u8], out: &mut [u8], at: usize, keep: &[bool], filler: u8)
         out[field..field + size].copy_from_slice(&(data.len() + 1).to_be_bytes()[8 - size..]);
         match kept {
             true => data.extend_from_slice(&cff[starts[i]..starts[i + 1]]),
-            false => data.push(filler),
+            false => data.extend_from_slice(filler),
         }
     }
     let field = at + 3 + keep.len() * size;
@@ -545,6 +555,22 @@ impl Fd {
         Subrs::read(cff, dict_offset(&cff[self.private.clone()], 19).map(|subrs| self.private.start + subrs))
     }
 }
+/// CFF2 (variable CFF) with every unused charstring emptied, which CFF2
+/// allows since it has no `endchar`. Subroutines stay: a used glyph's hint
+/// count, which `hintmask` parsing needs, depends on `blend` operands.
+// shortcut: CFF2 subroutines are kept whole; prune them like subset_cff if a
+// large variable face leaves big subsets.
+fn subset_cff2(cff: &[u8], used: &[bool]) -> Option<Vec<u8>> {
+    if *cff.first()? != 2 {
+        return None;
+    }
+    let top_at = *cff.get(2)? as usize;
+    let top = cff.get(top_at..top_at + be(cff, 3, 2)?)?;
+    let keep = (0..used.len()).map(|g| g == 0 || used[g]).collect::<Vec<_>>();
+    let mut out = cff.to_vec();
+    blank_index(cff, &mut out, dict_offset(top, 17)?, &keep, &[], 4)?;
+    Some(out)
+}
 /// CFF with every unused charstring replaced by `endchar` and every
 /// subroutine no kept charstring calls replaced by `return`.
 // shortcut: Type 2 `endchar` used as seac is not followed; handle it if a CFF
@@ -573,9 +599,9 @@ pub fn subset_cff(cff: &[u8], used: &[bool]) -> Option<Vec<u8>> {
         global = kept_global;
     }
     let mut out = cff.to_vec();
-    blank_index(cff, &mut out, charstrings, &keep, 14)?;
+    blank_index(cff, &mut out, charstrings, &keep, &[14], 2)?;
     for subrs in locals.iter().chain([&global]).filter(|s| !s.used.is_empty()) {
-        blank_index(cff, &mut out, subrs.at, &subrs.used, 11)?;
+        blank_index(cff, &mut out, subrs.at, &subrs.used, &[11], 2)?;
     }
     Some(out)
 }
@@ -1241,6 +1267,36 @@ mod tests {
         assert!(bare_cff(&cff_face(&[&[139, 14], &[139, 139, 140, 140, 14]]), &[false, true]).is_none());
         assert!(bare_cff(&cff_face(&[&[139, 14], &[140, 140, 12, 10, 10, 14]]), &[false, true]).is_none());
         assert!(bare_cff(&cff_face(&[&[139, 14], &[139, 139, 21, 14]]), &[false, true]).is_some());
+    }
+
+    #[test]
+    fn cff2_subset_empties_unused_charstrings_inside_the_sfnt() {
+        // CFF2: header (5 bytes), Top DICT with CharStrings, empty Global Subrs, then
+        // a CharStrings INDEX with a four-byte count. CFF2 charstrings have no endchar.
+        let glyphs: [&[u8]; 3] = [&[139, 139, 21], &[140, 140, 21], &[141, 141, 21, 139, 139, 5]];
+        let charstrings_at = 5 + 6 + 4;
+        let top = [&int5(charstrings_at)[..], &[17]].concat();
+        let mut cff2 = vec![2, 0, 5, 0, top.len() as u8];
+        cff2.extend(&top);
+        cff2.extend([0; 4]);
+        cff2.extend([0, 0, 0, 3, 1, 1]);
+        let mut offset = 1;
+        for g in glyphs {
+            offset += g.len() as u8;
+            cff2.push(offset);
+        }
+        glyphs.iter().for_each(|g| cff2.extend(*g));
+        let font = sfnt(&[(b"CFF2", cff2.clone()), (b"GSUB", vec![9; 30]), (b"fvar", vec![1; 16]), (b"head", vec![0; 54])]);
+        let subset = subset_sfnt(&font, &[false, false, true]).unwrap();
+        let tags = (0..be(&subset, 4, 2).unwrap()).map(|i| subset[12 + 16 * i..16 + 16 * i].to_vec()).collect::<Vec<_>>();
+        assert_eq!(tags, [b"CFF2".to_vec(), b"fvar".to_vec(), b"head".to_vec()]);
+        let (at, len) = (be(&subset, 20, 4).unwrap(), be(&subset, 24, 4).unwrap());
+        let table = &subset[at..at + len];
+        assert_eq!(table.len(), cff2.len());
+        let starts = sized_index(table, charstrings_at, 4).unwrap();
+        let kept = starts.windows(2).map(|w| table[w[0]..w[1]].to_vec()).collect::<Vec<_>>();
+        assert_eq!(kept, [glyphs[0], &[], glyphs[2]]);
+        assert!(table[starts[3]..].iter().all(|&b| b == 0));
     }
 
     fn sfnt(tables: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
