@@ -190,8 +190,14 @@ Effort: S ≤ 3 days, M 1–2 weeks, L 3–6 weeks.
 Not gaps, despite low numbers:
 
 - `tikz-basic` text 0.875: one `?` node is extracted in another order on an eight-word page.
-- `xelatex-multilingual` text 0.947: the reference font lacks ∀, ∈ and ℝ; the built-in copies them through ActualText and the reference drops them.
 - `xelatex-fontspec` ligatures and small caps: the built-in copies the source text, the reference copies glyph names. NFKC and casefold remove that.
+
+`xelatex-multilingual` text 0.947 was a gap after all (fixed in track 3D, now 1.000).
+Greek, Russian, German and ligatures already copied as XeLaTeX does; the difference was ∀ ∈ ℝ ≤ ≥, which `cmunrm.otf` lacks.
+XeLaTeX shapes them to .notdef and, with `\XeTeXgenerateactualtext` off by default, copies nothing for them.
+Pitex turns ActualText on, so the built-in copied the whole source word.
+`hlist_out` now ships a native word that holds glyph 0 as a plain glyph run (`native_word_has_notdef` in `src/{linux,macos}/xetex/engine/xetex_shipout.rs`).
+≠ still copies on both sides: HarfBuzz decomposes it to = and U+0338, which the font has.
 
 Fundamental limits, outside this corpus:
 LuaLaTeX-only documents (`luacode`, `luaotfload` features) need a Lua engine.

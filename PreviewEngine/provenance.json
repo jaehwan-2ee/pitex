@@ -884,7 +884,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_shipout.rs",
-   "sha256": "3e4cb50cef58c7fc9b0a97dc162634bb735582dd96c8bbb329e1842610e005dd",
+   "sha256": "752a9c264a1163d0013da048e22fbbdb4ca991618af1aca156ee42b38066b1e6",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-shipout.c",
@@ -1493,7 +1493,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_shipout.rs",
-   "sha256": "7d29c9a76df6a993a3f67a7a6decb53ffdffc4a8fa7f2c78bdeeda190f539b07",
+   "sha256": "39fb54c876636cee914ab2800c92d692b4bf39540caf43c12c74464402dc835c",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-shipout.c",
