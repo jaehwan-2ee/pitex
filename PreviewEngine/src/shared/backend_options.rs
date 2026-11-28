@@ -266,44 +266,9 @@ pub unsafe fn type1_unicode(c: *mut conv_ctx, font: *mut pdf_font) -> Option<i32
     if !font_output::allow_unicode(c,font) {
         return None;
     }
-    let mut names = BTreeMap::new();
-    if !(*font).enc.is_null() {
-        for code in 0..256usize {
-            let name = (*(*font).enc).glyph[code];
-            if !name.is_null() {
-                names.insert(
-                    code,
-                    std::ffi::CStr::from_ptr(name)
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-            }
-        }
-    } else {
-        let data = std::slice::from_raw_parts((*(*font).t1).data, (*(*font).t1).len1);
-        let text = String::from_utf8_lossy(data);
-        let tokens = text.split_ascii_whitespace().collect::<Vec<_>>();
-        for window in tokens.windows(4) {
-            if window[0] == "dup" && window[3] == "put" {
-                if let Ok(code) = window[1].parse::<usize>() {
-                    if code < 256 {
-                        if let Some(name) = window[2].strip_prefix('/') {
-                            names.insert(code, name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let mappings = names
-        .iter()
-        .filter_map(|(code, name)| {
-            if *(*font).used.add(*code) == 0 {
-                None
-            } else {
-                glyph_unicode(name, options).map(|value| (*code, value))
-            }
-        })
+    let mappings = font_subset::used_names(c, font)
+        .into_iter()
+        .filter_map(|(code, name)| glyph_unicode(&name, options).map(|value| (code, value)))
         .collect::<Vec<_>>();
     if mappings.is_empty() {
         return None;

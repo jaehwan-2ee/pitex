@@ -230,6 +230,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             true,
         ),
         (
+            "font-subset",
+            "",
+            r"\font\f=cmr10\font\g=cmr10 at12pt\edef\object{\pdffontobjnum\f}\edef\other{\pdffontobjnum\g}\pdfcatalog{/AuditFont \object\space 0 R/AuditFontCopy \other\space 0 R}\f ABZ\g AB",
+            true,
+        ),
+        (
             "quitvmode",
             "",
             r"\quitvmode X\par\typeout{FONT-AUDIT-PREV=\the\prevgraf}Paragraph entry.",
@@ -359,6 +365,27 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let charset = show(pdf, "trailer/Root/AuditFont/FontDescriptor/CharSet")?;
                     if !charset.contains("/A/B/Z") {
                         return Err(format!("included Type1 glyph names missing: {charset}").into());
+                    }
+                }
+                "font-subset" => {
+                    let descriptor = |key: &str| -> Result<String, Box<dyn Error>> {
+                        let font = show(pdf, &format!("trailer/Root/{key}"))?;
+                        Ok(regex::Regex::new(r"/FontDescriptor (\d+) 0 R")?
+                            .captures(&font)
+                            .ok_or("font descriptor missing")?[1]
+                            .to_string())
+                    };
+                    if descriptor("AuditFont")? != descriptor("AuditFontCopy")? {
+                        return Err("one face at two sizes was embedded twice".into());
+                    }
+                    let program = show(pdf, "trailer/Root/AuditFont/FontDescriptor/FontFile")?;
+                    let length = regex::Regex::new(r"/Length2 (\d+)")?
+                        .captures(&program)
+                        .ok_or("Type 1 program lengths missing")?[1]
+                        .parse::<usize>()?;
+                    // cmr10.pfb's whole encrypted part is about 30 KB; A, B, Z and .notdef need far less.
+                    if length > 12_000 {
+                        return Err(format!("Type 1 program not subset: Length2 {length}").into());
                     }
                 }
                 "charset-omit" => {

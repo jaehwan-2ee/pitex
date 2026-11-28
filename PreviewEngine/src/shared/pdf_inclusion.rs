@@ -192,29 +192,42 @@ pub unsafe fn fonts(
         if descriptor.is_null() || (*descriptor).type_0 != PR_DICT {
             continue;
         }
-        let program = if let Some(object) = (*(*c).document).inclusion.font_programs.get(&file) {
+        // Embed only the glyphs the included page lists in its CharSet.
+        let charset = pr_get(doc, descriptor, b"CharSet\0".as_ptr().cast());
+        let charset = (!charset.is_null() && (*charset).type_0 == PR_STRING)
+            .then(|| std::slice::from_raw_parts((*charset).u.str_0.s.cast::<u8>(), (*charset).u.str_0.len));
+        let key = format!("{file}\0{}", String::from_utf8_lossy(charset.unwrap_or_default()));
+        let program = if let Some(object) = (*(*c).document).inclusion.font_programs.get(&key) {
             *object
         } else {
             let object = pdfw_alloc((*c).pw);
+            let data = std::slice::from_raw_parts((*local).data, (*local).len1 + (*local).len2 + (*local).len3);
+            let (clear, rest) = data.split_at((*local).len1);
+            let (binary, trailer) = rest.split_at((*local).len2);
+            let subset = charset.and_then(|names| {
+                font_subset::subset_type1(binary, &names.split(|&b| b == b'/').filter(|n| !n.is_empty()).collect())
+            });
+            let binary = subset.as_deref().unwrap_or(binary);
             let dict = std::ffi::CString::new(format!(
                 "/Length1 {}/Length2 {}/Length3 {}",
-                (*local).len1,
-                (*local).len2,
-                (*local).len3
+                clear.len(),
+                binary.len(),
+                trailer.len()
             ))
             .unwrap();
+            let program = [clear, binary, trailer].concat();
             pdfw_stream(
                 (*c).pw,
                 object,
                 dict.as_ptr(),
-                (*local).data.cast(),
-                (*local).len1 + (*local).len2 + (*local).len3,
+                program.as_ptr().cast(),
+                program.len(),
                 true,
             );
             (*(*c).document)
                 .inclusion
                 .font_programs
-                .insert(file, object);
+                .insert(key, object);
             object
         };
         let output_descriptor = pdfw_alloc((*c).pw);
