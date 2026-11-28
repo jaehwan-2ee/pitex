@@ -450,7 +450,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/linux/driver/fonts.rs",
-   "sha256": "4086601d3dd8b67e80c61e1d2adbd70596bf4cda483211023ae249bad665c4e5",
+   "sha256": "0c24ea8b748d34458eadac53f59eea3458846643e55742e8d200b84d87c1ff13",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -1059,7 +1059,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/macos/driver/fonts.rs",
-   "sha256": "c4b43f4dde24e56bbc52e030a22d5ad1ab2701024136d829501cca2f6855e9f1",
+   "sha256": "d4ae2aa6f0903ae34012ed14de47116c14a0bbb5da197a1284a68681e2984a26",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "driver/fonts.c",
@@ -1694,7 +1694,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/embedded_aux.rs",
-   "sha256": "c1e2a36d88326c704330d80f68021317011aa96dee27285d1f7f3d6f8be9bbd4"
+   "sha256": "da0eebc465ac442e7d11b7c63b7fc8a65f8f42eb7fd1244024440c38db8cdf14"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
@@ -1784,7 +1784,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/font_map_tests.rs",
-   "sha256": "32a144851367cb7012bf7c4498a3f5e7e904d81dc93a72c3a69cdf354f83e660"
+   "sha256": "c1e6bde65fb9c66b3412b30a13d0f42bc6c177ec986eba8c5f4341391771c5b7"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",

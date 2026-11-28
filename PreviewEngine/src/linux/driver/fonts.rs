@@ -114,6 +114,8 @@ pub struct font_cache {
     pub nmap: ::core::ffi::c_int,
     pub capmap: ::core::ffi::c_int,
     pub anon_counter: ::core::ffi::c_int,
+    /// The pdftex.map buffer the map was parsed from; null once a document changed the map.
+    pub default_map: *mut tbuf,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -337,6 +339,7 @@ pub unsafe extern "C" fn font_cache_free(mut fc: *mut font_cache) {
     if fc.is_null() {
         return;
     }
+    tbuf_drop((*fc).default_map);
     let mut e: *mut fc_entry = (*fc).entries;
     while !e.is_null() {
         let mut n: *mut fc_entry = (*e).next as *mut fc_entry;
@@ -1562,8 +1565,8 @@ unsafe extern "C" fn load_map(mut fc: *mut font_cache) {
         (*file).len,
     );
     *text.offset((*file).len as isize) = 0 as ::core::ffi::c_char;
-    tbuf_drop(file);
     pitex_parse_map_text(fc,text,b'+');
+    (*fc).default_map = file;
 }
 unsafe fn pitex_map_entry_free(entry:map_entry) {free(entry.tfm.cast());free(entry.psname.cast());free(entry.fontfile.cast());free(entry.encfile.cast());}
 unsafe fn pitex_parse_map_text(fc:*mut font_cache,text:*mut ::core::ffi::c_char,mode:u8) {
@@ -1722,9 +1725,19 @@ unsafe fn pitex_parse_map_text(fc:*mut font_cache,text:*mut ::core::ffi::c_char,
 mod font_map_tests;
 #[no_mangle]
 pub unsafe extern "C" fn font_map_reset(fc:*mut font_cache) {
+    // Keep the parsed default map while pdftex.map is unchanged: re-parsing its ~45k lines
+    // on every conversion was most of a warm pdfLaTeX rerun's driver time.
+    if !(*fc).default_map.is_null() {
+        let current=(*fc).res.load.expect("font map resolver")((*fc).res.env,b"pdftex.map\0".as_ptr().cast(),RES_MAP);
+        let unchanged=current==(*fc).default_map;
+        tbuf_drop(current);
+        if unchanged {return;}
+    }
+    pitex_map_release_default(fc);
     for i in 0..(*fc).nmap {pitex_map_entry_free(*(*fc).map.offset(i as isize));}
     (*fc).nmap=0;(*fc).map_loaded=false;(*fc).duplicate_maps=0;
 }
+unsafe fn pitex_map_release_default(fc:*mut font_cache) {tbuf_drop((*fc).default_map);(*fc).default_map=std::ptr::null_mut();}
 unsafe fn pitex_map_spec(fc:*mut font_cache,spec:*const ::core::ffi::c_char)->(u8,String) {
     let text=std::ffi::CStr::from_ptr(spec).to_string_lossy();let text=text.trim();
     let has_modifier=text.as_bytes().first().is_some_and(|b|b"+=-".contains(b));
@@ -1733,6 +1746,8 @@ unsafe fn pitex_map_spec(fc:*mut font_cache,spec:*const ::core::ffi::c_char)->(u
         // A modifier requests the default font map before applying the update.
         if !(*fc).map_loaded {load_map(fc);}
     } else if !(*fc).map_loaded {(*fc).map_loaded=true;}
+    // Every \pdfmapfile/\pdfmapline changes the map, so the next conversion starts from a fresh one.
+    pitex_map_release_default(fc);
     (mode,text.to_owned())
 }
 #[no_mangle]

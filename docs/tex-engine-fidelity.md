@@ -74,6 +74,11 @@ Metrics per document:
 A missing page scores 0 for text and raster.
 Identical layouts rendered from different font embeddings score 0.975–1.0 on raster; that is the metric's noise floor.
 Text similarity is order-sensitive, so it also drops when superscripts or a `?` node are emitted in a different reading order.
+The reference text is corrected where pdfLaTeX copies math extension glyphs as something other than their meaning, so the score counts real differences.
+Big operators copy as the letter at their code point (a display sum is "X") and are mapped back (`CMEX_BIG_OPERATORS`).
+Sized delimiters (`\big(` through `\Bigg\}`) have no glyphtounicode.tex entry, so they copy as nothing or as a letter (`\Big[` is "h").
+`CMEX_DELIMITERS` lists their 56 cmex10 codes, and the harness adds them to a copy of the reference's CMEX ToUnicode CMap through MuPDF before running `pdftotext`; without `mutool` the reference is read unchanged.
+On `math-ams` this raises text from 0.931 to 0.947, and what remains is word order only: both pages hold the same words.
 
 ## Baseline
 
@@ -209,11 +214,12 @@ Gap 9 documents may carry a written exemption.
 | Text | Every document median ≥ 0.98; none below 0.95 | 18 / 25 and 18 / 25 |
 | Links and outline | Equal counts on 100% | 24 / 25 links, 25 / 25 outline |
 | Fonts | 0 unembedded | 0 |
-| Speed | No document's built-in cold or warm median slower than this baseline by more than 5%; corpus median not slower | Baseline (this report) |
+| Speed | Interleaved A/B against the "before" helpers, at least 15 sessions per arm: no document's 95% bootstrap interval for median(after)/median(before) lies above 1.05, cold and warm separately; corpus median of the per-document medians not slower | Baseline (this report) |
 | TeX Live drift | The same gates hold on the newest TeX Live release (TeX Live 2026 on the M4 today) | `biblatex-biber` fails (gap 2) |
 
-Speed is gated on comet and the M4, not on shared CI runners: median of 5, the same helper build on both sides of the comparison, `-j 4`, under the memory scope.
-CI keeps a loose guard of +25% on the built-in/reference time ratio, because runner noise is larger than 5%.
+Speed is gated on comet and the M4, not on shared CI runners, with `Tools/tex-fidelity.py --ab` (see "Fidelity gate"), `-j 4` builds and the memory scope.
+A median of 5 is not enough on one document: warm edits are bimodal in every build (an edit either ends idle or republishes, about 0.1 s against 0.18 s on `ieeetran-conf`), so a 5-sample median moves ±40–80% with the mix while both modes stay put.
+CI keeps a loose guard of +25% on the corpus median of the built-in/reference time ratio, because runner noise is larger than 5% (see "Fidelity gate").
 
 ## Round plan
 
@@ -228,7 +234,7 @@ Each PR below owns a file set, so PRs in one round do not edit the same files.
 | 1B Link annotations | 3, 10 | `src/{linux,macos}/driver/xdv2pdf.rs`, special-handling section only (`pdf:bann`/`eann`/`ann`, around lines 4400–4700) | `beamer-basic` 121/121 links; `biblatex-biber` raster ≥ 0.98 |
 | 1C OpenType ToUnicode | 4 (OpenType part) | `src/{linux,macos}/driver/fonts.rs`, `src/shared/font_output.rs`, `src/shared/opentype_math.rs` | `xelatex-fontspec` text ≥ 0.99 |
 | 1E Biber BBL format | 2 | `src/shared/embedded_aux.rs` BBL writer (around line 1197) | `biblatex-biber` on TeX Live 2026 matches the TeX Live 2023 numbers; TeX Live 2023 unchanged |
-| 1D Fidelity gate | — | `Tools/tex-fidelity.py` (`--check` against committed thresholds), `Fixtures/tex-fidelity/`, `.github/workflows/ci.yml` | CI fails on any regression from the committed baseline |
+| 1D Fidelity gate | — | `Tools/tex-fidelity.py` (`--check` against committed thresholds), `Fixtures/tex-fidelity/`, `.github/workflows/ci.yml` | CI fails on any regression from the committed baseline. Done: see "Fidelity gate" |
 
 ### Round 2 (parallel, after round 1 merges)
 
@@ -273,3 +279,45 @@ A permanent fix needs root: replace the universal binary with that arm64 copy, o
 The script needs `latexmk`, `pdflatex`, `xelatex`, `bibtex`, `biber` and poppler (`pdfinfo`, `pdftotext`, `pdftoppm`, `pdffonts`, `pdftohtml`) on `PATH`; `mutool` is optional.
 Runs are sequential so timings do not compete; a full `--runs 3` pass takes about 15 minutes on comet.
 CI runs the benchmark once per push in the `preview-engine` job and attaches the table to the step summary and the `tex-fidelity` artifact.
+
+## Fidelity gate
+
+`--check BASELINE` runs the corpus (or reads an earlier run with `--results`) and exits 1 when the run is worse than the baseline.
+The definition-of-done thresholds and the informational Korean set live in `Tools/tex-fidelity.py` (`doc_gates`, `INFORMATIONAL`).
+Korean and CJK documents are reported and never gated.
+
+For every gated document present in both runs, the check fails when:
+
+- text median or minimum, raster median or minimum drops by more than 0.001 (same helpers on the same machine reproduce scores to four decimals);
+- the page, link, outline or error-count difference against the reference grows;
+- a definition-of-done gate the document held in the baseline no longer holds;
+- the corpus raster median falls below 0.99 after meeting it;
+- the built-in engine gets slower (below).
+
+Speed has two modes.
+`--speed ratio` (default, shared CI runners) compares the corpus median of built-in/reference time, cold and warm, with `--speed-tolerance` (default 0.25); dividing by the reference cancels the runner's CPU speed.
+Three main runs on 2026-11-27 gave cold medians 0.995–1.048 and warm 1.193–1.275, so +25% leaves room for noise and still catches a broad slowdown.
+`--speed absolute --speed-tolerance 0.05` compares per-document medians of two separate runs on one machine; it is a quick screen, not the speed gate, because single medians of bimodal warm times swing more than 5%.
+
+The definition-of-done speed gate is `--ab`. It times two helper directories on one machine and builds no reference:
+
+```sh
+python3 Tools/tex-fidelity.py --ab <before helpers> <after helpers> --samples 15 --json ab.json --markdown ab.md
+```
+
+Each sample is a new helper session per arm, and the arm order alternates.
+Cold is generation 1 to its complete publication; warm is the second edit after `\begin{document}` in that session.
+For each document and each of cold and warm, the harness takes median(B)/median(A) with a 95% bootstrap interval (2,000 resamples of each arm, fixed seed).
+A gated document counts as slower only when the interval's lower bound is above 1.05.
+The run also fails when the median of B's per-document medians exceeds A's, cold or warm.
+Korean documents are reported and not gated.
+It exits 1 on a failure and needs at least 15 samples.
+
+CI runs `--check docs/tex-engine-fidelity/gate-baseline-ci.json` in the `preview-engine` job on pushes to `main`, on manual runs (`gh workflow run CI --ref <branch>`) and on pull requests that change `PreviewEngine/`, the harness, the corpus or the baselines.
+Other pull requests skip it.
+The whole corpus takes about 2 minutes on the runner (1 m 49 s at `a3102d8`), so pull requests run all of it; a subset would save about a minute and miss two thirds of the documents.
+The nightly release already requires a green CI run on its commit, so it inherits the gate.
+
+The CI baseline is the `tex-fidelity` artifact of the `main` CI run named in its header (`commit`).
+A PR that raises scores should refresh it in the same PR: download its own run's artifact (`gh run download <run> -n tex-fidelity`) and copy `tex-fidelity.json` over `gate-baseline-ci.json`.
+A PR may lower a score only on purpose: refresh the baseline the same way and say why in the PR.
