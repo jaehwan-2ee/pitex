@@ -6617,9 +6617,10 @@ unsafe extern "C" fn initialize_more_initex_variables() {
     (*eqtb.offset((INT_BASE + INT_PAR__xetex_generate_actual_text) as isize))
         .b32
         .s1 = 1 as ::core::ffi::c_int as int32_t;
-    // Pitex font expansion is opt-in; its capacities have useful defaults.
-    (*eqtb.offset((INT_BASE + INT_PAR__pitex_font_stretch) as isize)).b32.s1 = 20;
-    (*eqtb.offset((INT_BASE + INT_PAR__pitex_font_shrink) as isize)).b32.s1 = 20;
+    // As in pdfTeX, \pdfadjustspacing (\PitexFontExpansion) alone expands nothing:
+    // a font expands only with limits from \pdffontexpand or \PitexFontStretch/Shrink.
+    (*eqtb.offset((INT_BASE + INT_PAR__pitex_font_stretch) as isize)).b32.s1 = 0;
+    (*eqtb.offset((INT_BASE + INT_PAR__pitex_font_shrink) as isize)).b32.s1 = 0;
     (*eqtb.offset((INT_BASE + INT_PAR__pitex_font_step) as isize)).b32.s1 = 1;
 }
 unsafe fn pitex_register_parameter(parameter: &crate::backend_definitions::Parameter) {

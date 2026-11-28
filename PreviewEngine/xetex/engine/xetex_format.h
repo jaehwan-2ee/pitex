@@ -8,7 +8,7 @@
 
 /* The format version associated with these symbols. */
 
-#define TECTONIC_FORMAT_VERSION 36 /* Pitex format; not upstream Tectonic's. */
+#define TECTONIC_FORMAT_VERSION 37 /* Pitex format; not upstream Tectonic's. */
 
 /* Parameters associated with the multiletter control string hash table. */
 

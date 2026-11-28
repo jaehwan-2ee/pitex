@@ -188,7 +188,7 @@ Effort: S ≤ 3 days, M 1–2 weeks, L 3–6 weeks.
 | 6 | Bibliography documents slow on every edit | `biblatex-biber` (and any biblatex document) | Warm edit 2.12 s, slower than the 0.44 s reference pass and the built-in cold build | Each body edit regenerates the BBL in process and reruns passes to convergence even when citation keys and databases did not change (`src/shared/embedded_aux.rs`). Inferred from timing | M | Warm ≈ 0.2–0.4 s on bibliography documents | Fixable |
 | 7 | Slow cold start on small package-heavy documents | `pgfplots`, `siunitx`, `tikz-basic`, `enumitem-lists`, `footnotes-margins` | Cold 0.44–0.84 s vs reference 0.25–0.47 s | Measured in 2C: the first pass writes the AUX file, so every cold build reruns once, and that rerun launched a new engine process (format load and preamble again). Each engine process also ran `kpsewhich` for the ls-R list (about 0.05–0.1 s). Since 2C the rerun rolls back to a checkpoint at the main file's `\begin{document}` (Linux; macOS takes no checkpoint before the first page) and engine processes reuse the driver's ls-R list. Output is unchanged on all 28 documents; built-in cold median 0.63 → 0.42 s on comet, 0.49 → 0.35 s on the M4 | S | −0.2 s per cold session | Fixed (2C) |
 | 8 | Beamer title-box shadow | `beamer-basic` frame 1 | Page raster 0.896, softer shadow | pgf fading and soft-mask transparency path in the writer. Not located | S–M | Frame 1 to ≥ 0.97 | Fixable |
-| 9 | Paragraph breaks with font expansion | `microtype` | Raster 0.927, text 0.909 | Pitex's expansion optimizer can choose other breaks than pdfTeX (`COMPATIBILITY.md`, "Service and policy limits"). Partly masked by gap 1 | M | ≥ 0.97 after gap 1 | Semi-fundamental: pdfTeX's exact expansion arithmetic must be matched, not approximated |
+| 9 | Paragraph breaks with font expansion | `microtype` | Raster 0.927/0.903; breaks matched but words drifted up to 0.35 pt per line, and the `\textls` line lost its kerns | Pitex shared a line's slack between fonts and glue in proportion; pdfTeX's `hpack(cal_expand_ratio)` gives the fonts all of it first, rounds each glyph to the step, and `try_break` reduces the shortfall the same way. `\letterspacefont` also dropped the TFM kerns that pdfTeX keeps. Measured; fixed in round 3 (track 3A) by porting that arithmetic (`xetex_linebreak.rs`, `engine_fonts.rs`) | M | Raster 0.998/0.997 on comet and CI | Fixed |
 | 10 | URL link borders not drawn by poppler | `biblatex-biber` | Raster 0.959; the cyan URL boxes appear only in the reference rendering | `/Border` and `/C` match the reference. The difference is elsewhere in the annotation (indirect `/Annots` array or key set). Not located | S | ≥ 0.98 | Fixable; viewer-dependent |
 | 11 | Duplicate-destination warnings | `thesis-long` | Warning "duplicate destination ignored; the first definition is kept"; output matches | Writer reports what hyperref's `xetex` driver emits under XeLaTeX semantics; disappears with gap 1 (inferred) | S | Clean warnings | Fixable |
 
@@ -207,7 +207,6 @@ Pitex turns ActualText on, so the built-in copied the whole source word.
 Fundamental limits, outside this corpus:
 LuaLaTeX-only documents (`luacode`, `luaotfload` features) need a Lua engine.
 Shell-escape tools (`minted` without a frozen cache, `gnuplottex`, `svg` through Inkscape) are refused by preview policy.
-Exact pdfTeX paragraph output with font expansion (gap 9) needs pdfTeX's arithmetic, which is a port, not a fix.
 Nothing measured here requires a new TeX implementation; the core is XeTeX.
 
 ## Definition of done: "nearly equivalent"
@@ -264,8 +263,11 @@ Each PR below owns a file set, so PRs in one round do not edit the same files.
 
 - Corpus growth: `acmart`, `elsarticle`, `llncs`, `revtex4-2`, KOMA-Script, `memoir`, `tcolorbox`, `chemfig`, `minted` with a frozen cache.
 - Run the benchmark against the newest TeX Live in CI as well as Ubuntu's 2023 packages; gap 2 shows that package updates alone can break the built-in path.
-- Gap 9 (pdfTeX expansion arithmetic) if microtype documents still miss the raster gate.
 - Tighten the CI gate to the full definition of done and add a macOS runner with the CJK fonts.
+
+Track 3A note: with helpers built from the same commit (1bf03dd), `microtype` page 2 scored 0.946 on comet and 0.973 on CI, although both use TeX Live 2023.20240207, the same `microtype`/`lmodern` packages and poppler 24.02.0.
+The page held the `\textls` line, which the engine then set 1–3 pt off; how much a misplaced line costs in the 72 dpi ink F1 depends on rasterization details the two machines do not share (inferred, not isolated).
+With the letterspacing kerns fixed, both machines score 0.9972/0.9978 on the two pages, so the difference was the engine bug, not TeX Live.
 
 ## Running the benchmark
 

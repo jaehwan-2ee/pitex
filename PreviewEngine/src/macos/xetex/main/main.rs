@@ -464,7 +464,7 @@ mod format_tests {
         assert_eq!(magic_program(b"\\documentclass{article}\n% !TEX program = pdflatex\n"), None);
     }
 }
-pub const TECTONIC_FORMAT_VERSION: ::core::ffi::c_int = 36 as ::core::ffi::c_int;
+pub const TECTONIC_FORMAT_VERSION: ::core::ffi::c_int = 37 as ::core::ffi::c_int;
 pub const LOG: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 #[no_mangle]
 pub static mut primary_document: *const ::core::ffi::c_char =

@@ -36,7 +36,7 @@
    "license_in_file": "n/a (documentation)",
    "origin": "pitex",
    "path": "COMPATIBILITY.md",
-   "sha256": "6468d94e286d06c6d8ceb5337ec89ad5cb70bfca6abff2871f9ab4e13b9fc478"
+   "sha256": "89c2dadc463991720c9297589d707c94388e965f0219a9aa3431b120b367d244"
   },
   {
    "license_in_file": "none-in-file",
@@ -740,7 +740,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_ini.rs",
-   "sha256": "d907140f562f9f80e8541bd35da3382f30151b00024b59c8b158d5fed8ba3777",
+   "sha256": "b9dc3fe25c82d682483970cee16b8f4f77cdc4a697b5ec0b4cdedf47e9867c46",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-ini.c",
@@ -772,7 +772,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_linebreak.rs",
-   "sha256": "e85464b305ac3d2969743adeedd0e36e7ac3978b5893ecbc03b7d165d9f69061",
+   "sha256": "11adeeb36a54774fbd87e8b089150b280ba7fff2ce8f2d9e759c893536ea3f0e",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-linebreak.c",
@@ -948,7 +948,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/engine/xetex_xetex0.rs",
-   "sha256": "3cd926d7b03cbc74028bbeb440923ea7d369babc1b6a1a0c71601cd65930d0b5",
+   "sha256": "9516a9355a722886164dfb2ad93eab7169b305cc0a1c59500d630c94c345ced2",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-xetex0.c",
@@ -996,7 +996,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/linux/xetex/main/main.rs",
-   "sha256": "a6705f240091c1e11b1490b5fa13a4fad5fb94f2a10e8c6d8c7ea6d466eefe96",
+   "sha256": "eb97a85e1ff415ab8e29e65c50e6e56361eb99d6d826c15f349c2f4e5a7812ac",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/main/main.c",
@@ -1349,7 +1349,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_ini.rs",
-   "sha256": "bb64b26faaed0a8a94ad1e8bd23ac686f8264d0c0f5dcd1037383274a1fa2977",
+   "sha256": "43c4a189f80775bce2c0cfd829b8129872874e8df311ebf161ef413842e71872",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-ini.c",
@@ -1381,7 +1381,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_linebreak.rs",
-   "sha256": "d8256a012206cf8441810a91dce773947bfeeff19c3b453c6c89ffb513491a2b",
+   "sha256": "d4423dbfd501db7a61ea7d8c3614b66f77c9d0c8eb08a43413dba96dff186802",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-linebreak.c",
@@ -1557,7 +1557,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/engine/xetex_xetex0.rs",
-   "sha256": "af4e22e0780e8f6332582bc0d0cf14146b0d48785edc71dd9712092708514237",
+   "sha256": "936bcbf75279c19708a9dcffa57393b6855cbe1c07f988d918a00542e830687a",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/engine/xetex-xetex0.c",
@@ -1605,7 +1605,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "src/macos/xetex/main/main.rs",
-   "sha256": "fa035f053a66a8d6f7c36ec509cb1571ad59b5a637844bf100145ec62948e252",
+   "sha256": "9eed098034787e88f7e99fa8001a3c9fa13dc52a37b2539725107ff1bde69c21",
    "translated_from": {
     "commit": "9619780acb7c6a6e7fdaa2d52254a1087fb7f73d",
     "path": "xetex/main/main.c",
@@ -1700,7 +1700,7 @@
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
    "origin": "pitex",
    "path": "src/shared/engine_fonts.rs",
-   "sha256": "8d0dd50de6cb0268781fc5cf0e5b3c1a14bd763d9e0873a6828be9f626dedf6f"
+   "sha256": "6db9d65b866f1b00335d77975df7ab0afcdb621ece1e3354ec913ce87787047c"
   },
   {
    "license_in_file": "AGPL-3.0-or-later (Pitex)",
@@ -2079,7 +2079,7 @@
    "modified": true,
    "origin": "texpresso",
    "path": "xetex/engine/xetex_format.h",
-   "sha256": "deb275ef11a92ebf67b1be4a81823b0ac09c81f169b50fd1272966bfebf362fa",
+   "sha256": "cf0641b124e12190e0154e2e2fc7a5bf54312f23806e2558276741cff06b0a4a",
    "upstream_license": "none-in-file",
    "upstream_path": "src/engine/engine/xetex_format.h",
    "upstream_sha256": "f2b41dc1c4328eec879adae12e47ed2261f13ec7f079e292f0fe795713306b2d"
