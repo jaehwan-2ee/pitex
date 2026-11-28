@@ -68,6 +68,14 @@ const CASES: &[Case] = &[
         &[("bbox", None)],
     ),
     (
+        // A line repacked at natural width shows every glyph's expanded advance,
+        // so the widths match only with pdfTeX's expansion arithmetic.
+        "pdflatex-font-expansion",
+        r"\usepackage[T1]{fontenc}\usepackage{lmodern}\usepackage[expansion=true,protrusion=true]{microtype}\newcount\lines\def\measure{\setbox4=\lastbox\ifhbox4 \advance\lines1 \setbox6=\hbox{\unhcopy4}\typeout{SEM-LINE\the\lines=\the\wd6}\unskip\unpenalty\expandafter\measure\fi}",
+        r"\setbox0=\vbox{\hsize=6cm\noindent Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Ut purus elit, vestibulum ut, placerat ac, adipiscing vitae, felis. Curabitur dictum gravida mauris. Nam arcu libero, nonummy eget, consectetuer id, vulputate a, magna. Donec vehicula augue eu neque.\par}\setbox2=\vbox{\unvcopy0 \measure}\box0",
+        &[],
+    ),
+    (
         "color-stack",
         "",
         r"\edef\stack{\pdfcolorstackinit page direct{0 g 0 G}}\edef\other{\pdfcolorstackinit{1 g}}\typeout{SEM-STACKS=\stack,\other}\pdfcolorstack\stack push{1 0 0 rg 1 0 0 RG}\rule{20pt}{10pt}\pdfcolorstack\stack set{0 0 1 rg}\rule{20pt}{10pt}\pdfcolorstack\stack pop\rule{20pt}{10pt}\pdfcolorstack\stack current",

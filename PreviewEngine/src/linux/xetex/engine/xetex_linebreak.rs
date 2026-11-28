@@ -1763,8 +1763,8 @@ pub unsafe extern "C" fn line_break(mut d: bool) {
     pack_begin_line = 0 as ::core::ffi::c_int as int32_t;
 }
 
-// Original Pitex font expansion. Capacities and steps use per-mille units.
-// Font outlines are expanded by the PDF writer; node advances are adjusted here.
+// Font expansion with pdfTeX's arithmetic (\pdfadjustspacing, \pdffontexpand, \efcode).
+// A glyph's expanded advance is a kern after it; the PDF writer expands the outlines.
 const MARGIN_KERN_NODE: i32 = 40;
 const PITEX_EXPANSION_PARAMETER: i32 = 84 + 1;
 const PITEX_STRETCH_PARAMETER: i32 = 84 + 2;
@@ -1792,13 +1792,14 @@ unsafe fn pitex_math_transition(node: int32_t, in_math: &mut bool) {
     }
 }
 
-unsafe fn pitex_font_expansion(font:i32) -> crate::engine_fonts::Expansion {
+unsafe fn pitex_font_expansion(font:i32) -> Option<crate::engine_fonts::Expansion> {
     crate::engine_fonts::expansion(font,crate::engine_fonts::Expansion {
         stretch:pitex_expansion_parameter(PITEX_STRETCH_PARAMETER).clamp(0,1000),
-        shrink:pitex_expansion_parameter(PITEX_SHRINK_PARAMETER).clamp(0,1000),
-        step:pitex_expansion_parameter(PITEX_STEP_PARAMETER).clamp(1,1000),
+        shrink:pitex_expansion_parameter(PITEX_SHRINK_PARAMETER).clamp(0,500),
+        step:pitex_expansion_parameter(PITEX_STEP_PARAMETER).clamp(1,100),
     })
 }
+// (font, character or -1 for a native word, width, native)
 unsafe fn pitex_expansion_glyph(node:i32) -> Option<(i32,i32,i64,bool)> {
     let width=pitex_glyph_width(node) as i64;
     if is_char_node(node) || (*mem.offset(node as isize)).b16.s1 as i32==LIGATURE_NODE {
@@ -1811,31 +1812,63 @@ unsafe fn pitex_expansion_glyph(node:i32) -> Option<(i32,i32,i64,bool)> {
     }
     None
 }
-unsafe fn pitex_glyph_capacity(font:i32,character:i32,width:i64,stretching:bool) -> i64 {
-    let limits=pitex_font_expansion(font);
-    let limit=if stretching {limits.stretch}else{limits.shrink};
-    let weight=if character<0 {1000}else{crate::engine_fonts::code(100,font,character)};
-    width.max(0)*limit as i64*weight as i64/1_000_000
+unsafe fn pitex_efcode(font:i32,character:i32) -> i64 {
+    if character<0 {1000}else{crate::engine_fonts::code(100,font,character) as i64}
+}
+// Math is left alone only for \PitexFontExpansion; pdfTeX expands any \pdffontexpand font.
+unsafe fn pitex_expansion_skips(in_math:bool) -> bool {
+    in_math && !crate::engine_fonts::explicit_expansion()
+}
+// What `node` adds at full stretch and shrink (char_stretch/kern_stretch in pdfTeX).
+// A font kern counts only between two glyphs of one font; `previous` is the node before it.
+unsafe fn pitex_node_capacity(previous:i32,node:i32) -> (i64,i64,Option<crate::engine_fonts::Expansion>) {
+    use crate::engine_fonts::{glyph_capacity,kern_capacity};
+    if let Some((font,character,width,_))=pitex_expansion_glyph(node) {
+        let Some(limits)=pitex_font_expansion(font) else {return (0,0,None)};
+        let ef=pitex_efcode(font,character);
+        return (glyph_capacity(width,limits.stretch as i64,ef,true),glyph_capacity(width,limits.shrink as i64,ef,false),Some(limits));
+    }
+    if is_char_node(node) || (*mem.offset(node as isize)).b16.s1 as i32!=KERN_NODE || (*mem.offset(node as isize)).b16.s0 as i32!=NORMAL || previous==TEX_NULL {return (0,0,None);}
+    let next=(*mem.offset(node as isize)).b32.s1;
+    let (Some((left,character,_,false)),Some((right,_,_,false)))=(pitex_expansion_glyph(previous),if next==TEX_NULL {None}else{pitex_expansion_glyph(next)}) else {return (0,0,None)};
+    if left!=right {return (0,0,None);}
+    let Some(limits)=pitex_font_expansion(left) else {return (0,0,None)};
+    let kern=(*mem.offset((node+1) as isize)).b32.s1 as i64;
+    let ef=pitex_efcode(left,character);
+    (kern_capacity(kern,limits.stretch as i64,ef,true),kern_capacity(kern,limits.shrink as i64,ef,false),Some(limits))
+}
+#[derive(Default)]
+struct PitexCapacity { stretch:i64, shrink:i64, limits:Option<crate::engine_fonts::Expansion> }
+impl PitexCapacity {
+    unsafe fn add_list(&mut self,mut node:i32,stop:i32) {
+        let mut previous=TEX_NULL;let mut in_math=false;
+        while node!=TEX_NULL && node!=stop {
+            pitex_math_transition(node,&mut in_math);
+            if !pitex_expansion_skips(in_math) {
+                let (stretch,shrink,limits)=pitex_node_capacity(previous,node);
+                self.stretch+=stretch;self.shrink+=shrink;
+                if self.limits.is_none() {self.limits=limits;}
+            }
+            previous=node;node=(*mem.offset(node as isize)).b32.s1;
+        }
+    }
 }
 unsafe fn pitex_expand_line(head:int32_t,desired:scaled_t) -> int32_t {
     if pitex_expansion_parameter(PITEX_EXPANSION_PARAMETER)<=0 {return head;}
-    let mut node=head;let mut natural=0i64;let mut stretch=0i64;let mut shrink=0i64;
-    let mut capacities=[0i64;2];let mut infinite=[false;2];let mut in_math=false;
+    // hpack(..., cal_expand_ratio): natural width, glue, and what the fonts can give.
+    let mut node=head;let mut natural=0i64;let mut infinite=[false;2];
+    let mut capacity=PitexCapacity::default();capacity.add_list(head,TEX_NULL);
     while node!=TEX_NULL {
-        pitex_math_transition(node,&mut in_math);
-        if let Some((font,character,width,_))=pitex_expansion_glyph(node) {
+        if let Some((_,_,width,_))=pitex_expansion_glyph(node) {
             natural+=width;
-            if !in_math {capacities[0]+=pitex_glyph_capacity(font,character,width,true);capacities[1]+=pitex_glyph_capacity(font,character,width,false);}
         }else{
             match (*mem.offset(node as isize)).b16.s1 as i32 {
                 HLIST_NODE|VLIST_NODE|RULE_NODE|KERN_NODE|MATH_NODE|MARGIN_KERN_NODE=>natural+=(*mem.offset((node+1) as isize)).b32.s1 as i64,
                 GLUE_NODE=>{
                     let glue=(*mem.offset((node+1) as isize)).b32.s0;
                     natural+=(*mem.offset((glue+1) as isize)).b32.s1 as i64;
-                    let plus=(*mem.offset((glue+2) as isize)).b32.s1 as i64;
-                    let minus=(*mem.offset((glue+3) as isize)).b32.s1 as i64;
-                    if (*mem.offset(glue as isize)).b16.s1 as i32==NORMAL {stretch+=plus;}else if plus!=0 {infinite[0]=true;}
-                    if (*mem.offset(glue as isize)).b16.s0 as i32==NORMAL {shrink+=minus;}else if minus!=0 {infinite[1]=true;}
+                    if (*mem.offset(glue as isize)).b16.s1 as i32!=NORMAL && (*mem.offset((glue+2) as isize)).b32.s1!=0 {infinite[0]=true;}
+                    if (*mem.offset(glue as isize)).b16.s0 as i32!=NORMAL && (*mem.offset((glue+3) as isize)).b32.s1!=0 {infinite[1]=true;}
                 }
                 WHATSIT_NODE=>{
                     if matches!((*mem.offset(node as isize)).b16.s0 as i32,PIC_NODE|PDF_NODE) {natural+=(*mem.offset((node+1) as isize)).b32.s1 as i64;}
@@ -1845,26 +1878,20 @@ unsafe fn pitex_expand_line(head:int32_t,desired:scaled_t) -> int32_t {
         }
         node=(*mem.offset(node as isize)).b32.s1;
     }
-    let shortfall=desired as i64-natural;let stretching=shortfall>0;let direction=if stretching {0}else{1};
-    let capacity=capacities[direction];
-    if shortfall==0 || capacity<=0 || infinite[direction] {return head;}
-    let glue=if stretching {stretch.max(0)}else{shrink.max(0)};
-    let amount=shortfall.abs().saturating_mul(capacity)/(capacity+glue).max(1);
-    let utilization=(amount as f64/capacity as f64).min(1.);
-    let sign=if stretching {1i64}else{-1};
-    let mut result=head;let mut tail=TEX_NULL;let mut ratio=1.;in_math=false;node=head;
+    let excess=desired as i64-natural;
+    if infinite[if excess>0 {0}else{1}] {return head;}
+    let line_ratio=crate::engine_fonts::line_ratio(excess,capacity.stretch,capacity.shrink);
+    if line_ratio==0 {return head;}
+    // hpack(..., subst_ex_font): each glyph takes its font's expansion; font kerns keep their width.
+    let mut result=head;let mut tail=TEX_NULL;let mut ratio=1.;let mut in_math=false;node=head;
     while node!=TEX_NULL {
         let next=(*mem.offset(node as isize)).b32.s1;
         pitex_math_transition(node,&mut in_math);
-        let glyph=if in_math {None}else{pitex_expansion_glyph(node)};
+        let glyph=if pitex_expansion_skips(in_math) {None}else{pitex_expansion_glyph(node)};
         let node_type=if is_char_node(node) {-1}else{(*mem.offset(node as isize)).b16.s1 as i32};
         let mut change=0i64;
-        let wanted=if let Some((font,character,width,_))=glyph {
-            let config=pitex_font_expansion(font);
-            let limit=if stretching {config.stretch}else{config.shrink};
-            let weight=if character<0 {1000}else{crate::engine_fonts::code(100,font,character)};
-            let step=config.step.max(1) as i64;
-            change=((limit as f64*weight as f64/1000.*utilization) as i64/step*step)*sign;
+        let wanted=if let Some((font,character,_,_))=glyph {
+            if let Some(limits)=pitex_font_expansion(font) {change=crate::engine_fonts::glyph_expansion(line_ratio,pitex_efcode(font,character),limits);}
             1.+change as f64/1000.
         }else if in_math || matches!(node_type,HLIST_NODE|VLIST_NODE){1.}else{ratio};
         if (wanted-ratio).abs()>0.0000001 {
@@ -1873,25 +1900,20 @@ unsafe fn pitex_expand_line(head:int32_t,desired:scaled_t) -> int32_t {
             if tail==TEX_NULL {result=special;}else{(*mem.offset(tail as isize)).b32.s1=special;}
             ratio=wanted;
         }
+        tail=node;
         if let Some((_,_,width,native))=glyph {
+            let expanded=crate::engine_fonts::expanded_width(width,change);
             if native {
-                (*mem.offset((node+1) as isize)).b32.s1=(width*(1000+change)/1000) as i32;
+                (*mem.offset((node+1) as isize)).b32.s1=expanded as i32;
                 if matches!((*mem.offset(node as isize)).b16.s0 as i32,NATIVE_WORD_NODE|NATIVE_WORD_NODE_AT) {
                     let count=(*mem.offset((node+4) as isize)).b16.s0 as usize;
                     let positions=(*mem.offset((node+5) as isize)).ptr as *mut i32;
-                    if !positions.is_null() {for i in 0..count {let x=positions.add(i*2);*x=(*x as i64*(1000+change)/1000) as i32;}}
+                    if !positions.is_null() {for i in 0..count {let x=positions.add(i*2);*x=crate::engine_fonts::expanded_width(*x as i64,change) as i32;}}
                 }
-                tail=node;
-            }else if change!=0 {
-                let kern=new_kern((width*change/1000) as i32);(*mem.offset(kern as isize)).b16.s0=126;(*mem.offset(node as isize)).b32.s1=kern;
+            }else if expanded!=width {
+                let kern=new_kern((expanded-width) as i32);(*mem.offset(kern as isize)).b16.s0=126;(*mem.offset(node as isize)).b32.s1=kern;
                 (*mem.offset(kern as isize)).b32.s1=next;tail=kern;
-            }else{tail=node;}
-        }else{
-            if node_type==KERN_NODE && (*mem.offset(node as isize)).b16.s0==0 && !in_math {
-                let metric=mem.offset((node+1) as isize);
-                (*metric).b32.s1=((*metric).b32.s1 as f64*ratio).round() as i32;
             }
-            tail=node;
         }
         node=next;
     }
@@ -1901,31 +1923,25 @@ unsafe fn pitex_expand_line(head:int32_t,desired:scaled_t) -> int32_t {
     }
     result
 }
-unsafe fn pitex_list_expansion_capacity(mut node:i32,stop:i32,stretching:bool) -> i64 {
-    let mut capacity=0i64;let mut in_math=false;
-    while node!=TEX_NULL && node!=stop {
-        pitex_math_transition(node,&mut in_math);
-        if !in_math {if let Some((font,character,width,_))=pitex_expansion_glyph(node){capacity+=pitex_glyph_capacity(font,character,width,stretching);}}
-        node=(*mem.offset(node as isize)).b32.s1;
-    }
-    capacity
-}
-unsafe fn pitex_candidate_expansion_capacity(active:int32_t,breakpoint:int32_t,stretching:bool) -> scaled_t {
-    if pitex_expansion_parameter(PITEX_EXPANSION_PARAMETER)<2 {return 0;}
+// try_break with \pdfadjustspacing>1: the fonts between `active` and `breakpoint` take the
+// shortfall first, as pdfTeX's total_font_stretch/total_font_shrink do.
+unsafe fn pitex_expansion_shortfall(active:int32_t,breakpoint:int32_t,shortfall:scaled_t) -> scaled_t {
+    if shortfall==0 || pitex_expansion_parameter(PITEX_EXPANSION_PARAMETER)<2 {return shortfall;}
     let passive_record=(*mem.offset((active+1) as isize)).b32.s1;
     let previous=if passive_record==TEX_NULL {TEX_NULL}else{(*mem.offset((passive_record+1) as isize)).b32.s1};
     let mut start=if previous==TEX_NULL {(*mem.offset(TEMP_HEAD as isize)).b32.s1}else{(*mem.offset(previous as isize)).b32.s1};
-    let mut capacity=0i64;
+    let mut capacity=PitexCapacity::default();
     if previous!=TEX_NULL && !is_char_node(previous) && (*mem.offset(previous as isize)).b16.s1 as i32==DISC_NODE {
-        capacity+=pitex_list_expansion_capacity((*mem.offset((previous+1) as isize)).b32.s1,TEX_NULL,stretching);
+        capacity.add_list((*mem.offset((previous+1) as isize)).b32.s1,TEX_NULL);
         let replacement=(*mem.offset(previous as isize)).b16.s0;
         for _ in 0..replacement {if start!=TEX_NULL {start=(*mem.offset(start as isize)).b32.s1;}}
     }
-    capacity+=pitex_list_expansion_capacity(start,breakpoint,stretching);
+    capacity.add_list(start,breakpoint);
     if breakpoint!=TEX_NULL && !is_char_node(breakpoint) && (*mem.offset(breakpoint as isize)).b16.s1 as i32==DISC_NODE {
-        capacity+=pitex_list_expansion_capacity((*mem.offset((breakpoint+1) as isize)).b32.s0,TEX_NULL,stretching);
+        capacity.add_list((*mem.offset((breakpoint+1) as isize)).b32.s0,TEX_NULL);
     }
-    capacity.clamp(0,i32::MAX as i64) as i32
+    let Some(limits)=capacity.limits else {return shortfall};
+    crate::engine_fonts::break_shortfall(shortfall as i64,capacity.stretch,capacity.shrink,limits) as scaled_t
 }
 
 unsafe extern "C" fn post_line_break(mut d: bool) {
@@ -2919,8 +2935,7 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                     shortfall = shortfall + total_pw(r, cur_p);
                 }
             }
-            let pitex_candidate_stretch = pitex_candidate_expansion_capacity(r,cur_p,true);
-            let pitex_candidate_shrink = pitex_candidate_expansion_capacity(r,cur_p,false);
+            shortfall = pitex_expansion_shortfall(r, cur_p, shortfall);
             if shortfall > 0 as scaled_t {
                 if cur_active_width[3 as ::core::ffi::c_int as usize] != 0 as scaled_t
                     || cur_active_width[4 as ::core::ffi::c_int as usize]
@@ -2948,9 +2963,9 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                                 if (*mem.offset((r + 3 as int32_t) as isize)).b32.s1
                                     > 0 as int32_t
                                 {
-                                    g = (cur_active_width[2 as ::core::ffi::c_int as usize] + pitex_candidate_stretch);
+                                    g = (cur_active_width[2 as ::core::ffi::c_int as usize]);
                                 } else {
-                                    g = (cur_active_width[6 as ::core::ffi::c_int as usize] + pitex_candidate_shrink);
+                                    g = (cur_active_width[6 as ::core::ffi::c_int as usize]);
                                 }
                                 if g <= 0 as scaled_t {
                                     current_block = 12153365054289215322;
@@ -2991,7 +3006,7 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                                         }
                                         if g as ::core::ffi::c_long > 7230584 as ::core::ffi::c_long
                                         {
-                                            if ((cur_active_width[2 as ::core::ffi::c_int as usize] + pitex_candidate_stretch)
+                                            if ((cur_active_width[2 as ::core::ffi::c_int as usize])
                                                 as ::core::ffi::c_long) < 1663497 as ::core::ffi::c_long
                                             {
                                                 b = INF_BAD as int32_t;
@@ -3008,7 +3023,7 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                                             _ => {
                                                 b = badness(
                                                     g,
-                                                    (cur_active_width[2 as ::core::ffi::c_int as usize] + pitex_candidate_stretch),
+                                                    (cur_active_width[2 as ::core::ffi::c_int as usize]),
                                                 );
                                                 if b > 12 as int32_t {
                                                     if b > 99 as int32_t {
@@ -3023,12 +3038,12 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                                             }
                                         }
                                     } else if g < 0 as scaled_t {
-                                        if -g > (cur_active_width[6 as ::core::ffi::c_int as usize] + pitex_candidate_shrink) {
-                                            g = -(cur_active_width[6 as ::core::ffi::c_int as usize] + pitex_candidate_shrink);
+                                        if -g > (cur_active_width[6 as ::core::ffi::c_int as usize]) {
+                                            g = -(cur_active_width[6 as ::core::ffi::c_int as usize]);
                                         }
                                         b = badness(
                                             -g,
-                                            (cur_active_width[6 as ::core::ffi::c_int as usize] + pitex_candidate_shrink),
+                                            (cur_active_width[6 as ::core::ffi::c_int as usize]),
                                         );
                                         if b > 12 as int32_t {
                                             fit_class = TIGHT_FIT as ::core::ffi::c_uchar;
@@ -3066,7 +3081,7 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                     let mut current_block_230: u64;
                     if shortfall as ::core::ffi::c_long > 7230584 as ::core::ffi::c_long
                     {
-                        if ((cur_active_width[2 as ::core::ffi::c_int as usize] + pitex_candidate_stretch)
+                        if ((cur_active_width[2 as ::core::ffi::c_int as usize])
                             as ::core::ffi::c_long) < 1663497 as ::core::ffi::c_long
                         {
                             b = INF_BAD as int32_t;
@@ -3082,7 +3097,7 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                         382537808568233274 => {
                             b = badness(
                                 shortfall,
-                                (cur_active_width[2 as ::core::ffi::c_int as usize] + pitex_candidate_stretch),
+                                (cur_active_width[2 as ::core::ffi::c_int as usize]),
                             );
                             if b > 12 as int32_t {
                                 if b > 99 as int32_t {
@@ -3099,12 +3114,12 @@ unsafe extern "C" fn try_break(mut pi: int32_t, mut break_type: small_number) {
                     current_block = 1995330570110937187;
                 }
             } else {
-                if -shortfall > (cur_active_width[6 as ::core::ffi::c_int as usize] + pitex_candidate_shrink) {
+                if -shortfall > (cur_active_width[6 as ::core::ffi::c_int as usize]) {
                     b = (INF_BAD + 1 as ::core::ffi::c_int) as int32_t;
                 } else {
                     b = badness(
                         -shortfall,
-                        (cur_active_width[6 as ::core::ffi::c_int as usize] + pitex_candidate_shrink),
+                        (cur_active_width[6 as ::core::ffi::c_int as usize]),
                     );
                 }
                 if b > 12 as int32_t {

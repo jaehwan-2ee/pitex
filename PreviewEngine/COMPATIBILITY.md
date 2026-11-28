@@ -114,8 +114,9 @@ It includes alpha PNG, CMYK JPEG, TikZ gradients/fading/blending, PDF page impor
 
 ## Service and policy limits
 
-Font expansion adjusts line-break capacity, glyph advances and outlines.
-Pitex's optimizer can select different paragraph breaks from pdfTeX.
+Font expansion follows pdfTeX's arithmetic for `\pdfadjustspacing`, `\pdffontexpand` and `\efcode`: line-break shortfall, per-line expansion ratio and per-glyph steps.
+Once `\pdffontexpand` is used, only the fonts it names expand; `\PitexFontExpansion` alone expands every text font outside math.
+Expanded glyph advances are kerns after each glyph, and the PDF writer scales the outlines; pdfTeX instead switches to expanded font copies.
 Vertical-font support does not establish pTeX/upTeX paragraph-layout equivalence.
 Font discovery depends on the user's installed fonts and platform libraries.
 

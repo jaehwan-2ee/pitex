@@ -74,16 +74,81 @@ pub unsafe fn set_code(kind: i32, font: i32, character: i32, value: i32) {
         },
     );
 }
+// Once \pdffontexpand has been used, only fonts it named expand, as in pdfTeX;
+// before that, \PitexFontExpansion expands every text font with its own limits.
+static mut EXPLICIT_EXPANSION: bool = false;
 pub unsafe fn set_expansion(font: i32, stretch: i32, shrink: i32, step: i32) {
-    let step = step.clamp(1, 1000);
+    if step <= 0 {
+        return;
+    }
+    let step = step.min(100);
+    EXPLICIT_EXPANSION = true;
     settings(font).expansion = Some(Expansion {
         stretch: stretch.clamp(0, 1000) / step * step,
-        shrink: shrink.clamp(0, 1000) / step * step,
+        shrink: shrink.clamp(0, 500) / step * step,
         step,
     });
 }
-pub unsafe fn expansion(font: i32, fallback: Expansion) -> Expansion {
-    settings(font).expansion.unwrap_or(fallback)
+pub unsafe fn explicit_expansion() -> bool {
+    EXPLICIT_EXPANSION
+}
+pub unsafe fn expansion(font: i32, fallback: Expansion) -> Option<Expansion> {
+    match settings(font).expansion {
+        Some(limits) => Some(limits),
+        None if EXPLICIT_EXPANSION => None,
+        None => Some(fallback),
+    }
+}
+// pdfTeX's expansion arithmetic on scaled points. Expansions `e` are in thousandths.
+/// `round_xn_over_d`: x*n/d rounded half away from zero.
+pub fn round_xn_over_d(x: i64, n: i64, d: i64) -> i64 {
+    (x.abs() * n + d / 2) / d * x.signum()
+}
+/// `ext_xn_over_d`: the same product through a double, as pdfTeX's C helper does.
+pub fn ext_xn_over_d(x: i64, n: i64, d: i64) -> i64 {
+    let r = x as f64 * n as f64 / d as f64;
+    (if r > f64::EPSILON { r + 0.5 } else { r - 0.5 }) as i64
+}
+/// Width of a glyph or font kern `w` in the font expanded by `e`.
+pub fn expanded_width(w: i64, e: i64) -> i64 {
+    round_xn_over_d(w, 1000 + e, 1000)
+}
+/// `char_stretch`/`char_shrink`: what a glyph gains (loses) at the font's limit, times its efcode.
+pub fn glyph_capacity(w: i64, limit: i64, ef: i64, stretching: bool) -> i64 {
+    let change = if stretching { expanded_width(w, limit) - w } else { w - expanded_width(w, -limit) };
+    if limit > 0 && ef > 0 && change > 0 { round_xn_over_d(change, ef, 1000) } else { 0 }
+}
+/// `kern_stretch`/`kern_shrink`: a font kern's change at the limit, times the left glyph's efcode.
+pub fn kern_capacity(k: i64, limit: i64, ef: i64, stretching: bool) -> i64 {
+    if limit <= 0 { return 0; }
+    let change = if stretching { expanded_width(k, limit) - k } else { k - expanded_width(k, -limit) };
+    round_xn_over_d(change, ef, 1000)
+}
+/// The line's font expansion ratio from `hpack(..., cal_expand_ratio)`, in [-1000, 1000].
+pub fn line_ratio(excess: i64, font_stretch: i64, font_shrink: i64) -> i64 {
+    let total = if excess > 0 { font_stretch } else { font_shrink };
+    if excess == 0 || total <= 0 { return 0; }
+    round_xn_over_d(excess, 1000, total).clamp(-1000, 1000)
+}
+/// `do_subst_font` and `fix_expand_value`: one glyph's expansion for a line ratio.
+pub fn glyph_expansion(ratio: i64, ef: i64, limits: Expansion) -> i64 {
+    let limit = if ratio > 0 { limits.stretch } else { limits.shrink } as i64;
+    if ratio == 0 || ef == 0 || limit == 0 { return 0; }
+    let e = ext_xn_over_d(ratio * ef, limit, 1_000_000);
+    let step = limits.step as i64;
+    let magnitude = if e.abs() > limit { limit } else if e.abs() % step > 0 { step * round_xn_over_d(e.abs(), 1, step) } else { e.abs() };
+    magnitude * e.signum()
+}
+/// try_break's shortfall once the fonts take what they can (pdfTeX's line_break with \pdfadjustspacing=2).
+pub fn break_shortfall(shortfall: i64, font_stretch: i64, font_shrink: i64, limits: Expansion) -> i64 {
+    let step = limits.step.max(1) as i64;
+    if shortfall > 0 && font_stretch > 0 {
+        if font_stretch > shortfall { font_stretch / (limits.stretch as i64 / step).max(1) / 2 } else { shortfall - font_stretch }
+    } else if shortfall < 0 && font_shrink > 0 {
+        if font_shrink > -shortfall { -(font_shrink / (limits.shrink as i64 / step).max(1) / 2) } else { shortfall + font_shrink }
+    } else {
+        shortfall
+    }
 }
 pub unsafe fn disable_ligatures(font: i32) {
     settings(font).no_ligatures = true;
