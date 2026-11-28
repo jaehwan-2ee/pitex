@@ -999,11 +999,11 @@
    ],
    "text_median": 1.0,
    "text_min": 1.0,
-   "raster_median": 0.985222242801781,
-   "raster_min": 0.9732194642764819,
+   "raster_median": 0.9975346663521627,
+   "raster_min": 0.99722502132708,
    "raster_pages": [
     0.9972,
-    0.9732
+    0.9978
    ],
    "fonts": [
     [
