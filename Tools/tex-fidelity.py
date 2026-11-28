@@ -12,11 +12,17 @@ Usage:
       [--out DIR] [--json results.json] [--markdown table.md]
   python3 Tools/tex-fidelity.py --check BASELINE.json [--results RUN.json] \
       [--speed ratio|absolute] [--speed-tolerance 0.25]
+  python3 Tools/tex-fidelity.py --ab BIN_A BIN_B [--samples 15] [--only a,b] \
+      [--json ab.json] [--markdown ab.md]
   python3 Tools/tex-fidelity.py --self-test
 
 --check runs the corpus (or reads --results) and exits 1 when a gated
 document scores lower than in BASELINE, loses a definition-of-done gate it
 held there, or the built-in engine got slower beyond the speed tolerance.
+
+--ab times two helper builds against each other on one machine (the per-document
+speed gate): interleaved new sessions, at least 15 per arm, and a document is
+slower only when the 95% bootstrap interval of its median ratio lies above 1.05.
 
 Requires latexmk, pdflatex/xelatex, bibtex/biber and poppler-utils
 (pdfinfo, pdftotext, pdftoppm, pdffonts, pdftohtml) on PATH. Standard
@@ -28,6 +34,7 @@ import difflib
 import html
 import json
 import os
+import random
 import re
 import select
 import shutil
@@ -168,6 +175,59 @@ CMEX_BIG_OPERATORS = {
     "L": "⊕", "M": "⊕",  # circleplus
     "N": "⊗", "O": "⊗",  # circlemultiply
 }
+
+# Sized delimiters (big, Big, bigg, Bigg) by their cmex10 code, from the built-in encoding of
+# cmex10.pfb (lmex10 has the same layout). glyphtounicode.tex has no entry for these names, so
+# pdfTeX's ToUnicode CMap leaves them out: pdftotext drops the codes below 0x20 and shows the
+# others as the letter at their code point (bracketleftBig is "h"). The built-in engine copies
+# them as their base glyph, so the reference copy gets the base glyph's glyphtounicode.tex value.
+# Extensible pieces (parenlefttp, braceex, vextendsingle, ...) copy the same way in both PDFs
+# and are not listed.
+CMEX_DELIMITERS = {code: char for char, codes in {
+    "(": (0x00, 0x10, 0x12, 0x20), ")": (0x01, 0x11, 0x13, 0x21),
+    "[": (0x02, 0x68, 0x14, 0x22), "]": (0x03, 0x69, 0x15, 0x23),
+    "⌊": (0x04, 0x6A, 0x16, 0x24), "⌋": (0x05, 0x6B, 0x17, 0x25),
+    "⌈": (0x06, 0x6C, 0x18, 0x26), "⌉": (0x07, 0x6D, 0x19, 0x27),
+    "{": (0x08, 0x6E, 0x1A, 0x28), "}": (0x09, 0x6F, 0x1B, 0x29),
+    "⟨": (0x0A, 0x44, 0x1C, 0x2A), "⟩": (0x0B, 0x45, 0x1D, 0x2B),
+    "/": (0x0E, 0x2E, 0x1E, 0x2C), "\\": (0x0F, 0x2F, 0x1F, 0x2D),
+}.items() for code in codes}
+
+# Adds CMEX_DELIMITERS to the ToUnicode CMap of every CMEX10/LMMathExtension font (scriptArgs:
+# input, output, {"hex code": "hex UTF-16"}). MuPDF buffers expose bytes by index only.
+CMEX_DELIMITERS_JS = """var doc = new PDFDocument(scriptArgs[0]); var table = JSON.parse(scriptArgs[2]);
+var block = "", count = 0;
+for (var code in table) { block += "<" + code + "><" + table[code] + ">\\n"; count++; }
+block = count + " beginbfchar\\n" + block + "endbfchar\\n";
+for (var i = 1; i < doc.countObjects(); i++) {
+  var font = doc.newIndirect(i, 0).resolve();
+  var base = font && font.isDictionary() ? font.get("BaseFont") : null;
+  if (!base || !base.isName() || !/^([A-Z]{6}\\+)?(CMEX\\d+|LMMathExtension\\d+(-Regular)?)$/.test(base.asName())) continue;
+  var unicode = font.get("ToUnicode");
+  if (unicode && unicode.isStream()) {
+    var buffer = unicode.readStream(), text = "";
+    for (var k = 0; k < buffer.length; k++) text += String.fromCharCode(buffer[k]);
+    unicode.writeStream(text.replace("endcmap", block + "endcmap"));
+  } else {
+    font.put("ToUnicode", doc.addStream("/CIDInit/ProcSet findresource begin 12 dict begin begincmap " +
+      "/CMapName/PitexCMEX def /CMapType 2 def 1 begincodespacerange <00><FF> endcodespacerange\\n" +
+      block + "endcmap CMapName currentdict/CMap defineresource pop end end\\n", {}));
+  }
+}
+doc.save(scriptArgs[1], "compress");
+"""
+
+
+def with_cmex_delimiters(pdf, scratch):
+    """A copy of the reference whose CMEX fonts copy sized delimiters; the reference itself without mutool."""
+    if not shutil.which("mutool"):
+        return pdf
+    scratch.mkdir(parents=True, exist_ok=True)
+    script, out = scratch / "cmex-delimiters.js", scratch / "reference-cmex.pdf"
+    script.write_text(CMEX_DELIMITERS_JS)
+    table = {f"{code:02X}": f"{ord(char):04X}" for code, char in CMEX_DELIMITERS.items()}
+    proc = run(["mutool", "run", str(script), str(pdf), str(out), json.dumps(table)])
+    return out if proc.returncode == 0 and out.is_file() else pdf
 
 
 def cmex_corrections(pdf):
@@ -319,7 +379,8 @@ def log_counts(log):
 def compare(reference, builtin, dpi, scratch):
     ref_pages, out_pages = page_count(reference), page_count(builtin)
     common = min(ref_pages, out_pages)
-    ref_text, out_text = page_texts(reference, ref_pages, reference=True), page_texts(builtin, out_pages)
+    ref_text = page_texts(with_cmex_delimiters(reference, scratch), ref_pages, reference=True)
+    out_text = page_texts(builtin, out_pages)
     text = [difflib.SequenceMatcher(None, ref_text[i], out_text[i], autojunk=False).ratio()
             for i in range(common)] + [0.0] * abs(ref_pages - out_pages)
     ref_raster, out_raster = rasters(reference, dpi, scratch / "ref"), rasters(builtin, dpi, scratch / "out")
@@ -435,6 +496,101 @@ def check(baseline, results, speed="ratio", tolerance=0.25):
     return failures, lines
 
 
+# ---------- A/B speed ----------
+
+AB_SLOWER = 1.05
+
+
+def median_ratio(a, b, rounds=2000, seed=0):
+    """median(b)/median(a) with a 95% bootstrap interval (each arm resampled with replacement)."""
+    rng = random.Random(seed)
+    ratios = sorted(statistics.median(rng.choices(b, k=len(b))) / statistics.median(rng.choices(a, k=len(a)))
+                    for _ in range(rounds))
+    return statistics.median(b) / statistics.median(a), ratios[int(0.025 * rounds)], ratios[int(0.975 * rounds) - 1]
+
+
+def ab_verdict(docs):
+    """Failures and table lines for {name: {"A": {"cold": [...], "warm": [...]}, "B": {...}}}.
+
+    A gated document is slower only when the lower bound of its 95% interval for median(B)/median(A)
+    is above AB_SLOWER; warm times are bimodal (an edit ends idle or republishes), so one median of a
+    few samples is not evidence. Over the gated documents, the median of B's per-document medians may
+    not exceed A's.
+    """
+    failures, lines = [], ["| Document | Cold B/A [95% CI] | Warm B/A [95% CI] |", "|---|---|---|"]
+    corpus = {kind: {arm: [] for arm in "AB"} for kind in ("cold", "warm")}
+    for name, arms in docs.items():
+        cells = []
+        for kind in ("cold", "warm"):
+            ratio, low, high = median_ratio(arms["A"][kind], arms["B"][kind])
+            cells.append(f"{ratio:.3f} [{low:.3f}–{high:.3f}]")
+            if name in INFORMATIONAL:
+                continue
+            for arm in "AB":
+                corpus[kind][arm].append(statistics.median(arms[arm][kind]))
+            if low > AB_SLOWER:
+                failures.append(f"{name}: {kind} median B/A {ratio:.3f}, 95% CI lower bound {low:.3f} > {AB_SLOWER}")
+        lines.append(f"| {name}{' (informational)' if name in INFORMATIONAL else ''} | {cells[0]} | {cells[1]} |")
+    for kind in ("cold", "warm"):
+        a, b = (statistics.median(corpus[kind][arm]) if corpus[kind][arm] else None for arm in "AB")
+        if a is None:
+            continue
+        lines.append(f"| corpus {kind} median of medians | A {a:.3f} s | B {b:.3f} s |")
+        if b > a:
+            failures.append(f"corpus {kind} median {b:.3f} s > A {a:.3f} s")
+    lines += ["", f"{len(failures)} slower" + (":" if failures else "")] + [f"- {f}" for f in failures]
+    return failures, lines
+
+
+def ab_speed(bin_a, bin_b, samples, names, workroot):
+    """Interleaved A/B timing: each sample is a new helper session per arm, arm order alternating.
+
+    Cold is generation 1 to its complete publication; warm is the second edit right after
+    \\begin{document} in that session (the first edit settles the session).
+    """
+    bins = {"A": bin_a, "B": bin_b}
+    caches = {}
+    for arm, bin_dir in bins.items():
+        caches[arm] = workroot / f"cache-{arm}"
+        caches[arm].mkdir(mode=0o700)
+        for program in ("xelatex", "pdflatex"):
+            prime = workroot / f"_format-{arm}-{program}"
+            prime.mkdir()
+            (prime / "main.tex").write_text("\\documentclass{article}\\begin{document}x\\end{document}\n")
+            helper = Helper(bin_dir, prime, workroot / f"_format-{arm}-{program}-out", caches[arm], program)
+            helper.update(1, [])
+            helper.close()
+    docs = {}
+    for name in names:
+        source = (CORPUS / name / "main.tex").read_text()
+        program = program_of(source)
+        times = {arm: {"cold": [], "warm": []} for arm in bins}
+        for i in range(samples):
+            for arm in ("A", "B") if i % 2 == 0 else ("B", "A"):
+                work = workroot / f"{name}-{arm}-{i}"
+                shutil.copytree(CORPUS / name, work)
+                shutil.copy(CORPUS / "refs.bib", work / "refs.bib")
+                helper = Helper(bins[arm], work, workroot / f"{name}-{arm}-{i}-out", caches[arm], program)
+                try:
+                    start = time.perf_counter()
+                    event, _ = helper.update(1, [])
+                    if event.get("event") != "published":
+                        sys.exit(f"{name} ({arm}): {event.get('event')} {event.get('message', '')}")
+                    times[arm]["cold"].append(time.perf_counter() - start)
+                    for generation in (2, 3):
+                        marker = "\\begin{document}" + "\\relax " * (1 + generation % 2)
+                        edited = source.replace("\\begin{document}", marker, 1)
+                        _, seconds = helper.update(generation, [{"path": str(work / "main.tex"), "text": edited}])
+                    times[arm]["warm"].append(seconds)
+                finally:
+                    helper.close()
+                shutil.rmtree(work, ignore_errors=True)
+        docs[name] = times
+        print(name, json.dumps({arm: {k: round(statistics.median(v), 4) for k, v in t.items()}
+                                for arm, t in times.items()}), flush=True)
+    return docs
+
+
 # ---------- driver ----------
 
 def bench(name, bin_dir, runs, dpi, workroot, cache):
@@ -533,6 +689,7 @@ def self_test():
         assert ink_rows(*read_pgm(path)) == [0b101, 0b100]
     assert program_of("% !TEX program = xelatex\n") == "xelatex"
     assert program_of("\\documentclass{article}") == "pdflatex"
+    assert len(CMEX_DELIMITERS) == 56 and CMEX_DELIMITERS[0x12] == "(" and CMEX_DELIMITERS[0x68] == "["
     assert correct_words(["Proof", "X", "Pn", "X"], [{"X": "∑"}, {"P": "∑", "Pn": "∑n"}]) == ["Proof", "∑", "∑n", "X"]
     doc = {"name": "d", "program": "pdflatex", "ref_ok": True, "builtin_ok": True, "ref_errors": 0,
            "builtin_errors": 0, "pages": [2, 2], "text_median": 0.99, "text_min": 0.96, "raster_median": 0.98,
@@ -551,6 +708,20 @@ def self_test():
     slower = check([doc], [dict(doc, builtin_warm_s=0.27)], speed="absolute", tolerance=0.05)[0]
     assert slower[0].startswith("d: built-in warm 0.270 s") and slower[1].startswith("corpus built-in warm"), slower
     assert check([doc], [dict(doc, name="new")])[0] == [], "documents without a baseline are not gated"
+    rng = random.Random(1)
+    # Bimodal warm times: one median of 15 samples can move 40% with the mix, the interval does not exclude 1.
+    fast_slow = lambda share: [rng.uniform(0.09, 0.11) if rng.random() > share else rng.uniform(0.17, 0.2)
+                               for _ in range(15)]
+    warm = fast_slow(0.5)
+    same = {"A": {"cold": [1.0] * 15, "warm": warm}, "B": {"cold": [1.0] * 15, "warm": warm[::-1]}}
+    assert ab_verdict({"d": same})[0] == [], ab_verdict({"d": same})[1]
+    mixes = {"A": {"cold": [1.0] * 15, "warm": fast_slow(0.3)}, "B": {"cold": [1.0] * 15, "warm": fast_slow(0.7)}}
+    assert not any("d:" in f for f in ab_verdict({"d": mixes})[0]), "a different fast/slow mix is not a slower document"
+    slower = {"A": {"cold": [rng.uniform(0.98, 1.02) for _ in range(15)], "warm": [0.1] * 15},
+              "B": {"cold": [rng.uniform(1.10, 1.14) for _ in range(15)], "warm": [0.1] * 15}}
+    failures = ab_verdict({"d": slower})[0]
+    assert failures[0].startswith("d: cold median B/A") and failures[1].startswith("corpus cold"), failures
+    assert ab_verdict({"korean-kotex": slower})[0] == [], "Korean is informational"
     print("self-test ok")
 
 
@@ -568,10 +739,15 @@ def main():
                         help="ratio: built-in/reference corpus medians (shared runners); "
                              "absolute: built-in seconds per document, same machine as the baseline")
     parser.add_argument("--speed-tolerance", type=float, default=0.25)
+    parser.add_argument("--ab", nargs=2, type=Path, metavar=("BIN_A", "BIN_B"),
+                        help="interleaved A/B speed of two helper directories (no reference build)")
+    parser.add_argument("--samples", type=int, default=15, help="with --ab: sessions per arm and document")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
+    if args.ab:
+        return ab_main(args)
     if args.check and args.results:
         return gate(args, json.loads(args.results.read_text())["results"])
     bin_dir = Path(os.environ.get("PITEX_BIN", "")).resolve()
@@ -613,6 +789,25 @@ def main():
     print(f"work directory: {workroot}")
     if args.check:
         gate(args, results)
+
+
+def ab_main(args):
+    if args.samples < 15:
+        sys.exit("--ab needs at least 15 samples per arm")
+    names = [n for n in args.only.split(",") if n] or sorted(
+        p.name for p in CORPUS.iterdir() if (p / "main.tex").is_file())
+    workroot = Path(tempfile.mkdtemp(prefix="pitex-ab-", dir=args.out))
+    docs = ab_speed(args.ab[0].resolve(), args.ab[1].resolve(), args.samples, names, workroot)
+    failures, lines = ab_verdict(docs)
+    if args.json:
+        args.json.write_text(json.dumps({"samples": args.samples, "A": str(args.ab[0]), "B": str(args.ab[1]),
+                                         "docs": docs}, indent=1))
+    print("\n".join(lines))
+    if args.markdown:
+        args.markdown.write_text("\n".join(lines) + "\n")
+    shutil.rmtree(workroot, ignore_errors=True)
+    if failures:
+        sys.exit(1)
 
 
 def gate(args, results):
